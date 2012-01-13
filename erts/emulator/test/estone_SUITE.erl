@@ -81,7 +81,7 @@ all() ->
     [estone].
 
 groups() -> 
-    [{estone_bench, [{repeat,20}],[estone_bench]}].
+    [{estone_bench, [{repeat,50}],[estone_bench]}].
 
 init_per_suite(Config) ->
     Config.
