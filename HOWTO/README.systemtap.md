@@ -6,7 +6,7 @@ Introduction
 
 SystemTap is DTrace for Linux. In fact Erlang's SystemTap support
 is build using SystemTap's DTrace compatibility's layer. For an
-introduction to Erlang DTrace support read README.dtrace.md.
+introduction to Erlang DTrace support read [README.dtrace.md][].
 
 Requisites
 ----------
@@ -70,3 +70,6 @@ Adjust the process("beam") reference to your beam version and attach the script
 to a running "beam" instance:
 
   # stap /path/to/probe/script/port1.systemtap -x <pid of beam>
+
+
+   [README.dtrace.md][]: README.dtrace.md

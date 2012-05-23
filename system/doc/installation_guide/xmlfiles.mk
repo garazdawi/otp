@@ -19,6 +19,7 @@
 INST_GUIDE_CHAPTER_FILES = \
 	install-binary.xml \
 	verification.xml \
-	INSTALL.xml \
-	INSTALL-CROSS.xml \
-	INSTALL-WIN32.xml
+	INSTALL.md.xml \
+	INSTALL-CROSS.md.xml \
+	INSTALL-WIN32.md.xml \
+	README.markdown.md.xml

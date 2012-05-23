@@ -1037,10 +1037,11 @@ Modifying This Document
 -----------------------
 
 Before modifying this document you need to have a look at the
-`$ERL_TOP/README.md.txt` document.
+[$ERL_TOP/HOWTO/README.markdown.md][] document.
 
 
 
    [1]: http://www.erlang.org/faq.html "mailing lists"
+   [$ERL_TOP/HOWTO/README.markdown.md]: README.markdown.md
 
    [?TOC]: true

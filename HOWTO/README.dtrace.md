@@ -5,7 +5,7 @@ History
 -------
 
 The first implementation of DTrace probes for the Erlang virtual
-machine was presented at the [2008 Erlang User Conference] [4].  That
+machine was presented at the [2008 Erlang User Conference] [1].  That
 work, based on the Erlang/OTP R12 release, was discontinued due to
 what appears to be miscommunication with the original developers.
 
