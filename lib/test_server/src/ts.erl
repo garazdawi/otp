@@ -185,7 +185,7 @@ help(installed) ->
 	 "  ts:bench()        - Runs all benchmarks\n"
 	 "  ts:bench(Spec)    - Runs all benchmarks in the given spec file.\n"
 	 "                      The spec file is actually ../*_test/Spec_bench.spec\n"
-	 "  ts:benchmarks()   - Get all available famelies of benchmarks"
+	 "  ts:benchmarks()   - Get all available families of benchmarks\n"
 	 "\n"
 	 "Installation (already done):\n"
 	],
