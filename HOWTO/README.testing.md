@@ -30,7 +30,25 @@ of the places where you can expect to find tests:
 Some of the tests can be run using [ct_run][] directly at these locations, you
 just have to make sure you include the [ct hook][] called ts_install_cth in your
 path. Tests which require C files to be built *cannot* be tested using this
-method. 
+method.
+
+
+Writing tests
+-------------
+
+All tests are [common_test][] suites and follow the same pattern as all 
+[common_test][] suites. There are however a couple of corner cases which are
+handled by a test wrapper called `ts`. `ts` allows the test writer to put
+`Makefile.src` and `Makefile.first` files in the [data_dir][] and a special
+directory called `all_SUITE_data`. 
+
+`Makefile.first` is run before any other Makefile and is typically used to
+generate .hrl files which are needed by other test suites. As of 2012 only
+the erl_interface tests use this feature. 
+
+`Makefile.src` is configured to a `Makefile` using the `variables` created when
+[configuring the tests][]. These `Makefile`s are later run by the test suite
+to compile whatever platform specific code which the tests need to run.
 
 Releasing tests
 ---------------
@@ -63,9 +81,9 @@ setting which you use to start the emulator will be carried with you into the
 tests, so if you want to test using async threads you have to supply `+A 10` to
 `erl` when you start it. 
 
-To configure and run the tests `ts` is used. `ts` is a wrapped to `common_test`
-which takes care of configuration and build issues before `common_test` is 
-started.
+To configure and run the tests `ts` is used. `ts` is a wrapped to
+[common_test][] which takes care of configuration and build issues before 
+[common_test][] is started.
 
 ### Configuring the test environment
 
@@ -127,5 +145,8 @@ get to the currently running test)
    [ct hook]: http://www.erlang.org/doc/apps/common_test/ct_hooks_chapter.html
    [$ERL_TOP/HOWTO/INSTALL.md]: INSTALL.md
    [$ERL_TOP/HOWTO/INSTALL-CROSS.md]: INSTALL-CROSS.md#testing-the-cross-compiled-system
+   [common_test]: http://www.erlang.org/doc/man/ct.html
+   [data_dir]: http://www.erlang.org/doc/apps/common_test/write_test_chapter.html#data_priv_dir
+   [configuring the tests]: #configuring-the-test-environment
 
    [?TOC]: true
