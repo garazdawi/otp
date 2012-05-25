@@ -292,7 +292,7 @@ and then do the cross build of the system.
 to do a manual install either by doing (6), or (7).
 
 Testing the cross compiled system
---------------------------------------
+---------------------------------
 Some of the tests that come with erlang use native code to test. This means
 that when cross compiling erlang you also have to cross compile test suites
 in order to run tests on the target host. To do this you first have to release
@@ -547,10 +547,10 @@ Before modifying this document you need to have a look at the
 
 
    [$ERL_TOP/HOWTO/INSTALL.md]: INSTALL.md
-   [Building in Git]: INSTALL#How-to-Build-and-Install-ErlangOTP_Building-in-Git
+   [Building in Git]: INSTALL.md#How-to-Build-and-Install-ErlangOTP_Building-in-Git
    [How to Build the Documentation]: INSTALL.md#The-ErlangOTP-Documentation_How-to-Build-the-Documentation
    [cross configuration variables]: #Currently-Used-Configuration-Variables
    [DESTDIR]: http://www.gnu.org/prep/standards/html_node/DESTDIR.html
-   [$ERL_TOP/README.md.txt]: ../README.md.txt
+   [$ERL_TOP/README.markdown.md]: README.markdown.md
 
    [?TOC]: true
