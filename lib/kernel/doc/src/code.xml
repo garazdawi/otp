@@ -721,6 +721,7 @@ ok = code:finish_loading(Prepared),
     <func>
       <name name="which" arity="1" since=""/>
       <fsummary>The object code file of a module.</fsummary>
+      <type name="loaded_filename"/>
       <type name="loaded_ret_atoms"/>
       <desc>
         <p>If the module is not loaded, this function searches the code

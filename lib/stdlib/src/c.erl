@@ -28,6 +28,7 @@
 	 lc_batch/0, lc_batch/1,
 	 i/3,pid/3,m/0,m/1,mm/0,lm/0,
 	 bt/1, q/0,
+         h/1,h/2,h/3,
 	 erlangrc/0,erlangrc/1,bi/1, flush/0, regs/0, uptime/0,
 	 nregs/0,pwd/0,ls/0,ls/1,cd/1,memory/1,memory/0, xm/1]).
 
@@ -48,6 +49,9 @@ help() ->
 		   "cd(Dir)    -- change working directory\n"
 		   "flush()    -- flush any messages sent to the shell\n"
 		   "help()     -- help info\n"
+                   "h(M)       -- module documentation\n"
+                   "h(M,F)     -- module function documentation\n"
+                   "h(M,F,A)   -- module function arity documentation\n"
 		   "i()        -- information about the system\n"
 		   "ni()       -- information about the networked system\n"
 		   "i(X,Y,Z)   -- information about pid <X,Y,Z>\n"
@@ -146,6 +150,24 @@ c(SrcFile, NewOpts, Filter, BeamFile, Info) ->
                ++ lists:filter(F, old_options(Info))),
     format("Recompiling ~ts\n", [SrcFile]),
     safe_recompile(SrcFile, Options, BeamFile).
+
+h(Module) ->
+    case code:get_doc(Module) of
+        {ok, Docs} ->
+            shell_docs:render({Module, Docs})
+    end.
+
+h(Module,_Function) ->
+    case code:get_doc(Module) of
+        {ok, Docs} ->
+            shell_docs:render({Module, Docs})
+    end.
+
+h(Module,_Function,_Arity) ->
+    case code:get_doc(Module) of
+        {ok, Docs} ->
+            shell_docs:render({Module, Docs})
+    end.
 
 old_options(Info) ->
     case lists:keyfind(options, 1, Info) of

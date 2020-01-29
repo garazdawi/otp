@@ -69,6 +69,7 @@
 	 rehash/0,
 	 start_link/0,
 	 which/1,
+         get_doc/1,
 	 where_is_file/1,
 	 where_is_file/2,
 	 set_primary_archive/4,
@@ -781,7 +782,7 @@ start_get_mode() ->
 
 -spec which(Module) -> Which when
       Module :: module(),
-      Which :: file:filename() | loaded_ret_atoms() | non_existing.
+      Which :: loaded_filename() | non_existing.
 which(Module) when is_atom(Module) ->
     case is_loaded(Module) of
 	false ->
@@ -830,6 +831,31 @@ where_is_file(Tail, File, Path, Files) ->
             where_is_file(Tail, File)
     end.
 
+get_doc(Mod) when is_atom(Mod) ->
+    Filename = which(Mod),
+    case beam_lib:chunks(Filename, ["Docs"]) of
+        {error,beam_lib,{missing_chunk,_,_}} ->
+            get_doc(Filename, atom_to_list(Mod));
+        {ok, {Mod, [{"Docs",Bin}]}} ->
+            binary_to_term(Bin)
+    end.
+get_doc(Filename, Mod) ->
+    case filename:dirname(Filename) of
+        Filename ->
+            {error,missing};
+        Dir ->
+            ChunkFile = filename:join([Dir,"doc","chunks",Mod ++ ".chunk"]),
+            case file:read_file(ChunkFile) of
+                {ok, Bin} ->
+                    io:format("Opened: ~p~n",[ChunkFile]),
+                    {ok, binary_to_term(Bin)};
+                {error,enoent} ->
+                    get_doc(Dir, Mod);
+                {error,Reason} ->
+                    {error,Reason}
+            end
+    end.
+
 -spec set_primary_archive(ArchiveFile :: file:filename(),
 			  ArchiveBin :: binary(),
 			  FileInfo :: file:file_info(),
@@ -851,7 +877,7 @@ set_primary_archive(ArchiveFile0, ArchiveBin, #file_info{} = FileInfo,
 	{error, _Reason} = Error ->
 	    Error
     end.
-    
+
 %% Search the entire path system looking for name clashes
 
 -spec clash() -> 'ok'.

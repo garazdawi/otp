@@ -28,6 +28,7 @@
 	 erlangrc/1,bi/1, regs/0, flush/0,pwd/0,ls/0,ls/1,cd/1, 
          y/1, y/2,
 	 xm/1, bt/1, q/0,
+         h/1, h/2, h/3,
 	 ni/0, nregs/0]).
 
 -export([ih/0,iv/0,im/0,ii/1,ii/2,iq/1,ini/1,ini/2,inq/1,ib/2,ib/3,
@@ -76,6 +77,9 @@ c(File, Opt, Filter) -> c:c(File, Opt, Filter).
 cd(D)           -> c:cd(D).
 erlangrc(X) 	-> c:erlangrc(X).
 flush()         -> c:flush().
+h(M)            -> c:h(M).
+h(M,F)          -> c:h(M,F).
+h(M,F,A)        -> c:h(M,F,A).
 i() 		-> c:i().
 i(X,Y,Z) 	-> c:i(X,Y,Z).
 l(Mod)       	-> c:l(Mod).
