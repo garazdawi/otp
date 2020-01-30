@@ -48,5 +48,5 @@
   <xi:include href="erl_global.xml"/>
   <xi:include href="erl_malloc.xml"/>
   <xi:include href="erl_marshal.xml"/>
-  <xi:include href="erl_call.xml"/>
+  <xi:include href="erl_call_cmd.xml"/>
 </application>
