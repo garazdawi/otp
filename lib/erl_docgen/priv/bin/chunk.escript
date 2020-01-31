@@ -68,20 +68,6 @@ dbg(_,_) ->
 	  dom=[]           %% DOM structure 
 	 }).
 
-
-%% -record(docs_v1, {anno,
-%%                   beam_language,
-%%                   format,
-%%                   module_doc,
-%%                   metadata,
-%%                   docs}).
-
-%% -record(docs_v1_entry, {kind_name_arity,
-%%                         anno,
-%%                         signature,
-%%                         doc,
-%%                         metadata}).
-
 %%======================================================================
 %% External functions
 %%======================================================================
@@ -375,7 +361,7 @@ to_chunk({Dom,Meta}) ->
             false ->
                 [];
             {_,_,Functions} ->
-                [docs_v1_entry(function,Fname,Arity,maps:from_list(FMeta),#{<<"en">> => Fdoc})||
+                [docs_v1_entry(function,Fname,Arity,maps:from_list(FMeta),Fdoc)||
                     {function,[{name,Fname},{arity,Arity}|FMeta],Fdoc} <- Functions]
         end,
     docs_v1(Mdoc, Meta, FuncEntrys).
@@ -385,11 +371,11 @@ docs_v1(DocContents, Metadata, Docs) ->
     Anno = 0,
     BeamLanguage = erlang,
     Format = <<"text/erlang_doc">>, % FIXME decide about format
-    {docs_v1, Anno, BeamLanguage, Format, #{<<"en">> => DocContents}, Metadata, Docs}.
+    {docs_v1, Anno, BeamLanguage, Format, #{<<"en">> => term_to_binary(DocContents)}, Metadata, Docs}.
 
 docs_v1_entry(Kind, Name, Arity, Metadata, DocContents) ->
     % TODO fill these in
     Anno = 0,
     % TODO get signature from abstract code
     Signature = [list_to_binary(Name ++ "/" ++ Arity)],
-    {{Kind, Name, Arity}, Anno, Signature, term_to_binary(DocContents), Metadata}.
+    {{Kind, Name, list_to_integer(Arity)}, Anno, Signature, #{ <<"en">> => term_to_binary(DocContents)}, Metadata}.

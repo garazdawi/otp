@@ -154,19 +154,19 @@ c(SrcFile, NewOpts, Filter, BeamFile, Info) ->
 h(Module) ->
     case code:get_doc(Module) of
         {ok, Docs} ->
-            shell_docs:render({Module, Docs})
+            shell_docs:render(Module, Docs)
     end.
 
-h(Module,_Function) ->
+h(Module,Function) ->
     case code:get_doc(Module) of
         {ok, Docs} ->
-            shell_docs:render({Module, Docs})
+            shell_docs:render(Module, Function, Docs)
     end.
 
-h(Module,_Function,_Arity) ->
+h(Module,Function,Arity) ->
     case code:get_doc(Module) of
         {ok, Docs} ->
-            shell_docs:render({Module, Docs})
+            shell_docs:render(Module, Function, Arity, Docs)
     end.
 
 old_options(Info) ->

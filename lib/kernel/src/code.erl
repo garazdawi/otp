@@ -20,6 +20,7 @@
 -module(code).
 
 -include_lib("kernel/include/logger.hrl").
+-include("eep48.hrl").
 
 %% This is the interface module to the code server. It also contains
 %% some implementation details.  See also related modules: code_*.erl
@@ -831,15 +832,31 @@ where_is_file(Tail, File, Path, Files) ->
             where_is_file(Tail, File)
     end.
 
+-spec get_doc(Mod) -> {ok, Res} | {error, Reason} when
+      Mod :: module(),
+      Res :: #docs_v1{},
+      Reason :: non_existing | missing | file:posix().
 get_doc(Mod) when is_atom(Mod) ->
-    Filename = which(Mod),
+    case which(Mod) of
+        preloaded ->
+            Fn = filename:join([code:lib_dir(erts),"ebin",atom_to_list(Mod) ++ ".beam"]),
+            get_doc_chunk(Fn, Mod);
+        Error when is_atom(Error) ->
+            {error, Error};
+        Fn ->
+            get_doc_chunk(Fn, Mod)
+    end.
+
+get_doc_chunk(Filename, Mod) when is_atom(Mod) ->
     case beam_lib:chunks(Filename, ["Docs"]) of
         {error,beam_lib,{missing_chunk,_,_}} ->
-            get_doc(Filename, atom_to_list(Mod));
+            get_doc_chunk(Filename, atom_to_list(Mod));
+        {error,beam_lib,{file_error,Filename,enoent}} ->
+            get_doc_chunk(Filename, atom_to_list(Mod));
         {ok, {Mod, [{"Docs",Bin}]}} ->
             binary_to_term(Bin)
-    end.
-get_doc(Filename, Mod) ->
+    end;
+get_doc_chunk(Filename, Mod) ->
     case filename:dirname(Filename) of
         Filename ->
             {error,missing};
@@ -847,10 +864,9 @@ get_doc(Filename, Mod) ->
             ChunkFile = filename:join([Dir,"doc","chunks",Mod ++ ".chunk"]),
             case file:read_file(ChunkFile) of
                 {ok, Bin} ->
-                    io:format("Opened: ~p~n",[ChunkFile]),
                     {ok, binary_to_term(Bin)};
                 {error,enoent} ->
-                    get_doc(Dir, Mod);
+                    get_doc_chunk(Dir, Mod);
                 {error,Reason} ->
                     {error,Reason}
             end
