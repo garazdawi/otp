@@ -26,6 +26,7 @@ RELSYSDIR = $(RELEASE_PATH)/$(APPLICATION)-$(VSN)
 else
 RELSYSDIR = $(RELEASE_PATH)/lib/$(APPLICATION)-$(VSN)
 endif
+RELCHUNKSDIR = $(RELEASE_PATH)/lib/$(APPLICATION)-$(VSN)
 
 APP_DIR = $(ERL_TOP)/lib/$(APPLICATION)/src
 
@@ -148,11 +149,9 @@ release_docs_spec: docs
 ifneq ($(HTML_EXTRA_FILES),)
 	$(INSTALL_DATA) $(HTML_EXTRA_FILES) "$(RELSYSDIR)/doc/html"
 endif
-ifneq ($(CHUNKS_files),)
-ifeq ($(NO_CHUNKS),)
-	$(INSTALL_DIR) "$(RELSYSDIR)/doc/chunks"
-	$(INSTALL_DATA) $(CHUNKSDIR)/* "$(RELSYSDIR)/doc/chunks"
-endif
+ifneq ($(CHUNK_FILES),)
+	$(INSTALL_DIR) "$(RELCHUNKSDIR)/doc/chunks"
+	$(INSTALL_DATA) $(CHUNKSDIR)/* "$(RELCHUNKSDIR)/doc/chunks"
 endif
 	$(INSTALL_DATA) $(INFO_FILE) "$(RELSYSDIR)"
 ifneq ($(MAN1_FILES),)
