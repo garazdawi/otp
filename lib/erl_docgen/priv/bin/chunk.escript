@@ -32,6 +32,31 @@ main([FromXML, ToChunk]) ->
         {error, Reason} ->
             io:format("Failed to create chunks: ~p~n",[Reason]),
             erlang:halt(1);
+        {docs_v1,_,_,_,_,#{ source := S },[]} when
+              S =/= "../xml/gen_fsm.xml",
+              S =/= "../xml/shell_default.xml",
+              S =/= "../xml/user.xml",
+              S =/= "../xml/erlang_mode.xml",
+              S =/= "../xml/wxClipboardTextEvent.xml",
+              S =/= "../xml/wxDisplayChangedEvent.xml",
+              S =/= "../xml/wxGBSizerItem.xml",
+              S =/= "../xml/wxGraphicsBrush.xml",
+              S =/= "../xml/wxGraphicsFont.xml",
+              S =/= "../xml/wxGraphicsPen.xml",
+              S =/= "../xml/wxInitDialogEvent.xml",
+              S =/= "../xml/wxMaximizeEvent.xml",
+              S =/= "../xml/wxMouseCaptureLostEvent.xml",
+              S =/= "../xml/wxPaintEvent.xml",
+              S =/= "../xml/wxPreviewCanvas.xml",
+              S =/= "../xml/wxSysColourChangedEvent.xml",
+              S =/= "../xml/wxTaskBarIconEvent.xml",
+              S =/= "../xml/wxWindowCreateEvent.xml",
+              S =/= "../xml/wxWindowDestroyEvent.xml",
+              S =/= "../xml/wxDataObject.xml"
+              ->
+            io:format("Failed to create chunks: no functions found ~s~n",[S]),
+            erlang:halt(1),
+            ok;
         Docs ->
             ok = file:write_file(ToChunk, term_to_binary(Docs,[compressed]))
     end;
@@ -206,7 +231,7 @@ file(OTPXml)->
                                 {event_state,initial_state()}]) of
         {ok,Tree,_} ->
             Dom = get_dom(Tree),
-            transform(Dom,[],#{});
+            transform(Dom,[],#{ source => OTPXml });
         Else ->
             {error,Else}
     end.
@@ -218,7 +243,7 @@ docs(OTPXml)->
                                 {event_state,initial_state()}]) of
         {ok,Tree,_} ->
             Dom = get_dom(Tree),
-            NewDom = transform(Dom,[],#{}),
+            NewDom = transform(Dom,[],#{ source => OTPXml }),
             to_chunk(NewDom);
         Else ->
             {error,Else}
@@ -266,6 +291,10 @@ transform([{c,[],[{anno,[],AnnoContent}]}|T],Acc,Meta) ->
 transform([{funcs,_Attr,Content}|T],Acc,Meta) ->
     {Dom,Meta} = transform_funcs(Content, [], Meta),
     transform(T,[{functions,[],Dom}|Acc],Meta);
+%% transform <datatypes> with <datatype> as children
+transform([{datatypes,_Attr,Content}|T],Acc,Meta) ->
+    {Dom,Meta} = transform_datatypes(Content, [], Meta),
+    transform(T,[{datatypes,[],Dom}|Acc],Meta);
 %% transform <fsummary> to <p>
 transform([{fsummary,Attr,Content}|T],Acc,Meta) ->
     {Content2,Meta2} = transform(Content,[],Meta),
@@ -322,25 +351,65 @@ transform_funcs([],Acc,Meta) ->
     {lists:reverse(Acc),Meta}.
 
 func2func({func,_,Contents},Meta) ->
-    NameAttrList = 
-        [NameAttr || {name,NameAttr,[]} <- Contents], % FIXME will only work for new style
-    NewContents = [NC||{Tag,_,_} = NC <- Contents, Tag /= name],
-    Functions = [{function,FAttr,NewContents} || FAttr <- NameAttrList],
-    transform(Functions,[],Meta).
+    dbg("F ~p~n",[Contents]),
 
+    ContentsNoName = [NC||NC <- Contents, element(1,NC) /= name],
 
-func_to_tuple("erlang:" ++ Chars) ->
-    func_to_tuple(Chars);
+    case [Name || {name,_,_} = Name <- Contents] of
+        [{name,_,[]}|_] = NameList ->
+            %% Spec style function docs
+            TagsToFA =
+                fun(Tags) ->
+                        {proplists:get_value(name,Tags),
+                         proplists:get_value(arity,Tags)}
+                end,
+            Equiv = [TagsToFA(FAttr) || {name,FAttr,[]} <- NameList],
+            Functions = [{function,FAttr ++ [{equiv,Equiv -- [TagsToFA(FAttr)]}],ContentsNoName} ||
+                            {name,FAttr,[]} <- NameList ],
+            transform(Functions,[],Meta);
+        NameList ->
+            %% Manual style function docs
+            FFA = [{func_to_tuple(NameString),Attr} || {name, Attr, NameString} <- NameList],
+            Equiv = [FA || {FA,_} <- FFA],
+            Functions = [{function,[{name,Name},{arity,Arity},{equiv,Equiv -- [FA]} | Attr], ContentsNoName}
+                         || {{Name,Arity} = FA,Attr} <- FFA],
+            transform(Functions,[], Meta)
+    end.
+
 func_to_tuple(Chars) ->
-    [S|_] = string:tokens(Chars,[$)]),
-    [Name|Args] = string:tokens(S,[$(,$,]),
-    Arity = integer_to_list(length(Args)),
-    {Name,Arity}.
+    try
+        NoMod =
+            case string:split(strip_tags(Chars),":") of
+                [_, Tl] ->
+                    Tl;
+                [StrippedChars] ->
+                    StrippedChars
+            end,
+        [S|_] = string:lexemes(NoMod,[$)]),
+        [Name|Args] = string:lexemes(S,[$(,$,]),
+        Arity = integer_to_list(length(Args)),
+        {unicode:characters_to_list(Name),Arity}
+    catch E:R:ST ->
+            io:format("Failed to parse: ~p~n",[Chars]),
+            erlang:raise(E,R,ST)
+    end.
+
+strip_tags([{_Tag,_Attr,Content}|T]) ->
+    [Content | strip_tags(T)];
+strip_tags([H|T]) when not is_tuple(H) ->
+    [H | strip_tags(T)];
+strip_tags([]) ->
+    [].
+
+transform_datatypes([_DT|_T],_Acc,Meta) ->
+    %% TODO: Should also export datatype docs
+    {[],Meta}.
 
 
 transform_seealso(S = {seealso,_Attr,_Content}) ->
-    dbg("~p~n",[S]).
-%%transform_seealso({seealso,[{marker,MarkerStr}],Content}) ->    
+    dbg("~p~n",[S]),
+    _Content.
+%%transform_seealso({seealso,[{marker,MarkerStr}],Content}) ->
 %%    {a,[{type,seealso}],Content}.
 %% render([{module,[{name,M}|_],[]}|T],Acc,Meta) ->
 %%     render(T,[[<<"Module ">>,M,"\n"]|Acc],Meta);
@@ -355,7 +424,7 @@ transform_seealso(S = {seealso,_Attr,_Content}) ->
 to_chunk({Dom,Meta}) ->
     [{module,_Mattr,Mcontent}] = Dom,
 %    Module = proplists:get_value(name,Mattr),
-    Mdoc = [M ||{Tag,_,_} = M <- Mcontent, Tag =/= functions, Tag =/= modulesummary],
+    {description, _Meta, Mdoc} = lists:keyfind(description,1,Mcontent),
     FuncEntrys =
         case lists:keyfind(functions,1,Mcontent) of
             false ->

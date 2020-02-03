@@ -22,90 +22,120 @@
 -include("eep48.hrl").
 
 -export([render/2, render/3, render/4]).
+-export([get_doc/1,get_doc/3]).
+
+get_doc(Module) ->
+    {ok, #docs_v1{ module_doc = #{ <<"en">> := Docs } } } = code:get_doc(Module),
+    binary_to_term(Docs).
+
+get_doc(Module, Function, Arity) ->
+    {ok, #docs_v1{ docs = Docs } } = code:get_doc(Module),
+    FnFunctions =
+        lists:filter(fun({{function, F, A},_Anno,_Sig,_Doc,_Meta}) ->
+                             F =:= atom_to_list(Function) andalso A =:= Arity
+                     end, Docs),
+    [{F,A,S,maps:map(fun(_,BD) -> binary_to_term(BD) end, D),M} || {F,A,S,D,M} <- FnFunctions].
 
 render(Module, #docs_v1{ module_doc = #{<<"en">> := DocContents} }) ->
-    do_render(atom_to_list(Module), DocContents).
+    render_docs(atom_to_list(Module), DocContents).
 
 render(_Module, Function, #docs_v1{ docs = Docs }) ->
-    render(
+    render_function(
         lists:filter(fun({{function, F, _},_Anno,_Sig,_Doc,_Meta}) ->
                              F =:= atom_to_list(Function)
                      end, Docs)).
 render(_Module, Function, Arity, #docs_v1{ docs = Docs }) ->
-    render(
+    render_function(
       lists:filter(fun({{function, F, A},_Anno,_Sig,_Doc,_Meta}) ->
                            F =:= atom_to_list(Function) andalso A =:= Arity
                    end, Docs)).
 
-render([]) ->
+render_function([]) ->
     {error,doc_missing};
-render(FDocs) ->
-    [do_render(Sig, Doc) || {_,_Anno,Sig,#{ <<"en">> := Doc },_Meta} <- lists:sort(FDocs)],
+render_function(FDocs) ->
+    [render_docs(Sig, Doc) || {_,_Anno,Sig,#{ <<"en">> := Doc },_Meta} <- lists:sort(FDocs)],
     ok.
 
-do_render(Header, DocContents) ->
-    {_,_,Doc} = render2(binary_to_term(DocContents),0,[],[]),
-    io:format("~n\t~ts~n~n~ts~n",[Header, Doc]),
+render_docs(Header, DocContents) ->
+    {Doc,_} = render_docs(binary_to_term(DocContents),[],0),
+    io:format("~n\t~ts~ts~n",[Header, Doc]),
     ok.
 
-render2([H|T],Pos,State,Acc) ->
-    {NewPos,NewState,Acc2} = render2(H,Pos,State,[]),
-    render2(T,NewPos,NewState,[Acc2|Acc]);
-render2([],Pos,[_|T],Acc) ->
-    {Pos,T,lists:reverse(Acc)};
-render2([],Pos,State,Acc) ->
-    {Pos,State,lists:reverse(Acc)};
-render2(Element, Pos,State,Acc) ->
-    do_render(Element, Pos, State,Acc).
+render_docs(Elems,State,Pos) when is_list(Elems) ->
+    lists:mapfoldl(fun(Elem,P) ->
+                           io:format("Elem: ~p (~p) (~p)~n",[Elem,State,P]),
+                           render_docs(Elem,State,P)
+                   end,Pos,Elems);
+render_docs(Elem,State,Pos) ->
+    render_element(Elem,State,Pos).
 
-do_render({p,_,Content},Pos,State,Acc) ->
-    {_,State1,Acc1} = maybe("\n\n",Pos,[p|State],Acc),
-    render2(Content, 0, State1, Acc1);
-%% Assume that c only contains 1 binary which should not be split into words
-do_render({c,_,Content},Pos,State,Acc) ->
-    render2(Content, Pos, [c|State], Acc);
-do_render(B, Pos, State = [c|_], Acc) when is_binary(B) ->
-    do_render_words([B],Pos,State,Acc);
-do_render(B, Pos, State, Acc) when is_binary(B) ->
-    Words = split_to_words(B),
-%%    Words = string:lexemes(B," " ++[[$\r,$\n],$\n]),
-    do_render_words(Words,Pos,State,Acc);
-do_render({_Tag,_Attr,Content}, Pos, State, Acc) ->
-%    io:format("Unhandled:{~p, ~p, Content}~n",[Tag,Attr]),
-    render2(Content, Pos, State, Acc).
+render_element({p,_,Content},[],_Pos) ->
+    %% Add new lines if <p> at top level
+    {Docs, NewPos} = render_docs(Content, [p], 0),
+    {["\r\n\r\n", Docs], NewPos};
+render_element({p,_,Content},State,Pos) ->
+    render_docs(Content, [p|State], Pos);
+render_element({c,_,Content},State, Pos) ->
+    %% Assume that c only contains 1 binary which should not be split into words
+    render_docs(Content, [c|State], Pos);
+render_element({pre,_,Content},State,_Pos) ->
+    %% For pre we start with two new lines and make sure to respect the newlines
+    {Docs, NewPos} = render_docs(Content, [pre|State], 0),
+    {["\r\n\r\n", Docs], NewPos};
+render_element({ul,_,Content},State,_Pos) ->
+    render_docs(Content, [ul|State], 0);
+render_element({li,_,Content},[ul | _] = State,_Pos) ->
+    Bullet = <<" • "/utf8>>,
+    {Docs, NewPos} = render_docs(Content, [li | State], string:length(Bullet)),
+    {["\r\n",Bullet,Docs],NewPos};
+render_element(B, State, Pos) when is_binary(B) ->
+    case State of
+        [pre|_] ->
+            {B, 0};
+        [c|_] ->
+            do_render_words([B],Pos,State,[]);
+        _ ->
+            do_render_words(split_to_words(B),Pos,State,[])
+    end;
+render_element({a,_,Content},State, Pos) ->
+    %% Ignore links
+    render_docs(Content, State, Pos);
+render_element({Tag,Attr,Content}, State, Pos) ->
+    io:format("Unhandled:{~p, ~p, Content}~n",[Tag,Attr]),
+    render_docs(Content, State, Pos).
 
 do_render_words([Word|T],Pos,State,Acc) ->
     NewPos = Pos + string:length(Word),
     do_render_words2(T,NewPos,State,[Word|Acc]);
-do_render_words([],Pos,State,Acc) ->
-    {Pos,State,iolist_to_binary(lists:reverse(Acc))}.
+do_render_words([],Pos,_State,Acc) ->
+    {iolist_to_binary(lists:reverse(Acc)), Pos}.
 
 do_render_words2([Word|T],Pos,State,Acc) ->
     WordLength = string:length(Word),
     NewPos = WordLength + Pos,
-    if 
+    if
         NewPos > 60 ->
-            %% Word does not fit , time to add a newline 
+            %% Word does not fit , time to add a newline
             do_render_words2(T,WordLength,State,[Word,"\n"|Acc]);
          true ->
             %% Word does fit on line
-            {Pos1,State1,Acc1} = maybe(" ",Pos,State,Acc),
-            do_render_words2(T,Pos1+WordLength,State1,[Word|Acc1])
+            {Acc1,Pos1} = maybe(" ",Pos,State,Acc),
+            do_render_words2(T,Pos1+WordLength,State,[Word|Acc1])
     end;
-do_render_words2([],Pos,State,Acc) ->
-    {Pos,State,iolist_to_binary(lists:reverse(Acc))}.
+do_render_words2([],Pos,_State,Acc) ->
+    {iolist_to_binary(lists:reverse(Acc)), Pos}.
 
-maybe(_Chars,0,State,Acc) ->
-    {0,State,Acc};
-maybe(" ",_Pos,State=[c|_],Acc) ->
-    {0,State,Acc};
-maybe(" ",Pos,State,Acc) ->
-    {Pos+1,State,[$\s|Acc]};
-maybe(Chars = "\n",_Pos,State,Acc) ->
-    {0,State,[Chars|Acc]};
-maybe(Chars = "\n\n",_Pos,State,Acc) ->
-    {0,State,[Chars|Acc]}.
-    
+maybe(_Chars,0,_State,Acc) ->
+    {Acc,0};
+maybe(" ",_Pos,[c|_],Acc) ->
+    {Acc,0};
+maybe(" ",Pos,_State,Acc) ->
+    {[$\s|Acc],Pos+1};
+maybe(Chars = "\n",_Pos,_State,Acc) ->
+    {[Chars|Acc],0};
+maybe(Chars = "\n\n",_Pos,_State,Acc) ->
+    {[Chars|Acc],0}.
+
 split_to_words(B) ->
     Wl1 = binary:split(B,
                        [<<" ">>,
