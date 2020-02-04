@@ -58,7 +58,7 @@ render_function(FDocs) ->
 
 render_docs(Header, DocContents) ->
     {Doc,_} = render_docs(binary_to_term(DocContents),[],0),
-    io:format("~n\t~ts~ts~n",[Header, Doc]),
+    io:format("~n\t\033[;1m~ts\033[0m~ts~n",[Header, Doc]),
     ok.
 
 render_docs(Elems,State,Pos) when is_list(Elems) ->
@@ -76,18 +76,32 @@ render_element({p,_,Content},[],_Pos) ->
 render_element({p,_,Content},State,Pos) ->
     render_docs(Content, [p|State], Pos);
 render_element({c,_,Content},State, Pos) ->
-    %% Assume that c only contains 1 binary which should not be split into words
-    render_docs(Content, [c|State], Pos);
+    {Docs, NewPos} = render_docs(Content, [c|State], Pos),
+    {["\033[;;4m",Docs,"\033[0m"], NewPos};
+render_element({em,_,Content},State, Pos) ->
+    {Docs, NewPos} = render_docs(Content, State, Pos),
+    {["\033[;1m",Docs,"\033[0m"], NewPos};
 render_element({pre,_,Content},State,_Pos) ->
     %% For pre we start with two new lines and make sure to respect the newlines
     {Docs, NewPos} = render_docs(Content, [pre|State], 0),
     {["\r\n\r\n", Docs], NewPos};
 render_element({ul,_,Content},State,_Pos) ->
-    render_docs(Content, [ul|State], 0);
-render_element({li,_,Content},[ul | _] = State,_Pos) ->
+    render_docs(Content, [l|State], 0);
+render_element({ol,_,Content},State,_Pos) ->
+    %% For now ul and ol does the same thing
+    render_docs(Content, [l|State], 0);
+render_element({li,_,Content},[l | _] = State,_Pos) ->
     Bullet = <<" • "/utf8>>,
     {Docs, NewPos} = render_docs(Content, [li | State], string:length(Bullet)),
     {["\r\n",Bullet,Docs],NewPos};
+render_element({dl,_,Content},State,_Pos) ->
+    render_docs(Content, [dl|State], 0);
+render_element({dt,_,Content},[dl | _] = State,_Pos) ->
+    {Docs, NewPos} = render_docs(Content, [li | State], 2),
+    {["\r\n","  \033[;1m",Docs,":\033[0m"],NewPos};
+render_element({dd,_,Content},[dl | _] = State,_Pos) ->
+    {Docs, NewPos} = render_docs(Content, [li | State], 4),
+    {["\r\n","    ",Docs],NewPos};
 render_element(B, State, Pos) when is_binary(B) ->
     case State of
         [pre|_] ->

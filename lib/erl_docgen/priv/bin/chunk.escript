@@ -87,10 +87,11 @@ dbg(_,_) ->
 %% State record for the validator
 %%----------------------------------------------------------------------
 -record(state, {
+          normalize=true,  %% Should we normalize characters
 	  tags=[],         %% Tag stack
 	  cno=[],          %% Current node number
 	  namespaces = [], %% NameSpace stack
-	  dom=[]           %% DOM structure 
+	  dom=[]           %% DOM structure
 	 }).
 
 %%======================================================================
@@ -162,9 +163,22 @@ build_dom({startElement, _Uri, LocalName, _QName, Attributes},
 	  #state{tags=T, dom=D} = State) ->
 
     A = parse_attributes(LocalName, Attributes),
+    CName = list_to_atom(LocalName),
 
-    State#state{tags=[list_to_atom(LocalName) |T],
-                dom=[{list_to_atom(LocalName), 
+    Normalize =
+        if CName =:= pre; CName =:= code ->
+                %% Assert that we don't nest pre/code tags
+                true = State#state.normalize,
+                false;
+           CName =:= c ->
+                true = State#state.normalize,
+                trim;
+           true -> State#state.normalize
+        end,
+
+    State#state{normalize = Normalize,
+                tags=[CName |T],
+                dom=[{CName,
                       lists:reverse(A),
                       []
                      } | D]};
@@ -174,7 +188,18 @@ build_dom({endElement, _Uri, LocalName, _QName},
                       {PName, PAttributes, PContent} = _Parent | D]} = State) ->
     case list_to_atom(LocalName) of
 	CName ->
-            State#state{tags=T,
+            Normalize =
+                if CName =:= pre; CName =:= code ->
+                        %% Assert that we don't nest pre/code tags
+                        false = State#state.normalize,
+                        true;
+                   CName =:= c ->
+                        trim = State#state.normalize,
+                        true;
+                   true -> State#state.normalize
+                end,
+            State#state{normalize = Normalize,
+                        tags=T,
                         dom=[{PName, PAttributes, 
                               [{CName, CAttributes, 
                                 lists:reverse(CContent)}
@@ -189,14 +214,19 @@ build_dom({endElement, _Uri, LocalName, _QName},
 %%----------------------------------------------------------------------
 build_dom({characters, String},
 	  #state{dom=[{Name, Attributes, Content}| D]} = State) ->
-    State#state{dom=[{Name, Attributes, [unicode:characters_to_binary(String, utf8)|Content]} | D]};
+    NewContent =
+        if
+            State#state.normalize =/= false ->
+                normalize(State#state.normalize, unicode:characters_to_binary(String, utf8), Content);
+           State#state.normalize =:= false ->
+                [unicode:characters_to_binary(String, utf8) | Content]
+        end,
+    State#state{dom=[{Name, Attributes, NewContent} | D]};
 
 %% Default
 %%----------------------------------------------------------------------
 build_dom(_E, State) ->
     State. 
-
-
 
 %%----------------------------------------------------------------------
 %% Function  : parse_attributes(ElName, Attributes) -> Result
@@ -211,6 +241,19 @@ parse_attributes(_, [], _, Acc) ->
     Acc;
 parse_attributes(ElName, [{_Uri, _Prefix, LocalName, AttrValue} |As], N, Acc) ->  
     parse_attributes(ElName, As, N+1, [{list_to_atom(LocalName), AttrValue} |Acc]).
+
+normalize(Trim, B, [Tuple | _] = T) when is_tuple(Tuple) ->
+    [normalize(Trim, B) | T];
+normalize(Trim, B1,[B2|T]) ->
+    [normalize(Trim, [B1," ",B2]) | T];
+normalize(Trim, B,[]) ->
+    [normalize(Trim, B)].
+normalize(trim, CharData) ->
+    string:trim(normalize(CharData));
+normalize(_, CharData) ->
+    normalize(CharData).
+normalize(CharData) ->
+    re:replace(CharData,"\\s+"," ",[unicode,global,{return,binary}]).
 
 refman(RefMan) ->
     case catch xmerl_sax_parser:file(RefMan,
@@ -237,7 +280,7 @@ file(OTPXml)->
     end.
 
 docs(OTPXml)->
-    case catch xmerl_sax_parser:file(OTPXml,
+    try xmerl_sax_parser:file(OTPXml,
                                [skip_external_dtd,
                                 {event_fun,fun event/3},
                                 {event_state,initial_state()}]) of
@@ -247,6 +290,8 @@ docs(OTPXml)->
             to_chunk(NewDom);
         Else ->
             {error,Else}
+    catch E:R:ST ->
+            {error,{E,R,ST}}
     end.
 
 
@@ -338,9 +383,15 @@ transform_list(_,Content) ->
     {ul,[],[{li,A2,C2}||{item,A2,C2}<-Content]}.
 
 transform_taglist(Attr,Content) ->
-    Content2 = [{dt,A2,C2}||{tag,A2,C2} <- Content],
-    Content3 = [{dd,A3,C3}||{item,A3,C3} <- Content2],
-    {dl,Attr,Content3}.
+    Items =
+        lists:map(fun({tag,A,C}) ->
+                          {NewC,_} = transform(C, [], #{}),
+                          {dt,A,NewC};
+                     ({item,A,C}) ->
+                          {NewC,_} = transform(C, [], #{}),
+                          {dd,A,NewC}
+                  end, Content),
+    {dl,Attr,Items}.
 
 %% if we have {func,[],[{name,...},{name,....},...]}
 %% we convert it to one {func,[],[{name,...}] per arity lowest first.    
