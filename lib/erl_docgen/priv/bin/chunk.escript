@@ -223,6 +223,22 @@ build_dom({characters, String},
         end,
     State#state{dom=[{Name, Attributes, NewContent} | D]};
 
+build_dom({ignorableWhitespace, String},
+          #state{dom=[{Name,_,_}|_]} = State) ->
+    case lists:member(Name,
+                      [p,pre,input,code,quote,warning,
+                       note,dont,do,c,i,em,strong,tag,
+                       item,seealso]) of
+        true ->
+            build_dom({characters, String}, State);
+        false ->
+            State
+    end;
+
+build_dom({startEntity, SysId}, State) ->
+    io:format("startEntity:~p~n",[SysId]),
+    State;
+
 %% Default
 %%----------------------------------------------------------------------
 build_dom(_E, State) ->
@@ -253,7 +269,8 @@ normalize(trim, CharData) ->
 normalize(_, CharData) ->
     normalize(CharData).
 normalize(CharData) ->
-    re:replace(CharData,"\\s+"," ",[unicode,global,{return,binary}]).
+    Bin = re:replace(CharData,"\\s+"," ",[unicode,global,{return,binary}]),
+    re:replace(Bin,"&nbsp;",[160],[unicode,global,{return,binary}]).
 
 refman(RefMan) ->
     case catch xmerl_sax_parser:file(RefMan,
