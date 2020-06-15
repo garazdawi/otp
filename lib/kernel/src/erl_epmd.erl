@@ -96,11 +96,11 @@ port_please(Node, Host) ->
 	  Version :: non_neg_integer().
 
 port_please(Node, HostName, Timeout) when is_atom(HostName) ->
-  port_please1(Node, atom_to_list(HostName), Timeout);
+    fix_erl_epmd_port(Node, HostName, port_please1(Node, atom_to_list(HostName), Timeout));
 port_please(Node, HostName, Timeout) when is_list(HostName) ->
-  port_please1(Node, HostName, Timeout);
+    fix_erl_epmd_port(Node, HostName, port_please1(Node, HostName, Timeout));
 port_please(Node, EpmdAddr, Timeout) ->
-  get_port(Node, EpmdAddr, Timeout).
+    fix_erl_epmd_port(Node, EpmdAddr, get_port(Node, EpmdAddr, Timeout)).
 
 port_please1(Node, HostName, Timeout) ->
   Family = case inet_db:res_option(inet6) of
@@ -116,6 +116,17 @@ port_please1(Node, HostName, Timeout) ->
           ?port_please_failure2(_Else),
           noport
   end.
+
+fix_erl_epmd_port(_Node, HostName, {port,_,_} = Prt) ->
+    Prt;
+fix_erl_epmd_port(Node, HostName, Error) ->
+    case listen_port_please(Node, HostName) of
+        {ok, 0} ->
+            ?port_please_failure2(_Error),
+            Error;
+        {ok, Prt} ->
+            {port, Prt, 5}
+    end.
 
 -spec listen_port_please(Name, Host) -> {ok, Port} when
       Name :: atom(),
@@ -215,17 +226,20 @@ handle_call({register, Name, PortNo, Family}, _From, State) ->
     case State#state.socket of
 	P when P < 0 ->
 	    case do_register_node(Name, PortNo, Family) of
-                noepmd ->
-                    {reply, {ok, -1}, State#state{ socket = -1,
-                                                   port_no = PortNo,
-                                                   name = Name} };
 		{alive, Socket, Creation} ->
 		    S = State#state{socket = Socket,
 				    port_no = PortNo,
 				    name = Name},
 		    {reply, {ok, Creation}, S};
-		Error ->
-		    {reply, Error, State}
+                Error ->
+                    case init:get_argument(erl_epmd_port) of
+                        {ok, _} ->
+                            {reply, {ok, -1}, State#state{ socket = -1,
+                                                           port_no = PortNo,
+                                                           name = Name} };
+                        Error ->
+                            {reply, Error, State}
+                    end
 	    end;
 	_ ->
 	    {reply, {error, already_registered}, State}
@@ -330,12 +344,7 @@ do_register_node(NodeName, TcpPort, Family) ->
                     Error
             end;
 	Error ->
-            case init:get_argument(erl_epmd_port) of
-                {ok, _} ->
-                    noepmd;
-                _ ->
-                    Error
-            end
+            Error
     end.
 
 epmd_dist_high() ->
@@ -416,13 +425,7 @@ get_port(Node, EpmdAddress, Timeout) ->
 		    noport
 	    end;
 	_Error ->
-            case listen_port_please(Node, EpmdAddress) of
-                {ok, 0} ->
-                    ?port_please_failure2(_Error),
-                    noport;
-                {ok, Prt} ->
-                    {port, Prt, 5}
-            end
+            noport
     end.
 
 
