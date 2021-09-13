@@ -19,6 +19,9 @@ name: Build and check Erlang/OTP
 on:
   push:
   pull_request:
+  workflow_dispatch:
+  schedule:
+  - cron: '0 * * * *'
 
 jobs:
 
@@ -199,16 +202,21 @@ jobs:
           docker build --pull --tag ${{ steps.base.outputs.BASE_TAG }} \
             --cache-from ${{ steps.base.outputs.BASE_TAG }} \
             --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }} \
-            --build-arg BASE=${{ steps.base.outputs.BASE }} .
+            --build-arg BASE=${{ steps.base.outputs.BASE }} .github/
       - name: Build ${{ matrix.type }} image
         run: |
+          mv otp_src.tar.gz .github/otp.tar.gz
           docker build --tag otp --file .github/dockerfiles/Dockerfile.${{ matrix.type }} \
-            --build-arg ARCHIVE=otp_src.tar.gz .
+            .github/
 
         ## Smoke build tests
       - if: matrix.type == '32-bit' || matrix.type == '64-bit' || matrix.type == 'cross-compile'
         name: Run smoke test
-        run: docker run -v $PWD/scripts:/scripts otp "cd /tests && /scripts/run-smoke-tests"
+        run: docker run -v $PWD/scripts:/scripts otp "cd /tests && /scripts/run-tests smoke"
+
+      - if: matrix.type == '64-bit' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+        name: Run all tests
+        run: docker run -v $PWD/scripts:/scripts otp "~/init.sh && cd /tests && /scripts/run-tests all"
 
         ## Documentation checks
       - if: matrix.type == 'documentation'

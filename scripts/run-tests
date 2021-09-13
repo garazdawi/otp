@@ -1,6 +1,12 @@
 #!/bin/bash
 set -ev
 
+if [ "${1}" = "smoke" ]; then
+    CMD="erl -noshell -s ts install -s ts smoke_test batch -s init stop"
+else
+    CMD="erl -noshell -s ts install -s ts run all_tests -s init stop"
+fi
+
 if [ -d $ERL_TOP/release/tests/test_server ]; then
     cd $ERL_TOP/release/tests/test_server
 elif [ -d test_server ]; then
@@ -10,7 +16,7 @@ else
     exit 1;
 fi
 
-erl -noshell -s ts install -s ts smoke_test batch -s init stop
+${CMD}
 
 if grep -q '=failed *[1-9]' ct_run.test_server@*/*/run.*/suite.log; then
     echo "One or more tests failed."
