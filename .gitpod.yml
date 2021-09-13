@@ -1,0 +1,6 @@
+image:
+  file: .devcontainer/Dockerfile
+  context: .devcontainer
+vscode:
+  extensions:
+    - erlang-ls.erlang-ls
