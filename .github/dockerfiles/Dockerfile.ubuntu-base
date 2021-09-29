@@ -48,4 +48,4 @@ ENV OTP_STRICT_INSTALL=yes \
 
 COPY --chown=otptest:uucp dockerfiles/init.sh /home/otptest/
 
-RUN sudo mkdir /buildroot /tests && sudo chown otptest:uucp /buildroot /tests
+RUN sudo mkdir /buildroot /tests /otp && sudo chown otptest:uucp /buildroot /tests /otp

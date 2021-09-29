@@ -3,8 +3,10 @@ set -ev
 
 if [ "${1}" = "smoke" ]; then
     CMD="erl -noshell -s ts install -s ts smoke_test batch -s init stop"
-else
+elif [ "${1}" = "all" ]; then
     CMD="erl -noshell -s ts install -s ts run all_tests -s init stop"
+else
+    CMD="erl -noshell -s ts install -s ts run ${1} -s init stop"
 fi
 
 if [ -d $ERL_TOP/release/tests/test_server ]; then
