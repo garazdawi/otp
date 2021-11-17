@@ -58,8 +58,13 @@ All tests will require several hours to run. You may want to check the
 following text file that describes how to run tests for a specific
 application.
 
+  $ERL_TOP/HOWTO/TESTING.md
+
+You can follow the test results here:
+
+  file://$ERL_TOP/release/tests/test_server/index.html
+
 EOM
-        echo $ERL_TOP/HOWTO/TESTING.md
     }
     print_highlighted_msg_with_printer $YELLOW print_msg
 }
@@ -89,25 +94,6 @@ EOM
     }
     print_highlighted_msg_with_printer $LIGHT_CYAN print_msg
 }
-
-print_c_files_warning () {
-    print_msg () {
-        cat << EOM
-
-WARNING
-
-The test directory contains .c files which means that some test cases
-will probably not work correctly when run through "make test". The
-text file at the following location describes how one can compile and
-run all test cases:
-
-
-EOM
-        echo $ERL_TOP/HOWTO/TESTING.md
-    }
-    print_highlighted_msg_with_printer $YELLOW print_msg
-}
-
 
 print_on_error_note () {
     print_msg () {
@@ -189,6 +175,8 @@ MAKE_TEST_DIR="`pwd`/make_test_dir"
 MAKE_TEST_REL_DIR="$MAKE_TEST_DIR/${APPLICATION}_test"
 MAKE_TEST_CT_LOGS="$MAKE_TEST_DIR/ct_logs"
 RELEASE_TEST_SPEC_LOG="$MAKE_TEST_CT_LOGS/release_tests_spec_log"
+INSTALL_TEST_LOG="$MAKE_TEST_CT_LOGS/install_tests_log"
+COMPILE_TEST_LOG="$MAKE_TEST_CT_LOGS/compile_tests_log"
 
 cd test
 echo "The tests in test directory for $APPLICATION will be executed with ct_run"
@@ -197,10 +185,6 @@ then
     if [ ! -d "$MAKE_TEST_DIR" ]
     then
         print_all_tests_for_application_notes
-    fi
-    if find . -type f -name '*.c' | grep -q "."
-    then
-        print_c_files_warning
     fi
 fi
 
@@ -227,13 +211,33 @@ then
     fi
     ARGS="$SPEC_FLAG $SPEC_FILE"
 fi
-# Compile test server
-(cd "$ERL_TOP/lib/common_test/test_server" && make)
+
+# Compile test server and configure
+if [ ! -f "$ERL_TOP/lib/common_test/test_server/variables" ]; then
+    cd "$ERL_TOP/lib/common_test/test_server"
+    ( make && erl -noshell -eval "ts:install()." -s init stop )  > "$INSTALL_TEST_LOG" 2>&1
+    if [ $? != 0 ]
+    then
+        cat "$INSTALL_TEST_LOG"
+        print_highlighted_msg $RED "\"make && erl -eval 'ts:install()'\" in common_test/test_server failed."
+        exit 1
+    fi
+fi
+
 # Run ct_run
 cd $MAKE_TEST_REL_DIR
 
 if [ "${WSLcross}" != "true" ]
 then
+    erl -sname test -noshell -pa "$ERL_TOP/lib/common_test/test_server" \
+        -eval "ts:compile_datadirs(\"$ERL_TOP/lib/common_test/test_server/variables\",\"*_SUITE_data\")."\
+        -s init stop > "$COMPILE_TEST_LOG" 2>&1
+    if [ $? != 0 ]
+    then
+        cat "$COMPILE_TEST_LOG"
+        print_highlighted_msg $RED "\"erl -eval 'ts:compile_datadirs/2'\" failed."
+        exit 1
+    fi
     $CT_RUN -logdir $MAKE_TEST_CT_LOGS\
         -pa "$ERL_TOP/lib/common_test/test_server"\
         ${ARGS}\
