@@ -40,7 +40,7 @@ all: $(if $(FLAVOR),$(FLAVOR),$(PRIMARY_FLAVOR))
 docs:
 	$(V_at)( cd doc/src && $(MAKE) $@ )
 
-.PHONY: debug opt lcnt clean
+.PHONY: debug opt lcnt clean test
 debug opt lcnt clean:
 	$(V_at)for d in emulator $(ERTSDIRS); do \
 		if test -d $$d; then \
@@ -48,6 +48,10 @@ debug opt lcnt clean:
 		fi ; \
 	done
 	(cd preloaded/src && $(MAKE) ../ebin/erts.app)
+
+.PHONY: test
+test:
+	$(V_at)( cd emulator && $(MAKE) $@ )
 
 .PHONY: $(FLAVORS)
 $(FLAVORS):
@@ -164,5 +168,3 @@ release_docs:
 .PHONY: xmllint
 xmllint:
 	$(MAKE) -C doc/src $@
-
-include $(ERL_TOP)/make/app_targets.mk

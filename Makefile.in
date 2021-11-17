@@ -485,9 +485,14 @@ PROFILE=
 PROFILE_EMU_DEPS=
 endif
 
+ifeq ($(TYPE), test)
+emulator:
+	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) $(MAKE) $(TYPE)
+else
 emulator: $(PROFILE_EMU_DEPS)
 	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
 	  $(MAKE) NO_START_SCRIPTS=true $(TYPE) FLAVOR=$(FLAVOR) PROFILE=$(PROFILE)
+endif
 
 libs:
 ifeq ($(OTP_SMALL_BUILD),true)
@@ -512,10 +517,16 @@ APPS=$(patsubst $(ERL_TOP)/lib/%/doc,%,$(wildcard $(ERL_TOP)/lib/*/doc))
 
 .PHONY: $(APPS)
 
+ifeq ($(TYPE), test)
+$(APPS):
+	$(make_verbose)cd lib/$@ && \
+	  ERL_TOP=$(ERL_TOP) $(MAKE) $(TYPE)
+else
 $(APPS):
 	$(make_verbose)cd lib/$@ && \
 	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
-		$(MAKE) $(TYPE) BUILD_ALL=true
+		$(MAKE) $(TYPE)
+endif
 
 ##
 ## Generate `otp_internal` from the -deprecated() attributes in source.
