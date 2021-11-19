@@ -45,7 +45,7 @@
 -export([comment/1, make_priv_dir/0]).
 -export([os_type/0]).
 -export([run_on_shielded_node/2]).
--export([is_cover/0,is_debug/0,is_commercial/0]).
+-export([is_cover/0,is_debug/0,is_commercial/0,is_source_release/0]).
 
 -export([break/1,break/2,break/3,continue/0,continue/1]).
 -export([memory_checker/0, is_valgrind/0, is_asan/0]).
@@ -3090,6 +3090,16 @@ is_commercial() ->
         nomatch -> true;
 	_ -> false
     end.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% is_source_release() -> boolean()
+%%
+%% Returns true if the current emulator is from a source
+%% tree build or if it is from a released Erlang/OTP.
+is_source_release() ->
+    string:equal(
+      filename:join(code:root_dir(),"erts"),
+      code:lib_dir(erts)).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% is_valgrind() -> boolean()

@@ -403,8 +403,13 @@ records(Config) when is_list(Config) ->
            "\", '_', [{d,test1},{d,test2,17}]), rl([test1,test2]).",
     [{attribute,A1,record,{test1,_}},{attribute,A1,record,{test2,_}},ok] =
         scan(RR7),
-    PreReply = scan(<<"rr(prim_file).">>), % preloaded...
-    true = is_list(PreReply),
+    case test_server:is_source_release() of
+        false ->
+            PreReply = scan(<<"rr(prim_file).">>), % preloaded...
+            true = is_list(PreReply);
+        true ->
+            ok
+    end,
     Dir = filename:join(proplists:get_value(priv_dir, Config), "*.erl"),
     RR8 = "rp(rr(\"" ++ Dir ++ "\")).",
     [_,ok] = scan(RR8),

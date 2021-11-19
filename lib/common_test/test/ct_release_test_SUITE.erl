@@ -49,7 +49,12 @@ init_per_suite(Config) ->
 	{win32,_} ->
 	    {skipped, "Upgrade tests do currently not work on windows"};
 	_ ->
-	    ct_test_support:init_per_suite(Config)
+            case test_server:is_source_release() of
+                true ->
+                    {skipped, "Test cannot be run in a source tree"};
+                false ->
+                    ct_test_support:init_per_suite(Config)
+            end
     end.
 
 end_per_suite(Config) ->
