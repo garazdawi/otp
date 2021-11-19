@@ -749,31 +749,7 @@ passed to `configure`. One can force relative, or absolute links by passing
 phase. Note that such a request might cause a failure if the request cannot
 be satisfied.
 
-
-### Running ###
-
-   [$ERL_TOP/HOWTO/INSTALL-CROSS.md]: INSTALL-CROSS.md
-   [$ERL_TOP/HOWTO/INSTALL-WIN32.md]: INSTALL-WIN32.md
-   [DESTDIR]: http://www.gnu.org/prep/standards/html_node/DESTDIR.html
-   [Building in Git]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Within-Git
-   [Advanced Configure]: #Advanced-configuration-and-build-of-ErlangOTP_Configuring
-   [Pre-built Source Release]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Prebuilt-Source-Release
-   [make and $ERL_TOP]: #Advanced-configuration-and-build-of-ErlangOTP_make-and-ERLTOP
-   [html documentation]: http://www.erlang.org/download/otp_doc_html_%OTP-VSN%.tar.gz
-   [man pages]: http://www.erlang.org/download/otp_doc_man_%OTP-VSN%.tar.gz
-   [the released source tar ball]: http://www.erlang.org/download/otp_src_%OTP-VSN%.tar.gz
-   [System Principles]: system/system_principles:system_principles
-   [native build]: #How-to-Build-and-Install-ErlangOTP
-   [cross build]: INSTALL-CROSS.md
-   [Required Utilities]: #Required-Utilities
-   [Optional Utilities]: #Optional-Utilities
-   [Building on a Mac]: #Advanced-configuration-and-build-of-ErlangOTP_Building_OS-X-Darwin
-   [Building with wxErlang]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Building-with-wxErlang
-   [libatomic_ops]: https://github.com/ivmai/libatomic_ops/
-
-
-### Erlang/OTP test architectures ###
-
+## Erlang/OTP test architectures ##
 
 Erlang/OTP are currently tested on the following hardware and Opererating systems.
 This is not an exhaustive list, but we try to keep it as up to date as possible.
@@ -797,3 +773,21 @@ Operating System
 * Ubuntu 10.04 - 20.04
 * Windows 10, Windows Server 2019
 
+   [$ERL_TOP/HOWTO/INSTALL-CROSS.md]: INSTALL-CROSS.md
+   [$ERL_TOP/HOWTO/INSTALL-WIN32.md]: INSTALL-WIN32.md
+   [DESTDIR]: http://www.gnu.org/prep/standards/html_node/DESTDIR.html
+   [Building in Git]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Within-Git
+   [Advanced Configure]: #Advanced-configuration-and-build-of-ErlangOTP_Configuring
+   [Pre-built Source Release]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Prebuilt-Source-Release
+   [make and $ERL_TOP]: #Advanced-configuration-and-build-of-ErlangOTP_make-and-ERLTOP
+   [html documentation]: http://www.erlang.org/download/otp_doc_html_%OTP-VSN%.tar.gz
+   [man pages]: http://www.erlang.org/download/otp_doc_man_%OTP-VSN%.tar.gz
+   [the released source tar ball]: http://www.erlang.org/download/otp_src_%OTP-VSN%.tar.gz
+   [System Principles]: system/system_principles:system_principles
+   [native build]: #How-to-Build-and-Install-ErlangOTP
+   [cross build]: INSTALL-CROSS.md
+   [Required Utilities]: #Required-Utilities
+   [Optional Utilities]: #Optional-Utilities
+   [Building on a Mac]: #Advanced-configuration-and-build-of-ErlangOTP_Building_OS-X-Darwin
+   [Building with wxErlang]: #Advanced-configuration-and-build-of-ErlangOTP_Building_Building-with-wxErlang
+   [libatomic_ops]: https://github.com/ivmai/libatomic_ops/
