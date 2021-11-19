@@ -114,6 +114,13 @@ EOM
     print_highlighted_msg_with_printer $NC print_msg
 }
 
+release_erlang () {
+    local RELEASE_ROOT=${1}
+    (cd $ERL_TOP && make release RELEASE_ROOT="${RELEASE_ROOT}")
+    (cd "$RELEASE_ROOT" && ./Install -minimal "`pwd`")
+    export PATH="${RELEASE_ROOT}/bin:$PATH"
+}
+
 # Check ERL_TOP
 
 if [ -d "$1" ]
@@ -168,17 +175,40 @@ then
     exit 1
 fi
 
-
 APPLICATION="`basename $DIR`"
 CT_RUN="$ERL_TOP/bin/ct_run"
 MAKE_TEST_DIR="`pwd`/make_test_dir"
 MAKE_TEST_REL_DIR="$MAKE_TEST_DIR/${APPLICATION}_test"
 MAKE_TEST_CT_LOGS="$MAKE_TEST_DIR/ct_logs"
-RELEASE_TEST_SPEC_LOG="$MAKE_TEST_CT_LOGS/release_tests_spec_log"
-INSTALL_TEST_LOG="$MAKE_TEST_CT_LOGS/install_tests_log"
-COMPILE_TEST_LOG="$MAKE_TEST_CT_LOGS/compile_tests_log"
+RELEASE_TEST_SPEC_LOG="$MAKE_TEST_DIR/release_tests_spec_log"
+INSTALL_TEST_LOG="$MAKE_TEST_DIR/install_tests_log"
+COMPILE_TEST_LOG="$MAKE_TEST_DIR/compile_tests_log"
+RELEASE_ROOT="${MAKE_TEST_DIR}/otp"
+RELEASE_LOG="$MAKE_TEST_DIR/release_tests_log"
 
 cd test
+
+mkdir -p "$MAKE_TEST_DIR"
+mkdir -p "$MAKE_TEST_REL_DIR"
+mkdir -p "$MAKE_TEST_CT_LOGS"
+
+# Check that we are running a released erlang when we have to
+if [ "$TEST_NEEDS_RELEASE" = "true" ]; then
+    MSG=$(cat <<EOF
+This application needs to be tested using a released Erlang/OTP.
+Erlang/OTP will now be released to ${RELEASE_ROOT}.
+EOF
+       )
+    print_highlighted_msg $YELLOW "${MSG}"
+    release_erlang "${RELEASE_ROOT}" > "${RELEASE_LOG}" 2>&1
+    CT_RUN="${RELEASE_ROOT}/bin/ct_run"
+    if [ $? != 0 ]
+    then
+        print_highligted_msg $RED "\"make RELEASE_ROOT=${RELEASE_ROOT}\" failed."
+        exit 1
+    fi
+fi
+
 echo "The tests in test directory for $APPLICATION will be executed with ct_run"
 if [ -z "${ARGS}" ]
 then
@@ -188,9 +218,6 @@ then
     fi
 fi
 
-mkdir -p "$MAKE_TEST_DIR"
-mkdir -p "$MAKE_TEST_REL_DIR"
-mkdir -p "$MAKE_TEST_CT_LOGS"
 make RELSYSDIR=$MAKE_TEST_REL_DIR release_tests_spec > $RELEASE_TEST_SPEC_LOG 2>&1
 
 if [ $? != 0 ]
@@ -227,17 +254,19 @@ fi
 # Run ct_run
 cd $MAKE_TEST_REL_DIR
 
+erl -sname test -noshell -pa "$ERL_TOP/lib/common_test/test_server" \
+    -eval "ts:compile_datadirs(\"$ERL_TOP/lib/common_test/test_server/variables\",\"*_SUITE_data\")."\
+    -s init stop > "$COMPILE_TEST_LOG" 2>&1
+
+if [ $? != 0 ]
+then
+    cat "$COMPILE_TEST_LOG"
+    print_highlighted_msg $RED "\"erl -eval 'ts:compile_datadirs/2'\" failed."
+    exit 1
+fi
+
 if [ "${WSLcross}" != "true" ]
 then
-    erl -sname test -noshell -pa "$ERL_TOP/lib/common_test/test_server" \
-        -eval "ts:compile_datadirs(\"$ERL_TOP/lib/common_test/test_server/variables\",\"*_SUITE_data\")."\
-        -s init stop > "$COMPILE_TEST_LOG" 2>&1
-    if [ $? != 0 ]
-    then
-        cat "$COMPILE_TEST_LOG"
-        print_highlighted_msg $RED "\"erl -eval 'ts:compile_datadirs/2'\" failed."
-        exit 1
-    fi
     $CT_RUN -logdir $MAKE_TEST_CT_LOGS\
         -pa "$ERL_TOP/lib/common_test/test_server"\
         ${ARGS}\
