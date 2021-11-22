@@ -23,7 +23,7 @@ keep in mind whenever things start to not work as you expect them to.
 
 ## Short version
 
-First make sure you have done all [preperations](#preperations) then
+First make sure you have done all [preparations](#preparations) then
 do this:
 
 ```bash
@@ -56,6 +56,11 @@ with its own [Required Utilities](INSTALL-WIN32.md#tools-you-need-and-their-envi
 Then you need to set `ERL_TOP` to point at the repository you are developing in.
 Not all make commands needs this environment variable set, but many do so it is
 good to get into the habit of always setting it.
+
+```bash
+cd /path/to/repository/otp
+export ERL_TOP=`pwd`
+```
 
 Make sure that you have read the [Contributing to Erlang/OTP](../CONTRIBUTING.md)
 guide if you intend to make a contribution to Erlang/OTP.
