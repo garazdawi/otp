@@ -7,7 +7,10 @@ will try to showcase the most important features of the make system.
 The guide is mostly aimed towards development on a Unix platform, but
 most things should work also work on Windows.
 
-*WARNING* the functions mentioned in this guide are not supported. This
+This guide is aimed at the current Erlang/OTP version. The commands may
+or may not work on older/newer Erlang releases.
+
+*WARNING*: the functions mentioned in this guide are not supported. This
 means that they may be removed or changed without prior notice, so do
 not depend on them in CI. For supported make targets see the
 [Install howto](INSTALL.md) and the [Testing howto](TESTING.md).
@@ -20,12 +23,13 @@ keep in mind whenever things start to not work as you expect them to.
 
 ## Short version
 
-First do this:
+First make sure you have done all [preperations](#preperations) then
+do this:
 
 ```bash
 git clone -b maint git@github.com:erlang/otp
 cd otp && export ERL_TOP=`pwd`
-./configure && make
+./otp_build configure && make
 ```
 
 After making changes, adding tests and updating documentation. You do
@@ -46,7 +50,8 @@ Before you start working you need to clone the Erlang/OTP git repository
 and install any dependencies that you do not have. See
 [Required Utilities](INSTALL.md#required-utilities) and
 [Optional Utilities](INSTALL.md#optional-utilities) in [INSTALL.md](INSTALL.md)
-for a list of utilities to install.
+for a list of utilities to install. (Windows has its own [INSTALL Guide](INSTALL-WIN32.md)
+with its own [Required Utilities](INSTALL-WIN32.md#tools-you-need-and-their-environment)).
 
 Then you need to set `ERL_TOP` to point at the repository you are developing in.
 Not all make commands needs this environment variable set, but many do so it is
@@ -57,16 +62,16 @@ guide if you intend to make a contribution to Erlang/OTP.
 
 ### Faster builds
 
-Both `./configure` and `make` take advantage of running in parallel if told to,
+Both `configure` and `make` take advantage of running in parallel if told to,
 so in order to speed up your development environment make sure to set:
 
 ```bash
-export MAKEFLAGS=-jN        ## Change N to be the number of CPUs available
+export MAKEFLAGS=-jN        ## Change N to be the number of cores available
 ```
 
 The Erlang compiler can be run using a [Compile Server](https://www.erlang.org/doc/man/erlc.html#compile-server),
-this normally cuts a minute or two from the total build time of Erlang/OTP.
-To enable set this environment variable:
+this should also reduce the amount of time that the build takes. To enable set
+this environment variable:
 
 ```bash
 export ERLC_USE_SERVER=true
@@ -75,6 +80,12 @@ export ERLC_USE_SERVER=true
 ## Configuring
 
 You run configure by issuing the command:
+
+```bash
+./otp_build configure
+```
+
+On all OSs except Windows you can also just run:
 
 ```bash
 ./configure
@@ -86,11 +97,11 @@ If you update any configure.ac scripts you need to
 
 ### Help
 
-The toplevel configure will give help about the features that is provides.
+The toplevel configure will give help about the features that it provides.
 To get a full list of all features you need to use:
 
 ```bash
-./configure --help=recur
+./configure --help=r
 ```
 
 There is documentation for what most of the options mean in the
