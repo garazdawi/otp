@@ -48,6 +48,10 @@ and install any dependencies that you do not have. See
 [Optional Utilities](INSTALL.md#optional-utilities) in [INSTALL.md](INSTALL.md)
 for a list of utilities to install.
 
+Then you need to set `ERL_TOP` to point at the repository you are developing in.
+Not all make commands needs this environment variable set, but many do so it is
+good to get into the habit of always setting it.
+
 Make sure that you have read the [Contributing to Erlang/OTP](../CONTRIBUTING.md)
 guide if you intend to make a contribution to Erlang/OTP.
 
@@ -189,12 +193,22 @@ cd lib/stdlib && make
 Each application has a bunch of make targets that you can use.
 
 ```bash
-make                # build all source for this application
-make test           # run all tests for this application
-make dialyzer       # run dialyze for this application
-make doc            # build all docs for this application
-make xmllint        # run xmllint on the docs for this application
+make                                # build all source for this application
+make test                           # run all tests for this application
+make test ARGS="-suite lists_SUITE" # run the lists_SUITE tests
+make dialyzer                       # run dialyzer for this application
+make docs                           # build all docs for this application
+make xmllint                        # run xmllint on the docs for this application
 ```
+
+If you want to view what the documentation looks like for only your application
+you can do this:
+
+```bash
+(cd doc/src && make local_docs)
+```
+
+and then view `doc/html/index.html`.
 
 ## cerl
 
@@ -236,7 +250,50 @@ switches are:
 
 ## Static testing
 
+From the top level of Erlang/OTP you can run:
+
+```bash
 make xmllint
 make dialyzer
+```
+
+This will check that the documentation is correct and that there are no
+dialzyer errors.
 
 ## Running Test cases
+
+There is a detailed description about how to run tests in [TESTING.md](TESTING.md).
+
+## Writing and building documentation
+
+Most of the Erlang/OTP documentation is written in XML files locates in
+`lib/$APPLICATION_NAME/doc/src`. The format of the XML is described in the
+[ErlDocgen User's Guide](https://www.erlang.org/doc/apps/erl_docgen/users_guide.html).
+
+There is also some documentation that is written using [edoc](https://www.erlang.org/doc/man/edoc.html).
+
+To view the documentation the simplest way is to release it.
+
+```bash
+make release_docs
+```
+
+and then you can view `release/*/doc/index.html` in your favourite browser and
+make sure that it looks nice.
+
+This takes a while though and to speed up the edit-view cycle you can either
+limit what parts of the documentation is buid using `DOC_TARGETS`. For example:
+
+```bash
+make release_docs DOC_TARGETS=html
+```
+
+The different `DOC_TARGETS` built are `html`, `man`, `pdf` and `chunks`.
+
+You can also build the docs only for a single application. For example:
+
+```bash
+cd lib/stdlib/doc/src && make local_docs DOC_TARGETS=html
+```
+
+and then view the results at `lib/stdlib/doc/html/index.html`.
