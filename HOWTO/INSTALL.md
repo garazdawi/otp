@@ -751,7 +751,7 @@ be satisfied.
 
 ## Erlang/OTP test architectures ##
 
-Erlang/OTP are currently tested on the following hardware and Opererating systems.
+Erlang/OTP are currently tested on the following hardware and Operating systems.
 This is not an exhaustive list, but we try to keep it as up to date as possible.
 
 Architecture

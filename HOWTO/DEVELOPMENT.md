@@ -7,8 +7,9 @@ will try to showcase the most important features of the make system.
 The guide is mostly aimed towards development on a Unix platform, but
 most things should work also work on Windows.
 
-This guide is aimed at the current Erlang/OTP version. The commands may
-or may not work on older/newer Erlang releases.
+This guide is aimed at this Erlang/OTP version. If the howto is not
+working for you, make sure that you are looking at the howto for the
+version that you are trying to work with.
 
 *WARNING*: the functions mentioned in this guide are not supported. This
 means that they may be removed or changed without prior notice, so do
@@ -18,8 +19,8 @@ not depend on them in CI. For supported make targets see the
 The make system is not as always as robust as one might like, so if for
 any reason something does not work, try doing a `git clean -Xfdq` and
 start from the beginning again. This normally only needs to be done when
-you jump inbetween different git branches, but it can a good thing to
-keep in mind whenever things start to not work as you expect them to.
+you jump in between different git branches, but it can a good thing to
+keep in mind whenever things do not work as you expect them to.
 
 ## Short version
 
@@ -71,12 +72,14 @@ Both `configure` and `make` take advantage of running in parallel if told to,
 so in order to speed up your development environment make sure to set:
 
 ```bash
-export MAKEFLAGS=-jN        ## Change N to be the number of cores available
+## Change N to be at least the number of cores or hyper-threads available
+export MAKEFLAGS=-jN
 ```
 
 The Erlang compiler can be run using a [Compile Server](https://www.erlang.org/doc/man/erlc.html#compile-server),
-this should also reduce the amount of time that the build takes. To enable set
-this environment variable:
+this can cut from the total build time of Erlang/OTP by quite a lot,
+especially if you have a relatively slow machine.
+To enable set this environment variable:
 
 ```bash
 export ERLC_USE_SERVER=true
@@ -141,9 +144,14 @@ make test                # Run all tests, takes a long time
 make stdlib TYPE=test    # Run only stdlib tests, takes less time
                          # Run only lists_SUITE, takes even less time
 make stdlib TYPE=test ARGS="-suite lists_SUITE"
+                         # Run only member testcase in lists_SUITE
+make stdlib TYPE=test ARGS="-suite lists_SUITE -case member"
 ```
 
-and you can run static analysis test:
+See [ct_run](https://www.erlang.org/doc/man/ct_run.html#) for a list of all options
+that you can pass to ARGS.
+
+You can run static analysis test:
 
 ```bash
 make dialyzer            # Checks all of Erlang/OTP source code
@@ -274,7 +282,7 @@ make dialyzer
 ```
 
 This will check that the documentation is correct and that there are no
-dialzyer errors.
+dialyzer errors.
 
 ## Running Test cases
 
@@ -282,7 +290,7 @@ There is a detailed description about how to run tests in [TESTING.md](TESTING.m
 
 ## Writing and building documentation
 
-Most of the Erlang/OTP documentation is written in XML files locates in
+Most of the Erlang/OTP documentation is written in XML files located in
 `lib/$APPLICATION_NAME/doc/src`. The format of the XML is described in the
 [ErlDocgen User's Guide](https://www.erlang.org/doc/apps/erl_docgen/users_guide.html).
 
@@ -298,7 +306,7 @@ and then you can view `release/*/doc/index.html` in your favourite browser and
 make sure that it looks nice.
 
 This takes a while though and to speed up the edit-view cycle you can either
-limit what parts of the documentation is buid using `DOC_TARGETS`. For example:
+limit what parts of the documentation is buit using `DOC_TARGETS`. For example:
 
 ```bash
 make release_docs DOC_TARGETS=html

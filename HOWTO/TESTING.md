@@ -62,8 +62,8 @@ called test and in the root directory of the source code tree.
 *(Warning)* Some test cases do not run correctly or cannot be run at
 all through the `make test` command because `make test` runs tests
 directly by invoking the `ct_run` command instead of using the `ts`
-wrapper. One has to follow the procedure described above to run test
-cases that do not work with `make test`.
+wrapper. One has to follow the procedure described in [Releasing tests](#releasing-tests)
+to run test cases that do not work with `make test`.
 
 Below are some examples that illustrate how `make test` can be
 used:
