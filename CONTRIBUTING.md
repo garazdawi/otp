@@ -1,5 +1,12 @@
 # Contributing to Erlang/OTP
 
+1. [License](#license)
+2. [Reporting a bug](#reporting-a-bug)
+3. [Submitting Pull Requests](#submitting-pull-requests)
+  1. [Fixing a bug](#fixing-a-bug)
+  2. [Adding a new feature](#adding-a-new-feature)
+  3. [Before you submit your pull request](#before-you-submit-your-pull-request)
+
 ## License
 
 By making a contribution to this project, I certify that:
@@ -27,8 +34,7 @@ By making a contribution to this project, I certify that:
     consistent with this project or the open source license(s)
     involved.
 
-Erlang/otp is licensed under the
-Apache License 2.0
+Erlang/otp is licensed under the Apache License 2.0
 
 As stated in: [LICENSE.txt](LICENSE.txt)
 
@@ -47,7 +53,7 @@ Make sure you create a new branch for your pull request with `git checkout -b ne
 Give the branch a short but descriptive name, like `stdlib/lists-length-fix`.
 Never do your work directly on `maint` or `master`.
 
-## Fixing a bug
+### Fixing a bug
 
 * In most cases, pull requests for bug fixes should be based on the `maint` branch.
 There are exceptions, for example corrections to bugs that have been introduced in the `master` branch.
@@ -59,7 +65,7 @@ There are exceptions, for example corrections to bugs that have been introduced 
 * For applications without a test suite in the git repository, it would be appreciated if you provide a
 small code sample in the commit message or email a module that will provoke the failure.
 
-## Adding a new feature
+### Adding a new feature
 
 * In most cases, pull requests for new features should be based on the `master` branch.
 
@@ -90,7 +96,7 @@ feature one or two releases beforehand.
 can be included in OTP. Major changes or new features in ERTS, Kernel, or STDLIB will need an EEP or at least
 a discussion on the mailing list.
 
-## Before you submit your pull request
+### Before you submit your pull request
 
 * Make sure existing test cases don't fail. It is not necessary to run all tests (that would take many hours),
 but you should at least run the tests for the application you have changed.
@@ -127,7 +133,7 @@ Check your coding style:
 
 * In most code (Erlang and C), indentation is 4 steps. Indentation using only spaces is **strongly recommended**.
 
-### Configuring Emacs
+#### Configuring Emacs
 
 If you use Emacs, use the Erlang mode, and add the following lines to `.emacs`:
 

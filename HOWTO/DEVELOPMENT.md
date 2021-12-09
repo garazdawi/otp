@@ -7,10 +7,6 @@ will try to showcase the most important features of the make system.
 The guide is mostly aimed towards development on a Unix platform, but
 most things should work also work on Windows.
 
-This guide is aimed at this Erlang/OTP version. If the howto is not
-working for you, make sure that you are looking at the howto for the
-version that you are trying to work with.
-
 *WARNING*: the functions mentioned in this guide are not supported. This
 means that they may be removed or changed without prior notice, so do
 not depend on them in CI. For supported make targets see the
@@ -21,6 +17,23 @@ any reason something does not work, try doing a `git clean -Xfdq` and
 start from the beginning again. This normally only needs to be done when
 you jump in between different git branches, but it can a good thing to
 keep in mind whenever things do not work as you expect them to.
+
+*NOTE*: This instructions may vary for different versions of Erlang/OTP,
+so make sure to read the instructions for the version that you are working
+with.
+
+1. [Short version](#short-version)
+2. [Preperations](#preperations)
+  1. [Faster builds](#faster-builds)
+3. [Configuring](#configuring)
+  1. [Help](#help)
+4. [Building and testing](#building-and-testing)
+  1. [Build and test a specific application](#build-and-test-a-specific-application)
+  2. [Types and Flavors](#types-and-Flavors)
+  3. [cerl](#cerl)
+  4. [Static analysis](#static-analysis)
+8. [Running test cases](#running-test-cases)
+9. [Writing and building documentation](#writing-and-building-documentation)
 
 ## Short version
 
@@ -115,7 +128,7 @@ To get a full list of all features you need to use:
 There is documentation for what most of the options mean in the
 [INSTALL.md howto](INSTALL.md#Configuring).
 
-## Developing
+## Building and testing
 
 After you have done configure, you can do
 
@@ -166,6 +179,35 @@ make emulator            # Build erts, epmd etc
 make emulator TYPE=test  # Run all emulator tests
 ```
 
+### Build and test a specific application
+
+You can also build the application from within itself. Like this:
+
+```bash
+cd lib/stdlib && make
+```
+
+Each application has a bunch of make targets that you can use.
+
+```bash
+make                                # build all source for this application
+make test                           # run all tests for this application
+make test ARGS="-suite lists_SUITE" # run the lists_SUITE tests
+make dialyzer                       # run dialyzer for this application
+make docs                           # build all docs for this application
+make docs DOC_TARGETS="html"        # build html docs for this application
+make xmllint                        # run xmllint on the docs for this application
+```
+
+If you want to view what the documentation looks like for only your application
+you can do this:
+
+```bash
+(cd doc/src && make local_docs)
+```
+
+and then view `doc/html/index.html`.
+
 ### Types and Flavors
 
 Erlang can be built using different types and flavors. Mostly the types and
@@ -206,35 +248,7 @@ need to be processed. To work with these files there is a special `erl` program
 called `cerl` that is only available in the source tree. You can read more about
 it in the [cerl section](#cerl) later in this guide.
 
-## lib/APPLICATION
-
-You can also build the application from within itself. Like this:
-
-```bash
-cd lib/stdlib && make
-```
-
-Each application has a bunch of make targets that you can use.
-
-```bash
-make                                # build all source for this application
-make test                           # run all tests for this application
-make test ARGS="-suite lists_SUITE" # run the lists_SUITE tests
-make dialyzer                       # run dialyzer for this application
-make docs                           # build all docs for this application
-make xmllint                        # run xmllint on the docs for this application
-```
-
-If you want to view what the documentation looks like for only your application
-you can do this:
-
-```bash
-(cd doc/src && make local_docs)
-```
-
-and then view `doc/html/index.html`.
-
-## cerl
+### cerl
 
 `cerl` is a program available in `$ERL_TOP/bin/` that has a number of features
 useful when developing the Erlang run-time system. It work just as normal `erl`,
@@ -272,19 +286,20 @@ switches are:
 * -rr replay [session]
   * Load a recording session using `rr replay`, if no session is specified the latest run session is laoded.
 
-## Static testing
+### Static analysis
 
 From the top level of Erlang/OTP you can run:
 
 ```bash
 make xmllint
 make dialyzer
+make format-check
 ```
 
 This will check that the documentation is correct and that there are no
 dialyzer errors.
 
-## Running Test cases
+## Running test cases
 
 There is a detailed description about how to run tests in [TESTING.md](TESTING.md).
 
@@ -306,7 +321,7 @@ and then you can view `release/*/doc/index.html` in your favourite browser and
 make sure that it looks nice.
 
 This takes a while though and to speed up the edit-view cycle you can either
-limit what parts of the documentation is buit using `DOC_TARGETS`. For example:
+limit what parts of the documentation is built using `DOC_TARGETS`. For example:
 
 ```bash
 make release_docs DOC_TARGETS=html
