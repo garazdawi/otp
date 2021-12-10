@@ -3,9 +3,9 @@
 1. [License](#license)
 2. [Reporting a bug](#reporting-a-bug)
 3. [Submitting Pull Requests](#submitting-pull-requests)
-  1. [Fixing a bug](#fixing-a-bug)
-  2. [Adding a new feature](#adding-a-new-feature)
-  3. [Before you submit your pull request](#before-you-submit-your-pull-request)
+    1. [Fixing a bug](#fixing-a-bug)
+    2. [Adding a new feature](#adding-a-new-feature)
+    3. [Before you submit your pull request](#before-you-submit-your-pull-request)
 
 ## License
 
