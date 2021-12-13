@@ -249,7 +249,7 @@ jobs:
         ## Save docker image
       - if: matrix.type == '64-bit'
         name: Save docker image
-        run: docker save otp > /github/otp_docker.tar
+        run: docker save otp > otp_docker.tar
       - if: matrix.type == '64-bit'
         name: Upload pre-built tar archive
         uses: actions/upload-artifact@v2
@@ -287,7 +287,7 @@ jobs:
       - name: Restore docker image
         run: docker load < otp_docker.tar
       - name: Run tests
-        run: docker run -it otp scripts/run-tests ${{ matrix.type }}
+        run: docker run -it otp make ${{ matrix.type }} TYPE=test
 
   ## If this is a tag that has been pushed we do some release work
   release:
