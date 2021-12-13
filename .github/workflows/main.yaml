@@ -174,7 +174,7 @@ jobs:
 
     strategy:
       matrix:
-        type: [64-bit,32-bit,cross-compile,documentation]
+        type: [64-bit] # ,32-bit,cross-compile,documentation]
       fail-fast: false
 
     steps:
@@ -202,6 +202,7 @@ jobs:
           docker build --pull --tag ${{ steps.base.outputs.BASE_TAG }} \
             --cache-from ${{ steps.base.outputs.BASE_TAG }} \
             --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }} \
+            --build-arg USER=otptest --build-arg GROUP=uucp \
             --build-arg BASE=${{ steps.base.outputs.BASE }} .github/
       - name: Build ${{ matrix.type }} image
         run: |
@@ -213,10 +214,6 @@ jobs:
       - if: matrix.type == '32-bit' || matrix.type == '64-bit' || matrix.type == 'cross-compile'
         name: Run smoke test
         run: docker run -v $PWD/scripts:/scripts otp "cd /tests && /scripts/run-tests smoke"
-
-      - if: matrix.type == '64-bit' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
-        name: Run all tests
-        run: docker run -v $PWD/scripts:/scripts otp "~/init.sh && cd /tests && /scripts/run-tests all"
 
         ## Documentation checks
       - if: matrix.type == 'documentation'
@@ -249,6 +246,16 @@ jobs:
       - if: matrix.type == '64-bit'
         name: Run dialyzer
         run: docker run -v $PWD/scripts:/scripts otp "/scripts/run-dialyzer"
+        ## Save docker image
+      - if: matrix.type == '64-bit'
+        name: Save docker image
+        run: docker save otp > /github/otp_docker.tar
+      - if: matrix.type == '64-bit'
+        name: Upload pre-built tar archive
+        uses: actions/upload-artifact@v2
+        with:
+          name: otp_docker
+          path: otp_docker.tar
 
         ## Build pre-built tar archives
       - if: matrix.type == '32-bit'
@@ -262,6 +269,25 @@ jobs:
         with:
           name: otp_prebuilt
           path: otp_src.tar.gz
+
+  test:
+    name: Test Erlang/OTP
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        type: ${{ fromJson(["system","os_mon","runtime_tools"]) }}
+      fail-fast: false
+    steps:
+      ## Download docker images
+      - name: Download source archive
+        uses: actions/download-artifact@v2
+        with:
+          name: otp_docker
+      - name: Restore docker image
+        run: docker load < otp_docker.tar
+      - name: Run tests
+        run: docker run -it otp scripts/run-tests ${{ matrix.type }}
 
   ## If this is a tag that has been pushed we do some release work
   release:
