@@ -276,7 +276,7 @@ jobs:
     needs: build
     strategy:
       matrix:
-        type: ${{ fromJson(["system","os_mon","runtime_tools"]) }}
+        type: ${{ fromJson('["system", "os_mon", "runtime_tools"]') }}
       fail-fast: false
     steps:
       ## Download docker images
