@@ -1,7 +1,7 @@
 ##
 ## This docker file will build a base image for building Erlang/OTP
 ##
-ARG BASE=buildpack-deps:20.04
+ARG BASE=gitpod/workspace-full
 FROM $BASE
 
 ENV INSTALL_LIBS="zlib1g-dev libncurses5-dev libssl-dev unixodbc-dev libgmp3-dev libwxbase3.0-dev libwxgtk3.0-gtk3-dev libwxgtk-webview3.0-gtk3-dev libsctp-dev lksctp-tools"
