@@ -1,33 +1,36 @@
 ##
 ## This docker file will build a base image for building Erlang/OTP
 ##
-FROM ubuntu:20.04
+ARG BASE=buildpack-deps:20.04
+FROM $BASE
 
 ENV INSTALL_LIBS="zlib1g-dev libncurses5-dev libssl-dev unixodbc-dev libgmp3-dev libwxbase3.0-dev libwxgtk3.0-gtk3-dev libwxgtk-webview3.0-gtk3-dev libsctp-dev lksctp-tools"
 
+ARG EXTRA_LIBS="erlang"
+
 ENV DEBIAN_FRONTEND=noninteractive
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
-RUN apt-get update && \
-    apt-get -y upgrade && \
+RUN apt-get update && apt-get -y upgrade && \
     apt-get install -y build-essential m4 autoconf fop xsltproc clang clang-format \
-    default-jdk libxml2-utils unixodbc odbc-postgresql postgresql \
+    default-jdk libxml2-utils ${INSTALL_LIBS} \
+    unixodbc odbc-postgresql postgresql \
     tzdata ssh openssh-server groff-base sudo gdb apache2 bind9 expect vsftpd python \
-    $INSTALL_LIBS && \
-    sed -i 's@# en_US.UTF-8@en_US.UTF-8@g' /etc/locale.gen && locale-gen
-
-RUN update-alternatives --set wx-config /usr/lib/x86_64-linux-gnu/wx/config/gtk3-unicode-3.0
+    ${INSTALL_LIBS} ${EXTRA_LIBS} && \
+    sed -i 's@# en_US.UTF-8@en_US.UTF-8@g' /etc/locale.gen && locale-gen && \
+    update-alternatives --set wx-config /usr/lib/x86_64-linux-gnu/wx/config/gtk3-unicode-3.0
 
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
+ARG USER=gitpod
+ARG GROUP=gitpod
 ARG gid=10
 ARG uid=421
 
 RUN echo "Europe/Stockholm" > /etc/timezone && \
     ln -snf /usr/share/zoneinfo/$(cat /etc/timezone) /etc/localtime && \
-    useradd -rm -d /home/otptest -s /bin/sh -g ${gid} -G ${gid},sudo -u ${uid} otptest && \
-    echo "otptest ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/otptest && \
+    if [ ! -d /home/${USER} ]; then useradd -rm -d /home/${USER} -s /bin/sh -g ${gid} -G ${gid},sudo -u ${uid} ${USER}; fi && \
+    echo "${USER} ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/${USER} && \
     echo "/tests/** r," >> /etc/apparmor.d/local/usr.sbin.named
 
 USER postgres
@@ -37,15 +40,15 @@ RUN service postgresql start && \
     createdb -O odbctest odbctest && \
     service postgresql stop
 
-COPY --chown=root:uucp dockerfiles/odbc.ini /etc/
-COPY --chown=root:uucp dockerfiles/odbcinst.ini /etc/
+COPY --chown=root:${GROUP} dockerfiles/odbc.ini /etc/
+COPY --chown=root:${GROUP} dockerfiles/odbcinst.ini /etc/
 
-USER otptest
+USER ${USER}
 
-COPY --chown=otptest:uucp dockerfiles/log4j.properties /home/otptest/
+COPY --chown=${USER}:${GROUP} dockerfiles/log4j.properties /home/${USER}/
 ENV OTP_STRICT_INSTALL=yes \
-    JAVA_ARGS="-Dlog4j.configuration=file://home/otptest/log4j.properties"
+    JAVA_ARGS="-Dlog4j.configuration=file://home/${USER}/log4j.properties"
 
-COPY --chown=otptest:uucp dockerfiles/init.sh /home/otptest/
+COPY --chown=${USER}:${GROUP} dockerfiles/init.sh /home/${USER}/
 
-RUN sudo mkdir /buildroot /tests /otp && sudo chown otptest:uucp /buildroot /tests /otp
+RUN sudo mkdir /buildroot /tests /otp && sudo chown ${USER}:${GROUP} /buildroot /tests /otp

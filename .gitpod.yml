@@ -1,6 +1,7 @@
 image:
-  file: .devcontainer/Dockerfile
-  context: .devcontainer
+  file: .github/dockerfiles/Dockerfile.ubuntu-base
+  context: .github
 vscode:
   extensions:
+    - ms-vscode.cpptools
     - erlang-ls.erlang-ls
