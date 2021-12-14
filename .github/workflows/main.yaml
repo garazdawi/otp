@@ -203,6 +203,7 @@ jobs:
             --cache-from ${{ steps.base.outputs.BASE_TAG }} \
             --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }} \
             --build-arg USER=otptest --build-arg GROUP=uucp \
+            --build-arg uid=$(id -u) \
             --build-arg BASE=${{ steps.base.outputs.BASE }} .github/
       - name: Build ${{ matrix.type }} image
         run: |
@@ -287,7 +288,7 @@ jobs:
       - name: Restore docker image
         run: docker load < otp_docker.tar
       - name: Run tests
-        run: docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp make ${{ matrix.type }} TYPE=test
+        run: docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp "make ${{ matrix.type }} TYPE=test"
       - name: Upload test results
         uses: actions/upload-artifact@v2
         with:
