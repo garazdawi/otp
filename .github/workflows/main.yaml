@@ -293,6 +293,8 @@ jobs:
           mkdir $PWD/make_test_dir
           docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp "make ${{ matrix.type }} TYPE=test"
         continue-on-error: true
+      - name: Cleanup tests
+        run: rm -rf make_test_dir/otp || true
       - name: Upload test results
         uses: actions/upload-artifact@v2
         with:
