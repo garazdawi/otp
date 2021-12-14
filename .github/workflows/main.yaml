@@ -298,7 +298,7 @@ jobs:
       - name: Upload test results
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ matrix.type }}_test_results.tar.gz
+          name: ${{ matrix.type }}_test_results
           path: make_test_dir
       - name: Check test results
         run: |
@@ -316,11 +316,12 @@ jobs:
         uses: actions/download-artifact@v2
       - name: Merge test results
         run: |
-          tar xfz *_test_results.tar.gz
+          mkdir -p make_test_dir/ct_logs
+          cp -r *_test_results/ct_logs/* make_test_dir/ct_logs/
           docker load < otp_docker.tar
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "ct_run -refresh_logs /buildroot/otp/erts/make_test_dir"
-          docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
+          docker run -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "make system TYPE=test"
 
   ## If this is a tag that has been pushed we do some release work
