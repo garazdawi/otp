@@ -297,7 +297,8 @@ jobs:
     needs: [build, pack]
     strategy:
       matrix:
-        type: ${{ fromJson(needs.pack.outputs.changes) }}
+#        type: ${{ fromJson(needs.pack.outputs.changes) }}
+        type: ["os_mon"]
       fail-fast: false
     steps:
       ## Download docker images
@@ -314,12 +315,14 @@ jobs:
           docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp "make ${{ matrix.type }} TYPE=test"
         continue-on-error: true
       - name: Cleanup tests
-        run: rm -rf make_test_dir/otp || true
+        run: |
+          rm -rf make_test_dir/otp || true
+          tar czf ${{ matrix.type }}_test_results.tar.gz make_test_dir
       - name: Upload test results
         uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.type }}_test_results
-          path: make_test_dir
+          path: ${{ matrix.type }}_test_results.tar.gz
       - name: Check test results
         run: |
           if [ "${{ steps.run-tests.outcome }}" = "failure" ]; then
@@ -337,7 +340,9 @@ jobs:
       - name: Merge test results
         run: |
           mkdir -p make_test_dir/ct_logs
-          cp -r *_test_results/ct_logs/ct_run* make_test_dir/ct_logs/
+          for file in $(ls *_test_results/*.tar.gz); do
+            tar xzf $file make_test_dir/ct_logs
+          done
           docker load < otp_docker/otp_docker.tar
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "ct_run -refresh_logs /buildroot/otp/erts/make_test_dir"
