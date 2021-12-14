@@ -317,12 +317,26 @@ jobs:
       - name: Merge test results
         run: |
           mkdir -p make_test_dir/ct_logs
-          cp -r *_test_results/ct_logs/* make_test_dir/ct_logs/
+          tar -cpC *_test_results/ct_logs/ct_run* | tar -xpC make_test_dir/ct_logs/
           docker load < otp_docker.tar
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "ct_run -refresh_logs /buildroot/otp/erts/make_test_dir"
-          docker run -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
+          docker run -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
+            -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "make system TYPE=test"
+      - name: Cleanup tests
+        run: rm -rf make_test_dir/otp || true
+      - name: Upload test results
+        uses: actions/upload-artifact@v2
+        with:
+          name: test_results
+          path: make_test_dir
+        continue-on-error: true
+      - name: Check test results
+        run: |
+          if [ "${{ steps.run-tests.outcome }}" = "failure" ]; then
+            echo "One or more tests failed"
+          fi
 
   ## If this is a tag that has been pushed we do some release work
   release:
