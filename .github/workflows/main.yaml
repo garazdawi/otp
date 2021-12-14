@@ -21,7 +21,10 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-  - cron: '0 * * * *'
+    - cron: '0 * * * *'
+
+      # sasl: ${{ steps.changes.outputs.sasl }}
+      # reltool: ${{ steps.changes.outputs.reltool }}
 
 jobs:
 
@@ -29,32 +32,24 @@ jobs:
     name: Pack the Erlang/OTP tar.gz
     runs-on: ubuntu-latest
     outputs:
-      sasl: ${{ steps.changes.outputs.sasl }}
-      reltool: ${{ steps.changes.outputs.reltool }}
+      changes: ${{ steps.changes.outputs.changes }}
     steps:
       - uses: actions/checkout@v2
-      - name: Create initial pre-release tar 
+      - name: Get applications
+        run: |
+          .github/scripts/path-filters.sh > .github/scripts/path-filters.yaml
+          cat .github/scripts/path-filters.yaml
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: .github/scripts/path-filters.yaml
+      - name: Create initial pre-release tar
         run: .github/scripts/init-pre-release.sh
       - name: Upload source tar archive
         uses: actions/upload-artifact@v2
         with:
           name: otp_git_archive
           path: otp_src.tar.gz
-      - uses: dorny/paths-filter@v2
-        id: changes
-        with:
-          filters: |
-            sasl:
-              - 'lib/sasl/**' #'
-            reltool:
-              - 'lib/reltool/**' #'
-  meep:
-    name: Testy test
-    runs-on: ubuntu-latest
-    needs: pack
-    steps:
-      - name: Test
-        run: echo "${{ toJson(needs.pack.outputs) }}"
 
   build-macos:
     env:
@@ -79,7 +74,7 @@ jobs:
           ./otp_build configure --xcomp-conf=./xcomp/erl-xcomp-arm64-ios.conf --without-ssl
           ./otp_build boot -a
           ./otp_build release -a
-      
+
       - name: Package .xcframework
         run: |
           cd otp
@@ -93,6 +88,16 @@ jobs:
         with:
           name: ios_framework_${{ env.TARGET_ARCH }}
           path: otp/liberlang.xcframework
+
+  testy:
+    name: Test Erlang/OTP
+    runs-on: ubuntu-latest
+    needs: pack
+    strategy:
+      matrix:
+        type: ${{ fromJson(needs.pack.outputs.changes) }}
+    steps:
+      - run: echo "${{ matrix.type }}"
 
   build-windows:
     defaults:
@@ -201,6 +206,7 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: otp_git_archive
+      - run: echo "${{ needs.pack.outputs.changes }}"
       - name: Docker login
         uses: docker/login-action@v1
         with:
@@ -292,10 +298,10 @@ jobs:
   test:
     name: Test Erlang/OTP
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, pack]
     strategy:
       matrix:
-        type: ${{ fromJson('["sasl", "os_mon", "runtime_tools"]') }}
+        type: ${{ fromJson(needs.pack.outputs.changes) }}
       fail-fast: false
     steps:
       ## Download docker images
@@ -335,8 +341,8 @@ jobs:
       - name: Merge test results
         run: |
           mkdir -p make_test_dir/ct_logs
-          tar -cpC *_test_results/ct_logs/ct_run* | tar -xpC make_test_dir/ct_logs/
-          docker load < otp_docker.tar
+          cp -r *_test_results/ct_logs/ct_run* make_test_dir/ct_logs/
+          docker load < otp_docker/otp_docker.tar
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "ct_run -refresh_logs /buildroot/otp/erts/make_test_dir"
           docker run -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
