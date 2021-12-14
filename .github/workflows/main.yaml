@@ -288,7 +288,9 @@ jobs:
       - name: Restore docker image
         run: docker load < otp_docker.tar
       - name: Run tests
-        run: docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp "make ${{ matrix.type }} TYPE=test"
+        run: |
+          mkdir $PWD/make_test_dir
+          docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp "make ${{ matrix.type }} TYPE=test"
       - name: Upload test results
         uses: actions/upload-artifact@v2
         with:
