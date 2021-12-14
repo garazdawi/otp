@@ -28,6 +28,9 @@ jobs:
   pack:
     name: Pack the Erlang/OTP tar.gz
     runs-on: ubuntu-latest
+    outputs:
+      sasl: ${{ steps.changes.outputs.sasl }}
+      reltool: ${{ steps.changes.outputs.reltool }}
     steps:
       - uses: actions/checkout@v2
       - name: Create initial pre-release tar 
@@ -37,6 +40,20 @@ jobs:
         with:
           name: otp_git_archive
           path: otp_src.tar.gz
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            sasl:
+              - 'lib/sasl/**' #'
+            reltool:
+              - 'lib/reltool/**' #'
+  meep:
+    name: Testy test
+    runs-on: ubuntu-latest
+    needs: pack
+    steps:
+      run: echo "${{ needs.pack.outputs }}"
 
   build-macos:
     env:
