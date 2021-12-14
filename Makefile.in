@@ -472,7 +472,7 @@ BOOTSTRAP_COMPILER  =  $(BOOTSTRAP_TOP)/primary_compiler
 # otp.mk is only used to figure out if we are doing PGO or not
 include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
-.PHONY: emulator libs kernel preloaded
+.PHONY: emulator libs kernel preloaded system
 
 ifeq ($(USE_PGO), true)
 PROFILE=use
@@ -487,12 +487,17 @@ endif
 
 ifeq ($(TYPE), test)
 emulator:
+	$(make_verbose)cd erts/emulator && ERL_TOP=$(ERL_TOP) $(MAKE) $(TYPE)
+epmd:
+	$(make_verbose)cd erts/epmd && ERL_TOP=$(ERL_TOP) $(MAKE) $(TYPE)
+system:
 	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) $(MAKE) $(TYPE)
 else
 emulator: $(PROFILE_EMU_DEPS)
 	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
 	  $(MAKE) NO_START_SCRIPTS=true $(TYPE) FLAVOR=$(FLAVOR) PROFILE=$(PROFILE)
 endif
+
 
 libs:
 ifeq ($(OTP_SMALL_BUILD),true)

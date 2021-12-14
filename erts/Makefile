@@ -49,9 +49,11 @@ debug opt lcnt clean:
 	done
 	(cd preloaded/src && $(MAKE) ../ebin/erts.app)
 
+
 .PHONY: test
 test:
-	$(V_at)( cd emulator && $(MAKE) $@ )
+	TEST_NEEDS_RELEASE=true \
+	  $(ERL_TOP)/make/test_target_script.sh $(ERL_TOP)
 
 .PHONY: $(FLAVORS)
 $(FLAVORS):

@@ -212,7 +212,7 @@ jobs:
             .github/
 
         ## Smoke build tests
-      - if: matrix.type == '32-bit' || matrix.type == '64-bit' || matrix.type == 'cross-compile'
+      - if: matrix.type == '32-bit' || matrix.type == '63-bit' || matrix.type == 'cross-compile'
         name: Run smoke test
         run: docker run -v $PWD/scripts:/scripts otp "cd /tests && /scripts/run-tests smoke"
 
@@ -240,11 +240,11 @@ jobs:
           path: otp_doc_man.tar.gz
 
         ## Check formatting of cpp code
-      - if: matrix.type == '64-bit'
+      - if: matrix.type == '63-bit'
         name: Check format
         run: docker run -v $PWD/scripts:/scripts otp "make format-check"
         ## Run dialyzer
-      - if: matrix.type == '64-bit'
+      - if: matrix.type == '63-bit'
         name: Run dialyzer
         run: docker run -v $PWD/scripts:/scripts otp "/scripts/run-dialyzer"
         ## Save docker image
@@ -277,7 +277,7 @@ jobs:
     needs: build
     strategy:
       matrix:
-        type: ${{ fromJson('["system", "os_mon", "runtime_tools"]') }}
+        type: ${{ fromJson('["sasl", "os_mon", "runtime_tools"]') }}
       fail-fast: false
     steps:
       ## Download docker images
@@ -288,14 +288,38 @@ jobs:
       - name: Restore docker image
         run: docker load < otp_docker.tar
       - name: Run tests
+        id: run-tests
         run: |
           mkdir $PWD/make_test_dir
           docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp "make ${{ matrix.type }} TYPE=test"
+        continue-on-error: true
       - name: Upload test results
         uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.type }}_test_results.tar.gz
           path: make_test_dir
+      - name: Check test results
+        run: |
+          if [ "${{ steps.run-tests.outcome }}" = "failure" ]; then
+            echo "One or more tests failed"
+          fi
+
+  system-test:
+    name: System test
+    runs-on: ubuntu-latest
+    if: ${{ always() }} # Run even if the need has failed
+    needs: test
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v2
+      - name: Merge test results
+        run: |
+          tar xfz *_test_results.tar.gz
+          docker load < otp_docker.tar
+          docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
+            "ct_run -refresh_logs /buildroot/otp/erts/make_test_dir"
+          docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
+            "make system TYPE=test"
 
   ## If this is a tag that has been pushed we do some release work
   release:

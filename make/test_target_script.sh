@@ -116,7 +116,7 @@ EOM
 
 release_erlang () {
     local RELEASE_ROOT=${1}
-    (cd $ERL_TOP && make release RELEASE_ROOT="${RELEASE_ROOT}")
+    (cd $ERL_TOP && make release TYPE=opt RELEASE_ROOT="${RELEASE_ROOT}")
     (cd "$RELEASE_ROOT" && ./Install -minimal "`pwd`")
     export PATH="${RELEASE_ROOT}/bin:$PATH"
 }
@@ -142,7 +142,6 @@ then
 fi
 
 export ERL_TOP=$ERL_TOP
-
 
 if [ -z "${ARGS}" ]
 then
@@ -176,7 +175,13 @@ then
 fi
 
 APPLICATION="`basename $DIR`"
+
+if [ "$APPLICATION" = "erts" ]; then
+    APPLICATION="system"
+fi
+
 CT_RUN="$ERL_TOP/bin/ct_run"
+PATH="${ERL_TOP}/bin/:${PATH}"
 MAKE_TEST_DIR="`pwd`/make_test_dir"
 MAKE_TEST_REL_DIR="$MAKE_TEST_DIR/${APPLICATION}_test"
 MAKE_TEST_CT_LOGS="$MAKE_TEST_DIR/ct_logs"
@@ -202,6 +207,7 @@ EOF
     print_highlighted_msg $YELLOW "${MSG}"
     release_erlang "${RELEASE_ROOT}" > "${RELEASE_LOG}" 2>&1
     CT_RUN="${RELEASE_ROOT}/bin/ct_run"
+    PATH=${RELEASE_ROOT}/bin/:${PATH}
     if [ $? != 0 ]
     then
         print_highligted_msg $RED "\"make RELEASE_ROOT=${RELEASE_ROOT}\" failed."
