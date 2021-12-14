@@ -287,7 +287,12 @@ jobs:
       - name: Restore docker image
         run: docker load < otp_docker.tar
       - name: Run tests
-        run: docker run -it otp make ${{ matrix.type }} TYPE=test
+        run: docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp make ${{ matrix.type }} TYPE=test
+      - name: Upload test results
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.type }}_test_results.tar.gz
+          path: make_test_dir
 
   ## If this is a tag that has been pushed we do some release work
   release:
