@@ -1,4 +1,5 @@
-FROM docker.pkg.github.com/erlang/otp/ubuntu-base
+ARG BASE=docker.pkg.github.com/erlang/otp/ubuntu-base
+FROM $BASE
 
 ARG MAKEFLAGS=-j4
 ENV MAKEFLAGS=$MAKEFLAGS \

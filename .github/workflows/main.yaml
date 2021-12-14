@@ -192,7 +192,7 @@ jobs:
       - name: Calculate BASE image
         id: base
         run: |
-          BASE_TAG=$(grep "^FROM" .github/dockerfiles/Dockerfile.${{ matrix.type }} | head -1 | awk '{print $2}')
+          BASE_TAG=$(grep "ARG BASE=" .github/dockerfiles/Dockerfile.${{ matrix.type }} | head -1 | tr '=' ' ' | awk '{print $3}')
           echo "::set-output name=BASE_TAG::${BASE_TAG}"
           .github/scripts/base-tag "${BASE_TAG}"
       - name: Pull BASE image

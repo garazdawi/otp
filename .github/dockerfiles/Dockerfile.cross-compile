@@ -1,7 +1,8 @@
 ##
 ## This docker file will build Erlang on 32-bit to 64-bit x86
 ##
-FROM docker.pkg.github.com/erlang/otp/i386-debian-base as build
+ARG BASE=docker.pkg.github.com/erlang/otp/i386-debian-base
+FROM $BASE as build
 
 ARG MAKEFLAGS=-j4
 ENV MAKEFLAGS=$MAKEFLAGS \
