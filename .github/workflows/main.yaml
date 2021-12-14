@@ -176,6 +176,7 @@ jobs:
           export ERL_TOP=`pwd`
           export MAKEFLAGS=-j4
           export ERLC_USE_SERVER=true
+          export ERTS_SKIP_DEPEND=true
           eval `./otp_build env_win32 x64`
           ./otp_build configure
           if cat erts/CONF_INFO || cat lib/*/CONF_INFO || cat lib/*/SKIP || cat lib/SKIP-APPLICATIONS; then exit 1; fi
@@ -197,7 +198,7 @@ jobs:
 
     strategy:
       matrix:
-        type: [64-bit] # ,32-bit,cross-compile,documentation]
+        type: [64-bit,32-bit,cross-compile,documentation]
       fail-fast: false
 
     steps:
@@ -235,11 +236,6 @@ jobs:
           docker build --tag otp --file .github/dockerfiles/Dockerfile.${{ matrix.type }} \
             .github/
 
-        ## Smoke build tests
-      - if: matrix.type == '32-bit' || matrix.type == '63-bit' || matrix.type == 'cross-compile'
-        name: Run smoke test
-        run: docker run -v $PWD/scripts:/scripts otp "cd /tests && /scripts/run-tests smoke"
-
         ## Documentation checks
       - if: matrix.type == 'documentation'
         name: Run xmllint
@@ -264,14 +260,14 @@ jobs:
           path: otp_doc_man.tar.gz
 
         ## Check formatting of cpp code
-      - if: matrix.type == '63-bit'
+      - if: matrix.type == '64-bit'
         name: Check format
         run: docker run -v $PWD/scripts:/scripts otp "make format-check"
         ## Run dialyzer
-      - if: matrix.type == '63-bit'
+      - if: matrix.type == '64-bit'
         name: Run dialyzer
         run: docker run -v $PWD/scripts:/scripts otp "/scripts/run-dialyzer"
-        ## Save docker image
+        ## Save docker image for use by test job
       - if: matrix.type == '64-bit'
         name: Save docker image
         run: docker save otp > otp_docker.tar
