@@ -280,12 +280,12 @@ jobs:
           name: otp_docker
       - name: Restore docker image
         run: docker load < otp_docker.tar
-      ## Build the docs and prebuilt with chunks
-      - name: Build documentation
+      ## Build pre-built tar with chunks
+      - name: Build doc chunks
         run: |
           docker build -t otp - <<EOF
           FROM otp
-          RUN make docs && make release release_docs RELEASE_ROOT=/otp DOC_TARGETS=chunks
+          RUN make docs DOC_TARGETS=chunks
           EOF
       - name: Build pre-built tar archives
         run: |
@@ -296,11 +296,13 @@ jobs:
         with:
           name: otp_prebuilt
           path: otp_src.tar.gz
-        ## Documentation checks
-      - name: Run xmllint
-        run: docker run otp "make xmllint"
-      - name: Run html link check
-        run: docker run otp "make release_docs && scripts/otp_html_check /otp doc/index.html"
+      ## Build all the documentation
+      - name: Build documentation
+        run: |
+          docker build -t otp - <<EOF
+          FROM otp
+          RUN make docs
+          EOF
       - name: Release docs to publish
         run: |
           docker run -v $PWD/:/github otp \
@@ -319,6 +321,11 @@ jobs:
         with:
           name: otp_doc_man
           path: otp_doc_man.tar.gz
+      ## Documentation checks
+      - name: Run xmllint
+        run: docker run otp "make xmllint"
+      - name: Run html link check
+        run: docker run -v $PWD/:/github otp "scripts/otp_html_check /github/docs doc/index.html"
 
   static:
     name: Run static analysis
