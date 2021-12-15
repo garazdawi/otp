@@ -2,9 +2,7 @@
 
 cat <<EOF
 emulator:
-  - 'erts/**'
-  - '!erts/epmd/**'
-  - '!erts/test/**'
+  - ['erts/**','!erts/epmd/**','!erts/test/**']
 epmd:
   - 'erts/epmd/**'
 EOF

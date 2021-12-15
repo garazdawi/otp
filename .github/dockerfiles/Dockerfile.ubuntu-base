@@ -4,7 +4,7 @@
 ARG BASE=gitpod/workspace-full
 FROM $BASE
 
-ENV INSTALL_LIBS="zlib1g-dev libncurses5-dev libssl-dev unixodbc-dev libgmp3-dev libwxbase3.0-dev libwxgtk3.0-gtk3-dev libwxgtk-webview3.0-gtk3-dev libsctp-dev lksctp-tools"
+ENV INSTALL_LIBS="zlib1g-dev libncurses5-dev libssl-dev unixodbc-dev libsctp-dev lksctp-tools libgmp3-dev libwxbase3.0-dev libwxgtk3.0-gtk3-dev libwxgtk-webview3.0-gtk3-dev"
 
 ARG EXTRA_LIBS="erlang"
 
@@ -12,8 +12,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 RUN apt-get update && apt-get -y upgrade && \
-    apt-get install -y build-essential m4 autoconf fop xsltproc clang clang-format \
-    default-jdk libxml2-utils ${INSTALL_LIBS} \
+    apt-get install -y build-essential m4 autoconf fop xsltproc \
+    default-jdk libxml2-utils \
     unixodbc odbc-postgresql postgresql \
     tzdata ssh openssh-server groff-base sudo gdb apache2 bind9 expect vsftpd python \
     ${INSTALL_LIBS} ${EXTRA_LIBS} && \

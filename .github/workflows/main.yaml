@@ -233,7 +233,7 @@ jobs:
 
     strategy:
       matrix:
-        type: [32-bit,cross-compile]
+        type: [32-bit,cross-compile,clang]
       fail-fast: false
 
     steps:
@@ -335,6 +335,12 @@ jobs:
           name: otp_docker
       - name: Restore docker image
         run: docker load < otp_docker.tar
+      - name: Install clang-format
+        run: |
+          docker build -t otp - <<EOF
+          FROM otp
+          RUN apt-get install -y clang-format
+          EOF
         ## Check formatting of cpp code
       - name: Check format
         run: docker run otp "make format-check"
@@ -437,7 +443,7 @@ jobs:
           echo "::set-output name=tag::${TAG}"
           echo "::set-output name=release::${IS_RELEASE}"
           echo "::set-output name=vsn::${VSN}"
-      
+
       - uses: actions/checkout@v2
 
       ## Publish the pre-built archive and docs
