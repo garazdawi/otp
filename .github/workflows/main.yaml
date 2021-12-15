@@ -107,7 +107,7 @@ jobs:
       - name: Download source archive
         uses: actions/download-artifact@v2
         with:
-          name: otp_prebuilt
+          name: otp_prebuilt_no_chunks
 
       - name: Compile Erlang
         run: |
@@ -133,16 +133,6 @@ jobs:
         with:
           name: ios_framework_${{ env.TARGET_ARCH }}
           path: otp/liberlang.xcframework
-
-  testy:
-    name: Test Erlang/OTP
-    runs-on: ubuntu-latest
-    needs: pack
-    strategy:
-      matrix:
-        type: ${{ fromJson(needs.pack.outputs.changes) }}
-    steps:
-      - run: echo "${{ matrix.type }}"
 
   build-windows:
     defaults:
@@ -296,7 +286,7 @@ jobs:
       ## Build the docs and prebuilt with chunks
       - name: Build documentation
         run: |
-          docker build -t otp - <<<EOF
+          docker build -t otp - <<EOF
           FROM otp
           RUN make docs && make release_docs DOC_TYPE=chunks
           EOF
@@ -359,7 +349,7 @@ jobs:
     strategy:
       matrix:
 #        type: ${{ fromJson(needs.pack.outputs.changes) }}
-        type: ["os_mon","stdlib"]
+        type: ["os_mon","runtime_tools","compiler","sasl","tools","erl_interface"]
       fail-fast: false
     steps:
       ## Download docker images
@@ -414,7 +404,7 @@ jobs:
       - name: Cleanup tests
         run: |
           rm -rf make_test_dir/otp || true
-          make_test_dir && tar czf ../test_results.tar.gz *
+          cd make_test_dir && tar czf ../test_results.tar.gz *
       - name: Upload test results
         uses: actions/upload-artifact@v2
         with:
