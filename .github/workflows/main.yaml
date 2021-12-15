@@ -298,7 +298,7 @@ jobs:
     strategy:
       matrix:
 #        type: ${{ fromJson(needs.pack.outputs.changes) }}
-        type: ["os_mon"]
+        type: ["os_mon","stdlib"]
       fail-fast: false
     steps:
       ## Download docker images
@@ -343,6 +343,7 @@ jobs:
           for file in $(ls *_test_results/*.tar.gz); do
             tar xzf $file make_test_dir/ct_logs
           done
+          ls -la * make_test_dir/ct_logs/
           docker load < otp_docker/otp_docker.tar
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "ct_run -refresh_logs /buildroot/otp/erts/make_test_dir"
