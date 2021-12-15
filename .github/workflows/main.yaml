@@ -351,11 +351,13 @@ jobs:
             -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "make system TYPE=test"
       - name: Cleanup tests
-        run: rm -rf make_test_dir/otp || true
+        run: |
+          rm -rf make_test_dir/otp || true
+          make_test_dir && tar czf ../test_results.tar.gz *
       - name: Upload test results
         uses: actions/upload-artifact@v2
         with:
-          name: test_results
+          name: test_results.tar.gz
           path: make_test_dir
         continue-on-error: true
       - name: Check test results
