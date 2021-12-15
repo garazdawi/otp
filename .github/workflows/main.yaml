@@ -75,7 +75,9 @@ jobs:
       - name: Build 64-bit image
         run: |
           mv otp_src.tar.gz .github/otp.tar.gz
-          docker build --tag otp --file .github/dockerfiles/Dockerfile.64-bit \
+          docker build --tag otp \
+            --build-arg MAKEFLAGS=-j$(($(nproc) + 2)) \
+            --file .github/dockerfiles/Dockerfile.64-bit \
             .github/
       - name: Save docker image
         run: docker save otp > otp_docker.tar
@@ -91,7 +93,7 @@ jobs:
       - name: Upload pre-built tar archive
         uses: actions/upload-artifact@v2
         with:
-          name: otp_prebuilt
+          name: otp_prebuilt_no_chunks
           path: otp_src.tar.gz
 
   build-macos:
@@ -208,7 +210,7 @@ jobs:
       - name: Download source archive
         uses: actions/download-artifact@v2
         with:
-          name: otp_git_archive
+          name: otp_prebuilt_no_chunks
 
       - name: Compile Erlang
         run: |
@@ -241,7 +243,7 @@ jobs:
 
     strategy:
       matrix:
-        type: [64-bit,32-bit,cross-compile,documentation]
+        type: [32-bit,cross-compile]
       fail-fast: false
 
     steps:
@@ -249,7 +251,7 @@ jobs:
       - name: Download source archive
         uses: actions/download-artifact@v2
         with:
-          name: otp_git_archive
+          name: otp_prebuilt_no_chunks
       - run: echo "${{ needs.pack.outputs.changes }}"
       - name: Docker login
         uses: docker/login-action@v1
@@ -279,42 +281,75 @@ jobs:
           docker build --tag otp --file .github/dockerfiles/Dockerfile.${{ matrix.type }} \
             .github/
 
+  documentation:
+    name: Build and check documentation
+    runs-on: ubuntu-latest
+    needs: pack
+    steps:
+      ## Download docker images
+      - name: Download source archive
+        uses: actions/download-artifact@v2
+        with:
+          name: otp_docker
+      - name: Restore docker image
+        run: docker load < otp_docker.tar
+      ## Build the docs and prebuilt with chunks
+      - name: Build documentation
+        run: |
+          docker build -t otp <<<EOF
+          FROM otp
+          RUN make docs && make release_docs DOC_TYPE=chunks
+          EOF
+      - name: Build pre-built tar archives
+        run: |
+          docker run -v $PWD:/github otp \
+          "scripts/build-otp-tar -o /github/otp_clean_src.tar.gz /github/otp_src.tar.gz -b /buildroot/otp/ /buildroot/otp.tar.gz"
+      - name: Upload pre-built tar archive
+        uses: actions/upload-artifact@v2
+        with:
+          name: otp_prebuilt
+          path: otp_src.tar.gz
         ## Documentation checks
-      - if: matrix.type == 'documentation'
-        name: Run xmllint
+      - name: Run xmllint
         run: docker run otp "make xmllint"
-      - if: matrix.type == 'documentation'
-        name: Run html link check
+      - name: Run html link check
         run: docker run -v $PWD/scripts:/scripts otp "/scripts/otp_html_check /otp doc/index.html"
-      - if: matrix.type == 'documentation'
-        name: Release docs to publish
+      - name: Release docs to publish
         run: .github/scripts/release-docs.sh
-      - if: matrix.type == 'documentation'
-        name: Upload html documentation archive
+      - name: Upload html documentation archive
         uses: actions/upload-artifact@v2
         with:
           name: otp_doc_html
           path: otp_doc_html.tar.gz
-      - if: matrix.type == 'documentation'
-        name: Upload man documentation archive
+      - name: Upload man documentation archive
         uses: actions/upload-artifact@v2
         with:
           name: otp_doc_man
           path: otp_doc_man.tar.gz
 
+  static:
+    name: Run static analysis
+    runs-on: ubuntu-latest
+    needs: pack
+    steps:
+      ## Download docker images
+      - name: Download source archive
+        uses: actions/download-artifact@v2
+        with:
+          name: otp_docker
+      - name: Restore docker image
+        run: docker load < otp_docker.tar
         ## Check formatting of cpp code
-      - if: matrix.type == '64-bit'
-        name: Check format
+      - name: Check format
         run: docker run -v $PWD/scripts:/scripts otp "make format-check"
         ## Run dialyzer
-      - if: matrix.type == '64-bit'
-        name: Run dialyzer
+      - name: Run dialyzer
         run: docker run -v $PWD/scripts:/scripts otp "/scripts/run-dialyzer"
 
   test:
     name: Test Erlang/OTP
     runs-on: ubuntu-latest
-    needs: [build, pack]
+    needs: pack
     strategy:
       matrix:
 #        type: ${{ fromJson(needs.pack.outputs.changes) }}
