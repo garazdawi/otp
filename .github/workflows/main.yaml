@@ -285,7 +285,7 @@ jobs:
         run: |
           docker build -t otp - <<EOF
           FROM otp
-          RUN make docs && make release_docs DOC_TARGETS=chunks
+          RUN make docs && make release release_docs RELEASE_ROOT=/otp DOC_TARGETS=chunks
           EOF
       - name: Build pre-built tar archives
         run: |
