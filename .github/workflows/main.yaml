@@ -19,9 +19,6 @@ name: Build and check Erlang/OTP
 on:
   push:
   pull_request:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 * * * *'
 
 jobs:
 
@@ -40,16 +37,6 @@ jobs:
         id: changes
         with:
           filters: .github/scripts/path-filters.yaml
-      - uses: actions/github-script@v5
-        if: github.event_name == 'pull_request'
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: 'Running tests for ${{ steps.changes.outputs.changes }}'
-            })
       - name: Create initial pre-release tar
         run: .github/scripts/init-pre-release.sh
       - name: Upload source tar archive
@@ -72,12 +59,12 @@ jobs:
       - name: Pull BASE image
         run: docker pull ${{ steps.base.outputs.BASE_TAG }}
       - name: Build BASE image
-        run: |
-          docker build --pull --tag ${{ steps.base.outputs.BASE_TAG }} \
-            --cache-from ${{ steps.base.outputs.BASE_TAG }} \
-            --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }} \
-            --build-arg USER=otptest --build-arg GROUP=uucp \
-            --build-arg uid=$(id -u) \
+        run: >-
+          docker build --pull --tag ${{ steps.base.outputs.BASE_TAG }}
+            --cache-from ${{ steps.base.outputs.BASE_TAG }}
+            --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }}
+            --build-arg USER=otptest --build-arg GROUP=uucp
+            --build-arg uid=$(id -u)
             --build-arg BASE=${{ steps.base.outputs.BASE }} .github/
       - name: Build 64-bit image
         run: |
@@ -94,8 +81,8 @@ jobs:
           name: otp_docker
           path: otp_docker.tar
       - name: Build pre-built tar archives
-        run: |
-          docker run -v $PWD:/github otp \
+        run: >-
+          docker run -v $PWD:/github otp
           "scripts/build-otp-tar -o /github/otp_clean_src.tar.gz /github/otp_src.tar.gz -b /buildroot/otp/ /buildroot/otp.tar.gz"
       - name: Upload pre-built tar archive
         uses: actions/upload-artifact@v2
@@ -265,12 +252,12 @@ jobs:
       - name: Pull BASE image
         run: docker pull ${{ steps.base.outputs.BASE_TAG }}
       - name: Build BASE image
-        run: |
-          docker build --pull --tag ${{ steps.base.outputs.BASE_TAG }} \
-            --cache-from ${{ steps.base.outputs.BASE_TAG }} \
-            --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }} \
-            --build-arg USER=otptest --build-arg GROUP=uucp \
-            --build-arg uid=$(id -u) \
+        run: >-
+          docker build --pull --tag ${{ steps.base.outputs.BASE_TAG }}
+            --cache-from ${{ steps.base.outputs.BASE_TAG }}
+            --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }}
+            --build-arg USER=otptest --build-arg GROUP=uucp
+            --build-arg uid=$(id -u)
             --build-arg BASE=${{ steps.base.outputs.BASE }} .github/
       - name: Build ${{ matrix.type }} image
         run: |
@@ -298,8 +285,8 @@ jobs:
           RUN make docs DOC_TARGETS=chunks
           EOF
       - name: Build pre-built tar archives
-        run: |
-          docker run -v $PWD:/github otp \
+        run: >-
+          docker run -v $PWD:/github otp
           "scripts/build-otp-tar -o /github/otp_clean_src.tar.gz /github/otp_src.tar.gz -b /buildroot/otp/ /buildroot/otp.tar.gz"
       - name: Upload pre-built tar archive
         uses: actions/upload-artifact@v2
