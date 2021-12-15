@@ -111,7 +111,7 @@ jobs:
           tar -xzf ./otp_src.tar.gz
           cd otp
           export ERL_TOP=`pwd`
-          export MAKEFLAGS="-j4 -O"
+          export MAKEFLAGS="-j$(($(nproc) + 2)) -O"
           export ERLC_USE_SERVER=true
           ./otp_build configure --xcomp-conf=./xcomp/erl-xcomp-arm64-ios.conf --without-ssl
           ./otp_build boot -a
@@ -206,7 +206,7 @@ jobs:
           tar -xzf ./otp_src.tar.gz
           cd otp
           export ERL_TOP=`pwd`
-          export MAKEFLAGS=-j4
+          export MAKEFLAGS=-j$(($(nproc) + 2))
           export ERLC_USE_SERVER=true
           export ERTS_SKIP_DEPEND=true
           eval `./otp_build env_win32 x64`
@@ -336,7 +336,7 @@ jobs:
         run: |
           docker build -t otp - <<EOF
           FROM otp
-          RUN apt-get install -y clang-format
+          RUN sudo apt-get install -y clang-format
           EOF
         ## Check formatting of cpp code
       - name: Check format
@@ -381,6 +381,7 @@ jobs:
         run: |
           if [ "${{ steps.run-tests.outcome }}" = "failure" ]; then
             echo "One or more tests failed"
+            exit 1
           fi
 
   system-test:
@@ -411,8 +412,8 @@ jobs:
       - name: Upload test results
         uses: actions/upload-artifact@v2
         with:
-          name: test_results.tar.gz
-          path: make_test_dir
+          name: test_results
+          path: test_results.tar.gz
         continue-on-error: true
       - name: Check test results
         run: |

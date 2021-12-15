@@ -23,6 +23,6 @@ RUN  ./configure --prefix=/otp && \
         make && sudo make install
 
 ## Disable -Werror as testcases do not compile with it on
-ENV CFLAGS="-O2 -g"
+ENV CFLAGS="-O2 -g" ERL_COMPILER_OPTIONS=
 
 ENTRYPOINT ["bash","-c"]
