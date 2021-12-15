@@ -81,7 +81,7 @@ jobs:
             .github/
       - name: Save docker image
         run: docker save otp > otp_docker.tar
-      - name: Upload pre-built tar archive
+      - name: Upload docker image
         uses: actions/upload-artifact@v2
         with:
           name: otp_docker
@@ -107,7 +107,7 @@ jobs:
       - name: Download source archive
         uses: actions/download-artifact@v2
         with:
-          name: otp_git_archive
+          name: otp_prebuilt
 
       - name: Compile Erlang
         run: |
@@ -296,7 +296,7 @@ jobs:
       ## Build the docs and prebuilt with chunks
       - name: Build documentation
         run: |
-          docker build -t otp <<<EOF
+          docker build -t otp - <<<EOF
           FROM otp
           RUN make docs && make release_docs DOC_TYPE=chunks
           EOF
@@ -313,9 +313,15 @@ jobs:
       - name: Run xmllint
         run: docker run otp "make xmllint"
       - name: Run html link check
-        run: docker run -v $PWD/scripts:/scripts otp "/scripts/otp_html_check /otp doc/index.html"
+        run: docker run otp "scripts/otp_html_check /otp doc/index.html"
       - name: Release docs to publish
-        run: .github/scripts/release-docs.sh
+        run: |
+          docker run -v $PWD/:/github otp \
+            "make release docs release_docs && make release_docs DOC_TARGETS='man html pdf' RELEASE_ROOT=/github/docs"
+            sudo chown -R `whoami` docs
+            tar -C docs czf ../otp_doc_man.tar.gz man
+            rm -rf docs/man
+            tar -C docs czf ../otp_doc_html.tar.gz *
       - name: Upload html documentation archive
         uses: actions/upload-artifact@v2
         with:
@@ -341,10 +347,10 @@ jobs:
         run: docker load < otp_docker.tar
         ## Check formatting of cpp code
       - name: Check format
-        run: docker run -v $PWD/scripts:/scripts otp "make format-check"
+        run: docker run otp "make format-check"
         ## Run dialyzer
       - name: Run dialyzer
-        run: docker run -v $PWD/scripts:/scripts otp "/scripts/run-dialyzer"
+        run: docker run otp 'scripts/run-dialyzer'
 
   test:
     name: Test Erlang/OTP

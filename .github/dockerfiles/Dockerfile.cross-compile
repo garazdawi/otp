@@ -18,13 +18,6 @@ RUN tar xzf ../otp.tar.gz
 ## Build the bootstrap system
 RUN cd $ERL_TOP && CFLAGS="-Wall -O2 -g" ./configure && make && make install
 
-## Build pre-build tar ball
-RUN cd $ERL_TOP && scripts/build-otp-tar -o /buildroot/otp_clean_src.tar.gz /buildroot/otp_src.tar.gz \
-        -b /buildroot/bootstrap/otp/ /buildroot/otp.tar.gz
-
-## Prepare for a new build using pre-built tar ball
-RUN cd ../ && tar -xzf ./otp_src.tar.gz
-
 ENV HOST=$HOST_TRIP \
         CC=$HOST_TRIP-gcc \
         CPPFLAGS="--sysroot=/buildroot/sysroot" \
@@ -40,15 +33,16 @@ ENV HOST=$HOST_TRIP \
         erl_xcomp_sysroot=/buildroot/sysroot \
         ERL_TOP=/buildroot/otp
 
+RUN cd /buildroot && tar xzf otp.tar.gz
+
 WORKDIR /buildroot/otp
 
 ## Build the cross system
 # We cannot use config.guess for --build since its value clashes with the
 # canonical value of host...
-RUN ./configure --prefix=/otp/ --host=$HOST --build=x86-pc-linux-gnu
-RUN OTP_SMALL_BUILD=true V=1 make
-
-RUN make odbc && make install
+RUN ./configure --prefix=/otp/ --host=$HOST --build=x86-pc-linux-gnu && \
+    OTP_SMALL_BUILD=true V=1 make && \
+    make install
 
 ## Build the cross tests
 ENV CFLAGS="--sysroot=/buildroot/sysroot -O2 -g"
