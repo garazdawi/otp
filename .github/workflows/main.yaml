@@ -23,13 +23,10 @@ on:
   schedule:
     - cron: '0 * * * *'
 
-      # sasl: ${{ steps.changes.outputs.sasl }}
-      # reltool: ${{ steps.changes.outputs.reltool }}
-
 jobs:
 
   pack:
-    name: Pack the Erlang/OTP tar.gz
+    name: Build Erlang/OTP (64-bit)
     runs-on: ubuntu-latest
     outputs:
       changes: ${{ steps.changes.outputs.changes }}
@@ -100,7 +97,7 @@ jobs:
     env:
       RELEASE_LIBBEAM: yes
       TARGET_ARCH: aarch64-apple-ios
-    name: Build Erlang/OTP for iOS
+    name: Build Erlang/OTP (iOS)
     runs-on: macos-latest
     needs: pack
     steps:
@@ -140,7 +137,7 @@ jobs:
         shell: wsl-bash {0}
     env:
       WXWIDGETS_VERSION: 3.1.4
-    name: Build Erlang/OTP on Windows
+    name: Build Erlang/OTP (Windows)
     runs-on: windows-latest
     needs: pack
     steps:
@@ -288,7 +285,7 @@ jobs:
         run: |
           docker build -t otp - <<EOF
           FROM otp
-          RUN make docs && make release_docs DOC_TYPE=chunks
+          RUN make docs && make release_docs DOC_TARGETS=chunks
           EOF
       - name: Build pre-built tar archives
         run: |
@@ -303,7 +300,7 @@ jobs:
       - name: Run xmllint
         run: docker run otp "make xmllint"
       - name: Run html link check
-        run: docker run otp "scripts/otp_html_check /otp doc/index.html"
+        run: docker run otp "make release_docs && scripts/otp_html_check /otp doc/index.html"
       - name: Release docs to publish
         run: |
           docker run -v $PWD/:/github otp \
