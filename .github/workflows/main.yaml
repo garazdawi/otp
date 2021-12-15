@@ -50,7 +50,7 @@ jobs:
         with:
           name: otp_git_archive
           path: otp_src.tar.gz
-            - name: Docker login
+      - name: Docker login
         uses: docker/login-action@v1
         with:
           registry: docker.pkg.github.com
