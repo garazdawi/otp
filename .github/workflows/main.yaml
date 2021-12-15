@@ -40,6 +40,16 @@ jobs:
         id: changes
         with:
           filters: .github/scripts/path-filters.yaml
+      - uses: actions/github-script@v5
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: 'Running tests for ${{ steps.changes.outputs.changes }}'
+            })
       - name: Create initial pre-release tar
         run: .github/scripts/init-pre-release.sh
       - name: Upload source tar archive
