@@ -44,51 +44,51 @@ jobs:
         with:
           name: otp_git_archive
           path: otp_src.tar.gz
-#       - name: Docker login
-#         uses: docker/login-action@v1
-#         with:
-#           registry: docker.pkg.github.com
-#           username: ${{ github.repository_owner }}
-#           password: ${{ secrets.GITHUB_TOKEN }}
-#       - name: Calculate BASE image
-#         id: base
-#         run: |
-#           BASE_TAG=$(grep "ARG BASE=" .github/dockerfiles/Dockerfile.64-bit | head -1 | tr '=' ' ' | awk '{print $3}')
-#           echo "::set-output name=BASE_TAG::${BASE_TAG}"
-#           .github/scripts/base-tag "${BASE_TAG}"
-#       - name: Pull BASE image
-#         run: docker pull ${{ steps.base.outputs.BASE_TAG }}
-#       - name: Build BASE image
-#         run: >-
-#           docker build --pull --tag ${{ steps.base.outputs.BASE_TAG }}
-#             --cache-from ${{ steps.base.outputs.BASE_TAG }}
-#             --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }}
-#             --build-arg USER=otptest --build-arg GROUP=uucp
-#             --build-arg uid=$(id -u)
-#             --build-arg BASE=${{ steps.base.outputs.BASE }} .github/
-#       - name: Build 64-bit image
-#         run: |
-#           mv otp_src.tar.gz .github/otp.tar.gz
-#           docker build --tag otp \
-#             --build-arg MAKEFLAGS=-j$(($(nproc) + 2)) \
-#             --file .github/dockerfiles/Dockerfile.64-bit \
-#             .github/
-#       - name: Save docker image
-#         run: docker save otp > otp_docker.tar
-#       - name: Upload docker image
-#         uses: actions/upload-artifact@v2
-#         with:
-#           name: otp_docker
-#           path: otp_docker.tar
-#       - name: Build pre-built tar archives
-#         run: >-
-#           docker run -v $PWD:/github otp
-#           "scripts/build-otp-tar -o /github/otp_clean_src.tar.gz /github/otp_src.tar.gz -b /buildroot/otp/ /buildroot/otp.tar.gz"
-#       - name: Upload pre-built tar archive
-#         uses: actions/upload-artifact@v2
-#         with:
-#           name: otp_prebuilt_no_chunks
-#           path: otp_src.tar.gz
+      - name: Docker login
+        uses: docker/login-action@v1
+        with:
+          registry: docker.pkg.github.com
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Calculate BASE image
+        id: base
+        run: |
+          BASE_TAG=$(grep "ARG BASE=" .github/dockerfiles/Dockerfile.64-bit | head -1 | tr '=' ' ' | awk '{print $3}')
+          echo "::set-output name=BASE_TAG::${BASE_TAG}"
+          .github/scripts/base-tag "${BASE_TAG}"
+      - name: Pull BASE image
+        run: docker pull ${{ steps.base.outputs.BASE_TAG }}
+      - name: Build BASE image
+        run: >-
+          docker build --pull --tag ${{ steps.base.outputs.BASE_TAG }}
+            --cache-from ${{ steps.base.outputs.BASE_TAG }}
+            --file .github/dockerfiles/Dockerfile.${{ steps.base.outputs.BASE_TYPE }}
+            --build-arg USER=otptest --build-arg GROUP=uucp
+            --build-arg uid=$(id -u)
+            --build-arg BASE=${{ steps.base.outputs.BASE }} .github/
+      - name: Build 64-bit image
+        run: |
+          mv otp_src.tar.gz .github/otp.tar.gz
+          docker build --tag otp \
+            --build-arg MAKEFLAGS=-j$(($(nproc) + 2)) \
+            --file .github/dockerfiles/Dockerfile.64-bit \
+            .github/
+      - name: Save docker image
+        run: docker save otp > otp_docker.tar
+      - name: Upload docker image
+        uses: actions/upload-artifact@v2
+        with:
+          name: otp_docker
+          path: otp_docker.tar
+      - name: Build pre-built tar archives
+        run: >-
+          docker run -v $PWD:/github otp
+          "scripts/build-otp-tar -o /github/otp_clean_src.tar.gz /github/otp_src.tar.gz -b /buildroot/otp/ /buildroot/otp.tar.gz"
+      - name: Upload pre-built tar archive
+        uses: actions/upload-artifact@v2
+        with:
+          name: otp_prebuilt_no_chunks
+          path: otp_src.tar.gz
 
 #   build-macos:
 #     env:
@@ -324,106 +324,106 @@ jobs:
 #       - name: Run html link check
 #         run: docker run -v $PWD/:/github otp "scripts/otp_html_check /github/docs doc/index.html"
 
-#   static:
-#     name: Run static analysis
-#     runs-on: ubuntu-latest
-#     needs: pack
-#     steps:
-#       ## Download docker images
-#       - name: Download source archive
-#         uses: actions/download-artifact@v2
-#         with:
-#           name: otp_docker
-#       - name: Restore docker image
-#         run: docker load < otp_docker.tar
-#       - name: Install clang-format
-#         run: |
-#           docker build -t otp - <<EOF
-#           FROM otp
-#           RUN sudo apt-get install -y clang-format
-#           EOF
-#         ## Check formatting of cpp code
-#       - name: Check format
-#         run: docker run otp "make format-check"
-#         ## Run dialyzer
-#       - name: Run dialyzer
-#         run: docker run otp 'scripts/run-dialyzer'
+  static:
+    name: Run static analysis
+    runs-on: ubuntu-latest
+    needs: pack
+    steps:
+      ## Download docker images
+      - name: Download source archive
+        uses: actions/download-artifact@v2
+        with:
+          name: otp_docker
+      - name: Restore docker image
+        run: docker load < otp_docker.tar
+      - name: Install clang-format
+        run: |
+          docker build -t otp - <<EOF
+          FROM otp
+          RUN sudo apt-get install -y clang-format
+          EOF
+        ## Check formatting of cpp code
+      - name: Check format
+        run: docker run otp "make format-check"
+        ## Run dialyzer
+      - name: Run dialyzer
+        run: docker run otp 'scripts/run-dialyzer'
 
-#   test:
-#     name: Test Erlang/OTP
-#     runs-on: ubuntu-latest
-#     needs: pack
-#     strategy:
-#       matrix:
-#         type: ${{ fromJson(needs.pack.outputs.changes) }}
-# #        type: ["os_mon","runtime_tools","compiler","sasl","tools","erl_interface"]
-#       fail-fast: false
-#     steps:
-#       ## Download docker images
-#       - name: Download source archive
-#         uses: actions/download-artifact@v2
-#         with:
-#           name: otp_docker
-#       - name: Restore docker image
-#         run: docker load < otp_docker.tar
-#       - name: Run tests
-#         id: run-tests
-#         run: |
-#           mkdir $PWD/make_test_dir
-#           docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp "make ${{ matrix.type }} TYPE=test"
-#         continue-on-error: true
-#       - name: Cleanup tests
-#         run: |
-#           rm -rf make_test_dir/otp || true
-#           tar czf ${{ matrix.type }}_test_results.tar.gz make_test_dir
-#       - name: Upload test results
-#         uses: actions/upload-artifact@v2
-#         with:
-#           name: ${{ matrix.type }}_test_results
-#           path: ${{ matrix.type }}_test_results.tar.gz
-#       - name: Check test results
-#         run: |
-#           if [ "${{ steps.run-tests.outcome }}" = "failure" ]; then
-#             echo "One or more tests failed"
-#             exit 1
-#           fi
+  test:
+    name: Test Erlang/OTP
+    runs-on: ubuntu-latest
+    needs: pack
+    strategy:
+      matrix:
+        # type: ${{ fromJson(needs.pack.outputs.changes) }}
+        type: ["os_mon","runtime_tools","erl_interface"]
+      fail-fast: false
+    steps:
+      ## Download docker images
+      - name: Download source archive
+        uses: actions/download-artifact@v2
+        with:
+          name: otp_docker
+      - name: Restore docker image
+        run: docker load < otp_docker.tar
+      - name: Run tests
+        id: run-tests
+        run: |
+          mkdir $PWD/make_test_dir
+          docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp "make ${{ matrix.type }} TYPE=test"
+        continue-on-error: true
+      - name: Cleanup tests
+        run: |
+          rm -rf make_test_dir/otp || true
+          tar czf ${{ matrix.type }}_test_results.tar.gz make_test_dir
+      - name: Upload test results
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.type }}_test_results
+          path: ${{ matrix.type }}_test_results.tar.gz
+      - name: Check test results
+        run: |
+          if [ "${{ steps.run-tests.outcome }}" = "failure" ]; then
+            echo "One or more tests failed"
+            exit 1
+          fi
 
-#   system-test:
-#     name: System test
-#     runs-on: ubuntu-latest
-#     if: ${{ always() }} # Run even if the need has failed
-#     needs: test
-#     steps:
-#       - name: Download test results
-#         uses: actions/download-artifact@v2
-#       - name: Merge test results
-#         run: |
-#           mkdir -p make_test_dir/ct_logs
-#           for file in $(ls *_test_results/*.tar.gz); do
-#             tar xzf $file make_test_dir/ct_logs
-#           done
-#           ls -la * make_test_dir/ct_logs/
-#           docker load < otp_docker/otp_docker.tar
-#           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
-#             "ct_run -refresh_logs /buildroot/otp/erts/make_test_dir"
-#           docker run -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
-#             -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
-#             "make system TYPE=test"
-#       - name: Cleanup tests
-#         run: |
-#           rm -rf make_test_dir/otp || true
-#           cd make_test_dir && tar czf ../test_results.tar.gz *
-#       - name: Upload test results
-#         uses: actions/upload-artifact@v2
-#         with:
-#           name: test_results
-#           path: test_results.tar.gz
-#         continue-on-error: true
-#       - name: Check test results
-#         run: |
-#           if [ "${{ steps.run-tests.outcome }}" = "failure" ]; then
-#             echo "One or more tests failed"
-#           fi
+  system-test:
+    name: System test
+    runs-on: ubuntu-latest
+    if: ${{ always() }} # Run even if the need has failed
+    needs: test
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v2
+      - name: Merge test results
+        run: |
+          mkdir -p make_test_dir/ct_logs
+          for file in $(ls *_test_results/*.tar.gz); do
+            tar xzf $file make_test_dir/ct_logs
+          done
+          ls -la * make_test_dir/ct_logs/
+          docker load < otp_docker/otp_docker.tar
+          docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
+            "ct_run -refresh_logs /buildroot/otp/erts/make_test_dir"
+          docker run -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
+            -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
+            "make system TYPE=test"
+      - name: Cleanup tests
+        run: |
+          rm -rf make_test_dir/otp || true
+          cd make_test_dir && tar czf ../test_results.tar.gz *
+      - name: Upload test results
+        uses: actions/upload-artifact@v2
+        with:
+          name: test_results
+          path: test_results.tar.gz
+        continue-on-error: true
+      - name: Check test results
+        run: |
+          if [ "${{ steps.run-tests.outcome }}" = "failure" ]; then
+            echo "One or more tests failed"
+          fi
 
 #   ## If this is a tag that has been pushed we do some release work
 #   release:
