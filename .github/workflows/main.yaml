@@ -371,7 +371,8 @@ jobs:
         id: run-tests
         run: |
           mkdir $PWD/make_test_dir
-          touch $PWD/make_test_dir/${{ matrix.type }}
+          mkdir $PWD/make_test_dir/ct_logs_${{ matrix.type }}
+          touch $PWD/make_test_dir/ct_logs_${{ matrix.type }}/${{ matrix.type }}
           if [ "${{ matrix.type }}" = "runtime_tools" ]; then exit 1; fi
           # docker run -v $PWD/make_test_dir:/buildroot/otp/lib/${{ matrix.type }}/make_test_dir otp "make ${{ matrix.type }} TYPE=test"
         continue-on-error: true
