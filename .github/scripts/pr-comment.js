@@ -39,8 +39,8 @@ module.exports = async({ github, context }) => {
                 });
             console.log(`${match[1]}: ${JSON.stringify(job,null,2)}`);
             const result =
-                `* ${match[1]}: ` +
-                `View [GH action logs](${job.html_url}) - Download [CT Logs](${nightlyURL(ct_logs)})\n`;
+                `* ${match[1]} ${job.conclusion == 'success' ? "PASSED" : "FAILED"} ` +
+                `[GH action logs](${job.html_url}) [CT Logs](${nightlyURL(ct_logs)})\n`;
             if (job.conclusion == 'success') {
                 passed++;
                 passedTestResults += result;
