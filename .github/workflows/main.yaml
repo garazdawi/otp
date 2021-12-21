@@ -360,8 +360,8 @@ jobs:
     needs: pack
     strategy:
       matrix:
-        # type: ${{ fromJson(needs.pack.outputs.all) }}
-        type: ${{ fromJson(needs.pack.outputs.changes) }}
+        type: ${{ fromJson(needs.pack.outputs.all) }}
+        # type: ${{ fromJson(needs.pack.outputs.changes) }}
         # type: ["os_mon","runtime_tools"]
       fail-fast: false
     steps:
