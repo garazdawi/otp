@@ -98,7 +98,6 @@ FTP_FLAGS += -pa ../ftp/ebin
 FTP_ROOT = ../ftp
 
 MODULES =                 		\
-	erl_make_certs                  \
 	ftp_SUITE 	  		\
 	ftp_format_SUITE                \
 	ftp_test_lib
