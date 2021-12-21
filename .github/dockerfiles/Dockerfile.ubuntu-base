@@ -32,8 +32,10 @@ RUN echo "Europe/Stockholm" > /etc/timezone && \
     ln -snf /usr/share/zoneinfo/$(cat /etc/timezone) /etc/localtime && \
     if [ ! -d /home/${USER} ]; then useradd -rm -d /home/${USER} -s /bin/sh -g ${gid} -G ${gid},sudo -u ${uid} ${USER}; fi && \
     echo "${USER} ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/${USER} && \
+    echo "/buildroot/** r," >> /etc/apparmor.d/local/usr.sbin.named && \
     echo "/tests/** r," >> /etc/apparmor.d/local/usr.sbin.named
 
+## Setup progres so that the odbc test can run
 USER postgres
 
 RUN service postgresql start && \
@@ -51,6 +53,7 @@ ENV USER=${USER}
 RUN ssh-keygen -q -t rsa -N '' -f $HOME/.ssh/id_rsa && \
     cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
 
+## Java and log4j are used by fop to build documentation
 COPY --chown=${USER}:${GROUP} dockerfiles/log4j.properties /home/${USER}/
 ENV OTP_STRICT_INSTALL=yes \
     JAVA_ARGS="-Dlog4j.configuration=file://home/${USER}/log4j.properties"
@@ -58,5 +61,7 @@ ENV OTP_STRICT_INSTALL=yes \
 RUN sudo mkdir /buildroot /tests /otp && sudo chown ${USER}:${GROUP} /buildroot /tests /otp
 
 COPY --chown=${USER}:${GROUP} dockerfiles/init.sh /buildroot/
+
+## TODO: Build Erlang versions N, N-1 and N-2 for compatability testing.
 
 ENTRYPOINT ["/buildroot/init.sh"]

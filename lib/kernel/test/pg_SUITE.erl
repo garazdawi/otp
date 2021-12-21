@@ -753,7 +753,11 @@ stop_node(Node, Socket) when Node =/= node() ->
     true.
 
 forever() ->
-    fun() -> receive after infinity -> ok end end.
+    Parent = self(),
+    fun() ->
+            Ref = monitor(process,Parent),
+            receive {'DOWN',Ref,_,_,_} -> ok after infinity -> ok end
+    end.
 
 
 -spec control(Scope :: atom()) -> {Port :: integer(), pid()}.
