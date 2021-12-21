@@ -204,6 +204,7 @@ pre_end_per_testcase(_TC,Config,State) ->
 			    State :: #state{}) ->
 	{ok | skip_or_fail(), NewState :: #state{}}.
 post_end_per_testcase(_TC,_Config,Return,State) ->
+    "" = inet_db:res_option(domain),
     {Return, State}.
 
 %% Called after a test case failed.

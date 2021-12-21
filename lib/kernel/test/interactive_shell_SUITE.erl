@@ -754,7 +754,8 @@ remsh_longnames(Config) when is_list(Config) ->
         case inet_db:res_option(domain) of
             [] ->
                 "@127.0.0.1";
-            _ -> ""
+            D -> ct:pal("Domain: ~p",[D]),
+                 ""
         end,
     case rtstart(" -name " ++ atom_to_list(?FUNCTION_NAME)++Domain) of
         {ok, _SRPid, STPid, SState} ->
