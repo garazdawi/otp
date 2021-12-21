@@ -457,9 +457,22 @@ find_beam(Module) when is_atom(Module) ->
 	non_existing ->
 	    error({no_such_module, Module});
 	preloaded ->
-	    {Module, {_M, _Bin, File}} = 
-                {Module, code:get_object_code(Module)},
-	    {ok, File};
+            case code:get_object_code(Module) of
+                error ->
+                    %% If get_object_code fails we may be in a source
+                    %% tree build, so check erts/preloaded/src for module
+                    File = filename:join(
+                             [code:root_dir(), "erts", "preloaded", "ebin",
+                              atom_to_list(Module) ++ ".beam"]),
+                    case filelib:is_regular(File) of
+                        true ->
+                            {ok, File};
+                        false ->
+                            error({no_such_module, Module})
+                    end;
+                {_M, _Bin, File} ->
+                    {ok, File}
+            end;
         cover_compiled ->
 	    error({cover_compiled, Module});
 	File ->
