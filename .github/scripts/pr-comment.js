@@ -1,0 +1,89 @@
+module.exports = async({ github, context }) => {
+
+    /* We use this link service as github does not (yet) expose an API where
+       you can download an artifact.
+       https://github.com/actions/upload-artifact/issues/50
+    */
+    var nightlyURL = (artifact) => {
+        return `https://nightly.link/${context.repo.owner}/${context.repo.repo}/actions/artifacts/${artifact.id}.zip`
+    };
+
+    const jobs = await github.rest.actions.listJobsForWorkflowRun({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        run_id: context.payload.workflow_run.id,
+        per_page: 100
+    });
+    const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        run_id: context.payload.workflow_run.id,
+        per_page: 100
+    });
+
+    /* Loop through all jobs and find the passing/failing jobs */
+    var failedTestResults = "";
+    var failed = 0;
+    var passedTestResults = "";
+    var passed = 0;
+    for (const job of jobs.data.jobs) {
+        const match = job.name.match(/Test Erlang\/OTP \(([^)]+)\)/);
+        if (match && match.length > 1) {
+            const ct_logs = artifacts.data.artifacts.find(
+                (a) => {
+                    if (match[1] == "system") {
+                        return a.name == 'test_results';
+                    } else {
+                        return a.name == match[1] + '_test_results';
+                    }
+                });
+            console.log(`${match[1]}: ${JSON.stringify(job,null,2)}`);
+            const result =
+                `* ${match[1]}: ` +
+                `View [GH action logs](${job.html_url}) - Download [CT Logs](${nightlyURL(ct_logs)})\n`;
+            if (job.conclusion == 'success') {
+                passed++;
+                passedTestResults += result;
+            } else {
+                failed++;
+                failedTestResults += result;
+            }
+        }
+    }
+
+    if (failed > 0) {
+        failedTestResults = `**Failed applications (${failed})**\n${failedTestResults}`
+    }
+
+    if (passed > 0) {
+        passedTestResults = `<details>
+<summary><i><b>Passed applications (${passed})</b></i></summary>
+<p>
+
+${passedTestResults}
+</p>
+</details>`;
+    }
+
+    const ct_logs = artifacts.data.artifacts.find(
+        (a) => { return a.name == 'test_results'; });
+    const html_docs = artifacts.data.artifacts.find(
+        (a) => { return a.name == 'otp_doc_html'; });
+    const win_exe = artifacts.data.artifacts.find(
+        (a) => { return a.name == 'otp_prebuilt_win32'; });
+
+    return `Tests completed, status ${ context.payload.workflow_run.conclusion }
+
+${failedTestResults}
+
+${passedTestResults}
+
+**Artifacts**
+* ` + (ct_logs ? `[Complete CT logs](${nightlyURL(ct_logs)})` : "No CT logs found") + `
+* ` + (html_docs ? `[HTML Documentation](${nightlyURL(html_docs)})` : "No HTML docs found") + `
+* ` + (win_exe ? `[Windows Installer](${nightlyURL(win_exe)})` : "No Windows Installer found") + `
+
+See the [TESTING](https://github.com/erlang/otp/blob/master/HOWTO/TESTING.md) and [DEVELOPMENT](https://github.com/erlang/otp/blob/master/HOWTO/DEVELOPMENT.md) HowTo guides for details about how to run test locally.
+
+`;
+};

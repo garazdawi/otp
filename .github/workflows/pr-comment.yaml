@@ -1,0 +1,101 @@
+name: Comment on the pull request
+
+# read-write repo token
+# access to secrets
+on:
+  workflow_run:
+    workflows: ["Build and check Erlang/OTP"]
+    types:
+      - completed
+      - requested
+
+jobs:
+  starting-tests:
+    runs-on: ubuntu-latest
+    if: >-
+      ${{ github.event.workflow_run.pull_requests[0] != null &&
+          github.event.action == 'requested' }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+      - name: Get applications
+        run: |
+          .github/scripts/path-filters.sh > .github/scripts/path-filters.yaml
+          cat .github/scripts/path-filters.yaml
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: .github/scripts/path-filters.yaml
+      - id: change-list
+        uses: actions/github-script@v5
+        env:
+          changes: ${{ steps.changes.outputs.changes }}
+        with:
+          result-encoding: string
+          script: |
+            var data = "";
+            for (const app of JSON.parse(process.env.changes)) {
+               data += "* " + app + "\n";
+            }
+            return data;
+
+      - name: Find Comment
+        uses: peter-evans/find-comment@v1
+        id: fc
+        with:
+          issue-number: ${{ github.event.workflow_run.pull_requests[0].number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: Erlang/OTP Github Action Bot
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ github.event.workflow_run.pull_requests[0].number }}
+          body: |
+            Running tests on:
+
+            ${{ steps.change-list.outputs.result }}
+
+            Latest test run can be viewed here: ${{ github.event.workflow_run.html_url }}
+
+            Make sure that you have read [Contributing to Erlang/OTP](https://github.com/erlang/otp/blob/master/CONTRIBUTING.md)
+
+            // Erlang/OTP Github Action Bot
+          edit-mode: replace
+
+  finished-tests:
+    runs-on: ubuntu-latest
+    if: >-
+      ${{ github.event.workflow_run.pull_requests[0] != null &&
+          github.event.action == 'completed' }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/github-script@v5
+        id: failed-tests
+        with:
+          script: |
+            const script = require('./.github/scripts/pr-comment.js');
+            return await script({github, context});
+
+      - name: Find Comment
+        uses: peter-evans/find-comment@v1
+        id: fc
+        with:
+          issue-number: ${{ github.event.workflow_run.pull_requests[0].number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: ${{ github.event.workflow_run.html_url }}
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ github.event.workflow_run.pull_requests[0].number }}
+          body: |
+            ${{ fromJson(steps.failed-tests.outputs.result) }}
+
+            Latest test run can be viewed here: ${{ github.event.workflow_run.html_url }}
+
+            Make sure that you have read [Contributing to Erlang/OTP](https://github.com/erlang/otp/blob/master/CONTRIBUTING.md)
+
+            // Erlang/OTP Github Action Bot
+          edit-mode: replace
