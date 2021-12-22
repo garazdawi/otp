@@ -516,13 +516,9 @@ endif
 endif
 
 APPS=$(patsubst $(ERL_TOP)/lib/%/doc,%,$(wildcard $(ERL_TOP)/lib/*/doc))
-APPS_TEST=$(patsubst %, %_test,$(APPS))
 
 .PHONY: $(APPS)
 
-$(APPS_TEST): $(patsubst %_test,%,$@)
-	$(make_verbose)cd lib/$< && \
-	  ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
 $(APPS):
 	$(make_verbose)cd lib/$@ && \
 	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
@@ -1254,3 +1250,10 @@ ifeq ($(TYPE),)
 dialyzer: all
 	$(ERL_TOP)/scripts/run-dialyzer
 endif
+
+APPS_TEST=$(patsubst %, %_test,$(APPS))
+
+.SECONDARYEXPANSION:
+$(APPS_TEST): $$(patsubst %_test,%,$$@)
+	$(make_verbose)cd lib/$< && \
+	  ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
