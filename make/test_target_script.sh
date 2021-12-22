@@ -246,6 +246,11 @@ then
     ARGS="-spec $SPEC_FILE"
 fi
 
+if ([ -n "${TYPE}" ] || [ -n "${FLAVOR}" ]) && [ "${WSLcross}" = "true" ]; then
+    print_highlighted_msg $RED "Setting TYPE or FLAVOR is not implemented yet for WSL"
+    exit 1;
+fi
+
 if [ -n "${TYPE}" ]; then
     ERL_AFLAGS="${ERL_AFLAGS} -emu_type ${TYPE}"
 fi
