@@ -360,9 +360,9 @@ jobs:
     needs: pack
     strategy:
       matrix:
-        type: ${{ fromJson(needs.pack.outputs.all) }}
+        #type: ${{ fromJson(needs.pack.outputs.all) }}
         # type: ${{ fromJson(needs.pack.outputs.changes) }}
-        #type: ["emulator", "ssl", "crypto", "kernel"]
+        type: ["emulator"]
       fail-fast: false
     steps:
       ## Download docker images
@@ -382,9 +382,10 @@ jobs:
             epmd) DIR=erts/epmd ;;
             *) DIR=lib/${{ matrix.type }} ;;
           esac
-          docker run -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
+          docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
+            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
             -v "$PWD/make_test_dir:/buildroot/otp/$DIR/make_test_dir" \
-            otp "make ${{ matrix.type }} TYPE=test"
+            otp "ulimit -a && cat /proc/sys/kernel/core_pattern && make ${{ matrix.type }} TYPE=test"
       - name: Cleanup tests
         if: ${{ always() }}
         run: |
