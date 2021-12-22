@@ -56,7 +56,6 @@ end_per_suite(Config) when is_list(Config) ->
     Config.
 
 leaked_processes(Config) when is_list(Config) ->
-    erlang:halt(abort),
     Parent = self(),
     Go = make_ref(),
     spawn(fun () ->

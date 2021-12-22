@@ -360,9 +360,9 @@ jobs:
     needs: pack
     strategy:
       matrix:
-        #type: ${{ fromJson(needs.pack.outputs.all) }}
+        type: ${{ fromJson(needs.pack.outputs.all) }}
         # type: ${{ fromJson(needs.pack.outputs.changes) }}
-        type: ["emulator"]
+        #type: ["emulator"]
       fail-fast: false
     steps:
       ## Download docker images
