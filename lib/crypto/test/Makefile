@@ -17,6 +17,7 @@ TARGET_FILES= $(MODULES:%=$(EBIN)/%.$(EMULATOR))
 
 SPEC_FILES = \
 	crypto.spec \
+	gh_crypto.spec \
 	crypto_bench.spec
 
 COVER_FILE = crypto.cover
