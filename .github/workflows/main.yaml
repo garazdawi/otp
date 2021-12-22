@@ -382,6 +382,8 @@ jobs:
             epmd) DIR=erts/epmd ;;
             *) DIR=lib/${{ matrix.type }} ;;
           esac
+          sudo service apport stop
+          sudo bash -c "echo 'core.%p' > /proc/sys/kernel/core_pattern"
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
             -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
             -v "$PWD/make_test_dir:/buildroot/otp/$DIR/make_test_dir" \
