@@ -52,7 +52,7 @@ debug opt lcnt clean:
 
 .PHONY: test
 test:
-	TEST_NEEDS_RELEASE=true \
+	TEST_NEEDS_RELEASE=true TYPE=$(TYPE) \
 	  $(ERL_TOP)/make/test_target_script.sh $(ERL_TOP)
 
 .PHONY: $(FLAVORS)

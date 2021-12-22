@@ -485,19 +485,16 @@ PROFILE=
 PROFILE_EMU_DEPS=
 endif
 
-ifeq ($(TYPE), test)
-emulator:
-	$(make_verbose)cd erts/emulator && ERL_TOP=$(ERL_TOP) $(MAKE) $(TYPE)
-epmd:
-	$(make_verbose)cd erts/epmd && ERL_TOP=$(ERL_TOP) $(MAKE) $(TYPE)
-system:
-	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) $(MAKE) $(TYPE)
-else
+emulator_test: emulator
+	$(make_verbose)cd erts/emulator && ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
+epmd_test:
+	$(make_verbose)cd erts/epmd && ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
+system_test:
+	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
+
 emulator: $(PROFILE_EMU_DEPS)
 	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
 	  $(MAKE) NO_START_SCRIPTS=true $(TYPE) FLAVOR=$(FLAVOR) PROFILE=$(PROFILE)
-endif
-
 
 libs:
 ifeq ($(OTP_SMALL_BUILD),true)
@@ -519,19 +516,17 @@ endif
 endif
 
 APPS=$(patsubst $(ERL_TOP)/lib/%/doc,%,$(wildcard $(ERL_TOP)/lib/*/doc))
+APPS_TEST=$(patsubst %, %_test,$(APPS))
 
 .PHONY: $(APPS)
 
-ifeq ($(TYPE), test)
-$(APPS):
-	$(make_verbose)cd lib/$@ && \
-	  ERL_TOP=$(ERL_TOP) $(MAKE) $(TYPE)
-else
+$(APPS_TEST): $(patsubst %_test,%,$@)
+	$(make_verbose)cd lib/$< && \
+	  ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
 $(APPS):
 	$(make_verbose)cd lib/$@ && \
 	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
 		$(MAKE) $(TYPE)
-endif
 
 ##
 ## Generate `otp_internal` from the -deprecated() attributes in source.

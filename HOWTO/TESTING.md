@@ -81,15 +81,15 @@ export ERL_TOP=`pwd`
 
 # Run all test suites for an application
 (cd $ERL_TOP/lib/asn1 && make test)
-make asn1 TYPE=test
+make asn1_test
 
 # Run a test suite (The ARGS variable is passed to ct_run)
 (cd $ERL_TOP/lib/stdlib && make test ARGS="-suite ets_SUITE")
-make stdlib TYPE=test ARGS="-suite ets_SUITE"
+make stdlib_test ARGS="-suite ets_SUITE"
 
 # Run a test case
 (cd $ERL_TOP/erts/emulator && make test ARGS="-suite binary_SUITE -case deep_bitstr_lists")
-make emulator TYPE=test ARGS="-suite binary_SUITE -case deep_bitstr_lists"
+make emulator_test ARGS="-suite binary_SUITE -case deep_bitstr_lists"
 
 # Run all tests
 #

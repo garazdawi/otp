@@ -23,7 +23,7 @@ APPLICATION ?= $(basename $(notdir $(PWD)))
 .PHONY: test info gclean dialyzer dialyzer_plt dclean
 
 test:
-	TEST_NEEDS_RELEASE=$(TEST_NEEDS_RELEASE) \
+	TEST_NEEDS_RELEASE=$(TEST_NEEDS_RELEASE) TYPE=$(TYPE) \
 	  $(ERL_TOP)/make/test_target_script.sh $(ERL_TOP)
 
 info:

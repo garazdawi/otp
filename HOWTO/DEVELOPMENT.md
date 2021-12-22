@@ -1,18 +1,18 @@
 # Developing Erlang/OTP
 
-The Erlang/OTP development repository is quite large and make system
+The Erlang/OTP development repository is quite large and the make system
 contains a lot of functionality to help when a developing. This howto
 will try to showcase the most important features of the make system.
 
 The guide is mostly aimed towards development on a Unix platform, but
-most things should work also work on Windows.
+most things should work also work using WSL on Windows.
 
 *WARNING*: the functions mentioned in this guide are not supported. This
 means that they may be removed or changed without prior notice, so do
 not depend on them in CI. For supported make targets see the
 [Install howto](INSTALL.md) and the [Testing howto](TESTING.md).
 
-The make system is not as always as robust as one might like, so if for
+The make system is not always as robust as one might like, so if for
 any reason something does not work, try doing a `git clean -Xfdq` and
 start from the beginning again. This normally only needs to be done when
 you jump in between different git branches, but it can a good thing to
@@ -32,8 +32,11 @@ with.
     2. [Types and Flavors](#types-and-Flavors)
     3. [cerl](#cerl)
     4. [Static analysis](#static-analysis)
-8. [Running test cases](#running-test-cases)
-9. [Writing and building documentation](#writing-and-building-documentation)
+5. [Running test cases](#running-test-cases)
+6. [Writing and building documentation](#writing-and-building-documentation)
+7. [Github Actions](#github-actions)
+    1. [Debugging github actions failures](#debugging-github-actions-failures)
+8. [Testing using Docker](#testing-using-docker)
 
 ## Short version
 
@@ -57,6 +60,9 @@ make dialyzer   # Run dialyzer
 make docs       # Build the docs
 make xmllint    # Run xmllint on the docs
 ```
+
+Then enable [Github Actions](#github-actions) and push the changes to your fork
+of Erlang/OTP to check that you have not missed anything.
 
 ## Preparations
 
@@ -154,11 +160,11 @@ You can also run tests from the top:
 
 ```bash
 make test                # Run all tests, takes a long time
-make stdlib TYPE=test    # Run only stdlib tests, takes less time
+make stdlib_test         # Run only stdlib tests, takes less time
                          # Run only lists_SUITE, takes even less time
-make stdlib TYPE=test ARGS="-suite lists_SUITE"
+make stdlib_test ARGS="-suite lists_SUITE"
                          # Run only member testcase in lists_SUITE
-make stdlib TYPE=test ARGS="-suite lists_SUITE -case member"
+make stdlib_test ARGS="-suite lists_SUITE -case member"
 ```
 
 See [ct_run](https://www.erlang.org/doc/man/ct_run.html#) for a list of all options
@@ -176,7 +182,16 @@ represents erts and all its tools. So you can do this:
 
 ```bash
 make emulator            # Build erts, epmd etc
-make emulator TYPE=test  # Run all emulator tests
+make emulator_test  # Run all emulator tests
+```
+
+If you want to pass a run-time flag to the emulator running the tests you can
+use the `ERL_ARGS` flags to `make test`. For example if you want to run tests
+using [off heap message queue data](https://www.erlang.org/doc/man/erlang.html#process_flag_message_queue_data)
+for all process you would do this:
+
+```bash
+ERL_ARGS="+hmqd off_heap" make emulator_test
 ```
 
 ### Build and test a specific application
@@ -248,6 +263,19 @@ need to be processed. To work with these files there is a special `erl` program
 called `cerl` that is only available in the source tree. You can read more about
 it in the [cerl section](#cerl) later in this guide.
 
+If you want to run the tests with a special flavor or type, the easiest way to
+do that is by setting the `ERL_AFLAGS` to include the extra arguments you want
+passed to `erl`. For example if you want to run the emulator tests using the
+debug emulator you can do it like this:
+
+```bash
+make emulator_test TYPE=debug
+```
+
+*NOTE* Before you run tests using a TYPE or FLAVOR you need to build the **entire**
+Erlang/OTP repo using that TYPE or FLAVOR. That is `make TYPE=debug` for the example
+above.
+
 ### cerl
 
 `cerl` is a program available in `$ERL_TOP/bin/` that has a number of features
@@ -266,7 +294,8 @@ switches are:
   * Set environment variable `VALGRIND_LOG_DIR` to where you want valgrind logs.
   * Set environment variable `VALGRIND_MISC_FLAGS` for any extra valgrind flags you want to pass.
 * -asan
-  * Start asan with the the correct settings and use the `asan` [type](types-and-flavors).
+  * Start [Clang Address Sanitizer](https://clang.llvm.org/docs/AddressSanitizer.html)
+    with the the correct settings and use the `asan` [type](types-and-flavors).
   * Set environment variable `ASAN_LOG_DIR` to where you want the logs.
   * Set environment variable `ASAN_OPTIONS` for any extra asan options you want to pass.
 * -gcov
@@ -285,6 +314,13 @@ switches are:
   * Start Erlang under [rr](https://rr-project.org/) to record all events
 * -rr replay [session]
   * Load a recording session using `rr replay`, if no session is specified the latest run session is laoded.
+
+If you want to run tests using `cerl` (for example if you want to run asan on
+the nif_SUITE in emulator) you cannot use the `make test` approach to testing
+as that uses `ct_run` under the hood and `ct_run` does not support customizing
+the emulator start script. Instead you need to use the approach described in
+[Run tests with Address Sanitizer](INSTALL.md#run-tests-with-address-sanitizer).
+
 
 ### Static analysis
 
@@ -311,7 +347,9 @@ Most of the Erlang/OTP documentation is written in XML files located in
 
 There is also some documentation that is written using [edoc](https://www.erlang.org/doc/man/edoc.html).
 
-To view the documentation the simplest way is to release it.
+To view the documentation the simplest way is to release it. *NOTE* the Erlang/OTP
+repository needs to have been [built](#building-and-testing) before you can build
+the documentation.
 
 ```bash
 make release_docs
@@ -336,3 +374,18 @@ cd lib/stdlib/doc/src && make local_docs DOC_TARGETS=html
 ```
 
 and then view the results at `lib/stdlib/doc/html/index.html`.
+
+## Github Actions
+
+Erlang/OTP uses [Github Actions](https://github.com/features/actions) as a
+preliminary CI to check that nothing fundamental has been broken by the change.
+
+You can enable Github Actions on your own github fork in order to run the tests
+before opening a PR to the main repository.
+
+### Debugging github actions failures
+
+
+
+## Testing using Docker
+

@@ -387,7 +387,7 @@ jobs:
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
             -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
             -v "$PWD/make_test_dir:/buildroot/otp/$DIR/make_test_dir" \
-            otp "ulimit -a && cat /proc/sys/kernel/core_pattern && make ${{ matrix.type }} TYPE=test"
+            otp "make ${{ matrix.type }}_test"
       - name: Cleanup tests
         if: ${{ always() }}
         run: |
@@ -422,7 +422,7 @@ jobs:
         run: |
           docker run -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
             -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
-            "make system TYPE=test"
+            "make system_test"
       - name: Cleanup tests
         if: ${{ always() }}
         run: |

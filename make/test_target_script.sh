@@ -116,7 +116,7 @@ EOM
 
 release_erlang () {
     local RELEASE_ROOT=${1}
-    (cd $ERL_TOP && make release TYPE=opt RELEASE_ROOT="${RELEASE_ROOT}")
+    (cd $ERL_TOP && make release RELEASE_ROOT="${RELEASE_ROOT}")
     (cd "$RELEASE_ROOT" && ./Install -minimal "`pwd`")
     export PATH="${RELEASE_ROOT}/bin:$PATH"
 }
@@ -246,6 +246,13 @@ then
     ARGS="-spec $SPEC_FILE"
 fi
 
+if [ -n "${TYPE}" ]; then
+    ERL_AFLAGS="${ERL_AFLAGS} -emu_type ${TYPE}"
+fi
+if [ -n "${FLAVOR}" ]; then
+    ERL_AFLAGS="${ERL_AFLAGS} -emu_flavor ${FLAVOR}"
+fi
+
 # Compile test server and configure
 if [ ! -f "$ERL_TOP/lib/common_test/test_server/variables" ]; then
     cd "$ERL_TOP/lib/common_test/test_server"
@@ -277,7 +284,8 @@ then
     if [ -n "${CTRUN_TIMEOUT}" ]; then
         CTRUN_TIMEOUT="timeout -s ABRT --foreground --preserve-status $((${CTRUN_TIMEOUT}+5))m timeout -s USR1 --foreground --preserve-status ${CTRUN_TIMEOUT}m"
     fi
-    $CTRUN_TIMEOUT $CT_RUN -logdir $MAKE_TEST_CT_LOGS\
+    ERL_AFLAGS="${ERL_AFLAGS}" $CTRUN_TIMEOUT \
+      $CT_RUN -logdir $MAKE_TEST_CT_LOGS\
         -pa "$ERL_TOP/lib/common_test/test_server"\
         -config "$ERL_TOP/lib/common_test/test_server/ts.config"\
         -config "$ERL_TOP/lib/common_test/test_server/ts.unix.config"\
