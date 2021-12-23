@@ -243,6 +243,38 @@ you can do this:
 
 and then view `doc/html/index.html`.
 
+### Preloaded and Primary Bootstrap
+
+The Erlang code loader and compiler are written in Erlang, so in order to
+[bootstrap](https://en.wikipedia.org/wiki/Bootstrapping_(compilers))
+the system a number of compiled `.beam` files are commited into the
+Erlang/OTP git repository.
+
+The Erlang code located in [erts/preloaded/src](../erts/preloaded/src)
+is compiled into the VM and used to load enough code so that the code
+loader in the `kernel` application can be loaded. If you update any of
+that code you need to do a special preloaded update for the changes to
+take effect. This is done like this:
+
+```bash
+./otp_build update_preloaded [--no-commit]
+make  # Need to rebuild system after the preloaded has been updated
+```
+
+You need to have a working Erlang compiler in your path for this to work.
+In order to be able to compile the Erlang/OTP source code, there also needs
+to be a basic Erlang compiler committed into git. This is what is called the
+primary bootstrap. It is quite rare that you need to update this, but if you
+are extending the Erlang language and would like to use the new extensions
+in the Erlang/OTP source code you it needs to be updated. As an example, when
+we added `maps` to Erlang we first needed to have a commited primary bootstrap
+that could compile code with maps, before we actually could use maps anywhere.
+To update the primary bootstrap you do like this:
+
+```bash
+./otp_build update_primary [--no-commit]
+```
+
 ### Types and Flavors
 
 Erlang can be built using different types and flavors. Mostly the types and
