@@ -5,9 +5,12 @@ contains a lot of functionality to help when a developing. This howto
 will try to showcase the most important features of the make system.
 
 The guide is mostly aimed towards development on a Unix platform, but
-most things should work also work using WSL on Windows.
+most things should work also work using WSL on Windows. The guide also
+assumes that you are working in the git repositiory. Many of the
+scripts and tools described here are not available in the prebuilt tar
+archive that you can download for each release.
 
-*WARNING*: the functions mentioned in this guide are not supported. This
+*WARNING*: only some of APIs mentioned in this guide are supported. This
 means that they may be removed or changed without prior notice, so do
 not depend on them in CI. For supported make targets see the
 [Install howto](INSTALL.md) and the [Testing howto](TESTING.md).
@@ -36,7 +39,9 @@ with.
 6. [Writing and building documentation](#writing-and-building-documentation)
 7. [Github Actions](#github-actions)
     1. [Debugging github actions failures](#debugging-github-actions-failures)
-8. [Testing using Docker](#testing-using-docker)
+8. [Using Docker](#using-docker)
+    1. [Gidpod.io](#gitpod-io)
+    2. [VSCode Devcontainer](#vscode-devcontainer)
 
 ## Short version
 
@@ -287,7 +292,7 @@ debug emulator you can do it like this:
 make emulator_test TYPE=debug
 ```
 
-*NOTE* Before you run tests using a TYPE or FLAVOR you need to build the **entire**
+*NOTE*: Before you run tests using a TYPE or FLAVOR you need to build the **entire**
 Erlang/OTP repo using that TYPE or FLAVOR. That is `make TYPE=debug` for the example
 above.
 
@@ -362,7 +367,7 @@ Most of the Erlang/OTP documentation is written in XML files located in
 
 There is also some documentation that is written using [edoc](https://www.erlang.org/doc/man/edoc.html).
 
-To view the documentation the simplest way is to release it. *NOTE* the Erlang/OTP
+To view the documentation the simplest way is to release it. *NOTE*: the Erlang/OTP
 repository needs to have been [built](#building-and-testing) before you can build
 the documentation.
 
@@ -398,9 +403,86 @@ preliminary CI to check that nothing fundamental has been broken by the change.
 You can enable Github Actions on your own github fork in order to run the tests
 before opening a PR to the main repository.
 
+Github Actions does too many checks to list them all but the primary ones are:
+* Build on Ubuntu Linux and Windows
+* Cross build to Debian Linux on powerpc and iOS
+* Build and validate documentation
+* Run dialyzer on all of Erlang/OTP
+* Run the tests of the changed application
+
+Each run generates a bunch of artifacts. The most important ones are:
+* `test_results`
+    * An archive containing all the logs from all tests that have been run.
+      Navigate to `make_test_dir/ct_logs/index.html` within the archive to
+      view the Common Test summary of the tests.
+* `otp_win32_installer`
+    * A windows installer with the changes you have made.
+* `otp_doc_html`
+    * The HTML docs with the changes you have made.
+
 ### Debugging github actions failures
 
+Debugging Github Actions is at best a very time-consuming endevour. So if there
+is an error in the build or tests that you don't easily understand I would
+recommend that you try to reproduce it locally.
 
+This is of course not always possible, for instance if it only fails on Windows
+and you do not have access to a Windows machine, but it may the worth it as the
+leadtime for re-running a test is roughly 30 minutes. See the other sections of
+this guide for details on how to build and run tests locally.
 
-## Testing using Docker
+If testcases fail when running Github Actions, it is best to start by inspecting
+the logs of the test runs. The logs are attached to the finished run as
+`test_results`. You will find more details about why a testcase failed in
+the logs.
 
+## Using Docker
+
+In order to get a reproduceable environment for building and testing you can use
+[docker](https//www.docker.com). If you are not familiar with how to use it I
+would recommend [reading up a bit](https://www.docker.com/get-started) and trying
+some simple examples yourself before using it to build and test Erlang/OTP.
+
+There is a pre-built ubuntu base image available on github, but you can also run
+build it locally if you want to.
+
+Using the pre-built base you build an image like this:
+
+```bash
+docker login ghcr.io
+git archive --prefix otp/ -o otp.tar.gz HEAD
+docker built -t my_otp_image -f .github/dockerfiles/Dockerfile.64-bit .
+```
+
+This will fetch the ubuntu base image and build a 64-bit Erlang/OTP. You need to
+[login to the github container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+in order to fetch the base image. If you want to build the base image locally
+you can do that like this:
+
+```bash
+docker built -t docker.pkg.github.com/erlang/otp/ubuntu-base \
+  --build-arg BASE=ubuntu --build-arg uid=$(id -u) --build-arg gid=$(id -g) \
+  -f .github/dockerfiles/Dockerfile.ubuntu-base .github/
+```
+
+Which approach is fastest depends on the speed of your internet connection.
+
+When you have built the docker image you can run tests in it like this:
+
+```bash
+docker run my_otp_image "make stdlib_test"
+```
+
+or if you want to persist the test results outside the container:
+
+```bash
+mkdir make_test_dir
+docker run -v $PWD/make_test_dir:/buildroot/otp/lib/stdlib/make_test_dir \
+  my_otp_image "make stdlib_test"
+```
+
+The Common Test logs will be placed in `make_test_dir/ct_logs`.
+
+### Gidpod.io
+
+### VSCode Devcontainer
