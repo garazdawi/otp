@@ -104,6 +104,21 @@ To enable set this environment variable:
 export ERLC_USE_SERVER=true
 ```
 
+Re-building all application in Erlang/OTP can take a while so it is possible
+to build only a subset of the applications. This is done by setting either
+`OTP_SMALL_BUILD` or `OTP_TINY_BUILD` to `true` when doing make at the top
+level. However the simplest way is probably to just use the `./otp_build`
+wrapper that takes the options `-t` (tiny) or `-a` (all) and defaults to
+a small build.
+
+```bash
+# You need to have done ./configure before calling make or boot.
+OTP_TINY_BUILD=true make
+OTP_SMALL_BUILD=true make
+./otp_build boot -t
+./otp_build boot -a
+```
+
 ## Configuring
 
 You run configure by issuing the command:

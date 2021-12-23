@@ -1253,7 +1253,7 @@ endif
 
 APPS_TEST=$(patsubst %, %_test,$(APPS))
 
-.SECONDARYEXPANSION:
+.SECONDEXPANSION:
 $(APPS_TEST): $$(patsubst %_test,%,$$@)
 	$(make_verbose)cd lib/$< && \
 	  ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
