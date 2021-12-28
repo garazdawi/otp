@@ -61,8 +61,6 @@ jobs:
 
             Current test run can be viewed here: ${{ github.event.workflow_run.html_url }}
 
-            Make sure that you have read [Contributing to Erlang/OTP](https://github.com/erlang/otp/blob/master/CONTRIBUTING.md)
-
             // Erlang/OTP Github Action Bot
           edit-mode: replace
 
