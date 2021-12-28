@@ -101,7 +101,7 @@ groups() ->
     [
         {basic, [parallel], [errors, pg, leave_exit_race, single, overlay_missing]},
         {performance, [sequential], [thundering_herd]},
-        {cluster, [parallel], [process_owner_check, two, initial, netsplit, trisplit, foursplit,
+        {cluster, [], [process_owner_check, two, initial, netsplit, trisplit, foursplit,
             exchange, nolocal, double, scope_restart, missing_scope_join, empty_group_by_remote_leave,
             disconnected_start, forced_sync, group_leave]}
     ].
