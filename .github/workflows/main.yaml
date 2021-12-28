@@ -442,7 +442,7 @@ jobs:
         with:
           name: Unit Test Results
           path: |
-            make_test_dir/ct_logs/*/*/junit_report.xml
+            make_test_dir/ct_logs/*/junit_report.xml
 
   ## If this is a tag that has been pushed we do some release work
   release:
