@@ -32,9 +32,10 @@ with.
     1. [Help](#help)
 4. [Building and testing](#building-and-testing)
     1. [Build and test a specific application](#build-and-test-a-specific-application)
-    2. [Types and Flavors](#types-and-Flavors)
-    3. [cerl](#cerl)
-    4. [Static analysis](#static-analysis)
+    2. [Preloaded and Primary Bootstrap](#preloaded-and-primary-bootstrap)
+    3. [Types and Flavors](#types-and-Flavors)
+    4. [cerl](#cerl)
+    5. [Static analysis](#static-analysis)
 5. [Running test cases](#running-test-cases)
 6. [Writing and building documentation](#writing-and-building-documentation)
 7. [Github Actions](#github-actions)
@@ -274,6 +275,11 @@ To update the primary bootstrap you do like this:
 ```bash
 ./otp_build update_primary [--no-commit]
 ```
+
+*NOTE*: When submitting a PR to Erlang/OTP you will be asked to not include
+any commit updating preloaded or the primary bootstrap. This is because we
+cannot review the contents of binary files and thus need to make sure that
+they contain what they should.
 
 ### Types and Flavors
 
