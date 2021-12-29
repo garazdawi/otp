@@ -81,7 +81,7 @@ jobs:
           path: otp_src.tar.gz
 
   changed-apps:
-    name: Calculate changes apps
+    name: Calculate changed applications
     runs-on: ubuntu-latest
     outputs:
         changes: ${{ steps.changes.outputs.changes }}
@@ -429,7 +429,7 @@ jobs:
         run: |
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
             -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
-            -e EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"/buildroot/otp/erts/make_test_dir/system_junit.xml"}]" \" \
+            -e EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"/buildroot/otp/erts/make_test_dir/system_junit.xml'\"}]" \" \
             -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
             -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "make system_test"
