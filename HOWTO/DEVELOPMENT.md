@@ -442,6 +442,7 @@ You can enable Github Actions on your own github fork in order to run the tests
 before opening a PR to the main repository.
 
 Github Actions does too many checks to list them all but the primary ones are:
+
 * Build on Ubuntu Linux and Windows
 * Cross build to Debian Linux on powerpc and iOS
 * Build and validate documentation
@@ -449,14 +450,15 @@ Github Actions does too many checks to list them all but the primary ones are:
 * Run the tests of the changed application
 
 Each run generates a bunch of artifacts. The most important ones are:
+
 * `test_results`
-    * An archive containing all the logs from all tests that have been run.
-      Navigate to `make_test_dir/ct_logs/index.html` within the archive to
-      view the Common Test summary of the tests.
+  * An archive containing all the logs from all tests that have been run.
+    Navigate to `make_test_dir/ct_logs/index.html` within the archive to
+    view the Common Test summary of the tests.
 * `otp_win32_installer`
-    * A windows installer with the changes you have made.
+  * A windows installer with the changes you have made.
 * `otp_doc_html`
-    * The HTML docs with the changes you have made.
+  * The HTML docs with the changes you have made.
 
 ### Debugging github actions failures
 
@@ -466,8 +468,9 @@ recommend that you try to reproduce it locally.
 
 This is of course not always possible, for instance if it only fails on Windows
 and you do not have access to a Windows machine, but it may the worth it as the
-leadtime for re-running a test is roughly 30 minutes. See the other sections of
-this guide for details on how to build and run tests locally.
+leadtime of re-running a test is roughly 30 minutes. See the [other sections of
+this guide](#developing-erlang-otp) for details on how to build and run tests
+locally.
 
 If testcases fail when running Github Actions, it is best to start by inspecting
 the logs of the test runs. The logs are attached to the finished run as
@@ -488,8 +491,8 @@ Using the pre-built base you build an image like this:
 
 ```bash
 docker login ghcr.io
-git archive --prefix otp/ -o otp.tar.gz HEAD
-docker built -t my_otp_image -f .github/dockerfiles/Dockerfile.64-bit .
+git archive --prefix otp/ -o .github/otp.tar.gz HEAD
+docker build -t my_otp_image -f .github/dockerfiles/Dockerfile.64-bit .github/
 ```
 
 This will fetch the ubuntu base image and build a 64-bit Erlang/OTP. You need to
