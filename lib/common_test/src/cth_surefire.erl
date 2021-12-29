@@ -100,6 +100,7 @@ pre_init_per_suite(Suite,Config,#state{ test_cases = [] } = State) ->
 	end,
     {Config, init_tc(State#state{ filepath = Path,
 				  curr_suite = Suite,
+                                  curr_suite_file = get_file(Suite),
 				  curr_suite_ts = ?now,
 				  curr_log_dir = CurrLogDir},
 		     Config) };

@@ -246,6 +246,8 @@ then
     ARGS="-spec $SPEC_FILE"
 fi
 
+ARGS="${ARGS} ${EXTRA_ARGS}"
+
 if ([ -n "${TYPE}" ] || [ -n "${FLAVOR}" ]) && [ "${WSLcross}" = "true" ]; then
     print_highlighted_msg $RED "Setting TYPE or FLAVOR is not implemented yet for WSL"
     exit 1;

@@ -360,9 +360,9 @@ jobs:
     needs: pack
     strategy:
       matrix:
-        type: ${{ fromJson(needs.pack.outputs.all) }}
+        #type: ${{ fromJson(needs.pack.outputs.all) }}
         # type: ${{ fromJson(needs.pack.outputs.changes) }}
-        #type: ["emulator"]
+        type: ["os_mon","sasl"]
       fail-fast: false
     steps:
       ## Download docker images
@@ -385,7 +385,7 @@ jobs:
           sudo service apport stop
           sudo bash -c "echo 'core.%p' > /proc/sys/kernel/core_pattern"
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
-            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
+            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh -e EXTRA_ARGS="-ct_hooks cth_surefire" \
             -v "$PWD/make_test_dir:/buildroot/otp/$DIR/make_test_dir" \
             otp "make ${{ matrix.type }}_test"
       - name: Cleanup tests
@@ -420,7 +420,9 @@ jobs:
             "ct_run -refresh_logs /buildroot/otp/erts/make_test_dir"
       - name: Run system tests
         run: |
-          docker run -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
+          docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
+            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh -e EXTRA_ARGS="-ct_hooks cth_surefire" \
+            -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
             -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "make system_test"
       - name: Cleanup tests
@@ -434,6 +436,13 @@ jobs:
         with:
           name: test_results
           path: test_results.tar.gz
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v2
+        with:
+          name: Unit Test Results
+          path: |
+            make_test_dir/ct_logs/*/*/junit_report.xml
 
   ## If this is a tag that has been pushed we do some release work
   release:
@@ -497,3 +506,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.TRIGGER_ERLANG_ORG_BUILD }}
         run: |
           curl -H "Authorization: token ${GITHUB_TOKEN}" -X POST -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/erlang/erlang-org/actions/workflows/update-gh-cache.yaml/dispatches" -d '{"ref":"master"}'
+
+  event_file:
+    name: "Event File"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upload
+        uses: actions/upload-artifact@v2
+        with:
+          name: Event File
+          path: ${{ github.event_path }}
