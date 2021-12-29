@@ -391,8 +391,8 @@ jobs:
           sudo service apport stop
           sudo bash -c "echo 'core.%p' > /proc/sys/kernel/core_pattern"
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
-            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh -e \
-            EXTRA_ARGS="-ct_hooks cth_surefire '[{path,\"/buildroot/otp/$DIR/make_test_dir/${{ matrix.type }}_junit.xml\"}]'" \
+            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
+            -e EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"/buildroot/otp/$DIR/make_test_dir/${{ matrix.type }}_junit.xml\"}]" \
             -v "$PWD/make_test_dir:/buildroot/otp/$DIR/make_test_dir" \
             otp "make ${{ matrix.type }}_test"
       - name: Cleanup tests
@@ -429,7 +429,7 @@ jobs:
         run: |
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
             -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
-            -e EXTRA_ARGS="-ct_hooks cth_surefire '[{path,\"/buildroot/otp/erts/make_test_dir/system_junit.xml"}]'" \" \
+            -e EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"/buildroot/otp/erts/make_test_dir/system_junit.xml"}]" \" \
             -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
             -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "make system_test"
