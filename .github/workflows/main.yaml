@@ -450,6 +450,24 @@ jobs:
         with:
           name: test_results
           path: test_results.tar.gz
+      - name: Delete extra artifacts
+        uses: actions/github-script@v5
+        with:
+          script: |
+              const as = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: github.run_id,
+                per_page: 100
+              })
+              as.forEach((a) => {
+                if (a.name == "otp_docker")
+                await github.rest.actions.deleteArtifact({
+                  owner,
+                  repo,
+                  a.id,
+                });
+              });
       - name: Upload Test Results
         if: always()
         uses: actions/upload-artifact@v2
