@@ -429,7 +429,7 @@ jobs:
         run: |
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
             -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
-            -e EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"/buildroot/otp/erts/make_test_dir/system_junit.xml'\"}]" \" \
+            -e EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"/buildroot/otp/erts/make_test_dir/system_junit.xml\"}]" \
             -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
             -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "make system_test"
@@ -452,6 +452,7 @@ jobs:
           path: test_results.tar.gz
       - name: Delete extra artifacts
         uses: actions/github-script@v5
+        if: ${{ always() }}
         with:
           script: |
               const as = await github.rest.actions.listWorkflowRunArtifacts({
