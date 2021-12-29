@@ -20,16 +20,16 @@ module.exports = async({ github, context }) => {
     const html_docs = artifacts.data.artifacts.find(
         (a) => { return a.name == 'otp_doc_html'; });
     const win_exe = artifacts.data.artifacts.find(
-        (a) => { return a.name == 'otp_prebuilt_win32'; });
+        (a) => { return a.name == 'otp_win32_installer'; });
 
     return `
-**Artifacts**
+
+## Artifacts
 * ` + (ct_logs ? `[Complete CT logs](${nightlyURL(ct_logs)})` : "No CT logs found") + `
 * ` + (html_docs ? `[HTML Documentation](${nightlyURL(html_docs)})` : "No HTML docs found") + `
 * ` + (win_exe ? `[Windows Installer](${nightlyURL(win_exe)})` : "No Windows Installer found") + `
 
 See the [TESTING](https://github.com/erlang/otp/blob/master/HOWTO/TESTING.md) and [DEVELOPMENT](https://github.com/erlang/otp/blob/master/HOWTO/DEVELOPMENT.md) HowTo guides for details about how to run test locally.
-
 
 // Erlang/OTP Github Action Bot
 `;
