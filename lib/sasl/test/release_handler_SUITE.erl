@@ -528,6 +528,8 @@ upgrade(Conf) when is_list(Conf) ->
     %% Copy the P1G release to a directory for use in this testcase
     ok = copy_installed(Conf,p1g_install,[Sname]),
 
+    ok = nok,
+
     %% start the test node
     [TestNode] = start_nodes(Conf,[Sname],"upgrade start"),
 
