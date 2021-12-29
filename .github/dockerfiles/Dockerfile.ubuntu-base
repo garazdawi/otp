@@ -17,9 +17,12 @@ RUN apt-get update && apt-get -y upgrade && \
     unixodbc odbc-postgresql postgresql \
     tzdata ssh openssh-server groff-base sudo gdb apache2 bind9 nsd expect vsftpd python \
     linux-tools-common linux-tools-generic linux-tools-`uname -r` \
-    ${INSTALL_LIBS} ${EXTRA_LIBS} && \
+    ${INSTALL_LIBS} && \
+    for lib in ${EXTRA_LIBS}; do apt-get install -y ${lib}; done && \
     sed -i 's@# en_US.UTF-8@en_US.UTF-8@g' /etc/locale.gen && locale-gen && \
     update-alternatives --set wx-config /usr/lib/x86_64-linux-gnu/wx/config/gtk3-unicode-3.0
+
+## EXTRA_LIBS are installed using a for loop because of bugs in the erlang-doc deb package
 
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
