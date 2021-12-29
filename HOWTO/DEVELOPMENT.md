@@ -41,8 +41,7 @@ with.
 7. [Github Actions](#github-actions)
     1. [Debugging github actions failures](#debugging-github-actions-failures)
 8. [Using Docker](#using-docker)
-    1. [Gidpod.io](#gitpod-io)
-    2. [VSCode Devcontainer](#vscode-devcontainer)
+    1. [Gidpod.io or VSCode dev container](#gitpod-io-or-vscode-dev-container)
 
 ## Short version
 
@@ -502,7 +501,8 @@ you can do that like this:
 
 ```bash
 docker built -t docker.pkg.github.com/erlang/otp/ubuntu-base \
-  --build-arg BASE=ubuntu --build-arg uid=$(id -u) --build-arg gid=$(id -g) \
+  --build-arg BASE=ubuntu --build-arg USER=otptest --build-arg uid=$(id -u) \
+  --build-arg GROUP=uucp --build-arg gid=$(id -g) \
   -f .github/dockerfiles/Dockerfile.ubuntu-base .github/
 ```
 
@@ -524,6 +524,24 @@ docker run -v $PWD/make_test_dir:/buildroot/otp/lib/stdlib/make_test_dir \
 
 The Common Test logs will be placed in `make_test_dir/ct_logs`.
 
-### Gidpod.io
+### Gidpod.io or VSCode dev container
 
-### VSCode Devcontainer
+This git repository is also prepared to run using [Gitpod](https://gitpod.io/) or
+[VSCode Devcontainer](https://code.visualstudio.com/docs/remote/containers).
+
+The support for these environments is very early so it will be a bit unstable.
+
+To access the gitpod for Erlang/OTP you just navigate to
+[https://gitpod.io/#https://github.com/erlang/otp](https://gitpod.io/#https://github.com/erlang/otp).
+
+When using a VSCode dev container, you only need to open [VSCode](https://code.visualstudio.com/)
+in the Erlang/OTP repository and you should get a popup that asks if you want to
+run in a dev container.
+
+The gitpod and dev container both use the base ubuntu image built in [Using Docker](#using-docker).
+So it should be possible to run all tests inside the containers with all test
+dependencies available.
+
+*WARNING*: Using VSCode dev container on MacOS can be very slow because of limitations
+in the filesystem. So I would recommend either using gitpod or just work localy without
+the dev container on MacOS.
