@@ -460,7 +460,7 @@ jobs:
                 repo: context.repo.repo,
                 run_id: github.run_id,
                 per_page: 100
-              })
+              });
               as.forEach((a) => {
                 if (a.name == "otp_docker")
                 await github.rest.actions.deleteArtifact({
