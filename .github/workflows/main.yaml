@@ -385,7 +385,8 @@ jobs:
           sudo service apport stop
           sudo bash -c "echo 'core.%p' > /proc/sys/kernel/core_pattern"
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
-            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh -e EXTRA_ARGS="-ct_hooks cth_surefire" \
+            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh -e \
+            EXTRA_ARGS="-ct_hooks cth_surefire '[{path,\"/buildroot/otp/$DIR/make_test_dir/${{ matrix.type }}_junit.xml"}]'" \
             -v "$PWD/make_test_dir:/buildroot/otp/$DIR/make_test_dir" \
             otp "make ${{ matrix.type }}_test"
       - name: Cleanup tests
@@ -421,7 +422,8 @@ jobs:
       - name: Run system tests
         run: |
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 \
-            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh -e EXTRA_ARGS="-ct_hooks cth_surefire" \
+            -e CTRUN_TIMEOUT=90 -e SPEC_PREFIX=gh \
+            -e EXTRA_ARGS="-ct_hooks cth_surefire '[{path,\"/buildroot/otp/erts/make_test_dir/system_junit.xml"}]'" \" \
             -e OTP_DAILY_BUILD_TOP_DIR=/buildroot/otp/erts/make_test_dir \
             -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "make system_test"
@@ -430,6 +432,12 @@ jobs:
         run: |
           rm -rf make_test_dir/otp || true
           tar czf test_results.tar.gz make_test_dir
+          # Translate file="/buildroot/otp/lib/os_mon/make_test_dir/os_mon_test/cpu_sup_SUITE.erl"
+          # to file="lib/os_mon/test/cpu_sup_SUITE.erl"
+          sed -i -e 's:file="/buildroot/otp/:file=":g' \
+              -e 's:\(file="[^/]*/[^/]*/\)make_test_dir/[^/]*:\1test:g' \
+              -e 's:\(file="erts/\)make_test_dir/[^/]*:\1test:g' \
+              make_test_dir/*_junit.xml
       - name: Upload test results
         uses: actions/upload-artifact@v2
         if: ${{ always() }}
@@ -442,7 +450,7 @@ jobs:
         with:
           name: Unit Test Results
           path: |
-            make_test_dir/ct_logs/*/junit_report.xml
+            make_test_dir/*_junit.xml
 
   ## If this is a tag that has been pushed we do some release work
   release:
