@@ -41,7 +41,8 @@ end_per_suite(Config) when is_list(Config) ->
 
 init_per_testcase(unavailable, Config) ->
     terminate(Config),
-    init_per_testcase(dummy, Config);
+    init_per_testcase(dummy, Config),
+    {skip,"aa"};
 init_per_testcase(_Case, Config) ->
     Config.
 
@@ -72,6 +73,7 @@ all() ->
 %% Test of load API functions
 load_api(Config) when is_list(Config) ->
 
+    ok = nok,
     %% nprocs()
     N = cpu_sup:nprocs(),
     true = is_integer(N),
