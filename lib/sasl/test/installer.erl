@@ -176,6 +176,8 @@ install_5(TestNode) ->
     %% new emulator version.
     {"SASL-test","__new_emulator__P1H"} = init:script_id(),
 
+    ok = nok,
+
     %% Check that P2A is in use.
     ?check_release_states([old,permanent,unpacked,current]),
     ?check_running_app(a,"1.1"),
