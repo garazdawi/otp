@@ -462,12 +462,13 @@ jobs:
                 per_page: 100
               });
               as.forEach((a) => {
-                if (a.name == "otp_docker")
-                await github.rest.actions.deleteArtifact({
-                  owner,
-                  repo,
-                  a.id,
-                });
+                if (a.name == "otp_docker") {
+                  github.rest.actions.deleteArtifact({
+                    owner,
+                    repo,
+                    a.id,
+                  });
+                }
               });
       - name: Upload Test Results
         if: always()
