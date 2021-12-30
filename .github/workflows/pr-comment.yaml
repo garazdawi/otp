@@ -29,7 +29,7 @@ jobs:
         with:
           script: |
             const script = require('./.github/scripts/pr-comment.js');
-            return await script({github, context, ``});
+            return await script({github, context, ''});
 
       - name: Create or update comment
         uses: peter-evans/create-or-update-comment@v1
@@ -88,7 +88,7 @@ jobs:
         with:
           script: |
             const script = require('./.github/scripts/pr-comment.js');
-            return await script({github, context, `${{ steps.fc.outputs.comment-body }}`});
+            return await script({github, context, '${{ steps.fc.outputs.comment-body }}'});
 
       - name: Create or update comment
         uses: peter-evans/create-or-update-comment@v1
