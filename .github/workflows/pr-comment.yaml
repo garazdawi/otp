@@ -17,6 +17,7 @@ jobs:
           github.event.workflow_run.pull_requests[0] != null &&
           github.event.action == 'requested' }}
     steps:
+      - uses: actions/checkout@v2
       - name: Find Comment
         uses: peter-evans/find-comment@v1
         id: fc
