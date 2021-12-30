@@ -366,9 +366,9 @@ jobs:
     needs: [pack, changed-apps]
     strategy:
       matrix:
-        type: ${{ fromJson(needs.changed-apps.outputs.all) }}
+        # type: ${{ fromJson(needs.changed-apps.outputs.all) }}
         # type: ${{ fromJson(needs.changed-apps.outputs.changes) }}
-        # type: ["os_mon","sasl"]
+        type: ["os_mon","sasl"]
       fail-fast: false
     steps:
       ## Download docker images
@@ -383,7 +383,7 @@ jobs:
         ## Need to specialize for epmd and emulator
         run: |
           mkdir $PWD/make_test_dir
-          case ${{ matrix.type }} in
+          case "${{ matrix.type }}" in
             emulator) DIR=erts/emulator/ ;;
             epmd) DIR=erts/epmd ;;
             *) DIR=lib/${{ matrix.type }} ;;

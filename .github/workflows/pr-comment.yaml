@@ -61,10 +61,14 @@ jobs:
            gh api "$artifacts_url" --paginate -q '.artifacts[] | [.name, .archive_download_url] | @tsv' | while read artifact
            do
              IFS=$'\t' read name url <<< "$artifact"
-             if [ "$name" = "Unit Test Results" ]; then
-               gh api $url > "$name.zip"
-               unzip -d "$name" "$name.zip"
-             fi
+             case "$name" in
+                "Unit Test Results")
+                "Event File")
+                   gh api $url > "$name.zip"
+                   unzip -d "$name" "$name.zip"
+               ;;
+               *) ;;
+             esac
            done
 
       - name: Publish Unit Test Results
