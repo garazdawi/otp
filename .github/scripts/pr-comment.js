@@ -1,4 +1,4 @@
-module.exports = async({ github, context }) => {
+module.exports = async({ github, context, body }) => {
 
     /* We use this link service as github does not (yet) expose an API where
        you can download an artifact.
@@ -22,7 +22,20 @@ module.exports = async({ github, context }) => {
     const win_exe = artifacts.data.artifacts.find(
         (a) => { return a.name == 'otp_win32_installer'; });
 
-    return `
+    // If the body already contains an Artifacts header, this is a call to
+    // update the comment without having updated any test results. So
+    // We need to remove the intro and extro from the body
+    if (/##/.test(body)) {
+        body = body.split("##")[1];
+    }
+
+    return `Hello!
+
+Thanks for opening a PR to improve Erlang/OTP.
+
+To speed up review, make sure that you have read [Contributing to Erlang/OTP](https://github.com/erlang/otp/blob/master/CONTRIBUTING.md) and that all [checks](/${{ github.repository }}/pull/${{ github.event.workflow_run.pull_requests[0].number }}/checks) pass.
+
+${body}
 
 ## Artifacts
 * ` + (ct_logs ? `[Complete CT logs](${nightlyURL(ct_logs)})` : "No CT logs found") + `
