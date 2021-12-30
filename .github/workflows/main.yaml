@@ -461,7 +461,7 @@ jobs:
                 run_id: context.runId,
                 per_page: 100
               });
-              as.forEach((a) => {
+              as.data.artifacts.forEach((a) => {
                 if (a.name == "otp_docker") {
                   github.rest.actions.deleteArtifact({
                     owner: context.repo.owner,
