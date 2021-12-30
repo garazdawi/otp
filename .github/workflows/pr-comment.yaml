@@ -86,10 +86,12 @@ jobs:
 
       - uses: actions/github-script@v5
         id: failed-tests
+        env:
+          BODY: ${{ steps.step-id.outputs.output-name }}
         with:
           script: |
             const script = require('./.github/scripts/pr-comment.js');
-            return await script({github, context, body: '${{ steps.fc.outputs.comment-body }}'});
+            return await script({github, context, body: process.env.BODY });
 
       - name: Create or update comment
         uses: peter-evans/create-or-update-comment@v1
