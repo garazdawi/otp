@@ -458,7 +458,7 @@ jobs:
               const as = await github.rest.actions.listWorkflowRunArtifacts({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                run_id: github.run_id,
+                run_id: context.runId,
                 per_page: 100
               });
               as.forEach((a) => {
