@@ -366,9 +366,9 @@ jobs:
     needs: [pack, changed-apps]
     strategy:
       matrix:
-        # type: ${{ fromJson(needs.changed-apps.outputs.all) }}
+        type: ${{ fromJson(needs.changed-apps.outputs.all) }}
         # type: ${{ fromJson(needs.changed-apps.outputs.changes) }}
-        type: ["os_mon","sasl"]
+        # type: ["os_mon","sasl"]
       fail-fast: false
     steps:
       ## Download docker images
