@@ -33,7 +33,7 @@ module.exports = async({ github, context, body }) => {
 
 Thanks for opening a PR to improve Erlang/OTP.
 
-To speed up review, make sure that you have read [Contributing to Erlang/OTP](https://github.com/erlang/otp/blob/master/CONTRIBUTING.md) and that all [checks](/${{ github.repository }}/pull/${{ github.event.workflow_run.pull_requests[0].number }}/checks) pass.
+To speed up review, make sure that you have read [Contributing to Erlang/OTP](https://github.com/erlang/otp/blob/master/CONTRIBUTING.md) and that all [checks](/${context.repo.owner}/${context.repo.repo}/pull/${ context.issue.number }/checks) pass.
 
 ${body}
 
