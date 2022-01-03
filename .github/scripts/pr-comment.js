@@ -1,5 +1,7 @@
 module.exports = async({ github, context }) => {
 
+    console.log(`Workflow: ${JSON.stringify(context.payload.workflow_run,null,2)}`);
+
     /* We use this link service as github does not (yet) expose an API where
        you can download an artifact.
        https://github.com/actions/upload-artifact/issues/50
