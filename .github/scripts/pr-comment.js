@@ -97,6 +97,7 @@ See the [TESTING](https://github.com/erlang/otp/blob/master/HOWTO/TESTING.md) an
         await github.rest.issues.createComment({
             owner: context.repo.owner,
             repo: context.repo.repo,
+            issue_number: context.payload.workflow_run.pull_requests[0].number,
             body: body
         });
     }
