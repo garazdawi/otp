@@ -18,27 +18,12 @@ jobs:
           github.event.action == 'requested' }}
     steps:
       - uses: actions/checkout@v2
-      - name: Find Comment
-        uses: peter-evans/find-comment@v1
-        id: fc
-        with:
-          issue-number: ${{ github.event.workflow_run.pull_requests[0].number }}
-          comment-author: 'github-actions[bot]'
+      ## We create an initial comment with some useful help to the user
       - uses: actions/github-script@v5
-        id: failed-tests
         with:
           script: |
             const script = require('./.github/scripts/pr-comment.js');
-            return await script({github, context, body: ''});
-
-      - name: Create or update comment
-        uses: peter-evans/create-or-update-comment@v1
-        if: steps.fc.outputs.comment-id == ''
-        with:
-          comment-id: ${{ steps.fc.outputs.comment-id }}
-          issue-number: ${{ github.event.workflow_run.pull_requests[0].number }}
-          body: |
-            ${{ fromJson(steps.failed-tests.outputs.result) }}
+            return await script({github, context});
 
   finished-tests:
     runs-on: ubuntu-latest
@@ -66,7 +51,7 @@ jobs:
              fi
            done
 
-      - name: Publish Unit Test Results
+      - name: Publish CT Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1
         with:
           commit: ${{ github.event.workflow_run.head_sha }}
@@ -75,28 +60,10 @@ jobs:
           check_name: "CT Test Results"
           files: "artifacts/**/*.xml"
 
-      - name: Find Comment
-        uses: peter-evans/find-comment@v1
-        id: fc
-        with:
-          issue-number: ${{ github.event.workflow_run.pull_requests[0].number }}
-          comment-author: 'github-actions[bot]'
-          body-includes: "CT Test Results"
-
+        ## Append some usefull links and tips to the test results posted by
+        ## Publish CT Test Results
       - uses: actions/github-script@v5
-        id: failed-tests
-        env:
-          BODY: ${{ steps.step-id.outputs.comment-body }}
         with:
           script: |
             const script = require('./.github/scripts/pr-comment.js');
-            return await script({github, context, body: process.env.BODY });
-
-      - name: Create or update comment
-        uses: peter-evans/create-or-update-comment@v1
-        with:
-          comment-id: ${{ steps.fc.outputs.comment-id }}
-          issue-number: ${{ github.event.workflow_run.pull_requests[0].number }}
-          edit-mode: replace
-          body: |
-            ${{ fromJson(steps.failed-tests.outputs.result) }}
+            return await script({github, context });
