@@ -51,7 +51,7 @@ alternative() ->
 
 groups() ->
     [
-        {dist, [parallel], [errors, dist, peer_down_crash, peer_down_continue, peer_down_boot,
+        {dist, [], [errors, dist, peer_down_crash, peer_down_continue, peer_down_boot,
             dist_io_redirect, dist_up_down, dist_localhost]},
         {tcp, [parallel], alternative()},
         {standard_io, [parallel], [init_debug | alternative()]},
