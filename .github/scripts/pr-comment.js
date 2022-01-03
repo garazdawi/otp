@@ -63,7 +63,9 @@ module.exports = async({ github, context }) => {
            EnricoMi/publish-unit-test-result-action@v1 will create a new comment. */
         ct_body = `## CT Test Results
 
-Tests are running... ${context.payload.workflow_run.html_url}`;
+Tests are running... ${context.payload.workflow_run.html_url}
+
+Results for commit ${context.payload.workflow_run.head_sha}`;
     }
 
     console.log(`ct_body: ${ct_body}`);
