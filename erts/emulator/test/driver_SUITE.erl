@@ -198,7 +198,7 @@ end_per_group(_GroupName, Config) ->
         undefined ->
             Config;
         {Peer, _Node} ->
-            peer:stop(Peer),
+            ok = peer:stop(Peer),
             {save_config, proplists:delete(node, Config)}
     end.
 
@@ -1089,7 +1089,7 @@ get_stable_check_io_info(N) ->
 %% Merge return from erlang:system_info(check_io)
 %% as if it was one big pollset.
 get_check_io_total(ChkIo) ->
-    ct:log("ChkIo = ~p~n",[ChkIo]),
+    ct:log("ChkIo = ~p (~p)~n",[ChkIo, nodes()]),
     {Fallback, Rest} = get_fallback(ChkIo),
     OnlyPollThreads = [PS || PS <- Rest, not is_scheduler_pollset(PS)],
     add_fallback_infos(Fallback,
