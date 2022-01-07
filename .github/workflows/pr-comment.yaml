@@ -23,7 +23,7 @@ jobs:
         with:
           script: |
             const script = require('./.github/scripts/pr-comment.js');
-            return await script({github, context});
+            return await script({github, context, state: 'starting'});
 
   finished-tests:
     runs-on: ubuntu-latest
@@ -35,10 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Download and Extract Artifacts
+        id: extract
         env:
           GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
         run: |
            mkdir -p artifacts && cd artifacts
+
+           HAS_TEST_ARTIFACTS=false
 
            artifacts_url=${{ github.event.workflow_run.artifacts_url }}
 
@@ -46,13 +49,19 @@ jobs:
            do
              IFS=$'\t' read name url <<< "$artifact"
              if [ "$name" = "Unit Test Results" ] || [ "$name" = "Event File" ]; then
-                   gh api $url > "$name.zip"
-                   unzip -d "$name" "$name.zip"
+               if [ "$name" = "Unit Test Results" ]; then
+                 HAS_TEST_ARTIFACTS=true
+               fi
+               gh api $url > "$name.zip"
+               unzip -d "$name" "$name.zip"
              fi
            done
 
+           echo "::set-output name=HAS_TEST_ARTIFACTS::${HAS_TEST_ARTIFACTS}"
+
       - name: Publish CT Test Results
         uses: EnricoMi/publish-unit-test-result-action@v1
+        if: steps.extract.outputs.HAS_TEST_ARTIFACTS == 'true'
         with:
           commit: ${{ github.event.workflow_run.head_sha }}
           event_file: artifacts/Event File/event.json
@@ -66,4 +75,4 @@ jobs:
         with:
           script: |
             const script = require('./.github/scripts/pr-comment.js');
-            return await script({github, context });
+            return await script({github, context, state: 'finished'});

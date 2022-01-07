@@ -1,4 +1,4 @@
-module.exports = async({ github, context }) => {
+module.exports = async({ github, context, state }) => {
 
     console.log(`Workflow: ${JSON.stringify(context.payload.workflow_run,null,2)}`);
 
@@ -26,12 +26,26 @@ module.exports = async({ github, context }) => {
     const win_exe = artifacts.find(
         (a) => { return a.name == 'otp_win32_installer'; });
 
+    let pr_number = -1;
+    for (const worlflow_pr of context.payload.workflow_run.pull_requests) {
+        let pr = await github.request("GET " + worlflow_pr.url);
+
+        console.log(`PR: ${JSON.stringify(pr,null,2)}`);
+
+        if (pr.data.base.repo.name == context.repo.repo &&
+            pr.data.base.repo.owner.login == context.repo.owner) {
+            pr_number = worlflow_pr.number;
+            break;
+        }
+    }
+    if (pr_number == -1) return;
+
     let gh_comments = await github.paginate(
         github.rest.issues.listComments,
         {
             owner: context.repo.owner,
             repo: context.repo.repo,
-            issue_number: context.payload.workflow_run.pull_requests[0].number,
+            issue_number: pr_number,
             per_page: 100
         });
 
@@ -50,23 +64,26 @@ module.exports = async({ github, context }) => {
        comment to further help the user.
     */
 
-    if (gh_comment) {
-        /* If the comment has a marker, it has not been touched by
-           EnricoMi/publish-unit-test-result-action@v1 and then we do not need
+    if (gh_comment && !gh_comment.body.match("<!-- marker -->")) {
+        /* If the comment does not have a marker, it has been touched by
+           EnricoMi/publish-unit-test-result-action@v1 and then we need
            to update the comment */
-        if (gh_comment.body.match("<!-- marker -->"))
-            return;
         ct_body = gh_comment.body;
+    } else if (gh_comment && state == 'starting') {
+        /* If the comment exists and we are just starting the workflow we do nothing */
+        return;
     } else {
         /* if the comment does not exist we use a place holder comment. This
            needs to start with "## CT Test Results" and
            contain "Results for commit" as otherwise
            EnricoMi/publish-unit-test-result-action@v1 will create a new comment. */
-        ct_body = `## CT Test Results
-
-Tests are running... ${context.payload.workflow_run.html_url}
-
-Results for commit ${context.payload.workflow_run.head_sha}`;
+        ct_body = "## CT Test Results\n\n";
+        if (state == 'starting') {
+            ct_body += `Tests are running... ${context.payload.workflow_run.html_url}\n\n`;
+        } else {
+            ct_body += "Test not available\n\n";
+        }
+        ct_body += `Results for commit ${context.payload.workflow_run.head_sha}`;
     }
 
     console.log(`ct_body: ${ct_body}`);
