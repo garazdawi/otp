@@ -2,3 +2,4 @@ bootstrap/lib
 bootstrap/target
 .git
 scripts
+.github
