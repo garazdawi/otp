@@ -60,6 +60,9 @@ else
       kernel stdlib compiler
   else
     ifdef SECONDARY_BOOTSTRAP
+      ## yecc in parsetools is needed by snmp, xmerl, edoc
+      ## sasl is needed to create start.boot
+      ## asn1 is needed by public_key
       ifdef TINY_BUILD
         SUB_DIRECTORIES = parsetools sasl
       else
@@ -67,7 +70,13 @@ else
       endif
     else
       ifdef TERTIARY_BOOTSTRAP
-        SUB_DIRECTORIES = snmp sasl erl_interface jinterface syntax_tools wx public_key
+        ## sasl is needed to create start.boot
+        ## erl_interface is needed by odbc
+        ## jinterface was needed by orber
+        ## syntax_tools is needed by diameter
+        ## wx is needed by debugger, observer and et (wx_object behaviour)
+        ## public_key is needed by ssl and ssh
+        SUB_DIRECTORIES = sasl syntax_tools wx public_key
       else
         ifdef DOC_BOOTSTRAP
           SUB_DIRECTORIES = xmerl edoc erl_docgen public_key

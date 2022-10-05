@@ -60,18 +60,16 @@ jobs:
             restore-keys: |
                 prebuilt-${{ github.ref_name }}
                 prebuilt-${{ github.base_ref }}
-      - uses: dorny/paths-filter@v2
-        id: changed
-        with:
-          filters:
-              - changed: '**'
-          list-files: shell
+      # - uses: dorny/paths-filter@v2
+      #   id: changed
+      #   with:
+      #     filters:
+      #         - changed: '**'
+      #     list-files: shell
       - name: Build image
         run: |
           if [ -f otp_src.tar.gz ]; then
-             mkdir cache archive
-             tar -C cache -xvzf otp_src.tar.gz
-             tar -C archive -xvzf otp_archive.tar.gz
+             .github/scripts/restore-from-prebuilt.sh otp_src.tar.gz otp_archive.tar.gz .github/otp.tar.gz
           else
              mv otp_archive.tar.gz .github/otp.tar.gz
           fi
