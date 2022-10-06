@@ -36,3 +36,5 @@ done
 tar -czf "${TARGET}" -C "${TMP_DIR}" otp
 
 rm -rf "${TMP_DIR}"
+
+exit 0
