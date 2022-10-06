@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -x
+set -xe
 
 CACHE="$1"
 ARCHIVE="$2"
@@ -36,5 +36,3 @@ done
 tar -czf "${TARGET}" -C "${TMP_DIR}" otp
 
 rm -rf "${TMP_DIR}"
-
-exit 0

@@ -87,8 +87,8 @@ jobs:
           if [ -f otp_src.tar.gz ]; then
              .github/scripts/restore-from-prebuilt.sh otp_src.tar.gz \
                  otp_archive.tar.gz .github/otp.tar.gz \
-                 '${{ steps.cache.outputs.deleted_files }}'
-                 '${{ steps.cache.outputs.bootstrap }}'
+                 '${{ steps.cache.outputs.deleted_files }}' \
+                 '${{ steps.cache.outputs.bootstrap }}' \
                  '${{ steps.changes.outputs.changes }}'
           else
              mv otp_archive.tar.gz .github/otp.tar.gz
