@@ -34,6 +34,6 @@ for delete in $DELETED; do
     fi
 done
 
-# tar -czf "${TARGET}" -C "${TMP_DIR}" otp
+tar -czf "${TARGET}" -C "${TMP_DIR}" otp
 
-# rm -rf "${TMP_DIR}"
+rm -rf "${TMP_DIR}"
