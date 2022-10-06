@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -xe
+set -x
 
 CACHE="$1"
 ARCHIVE="$2"
