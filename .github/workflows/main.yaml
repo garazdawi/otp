@@ -76,7 +76,7 @@ jobs:
       - uses: dorny/paths-filter@v2
         id: cache
         with:
-          filters:
+          filters: |
               deleted:
                   - deleted: '**'
               bootstrap:
