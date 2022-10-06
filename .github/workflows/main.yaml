@@ -27,8 +27,21 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
         BASE_BUILD: ${{ steps.base-build.outputs.BASE_BUILD }}
+        changes: ${{ steps.changes.outputs.changes }}
+        all: ${{ steps.apps.outputs.all }}
     steps:
       - uses: actions/checkout@v2
+      - name: Get applications
+        id: apps
+        run: |
+          .github/scripts/path-filters.sh > .github/scripts/path-filters.yaml
+          ALL_APPS=$(grep '^[a-z_]*:' .github/scripts/path-filters.yaml | sed 's/:.*$//')
+          ALL_APPS=$(jq -n --arg inarr "${ALL_APPS}" '$inarr | split("\n")' | tr '\n' ' ')
+          echo "::set-output name=all::${ALL_APPS}"
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: .github/scripts/path-filters.yaml
       - name: Create initial pre-release tar
         run: .github/scripts/init-pre-release.sh
       - name: Upload source tar archive
@@ -60,19 +73,23 @@ jobs:
             restore-keys: |
                 prebuilt-${{ github.ref_name }}
                 prebuilt-${{ github.base_ref }}
-       - uses: dorny/paths-filter@v2
-         id: changed
-         with:
-           filters:
-               deleted:
-                   - deleted: '**'
-           list-files: shell
+      - uses: dorny/paths-filter@v2
+        id: cache
+        with:
+          filters:
+              deleted:
+                  - deleted: '**'
+              bootstrap:
+                  - 'bootstrap/**'
+          list-files: shell
       - name: Build image
         run: |
           if [ -f otp_src.tar.gz ]; then
              .github/scripts/restore-from-prebuilt.sh otp_src.tar.gz \
                  otp_archive.tar.gz .github/otp.tar.gz \
-                 ${{ steps.changed.outputs.changed_files }}
+                 "${{ steps.cache.outputs.deleted_files }}"
+                 "${{ steps.cache.outputs.bootstrap }}"
+                 "${{ steps.changes.outputs.changes }}"
           else
              mv otp_archive.tar.gz .github/otp.tar.gz
           fi
@@ -98,26 +115,6 @@ jobs:
         with:
           name: otp_prebuilt_no_chunks
           path: otp_src.tar.gz
-
-  changed-apps:
-    name: Calculate changed applications
-    runs-on: ubuntu-latest
-    outputs:
-        changes: ${{ steps.changes.outputs.changes }}
-        all: ${{ steps.apps.outputs.all }}
-    steps:
-      - uses: actions/checkout@v2
-      - name: Get applications
-        id: apps
-        run: |
-          .github/scripts/path-filters.sh > .github/scripts/path-filters.yaml
-          ALL_APPS=$(grep '^[a-z_]*:' .github/scripts/path-filters.yaml | sed 's/:.*$//')
-          ALL_APPS=$(jq -n --arg inarr "${ALL_APPS}" '$inarr | split("\n")' | tr '\n' ' ')
-          echo "::set-output name=all::${ALL_APPS}"
-      - uses: dorny/paths-filter@v2
-        id: changes
-        with:
-          filters: .github/scripts/path-filters.yaml
 
   build-macos:
     name: Build Erlang/OTP (macOS)
@@ -295,8 +292,8 @@ jobs:
   build-flavors:
     name: Build Erlang/OTP (Types and Flavors)
     runs-on: ubuntu-latest
-    needs: [pack, changed-apps]
-    if: contains(needs.changed-apps.outputs.changes, 'emulator')
+    needs: pack
+    if: contains(needs.pack.outputs.changes, 'emulator')
 
     steps:
       - uses: actions/checkout@v2
@@ -476,12 +473,12 @@ jobs:
   test:
     name: Test Erlang/OTP
     runs-on: ubuntu-latest
-    needs: [pack, changed-apps]
-    if: needs.changed-apps.outputs.changes != '[]'
+    needs: pack
+    if: needs.pack.outputs.changes != '[]'
     strategy:
       matrix:
-        # type: ${{ fromJson(needs.changed-apps.outputs.all) }}
-        type: ${{ fromJson(needs.changed-apps.outputs.changes) }}
+        # type: ${{ fromJson(needs.pack.outputs.all) }}
+        type: ${{ fromJson(needs.pack.outputs.changes) }}
         # type: ["os_mon","sasl"]
       fail-fast: false
     steps:

@@ -2,13 +2,12 @@
 
 set -xe
 
-CACHE=$1
-shift
-ARCHIVE=$1
-shift
-TARGET=$1
-shift
-DELETED="$*"
+CACHE="$1"
+ARCHIVE="$2"
+TARGET="$3"
+DELETED="$4"
+BOOTSTRAP="$5"
+CHANGED="$6"
 
 TMP_DIR=$(mktemp -d)
 CACHE_DIR="${TMP_DIR}"
