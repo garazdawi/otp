@@ -111,11 +111,97 @@
     | h5
     | h6.
 
+-export([convert/1]).
+
 -spec normalize(Docs) -> NormalizedDocs when
     Docs :: chunk_elements(),
     NormalizedDocs :: chunk_elements().
 normalize(Docs) ->
     shell_docs:normalize(Docs).
+
+convert(Module) ->
+    {ok, {Module,
+          [{debug_info,
+            {debug_info_v1, erl_abstract_code,
+             {AST, Meta}}}]}} = beam_lib:chunks(code:which(Module),[debug_info]),
+    {_, _, file, {File, _}} = lists:keyfind(file, 3, AST),
+    Cwd = proplists:get_value(cwd, Meta, ""),
+    Filename = filename:join(Cwd, File),
+    {ok, FileBin} = file:read_file(Filename),
+    {ok, #docs_v1{ module_doc = #{ <<"en">> := _ModuleDoc },
+                   docs = Docs } } = code:get_doc(Module, #{ sources => [eep48] }),
+    NewFileBin = convert(FileBin, filter_and_fix_anno(AST, Docs)),
+    %% io:format("~p~n",[hd(NewFileBin)]),
+    io:format("~ts~n",[NewFileBin]),
+    %% io:format("~p~n",[hd(lists:reverse(NewFileBin))]),
+    %% {AST, Meta}.
+    file:write_file(Filename, NewFileBin),
+    ok.
+
+convert(File, Docs) ->
+    SortedDocs =
+        lists:sort(
+          fun(MFA1, MFA2) ->
+                  erl_anno:line(element(2, MFA1)) >= erl_anno:line(element(2, MFA2))
+          end, Docs),
+    convert(string:split(File, "\n", all), [], SortedDocs).
+convert(File, Acc, []) ->
+    unicode:characters_to_binary([[A,$\n] || A <- File ++ Acc]);
+convert(File, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T]) ->
+    {Before, After} = lists:split(erl_anno:line(Anno)-1, File),
+    convert(Before, [comment(render_docs(D, init_config(D, #{})))|After] ++ Acc, T).
+
+comment(String) ->
+    ["-doc \"",
+     string:trim(re:replace(String, "(\"|\\\\)", "\\\\\\1", [global])),
+     "\"."].
+     %% [["%%% ", L, $\n] || L <- string:split(string:trim(String), "\n", all)]].
+
+filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T]) ->
+    NewAnno =
+        case erl_anno:line(Anno) of
+            0 when What =:= function ->
+                case lists:search(fun({attribute, _, spec, {FA, _}}) when is_tuple(FA) ->
+                                          {F, A} =:= FA;
+                                     %% ({attribute, _, spec, {Spec, _}}) when is_atom(Spec) ->
+                                     %%      {F, A} =:= {Spec, 0};
+                                     (_) ->
+                                          false
+                                  end, AST) of
+                    {value, {attribute, SpecAnno, _, _}} ->
+                        SpecAnno;
+                    false ->
+                        case lists:search(fun({function, _, FF, FA, _}) when is_tuple(FA) ->
+                                                  {F, A} =:= {FF, FA};
+                                             (_) ->
+                                                  false
+                                          end, AST) of
+                            {value, {function, FuncAnno, _, _, _}} ->
+                                FuncAnno
+                        end
+                end;
+            0 when What =:= type ->
+                case lists:search(fun({attribute, _, type, {FA, _}}) when is_tuple(FA) ->
+                                          {F, A} =:= FA;
+                                     ({attribute, _, type, {Type, _, _}}) when is_atom(Type) ->
+                                          {F, A} =:= {Type, 0};
+                                     (_) ->
+                                          false
+                                  end, AST) of
+                    {value, {attribute, TypeAnno, _, _}} ->
+                        TypeAnno;
+                    false ->
+                        io:format("Could not find type: ~p/~p~n",[F,A]),
+                        Anno
+                end;
+            _Line ->
+                Anno
+        end,
+    [{{What, F, A}, erl_anno:set_file(erl_anno:file(Anno), NewAnno), S, D, M} | filter_and_fix_anno(AST, T)];
+filter_and_fix_anno(AST, [_ | T]) ->
+    filter_and_fix_anno(AST, T);
+filter_and_fix_anno(_, []) ->
+    [].
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% API function for dealing with the function documentation
@@ -375,7 +461,9 @@ render_function(FDocs, #docs_v1{docs = Docs} = D, Config) ->
     lists:map(
         fun({Group, Members}) ->
             lists:map(
-                fun(Member = {_, _, _, Doc, _}) ->
+                fun(_Member = {_, _, _, hidden, _}) ->
+                        {error,hidden};
+                    (Member = {_, _, _, Doc, _}) ->
                     Sig = render_signature(Member),
                     LocalDoc =
                         if
@@ -513,6 +601,8 @@ render_typecb_docs([], _C) ->
     {error, type_missing};
 render_typecb_docs(TypeCBs, #config{} = C) when is_list(TypeCBs) ->
     [render_typecb_docs(TypeCB, C) || TypeCB <- TypeCBs];
+render_typecb_docs({_F, _, _Sig, hidden, _Meta} = _TypeCB, #config{docs = _D} = _C) ->
+    {error, hidden};
 render_typecb_docs({F, _, _Sig, Docs, _Meta} = TypeCB, #config{docs = D} = C) ->
     render_headers_and_docs(render_signature(TypeCB), get_local_doc(F, Docs, D), C).
 -spec render_typecb_docs(chunk_elements(), #docs_v1{}, _) ->

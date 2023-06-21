@@ -922,6 +922,8 @@ function_state({attribute,A,spec,{Fun,Types}}, St) ->
     spec_decl(A, Fun, Types, St);
 function_state({attribute,_A,dialyzer,_Val}, St) ->
     St;
+function_state({attribute,_A,doc,_Val}, St) ->
+    St;
 function_state({attribute,Aa,Attr,_Val}, St) ->
     add_error(Aa, {attribute,Attr}, St);
 function_state({function,Anno,N,A,Cs}, St) ->
