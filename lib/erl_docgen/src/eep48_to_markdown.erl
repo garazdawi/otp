@@ -221,16 +221,17 @@ filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T
             0 when What =:= type ->
                 case lists:search(fun({attribute, _, type, {FA, _}}) when is_tuple(FA) ->
                                           {F, A} =:= FA;
-                                     ({attribute, _, type, {Type, _, _}}) when is_atom(Type) ->
-                                          {F, A} =:= {Type, 0};
+                                     ({attribute, _, type, {Type, _, Args}}) when is_atom(Type) ->
+                                          {F, A} =:= {Type, length(Args)};
                                      (_) ->
                                           false
                                   end, AST) of
                     {value, {attribute, TypeAnno, _, _}} ->
                         TypeAnno;
                     false ->
+                        io:format("~p~n",[AST]),
                         io:format("Could not find type: ~p/~p~n",[F,A]),
-                        Anno
+                        error(badarg)
                 end;
             _Line ->
                 Anno
