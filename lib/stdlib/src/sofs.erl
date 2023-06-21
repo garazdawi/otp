@@ -114,22 +114,34 @@
               type/0]).
 -export_type([ordset/0, a_set/0]).
 
+-doc "Any kind of set \\(also included are the atomic sets\\)\\.".
 -type(anyset() :: ordset() | a_set()).
+-doc "A [binary relation](https://erlang.org/doc/man/sofs.html#binary_relation)\\.".
 -type(binary_relation() :: relation()).
+-doc "An [external set](https://erlang.org/doc/man/sofs.html#external_set)\\.".
 -type(external_set() :: term()).
+-doc "A [function](https://erlang.org/doc/man/sofs.html#function)\\.".
 -type(a_function() :: relation()).
+-doc "A [family](https://erlang.org/doc/man/sofs.html#family) \\(of subsets\\)\\.".
 -type(family() :: a_function()).
+-doc "An [ordered set](https://erlang.org/doc/man/sofs.html#sets_definition)\\.".
 -opaque(ordset() :: #?ORDTAG{}).
+-doc "An [n\\-ary relation](https://erlang.org/doc/man/sofs.html#n_ary_relation)\\.".
 -type(relation() :: a_set()).
+-doc "An [unordered set](https://erlang.org/doc/man/sofs.html#sets_definition)\\.".
 -opaque(a_set() :: #?TAG{}).
+-doc "An [unordered set](https://erlang.org/doc/man/sofs.html#sets_definition) of unordered sets\\.".
 -type(set_of_sets() :: a_set()).
+-doc "A [SetFun](https://erlang.org/doc/man/sofs.html#set_fun)\\.".
 -type(set_fun() :: pos_integer()
                  | {external, fun((external_set()) -> external_set())}
                  | fun((anyset()) -> anyset())).
 -type(spec_fun() :: {external, fun((external_set()) -> boolean())}
                   | fun((anyset()) -> boolean())).
+-doc "A [type](https://erlang.org/doc/man/sofs.html#type)\\.".
 -type(type() :: term()).
 
+-doc "A tuple where the elements are of type `T`\\.".
 -type(tuple_of(_T) :: tuple()).
 
 %%
@@ -140,6 +152,28 @@
 %%% Create sets
 %%%
 
+-doc "Creates an element of [Sets](https://erlang.org/doc/man/sofs.html#sets_definition) by traversing term `Term`, sorting lists, removing duplicates, and deriving or verifying a [valid type](https://erlang.org/doc/man/sofs.html#valid_type) for the so obtained external set\\. An explicitly specified [type](https://erlang.org/doc/man/sofs.html#type) `Type` can be used to limit the depth of the traversal; an atomic type stops the traversal, as shown by the following example where `\"foo\"` and `{\"foo\"}` are left unmodified:
+
+```erlang
+1> S = sofs:from_term([{{\"foo\"},[1,1]},{\"foo\",[2,2]}],
+[{atom,[atom]}]),
+sofs:to_external(S).
+[{{\"foo\"},[1]},{\"foo\",[2]}]
+```
+
+`from_term` can be used for creating atomic or ordered sets\\. The only purpose of such a set is that of later building unordered sets, as all functions in this module that *do* anything operate on unordered sets\\. Creating unordered sets from a collection of ordered sets can be the way to go if the ordered sets are big and one does not want to waste heap by rebuilding the elements of the unordered set\\. The following example shows that a set can be built \"layer by layer\":
+
+```erlang
+1> A = sofs:from_term(a),
+S = sofs:set([1,2,3]),
+P1 = sofs:from_sets({A,S}),
+P2 = sofs:from_term({b,[6,5,4]}),
+Ss = sofs:from_sets([P1,P2]),
+sofs:to_external(Ss).
+[{a,[1,2,3]},{b,[4,5,6]}]
+```
+
+Other functions that create sets are [`from_external/2`](https://erlang.org/doc/man/sofs.html#from_external-2) and [`from_sets/1`](https://erlang.org/doc/man/sofs.html#from_sets-1)\\. Special cases of `from_term/2` are [`a_function/1,2`](https://erlang.org/doc/man/sofs.html#a_function-1), [`empty_set/0`](https://erlang.org/doc/man/sofs.html#empty_set-0), [`family/1,2`](https://erlang.org/doc/man/sofs.html#family-1), [`relation/1,2`](https://erlang.org/doc/man/sofs.html#relation-1), and [`set/1,2`](https://erlang.org/doc/man/sofs.html#set-1)\\.".
 -spec(from_term(Term) -> AnySet when
       AnySet :: anyset(),
       Term :: term()).
@@ -166,6 +200,7 @@ from_term(L, T) ->
             erlang:error(badarg)
     end.
 
+-doc "Creates a set from the [external set](https://erlang.org/doc/man/sofs.html#external_set) `ExternalSet` and the [type](https://erlang.org/doc/man/sofs.html#type) `Type`\\. It is assumed that `Type` is a [valid type](https://erlang.org/doc/man/sofs.html#valid_type) of `ExternalSet`\\.".
 -spec(from_external(ExternalSet, Type) -> AnySet when
       ExternalSet :: external_set(),
       AnySet :: anyset(),
@@ -175,11 +210,13 @@ from_external(L, ?SET_OF(Type)) ->
 from_external(T, Type) ->
     ?ORDSET(T, Type).
 
+-doc "Returns the [untyped empty set](https://erlang.org/doc/man/sofs.html#sets_definition)\\. `empty_set()` is equivalent to `from_term([], ['_'])`\\.".
 -spec(empty_set() -> Set when
       Set :: a_set()).
 empty_set() ->
     ?SET([], ?ANYTYPE).
 
+-doc "Returns `true` if term `Term` is a [type](https://erlang.org/doc/man/sofs.html#type)\\.".
 -spec(is_type(Term) -> Bool when
       Bool :: boolean(),
       Term :: term()).
@@ -192,6 +229,7 @@ is_type(T) when tuple_size(T) > 0 ->
 is_type(_T) ->
     false.
 
+-doc "Creates an [unordered set](https://erlang.org/doc/man/sofs.html#sets_definition)\\. `set(L, T)` is equivalent to `from_term(L, T)`, if the result is an unordered set\\. If no [type](https://erlang.org/doc/man/sofs.html#type) is explicitly specified, `[atom]` is used as the set type\\.".
 -spec(set(Terms) -> Set when
       Set :: a_set(),
       Terms :: [term()]).
@@ -217,6 +255,16 @@ set(L, ?SET_OF(_) = T) ->
 set(_, _) ->
     erlang:error(badarg).
 
+-doc "Returns the [ordered set](https://erlang.org/doc/man/sofs.html#sets_definition) containing the sets of the non\\-empty tuple `TupleOfSets`\\.".
+-doc "Returns the [unordered set](https://erlang.org/doc/man/sofs.html#sets_definition) containing the sets of list `ListOfSets`\\.
+
+```erlang
+1> S1 = sofs:relation([{a,1},{b,2}]),
+S2 = sofs:relation([{x,3},{y,4}]),
+S = sofs:from_sets([S1,S2]),
+sofs:to_external(S).
+[[{a,1},{b,2}],[{x,3},{y,4}]]
+```".
 -spec(from_sets(ListOfSets) -> Set when
       Set :: a_set(),
       ListOfSets :: [anyset()];
@@ -240,6 +288,7 @@ from_sets(Tuple) when is_tuple(Tuple) ->
 from_sets(_) ->
     erlang:error(badarg).
 
+-doc "Creates a [relation](https://erlang.org/doc/man/sofs.html#relation)\\. `relation(R, T)` is equivalent to `from_term(R, T)`, if T is a [type](https://erlang.org/doc/man/sofs.html#type) and the result is a relation\\. If `Type` is an integer N, then `[{atom, ..., atom}])`, where the tuple size is N, is used as type of the relation\\. If no type is explicitly specified, the size of the first tuple of `Tuples` is used if there is such a tuple\\. `relation([])` is equivalent to `relation([], 2)`\\.".
 -spec(relation(Tuples) -> Relation when
       Relation :: relation(),
       Tuples :: [tuple()]).
@@ -262,6 +311,7 @@ relation(Ts, TS) ->
     catch _:_ -> erlang:error(badarg)
     end.
 
+-doc "Creates a [function](https://erlang.org/doc/man/sofs.html#function)\\. `a_function(F, T)` is equivalent to `from_term(F, T)` if the result is a function\\. If no [type](https://erlang.org/doc/man/sofs.html#type) is explicitly specified, `[{atom, atom}]` is used as the function type\\.".
 -spec(a_function(Tuples) -> Function when
       Function :: a_function(),
       Tuples :: [tuple()]).
@@ -287,6 +337,7 @@ a_function(Ts, T) ->
     catch _:_ -> erlang:error(badarg)
     end.
 
+-doc "Creates a [family of subsets](https://erlang.org/doc/man/sofs.html#family)\\. `family(F, T)` is equivalent to `from_term(F, T)` if the result is a family\\. If no [type](https://erlang.org/doc/man/sofs.html#type) is explicitly specified, `[{atom, [atom]}]` is used as the family type\\.".
 -spec(family(Tuples) -> Family when
       Family :: family(),
       Tuples :: [tuple()]).
@@ -316,6 +367,7 @@ family(Ts, T) ->
 %%% Functions on sets.
 %%%
 
+-doc "Returns the [external set](https://erlang.org/doc/man/sofs.html#external_set) of an atomic, ordered, or unordered set\\.".
 -spec(to_external(AnySet) -> ExternalSet when
       ExternalSet :: external_set(),
       AnySet :: anyset()).
@@ -324,6 +376,7 @@ to_external(S) when ?IS_SET(S) ->
 to_external(S) when ?IS_ORDSET(S) ->
     ?ORDDATA(S).
 
+-doc "Returns the [type](https://erlang.org/doc/man/sofs.html#type) of an atomic, ordered, or unordered set\\.".
 -spec(type(AnySet) -> Type when
       AnySet :: anyset(),
       Type :: type()).
@@ -332,6 +385,7 @@ type(S) when ?IS_SET(S) ->
 type(S) when ?IS_ORDSET(S) ->
     ?ORDTYPE(S).
 
+-doc "Returns the elements of the ordered set `ASet` as a tuple of sets, and the elements of the unordered set `ASet` as a sorted list of sets without duplicates\\.".
 -spec(to_sets(ASet) -> Sets when
       ASet :: a_set() | ordset(),
       Sets :: tuple_of(AnySet) | [AnySet],
@@ -346,6 +400,7 @@ to_sets(S) when ?IS_ORDSET(S), is_tuple(?ORDTYPE(S)) ->
 to_sets(S) when ?IS_ORDSET(S) ->
     erlang:error(badarg).
 
+-doc "Returns the number of elements of the ordered or unordered set `ASet`\\.".
 -spec(no_elements(ASet) -> NoElements when
       ASet :: a_set() | ordset(),
       NoElements :: non_neg_integer()).
@@ -356,6 +411,16 @@ no_elements(S) when ?IS_ORDSET(S), is_tuple(?ORDTYPE(S)) ->
 no_elements(S) when ?IS_ORDSET(S) ->
     erlang:error(badarg).
 
+-doc "Returns the set containing every element of `Set1` for which `Fun` returns `true`\\. If `Fun` is a tuple `{external, Fun2}`, `Fun2` is applied to the [external set](https://erlang.org/doc/man/sofs.html#external_set) of each element, otherwise `Fun` is applied to each element\\.
+
+```erlang
+1> R1 = sofs:relation([{a,1},{b,2}]),
+R2 = sofs:relation([{x,1},{x,2},{y,3}]),
+S1 = sofs:from_sets([R1,R2]),
+S2 = sofs:specification(fun sofs:is_a_function/1, S1),
+sofs:to_external(S2).
+[[{a,1},{b,2}]]
+```".
 -spec(specification(Fun, Set1) -> Set2 when
       Fun :: spec_fun(),
       Set1 :: a_set(),
@@ -375,6 +440,7 @@ specification(Fun, S) when ?IS_SET(S) ->
 	    erlang:error(Bad)
     end.
 
+-doc "Returns the [union](https://erlang.org/doc/man/sofs.html#union) of `Set1` and `Set2`\\.".
 -spec(union(Set1, Set2) -> Set3 when
       Set1 :: a_set(),
       Set2 :: a_set(),
@@ -385,6 +451,7 @@ union(S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
         Type ->  ?SET(umerge(?LIST(S1), ?LIST(S2)), Type)
     end.
 
+-doc "Returns the [intersection](https://erlang.org/doc/man/sofs.html#intersection) of `Set1` and `Set2`\\.".
 -spec(intersection(Set1, Set2) -> Set3 when
       Set1 :: a_set(),
       Set2 :: a_set(),
@@ -395,6 +462,7 @@ intersection(S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
         Type ->  ?SET(intersection(?LIST(S1), ?LIST(S2), []), Type)
     end.
 
+-doc "Returns the [difference](https://erlang.org/doc/man/sofs.html#difference) of the sets `Set1` and `Set2`\\.".
 -spec(difference(Set1, Set2) -> Set3 when
       Set1 :: a_set(),
       Set2 :: a_set(),
@@ -405,6 +473,15 @@ difference(S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
         Type ->  ?SET(difference(?LIST(S1), ?LIST(S2), []), Type)
     end.
 
+-doc "Returns the [symmetric difference](https://erlang.org/doc/man/sofs.html#symmetric_difference) \\(or the Boolean sum\\) of `Set1` and `Set2`\\.
+
+```erlang
+1> S1 = sofs:set([1,2,3]),
+S2 = sofs:set([2,3,4]),
+P = sofs:symdiff(S1, S2),
+sofs:to_external(P).
+[1,4]
+```".
 -spec(symdiff(Set1, Set2) -> Set3 when
       Set1 :: a_set(),
       Set2 :: a_set(),
@@ -415,6 +492,11 @@ symdiff(S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
         Type ->  ?SET(symdiff(?LIST(S1), ?LIST(S2), []), Type)
     end.
 
+-doc "Returns a triple of sets:
+
+* `Set3` contains the elements of `Set1` that do not belong to `Set2`\\.
+* `Set4` contains the elements of `Set1` that belong to `Set2`\\.
+* `Set5` contains the elements of `Set2` that do not belong to `Set1`\\.".
 -spec(symmetric_partition(Set1, Set2) -> {Set3, Set4, Set5} when
       Set1 :: a_set(),
       Set2 :: a_set(),
@@ -427,6 +509,17 @@ symmetric_partition(S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
         Type ->  sympart(?LIST(S1), ?LIST(S2), [], [], [], Type)
     end.
 
+-doc "Returns the [Cartesian product](https://erlang.org/doc/man/sofs.html#Cartesian_product) of `Set1` and `Set2`\\.
+
+```erlang
+1> S1 = sofs:set([1,2]),
+S2 = sofs:set([a,b]),
+R = sofs:product(S1, S2),
+sofs:to_external(R).
+[{1,a},{1,b},{2,a},{2,b}]
+```
+
+`product(S1, S2)` is equivalent to `product({S1, S2})`\\.".
 -spec(product(Set1, Set2) -> BinRel when
       BinRel :: binary_relation(),
       Set1 :: a_set(),
@@ -441,6 +534,16 @@ product(S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
 	    ?SET(relprod(map(F, ?LIST(S1)), map(F, ?LIST(S2))), T)
     end.
 
+-doc "Returns the [Cartesian product](https://erlang.org/doc/man/sofs.html#Cartesian_product_tuple) of the non\\-empty tuple of sets `TupleOfSets`\\. If \\(x\\[1\\], \\.\\.\\., x\\[n\\]\\) is an element of the n\\-ary relation `Relation`, then x\\[i\\] is drawn from element i of `TupleOfSets`\\.
+
+```erlang
+1> S1 = sofs:set([a,b]),
+S2 = sofs:set([1,2]),
+S3 = sofs:set([x,y]),
+P3 = sofs:product({S1,S2,S3}),
+sofs:to_external(P3).
+[{a,1,x},{a,1,y},{a,2,x},{a,2,y},{b,1,x},{b,1,y},{b,2,x},{b,2,y}]
+```".
 -spec(product(TupleOfSets) -> Relation when
       Relation :: relation(),
       TupleOfSets :: tuple_of(a_set())).
@@ -462,6 +565,15 @@ product(T) when is_tuple(T) ->
     catch _:_ -> erlang:error(badarg)
     end.
 
+-doc "Creates the [function](https://erlang.org/doc/man/sofs.html#function) that maps each element of set `Set` onto `AnySet`\\.
+
+```erlang
+1> S = sofs:set([a,b]),
+E = sofs:from_term(1),
+R = sofs:constant_function(S, E),
+sofs:to_external(R).
+[{a,1},{b,1}]
+```".
 -spec(constant_function(Set, AnySet) -> Function when
       AnySet :: anyset(),
       Function :: a_function(),
@@ -477,6 +589,14 @@ constant_function(S, E) when ?IS_SET(S) ->
 constant_function(S, _) when ?IS_ORDSET(S) ->
     erlang:error(badarg).
 
+-doc "Returns `true` if `AnySet1` and `AnySet2` are [equal](https://erlang.org/doc/man/sofs.html#equal), otherwise `false`\\. The following example shows that `==/2` is used when comparing sets for equality:
+
+```erlang
+1> S1 = sofs:set([1.0]),
+S2 = sofs:set([1]),
+sofs:is_equal(S1, S2).
+true
+```".
 -spec(is_equal(AnySet1, AnySet2) -> Bool when
       AnySet1 :: anyset(),
       AnySet2 :: anyset(),
@@ -496,6 +616,7 @@ is_equal(S1, S2) when ?IS_SET(S1), ?IS_ORDSET(S2) ->
 is_equal(S1, S2) when ?IS_ORDSET(S1), ?IS_SET(S2) ->
     erlang:error(type_mismatch).
 
+-doc "Returns `true` if `Set1` is a [subset](https://erlang.org/doc/man/sofs.html#subset) of `Set2`, otherwise `false`\\.".
 -spec(is_subset(Set1, Set2) -> Bool when
       Bool :: boolean(),
       Set1 :: a_set(),
@@ -506,6 +627,7 @@ is_subset(S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
         false -> erlang:error(type_mismatch)
     end.
 
+-doc "Returns `true` if `Term` appears to be an [unordered set](https://erlang.org/doc/man/sofs.html#sets_definition), an ordered set, or an atomic set, otherwise `false`\\. Note that this function will return `true` for any term that coincides with the representation of a `sofs` set\\. See also note on data types\\.".
 -spec(is_sofs_set(Term) -> Bool when
       Bool :: boolean(),
       Term :: term()).
@@ -516,6 +638,7 @@ is_sofs_set(S) when ?IS_ORDSET(S) ->
 is_sofs_set(_S) ->
     false.
 
+-doc "Returns `true` if `AnySet` appears to be an [unordered set](https://erlang.org/doc/man/sofs.html#sets_definition), and `false` if `AnySet` is an ordered set or an atomic set or any other term\\. Note that the test is shallow and this function will return `true` for any term that coincides with the representation of an unordered set\\. See also note on data types\\.".
 -spec(is_set(AnySet) -> Bool when
       AnySet :: anyset(),
       Bool :: boolean()).
@@ -524,6 +647,7 @@ is_set(S) when ?IS_SET(S) ->
 is_set(S) when ?IS_ORDSET(S) ->
     false.
 
+-doc "Returns `true` if `AnySet` is an empty unordered set, otherwise `false`\\.".
 -spec(is_empty_set(AnySet) -> Bool when
       AnySet :: anyset(),
       Bool :: boolean()).
@@ -532,6 +656,7 @@ is_empty_set(S) when ?IS_SET(S) ->
 is_empty_set(S) when ?IS_ORDSET(S) ->
     false.
 
+-doc "Returns `true` if `Set1` and `Set2` are [disjoint](https://erlang.org/doc/man/sofs.html#disjoint), otherwise `false`\\.".
 -spec(is_disjoint(Set1, Set2) -> Bool when
       Bool :: boolean(),
       Set1 :: a_set(),
@@ -550,6 +675,7 @@ is_disjoint(S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
 %%% Functions on set-of-sets.
 %%%
 
+-doc "Returns the [union](https://erlang.org/doc/man/sofs.html#union_n) of the set of sets `SetOfSets`\\.".
 -spec(union(SetOfSets) -> Set when
       Set :: a_set(),
       SetOfSets :: set_of_sets()).
@@ -560,6 +686,9 @@ union(Sets) when ?IS_SET(Sets) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns the [intersection](https://erlang.org/doc/man/sofs.html#intersection_n) of the set of sets `SetOfSets`\\.
+
+Intersecting an empty set of sets exits the process with a `badarg` message\\.".
 -spec(intersection(SetOfSets) -> Set when
       Set :: a_set(),
       SetOfSets :: set_of_sets()).
@@ -574,6 +703,14 @@ intersection(Sets) when ?IS_SET(Sets) ->
             end
     end.
 
+-doc "Returns the binary relation containing the elements \\(E, Set\\) such that Set belongs to `SetOfSets` and E belongs to Set\\. If `SetOfSets` is a [partition](https://erlang.org/doc/man/sofs.html#partition) of a set X and R is the equivalence relation in X induced by `SetOfSets`, then the returned relation is the [canonical map](https://erlang.org/doc/man/sofs.html#canonical_map) from X onto the equivalence classes with respect to R\\.
+
+```erlang
+1> Ss = sofs:from_term([[a,b],[b,c]]),
+CR = sofs:canonical_relation(Ss),
+sofs:to_external(CR).
+[{a,[a,b]},{b,[a,b]},{b,[b,c]},{c,[b,c]}]
+```".
 -spec(canonical_relation(SetOfSets) -> BinRel when
       BinRel :: binary_relation(),
       SetOfSets :: set_of_sets()).
@@ -597,6 +734,14 @@ canonical_relation(Sets) when ?IS_SET(Sets) ->
 rel2fam(R) ->
     relation_to_family(R).
 
+-doc "Returns [family](https://erlang.org/doc/man/sofs.html#family) `Family` such that the index set is equal to the [domain](https://erlang.org/doc/man/sofs.html#domain) of the binary relation `BinRel`, and `Family`\\[i\\] is the [image](https://erlang.org/doc/man/sofs.html#image) of the set of i under `BinRel`\\.
+
+```erlang
+1> R = sofs:relation([{b,1},{c,2},{c,3}]),
+F = sofs:relation_to_family(R),
+sofs:to_external(F).
+[{b,[1]},{c,[2,3]}]
+```".
 -spec(relation_to_family(BinRel) -> Family when
       Family :: family(),
       BinRel :: binary_relation()).
@@ -609,6 +754,14 @@ relation_to_family(R) when ?IS_SET(R) ->
         _Else    -> erlang:error(badarg)
     end.
 
+-doc "Returns the [domain](https://erlang.org/doc/man/sofs.html#domain) of the binary relation `BinRel`\\.
+
+```erlang
+1> R = sofs:relation([{1,a},{1,b},{2,b},{2,c}]),
+S = sofs:domain(R),
+sofs:to_external(S).
+[1,2]
+```".
 -spec(domain(BinRel) -> Set when
       BinRel :: binary_relation(),
       Set :: a_set()).
@@ -619,6 +772,14 @@ domain(R) when ?IS_SET(R) ->
         _Else    -> erlang:error(badarg)
     end.
 
+-doc "Returns the [range](https://erlang.org/doc/man/sofs.html#range) of the binary relation `BinRel`\\.
+
+```erlang
+1> R = sofs:relation([{1,a},{1,b},{2,b},{2,c}]),
+S = sofs:range(R),
+sofs:to_external(S).
+[a,b,c]
+```".
 -spec(range(BinRel) -> Set when
       BinRel :: binary_relation(),
       Set :: a_set()).
@@ -629,6 +790,16 @@ range(R) when ?IS_SET(R) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns the [field](https://erlang.org/doc/man/sofs.html#field) of the binary relation `BinRel`\\.
+
+```erlang
+1> R = sofs:relation([{1,a},{1,b},{2,b},{2,c}]),
+S = sofs:field(R),
+sofs:to_external(S).
+[1,2,a,b,c]
+```
+
+`field(R)` is equivalent to `union(domain(R), range(R))`\\.".
 -spec(field(BinRel) -> Set when
       BinRel :: binary_relation(),
       Set :: a_set()).
@@ -638,6 +809,19 @@ range(R) when ?IS_SET(R) ->
 field(R) ->
     union(domain(R), range(R)).
 
+-doc "If `ListOfBinRels` is a non\\-empty list \\[R\\[1\\], \\.\\.\\., R\\[n\\]\\] of binary relations and `BinRel1` is a binary relation, then `BinRel2` is the [relative product](https://erlang.org/doc/man/sofs.html#tuple_relative_product) of the ordered set \\(R\\[i\\], \\.\\.\\., R\\[n\\]\\) and `BinRel1`\\.
+
+If `BinRel1` is omitted, the relation of equality between the elements of the [Cartesian product](https://erlang.org/doc/man/sofs.html#Cartesian_product_tuple) of the ranges of R\\[i\\], range R\\[1\\] × \\.\\.\\. × range R\\[n\\], is used instead \\(intuitively, nothing is \"lost\"\\)\\.
+
+```erlang
+1> TR = sofs:relation([{1,a},{1,aa},{2,b}]),
+R1 = sofs:relation([{1,u},{2,v},{3,c}]),
+R2 = sofs:relative_product([TR, R1]),
+sofs:to_external(R2).
+[{1,{a,u}},{1,{aa,u}},{2,{b,v}}]
+```
+
+Notice that `relative_product([R1], R2)` is different from `relative_product(R1, R2)`; the list of one element is not identified with the element itself\\.".
 -spec(relative_product(ListOfBinRels) -> BinRel2 when
       ListOfBinRels :: [BinRel, ...],
       BinRel :: binary_relation(),
@@ -654,6 +838,7 @@ relative_product(RL) when is_list(RL) ->
             Reply
     end.
 
+-doc "Returns the [relative product](https://erlang.org/doc/man/sofs.html#relative_product) of the binary relations `BinRel1` and `BinRel2`\\.".
 -spec(relative_product(ListOfBinRels, BinRel1) -> BinRel2 when
       ListOfBinRels :: [BinRel, ...],
       BinRel :: binary_relation(),
@@ -682,6 +867,17 @@ relative_product(RL, R) when is_list(RL), ?IS_SET(R) ->
             Reply
     end.
 
+-doc "Returns the [relative product](https://erlang.org/doc/man/sofs.html#relative_product) of the [converse](https://erlang.org/doc/man/sofs.html#converse) of the binary relation `BinRel1` and the binary relation `BinRel2`\\.
+
+```erlang
+1> R1 = sofs:relation([{1,a},{1,aa},{2,b}]),
+R2 = sofs:relation([{1,u},{2,v},{3,c}]),
+R3 = sofs:relative_product1(R1, R2),
+sofs:to_external(R3).
+[{a,u},{aa,u},{b,v}]
+```
+
+`relative_product1(R1, R2)` is equivalent to `relative_product(converse(R1), R2)`\\.".
 -spec(relative_product1(BinRel1, BinRel2) -> BinRel3 when
       BinRel1 :: binary_relation(),
       BinRel2 :: binary_relation(),
@@ -704,6 +900,14 @@ relative_product1(R1, R2) when ?IS_SET(R1), ?IS_SET(R2) ->
         false -> erlang:error(type_mismatch)
     end.
 
+-doc "Returns the [converse](https://erlang.org/doc/man/sofs.html#converse) of the binary relation `BinRel1`\\.
+
+```erlang
+1> R1 = sofs:relation([{1,a},{2,b},{3,a}]),
+R2 = sofs:converse(R1),
+sofs:to_external(R2).
+[{a,1},{a,3},{b,2}]
+```".
 -spec(converse(BinRel1) -> BinRel2 when
       BinRel1 :: binary_relation(),
       BinRel2 :: binary_relation()).
@@ -714,6 +918,15 @@ converse(R) when ?IS_SET(R) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns the [image](https://erlang.org/doc/man/sofs.html#image) of set `Set1` under the binary relation `BinRel`\\.
+
+```erlang
+1> R = sofs:relation([{1,a},{2,b},{2,c},{3,d}]),
+S1 = sofs:set([1,2]),
+S2 = sofs:image(R, S1),
+sofs:to_external(S2).
+[a,b,c]
+```".
 -spec(image(BinRel, Set1) -> Set2 when
       BinRel :: binary_relation(),
       Set1 :: a_set(),
@@ -731,6 +944,15 @@ image(R, S) when ?IS_SET(R), ?IS_SET(S) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns the [inverse image](https://erlang.org/doc/man/sofs.html#inverse_image) of `Set1` under the binary relation `BinRel`\\.
+
+```erlang
+1> R = sofs:relation([{1,a},{2,b},{2,c},{3,d}]),
+S1 = sofs:set([c,d,e]),
+S2 = sofs:inverse_image(R, S1),
+sofs:to_external(S2).
+[2,3]
+```".
 -spec(inverse_image(BinRel, Set1) -> Set2 when
       BinRel :: binary_relation(),
       Set1 :: a_set(),
@@ -749,6 +971,14 @@ inverse_image(R, S) when ?IS_SET(R), ?IS_SET(S) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns the [strict relation](https://erlang.org/doc/man/sofs.html#strict_relation) corresponding to the binary relation `BinRel1`\\.
+
+```erlang
+1> R1 = sofs:relation([{1,1},{1,2},{2,1},{2,2}]),
+R2 = sofs:strict_relation(R1),
+sofs:to_external(R2).
+[{1,2},{2,1}]
+```".
 -spec(strict_relation(BinRel1) -> BinRel2 when
       BinRel1 :: binary_relation(),
       BinRel2 :: binary_relation()).
@@ -760,6 +990,14 @@ strict_relation(R) when ?IS_SET(R) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns a subset S of the [weak relation](https://erlang.org/doc/man/sofs.html#weak_relation) W corresponding to the binary relation `BinRel1`\\. Let F be the [field](https://erlang.org/doc/man/sofs.html#field) of `BinRel1`\\. The subset S is defined so that x S y if x W y for some x in F and for some y in F\\.
+
+```erlang
+1> R1 = sofs:relation([{1,1},{1,2},{3,1}]),
+R2 = sofs:weak_relation(R1),
+sofs:to_external(R2).
+[{1,1},{1,2},{2,2},{3,1},{3,3}]
+```".
 -spec(weak_relation(BinRel1) -> BinRel2 when
       BinRel1 :: binary_relation(),
       BinRel2 :: binary_relation()).
@@ -776,6 +1014,16 @@ weak_relation(R) when ?IS_SET(R) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns the [extension](https://erlang.org/doc/man/sofs.html#extension) of `BinRel1` such that for each element E in `Set` that does not belong to the [domain](https://erlang.org/doc/man/sofs.html#domain) of `BinRel1`, `BinRel2` contains the pair \\(E, `AnySet`\\)\\.
+
+```erlang
+1> S = sofs:set([b,c]),
+A = sofs:empty_set(),
+R = sofs:family([{a,[1,2]},{b,[3]}]),
+X = sofs:extension(R, S, A),
+sofs:to_external(X).
+[{a,[1,2]},{b,[3]},{c,[]}]
+```".
 -spec(extension(BinRel1, Set, AnySet) -> BinRel2 when
       AnySet :: anyset(),
       BinRel1 :: binary_relation(),
@@ -809,6 +1057,7 @@ extension(R, S, E) when ?IS_SET(R), ?IS_SET(S) ->
 	    erlang:error(badarg)
     end.
 
+-doc "Returns `true` if the binary relation `BinRel` is a [function](https://erlang.org/doc/man/sofs.html#function) or the untyped empty set, otherwise `false`\\.".
 -spec(is_a_function(BinRel) -> Bool when
       Bool :: boolean(),
       BinRel :: binary_relation()).
@@ -823,6 +1072,15 @@ is_a_function(R) when ?IS_SET(R) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns the [restriction](https://erlang.org/doc/man/sofs.html#restriction) of the binary relation `BinRel1` to `Set`\\.
+
+```erlang
+1> R1 = sofs:relation([{1,a},{2,b},{3,c}]),
+S = sofs:set([1,2,4]),
+R2 = sofs:restriction(R1, S),
+sofs:to_external(R2).
+[{1,a},{2,b}]
+```".
 -spec(restriction(BinRel1, Set) -> BinRel2 when
       BinRel1 :: binary_relation(),
       BinRel2 :: binary_relation(),
@@ -830,6 +1088,17 @@ is_a_function(R) when ?IS_SET(R) ->
 restriction(Relation, Set) ->
     restriction(1, Relation, Set).
 
+-doc "Returns the difference between the binary relation `BinRel1` and the [restriction](https://erlang.org/doc/man/sofs.html#restriction) of `BinRel1` to `Set`\\.
+
+```erlang
+1> R1 = sofs:relation([{1,a},{2,b},{3,c}]),
+S = sofs:set([2,4,6]),
+R2 = sofs:drestriction(R1, S),
+sofs:to_external(R2).
+[{1,a},{3,c}]
+```
+
+`drestriction(R, S)` is equivalent to `difference(R, restriction(R, S))`\\.".
 -spec(drestriction(BinRel1, Set) -> BinRel2 when
       BinRel1 :: binary_relation(),
       BinRel2 :: binary_relation(),
@@ -841,6 +1110,15 @@ drestriction(Relation, Set) ->
 %%% Functions on functions only.
 %%%
 
+-doc "Returns the [composite](https://erlang.org/doc/man/sofs.html#composite) of the functions `Function1` and `Function2`\\.
+
+```erlang
+1> F1 = sofs:a_function([{a,1},{b,2},{c,2}]),
+F2 = sofs:a_function([{1,x},{2,y},{3,z}]),
+F = sofs:composite(F1, F2),
+sofs:to_external(F).
+[{a,x},{b,y},{c,y}]
+```".
 -spec(composite(Function1, Function2) -> Function3 when
       Function1 :: a_function(),
       Function2 :: a_function(),
@@ -869,6 +1147,14 @@ composite(Fn1, Fn2) when ?IS_SET(Fn1), ?IS_SET(Fn2) ->
         false -> erlang:error(type_mismatch)
     end.
 
+-doc "Returns the [inverse](https://erlang.org/doc/man/sofs.html#inverse) of function `Function1`\\.
+
+```erlang
+1> R1 = sofs:relation([{1,a},{2,b},{3,c}]),
+R2 = sofs:inverse(R1),
+sofs:to_external(R2).
+[{a,1},{b,2},{c,3}]
+```".
 -spec(inverse(Function1) -> Function2 when
       Function1 :: a_function(),
       Function2 :: a_function()).
@@ -889,6 +1175,15 @@ inverse(Fn) when ?IS_SET(Fn) ->
 %%% Functions on relations (binary or other).
 %%%
 
+-doc "Returns a subset of `Set1` containing those elements that gives an element in `Set2` as the result of applying `SetFun`\\.
+
+```erlang
+1> S1 = sofs:relation([{1,a},{2,b},{3,c}]),
+S2 = sofs:set([b,c,d]),
+S3 = sofs:restriction(2, S1, S2),
+sofs:to_external(S3).
+[{2,b},{3,c}]
+```".
 -spec(restriction(SetFun, Set1, Set2) -> Set3 when
       SetFun :: set_fun(),
       Set1 :: a_set(),
@@ -957,6 +1252,18 @@ restriction(SetFun, S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
 	    end
     end.
 
+-doc "Returns a subset of `Set1` containing those elements that do not give an element in `Set2` as the result of applying `SetFun`\\.
+
+```erlang
+1> SetFun = {external, fun({_A,B,C}) -> {B,C} end},
+R1 = sofs:relation([{a,aa,1},{b,bb,2},{c,cc,3}]),
+R2 = sofs:relation([{bb,2},{cc,3},{dd,4}]),
+R3 = sofs:drestriction(SetFun, R1, R2),
+sofs:to_external(R3).
+[{a,aa,1}]
+```
+
+`drestriction(F, S1, S2)` is equivalent to `difference(S1, restriction(F, S1, S2))`\\.".
 -spec(drestriction(SetFun, Set1, Set2) -> Set3 when
       SetFun :: set_fun(),
       Set1 :: a_set(),
@@ -1026,6 +1333,16 @@ drestriction(SetFun, S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
 	    end
     end.
 
+-doc "Returns the set created by substituting each element of `Set1` by the result of applying `SetFun` to the element\\.
+
+If `SetFun` is a number i \\>= 1 and `Set1` is a relation, then the returned set is the [projection](https://erlang.org/doc/man/sofs.html#projection) of `Set1` onto coordinate i\\.
+
+```erlang
+1> S1 = sofs:from_term([{1,a},{2,b},{3,a}]),
+S2 = sofs:projection(2, S1),
+sofs:to_external(S2).
+[a,b]
+```".
 -spec(projection(SetFun, Set1) -> Set2 when
       SetFun :: set_fun(),
       Set1 :: a_set(),
@@ -1045,6 +1362,44 @@ projection(I, Set) when is_integer(I), ?IS_SET(Set) ->
 projection(Fun, Set) ->
     range(substitution(Fun, Set)).
 
+-doc "Returns a function, the domain of which is `Set1`\\. The value of an element of the domain is the result of applying `SetFun` to the element\\.
+
+```erlang
+1> L = [{a,1},{b,2}].
+[{a,1},{b,2}]
+2> sofs:to_external(sofs:projection(1,sofs:relation(L))).
+[a,b]
+3> sofs:to_external(sofs:substitution(1,sofs:relation(L))).
+[{{a,1},a},{{b,2},b}]
+4> SetFun = {external, fun({A,_}=E) -> {E,A} end},
+sofs:to_external(sofs:projection(SetFun,sofs:relation(L))).
+[{{a,1},a},{{b,2},b}]
+```
+
+The relation of equality between the elements of \\{a,b,c\\}:
+
+```erlang
+1> I = sofs:substitution(fun(A) -> A end, sofs:set([a,b,c])),
+sofs:to_external(I).
+[{a,a},{b,b},{c,c}]
+```
+
+Let `SetOfSets` be a set of sets and `BinRel` a binary relation\\. The function that maps each element `Set` of `SetOfSets` onto the [image](https://erlang.org/doc/man/sofs.html#image) of `Set` under `BinRel` is returned by the following function:
+
+```erlang
+images(SetOfSets, BinRel) ->
+   Fun = fun(Set) -> sofs:image(BinRel, Set) end,
+   sofs:substitution(Fun, SetOfSets).
+```
+
+External unordered sets are represented as sorted lists\\. So, creating the image of a set under a relation R can traverse all elements of R \\(to that comes the sorting of results, the image\\)\\. In [`image/2`](https://erlang.org/doc/man/sofs.html#image-2), `BinRel` is traversed once for each element of `SetOfSets`, which can take too long\\. The following efficient function can be used instead under the assumption that the image of each element of `SetOfSets` under `BinRel` is non\\-empty:
+
+```erlang
+images2(SetOfSets, BinRel) ->
+   CR = sofs:canonical_relation(SetOfSets),
+   R = sofs:relative_product1(CR, BinRel),
+   sofs:relation_to_family(R).
+```".
 -spec(substitution(SetFun, Set1) -> Set2 when
       SetFun :: set_fun(),
       Set1 :: a_set(),
@@ -1088,6 +1443,15 @@ substitution(SetFun, Set) when ?IS_SET(Set) ->
 	    end
     end.
 
+-doc "Returns the [partition](https://erlang.org/doc/man/sofs.html#partition) of the union of the set of sets `SetOfSets` such that two elements are considered equal if they belong to the same elements of `SetOfSets`\\.
+
+```erlang
+1> Sets1 = sofs:from_term([[a,b,c],[d,e,f],[g,h,i]]),
+Sets2 = sofs:from_term([[b,c,d],[e,f,g],[h,i,j]]),
+P = sofs:partition(sofs:union(Sets1, Sets2)),
+sofs:to_external(P).
+[[a],[b,c],[d],[e,f],[g],[h,i],[j]]
+```".
 -spec(partition(SetOfSets) -> Partition when
       SetOfSets :: set_of_sets(),
       Partition :: a_set()).
@@ -1096,6 +1460,15 @@ partition(Sets) ->
     F2 = relation_to_family(converse(F1)),
     range(F2).
 
+-doc "Returns the [partition](https://erlang.org/doc/man/sofs.html#partition) of `Set` such that two elements are considered equal if the results of applying `SetFun` are equal\\.
+
+```erlang
+1> Ss = sofs:from_term([[a],[b],[c,d],[e,f]]),
+SetFun = fun(S) -> sofs:from_term(sofs:no_elements(S)) end,
+P = sofs:partition(SetFun, Ss),
+sofs:to_external(P).
+[[[a],[b]],[[c,d],[e,f]]]
+```".
 -spec(partition(SetFun, Set) -> Partition when
       SetFun :: set_fun(),
       Partition :: a_set(),
@@ -1115,6 +1488,17 @@ partition(I, Set) when is_integer(I), ?IS_SET(Set) ->
 partition(Fun, Set) ->
     range(partition_family(Fun, Set)).
 
+-doc "Returns a pair of sets that, regarded as constituting a set, forms a [partition](https://erlang.org/doc/man/sofs.html#partition) of `Set1`\\. If the result of applying `SetFun` to an element of `Set1` gives an element in `Set2`, the element belongs to `Set3`, otherwise the element belongs to `Set4`\\.
+
+```erlang
+1> R1 = sofs:relation([{1,a},{2,b},{3,c}]),
+S = sofs:set([2,4,6]),
+{R2,R3} = sofs:partition(1, R1, S),
+{sofs:to_external(R2),sofs:to_external(R3)}.
+{[{2,b}],[{1,a},{3,c}]}
+```
+
+`partition(F, S1, S2)` is equivalent to `{restriction(F, S1, S2), drestriction(F, S1, S2)}`\\.".
 -spec(partition(SetFun, Set1, Set2) -> {Set3, Set4} when
       SetFun :: set_fun(),
       Set1 :: a_set(),
@@ -1187,6 +1571,15 @@ partition(SetFun, S1, S2) when ?IS_SET(S1), ?IS_SET(S2) ->
 	    end
     end.
 
+-doc "If `TupleOfBinRels` is a non\\-empty tuple \\{R\\[1\\], \\.\\.\\., R\\[n\\]\\} of binary relations and `BinRel1` is a binary relation, then `BinRel2` is the [multiple relative product](https://erlang.org/doc/man/sofs.html#multiple_relative_product) of the ordered set \\(R\\[i\\], \\.\\.\\., R\\[n\\]\\) and `BinRel1`\\.
+
+```erlang
+1> Ri = sofs:relation([{a,1},{b,2},{c,3}]),
+R = sofs:relation([{a,b},{b,c},{c,a}]),
+MP = sofs:multiple_relative_product({Ri, Ri}, R),
+sofs:to_external(sofs:range(MP)).
+[{1,2},{2,3},{3,1}]
+```".
 -spec(multiple_relative_product(TupleOfBinRels, BinRel1) -> BinRel2 when
       TupleOfBinRels :: tuple_of(BinRel),
       BinRel :: binary_relation(),
@@ -1203,6 +1596,15 @@ multiple_relative_product(T, R) when is_tuple(T), ?IS_SET(R) ->
 	    erlang:error(badarg)
     end.
 
+-doc "Returns the [natural join](https://erlang.org/doc/man/sofs.html#natural_join) of the relations `Relation1` and `Relation2` on coordinates `I` and `J`\\.
+
+```erlang
+1> R1 = sofs:relation([{a,x,1},{b,y,2}]),
+R2 = sofs:relation([{1,f,g},{1,h,i},{2,3,4}]),
+J = sofs:join(R1, 3, R2, 1),
+sofs:to_external(J).
+[{a,x,1,f,g},{a,x,1,h,i},{b,y,2,3,4}]
+```".
 -spec(join(Relation1, I, Relation2, J) -> Relation3 when
       Relation1 :: relation(),
       Relation2 :: relation(),
@@ -1250,6 +1652,14 @@ test_rel(R, I, C) ->
 fam2rel(F) ->
     family_to_relation(F).
 
+-doc "If `Family` is a [family](https://erlang.org/doc/man/sofs.html#family), then `BinRel` is the binary relation containing all pairs \\(i, x\\) such that i belongs to the index set of `Family` and x belongs to `Family`\\[i\\]\\.
+
+```erlang
+1> F = sofs:family([{a,[]}, {b,[1]}, {c,[2,3]}]),
+R = sofs:family_to_relation(F),
+sofs:to_external(R).
+[{b,1},{c,2},{c,3}]
+```".
 -spec(family_to_relation(Family) -> BinRel when
       Family :: family(),
       BinRel :: binary_relation()).
@@ -1262,6 +1672,15 @@ family_to_relation(F) when ?IS_SET(F) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "If `Family1` is a [family](https://erlang.org/doc/man/sofs.html#family), then `Family2` is the [restriction](https://erlang.org/doc/man/sofs.html#restriction) of `Family1` to those elements i of the index set for which `Fun` applied to `Family1`\\[i\\] returns `true`\\. If `Fun` is a tuple `{external, Fun2}`, then `Fun2` is applied to the [external set](https://erlang.org/doc/man/sofs.html#external_set) of `Family1`\\[i\\], otherwise `Fun` is applied to `Family1`\\[i\\]\\.
+
+```erlang
+1> F1 = sofs:family([{a,[1,2,3]},{b,[1,2]},{c,[1]}]),
+SpecFun = fun(S) -> sofs:no_elements(S) =:= 2 end,
+F2 = sofs:family_specification(SpecFun, F1),
+sofs:to_external(F2).
+[{b,[1,2]}]
+```".
 -spec(family_specification(Fun, Family1) -> Family2 when
       Fun :: spec_fun(),
       Family1 :: family(),
@@ -1285,6 +1704,14 @@ family_specification(Fun, F) when ?IS_SET(F) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns the union of [family](https://erlang.org/doc/man/sofs.html#family) `Family`\\.
+
+```erlang
+1> F = sofs:family([{a,[0,2,4]},{b,[0,1,2]},{c,[2,3]}]),
+S = sofs:union_of_family(F),
+sofs:to_external(S).
+[0,1,2,3,4]
+```".
 -spec(union_of_family(Family) -> Set when
       Family :: family(),
       Set :: a_set()).
@@ -1296,6 +1723,16 @@ union_of_family(F) when ?IS_SET(F) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "Returns the intersection of [family](https://erlang.org/doc/man/sofs.html#family) `Family`\\.
+
+Intersecting an empty family exits the process with a `badarg` message\\.
+
+```erlang
+1> F = sofs:family([{a,[0,2,4]},{b,[0,1,2]},{c,[2,3]}]),
+S = sofs:intersection_of_family(F),
+sofs:to_external(S).
+[2]
+```".
 -spec(intersection_of_family(Family) -> Set when
       Family :: family(),
       Set :: a_set()).
@@ -1311,6 +1748,16 @@ intersection_of_family(F) when ?IS_SET(F) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "If `Family1` is a [family](https://erlang.org/doc/man/sofs.html#family) and `Family1`\\[i\\] is a set of sets for each i in the index set of `Family1`, then `Family2` is the family with the same index set as `Family1` such that `Family2`\\[i\\] is the [union](https://erlang.org/doc/man/sofs.html#union_n) of `Family1`\\[i\\]\\.
+
+```erlang
+1> F1 = sofs:from_term([{a,[[1,2],[2,3]]},{b,[[]]}]),
+F2 = sofs:family_union(F1),
+sofs:to_external(F2).
+[{a,[1,2,3]},{b,[]}]
+```
+
+`family_union(F)` is equivalent to `family_projection(fun sofs:union/1, F)`\\.".
 -spec(family_union(Family1) -> Family2 when
       Family1 :: family(),
       Family2 :: family()).
@@ -1322,6 +1769,16 @@ family_union(F) when ?IS_SET(F) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "If `Family1` is a [family](https://erlang.org/doc/man/sofs.html#family) and `Family1`\\[i\\] is a set of sets for every i in the index set of `Family1`, then `Family2` is the family with the same index set as `Family1` such that `Family2`\\[i\\] is the [intersection](https://erlang.org/doc/man/sofs.html#intersection_n) of `Family1`\\[i\\]\\.
+
+If `Family1`\\[i\\] is an empty set for some i, the process exits with a `badarg` message\\.
+
+```erlang
+1> F1 = sofs:from_term([{a,[[1,2,3],[2,3,4]]},{b,[[x,y,z],[x,y]]}]),
+F2 = sofs:family_intersection(F1),
+sofs:to_external(F2).
+[{a,[2,3]},{b,[x,y]}]
+```".
 -spec(family_intersection(Family1) -> Family2 when
       Family1 :: family(),
       Family2 :: family()).
@@ -1338,6 +1795,14 @@ family_intersection(F) when ?IS_SET(F) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "If `Family1` is a [family](https://erlang.org/doc/man/sofs.html#family) and `Family1`\\[i\\] is a binary relation for every i in the index set of `Family1`, then `Family2` is the family with the same index set as `Family1` such that `Family2`\\[i\\] is the [domain](https://erlang.org/doc/man/sofs.html#domain) of `Family1[i]`\\.
+
+```erlang
+1> FR = sofs:from_term([{a,[{1,a},{2,b},{3,c}]},{b,[]},{c,[{4,d},{5,e}]}]),
+F = sofs:family_domain(FR),
+sofs:to_external(F).
+[{a,[1,2,3]},{b,[]},{c,[4,5]}]
+```".
 -spec(family_domain(Family1) -> Family2 when
       Family1 :: family(),
       Family2 :: family()).
@@ -1350,6 +1815,14 @@ family_domain(F) when ?IS_SET(F) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "If `Family1` is a [family](https://erlang.org/doc/man/sofs.html#family) and `Family1`\\[i\\] is a binary relation for every i in the index set of `Family1`, then `Family2` is the family with the same index set as `Family1` such that `Family2`\\[i\\] is the [range](https://erlang.org/doc/man/sofs.html#range) of `Family1`\\[i\\]\\.
+
+```erlang
+1> FR = sofs:from_term([{a,[{1,a},{2,b},{3,c}]},{b,[]},{c,[{4,d},{5,e}]}]),
+F = sofs:family_range(FR),
+sofs:to_external(F).
+[{a,[a,b,c]},{b,[]},{c,[d,e]}]
+```".
 -spec(family_range(Family1) -> Family2 when
       Family1 :: family(),
       Family2 :: family()).
@@ -1362,12 +1835,31 @@ family_range(F) when ?IS_SET(F) ->
         _ -> erlang:error(badarg)
     end.
 
+-doc "If `Family1` is a [family](https://erlang.org/doc/man/sofs.html#family) and `Family1`\\[i\\] is a binary relation for every i in the index set of `Family1`, then `Family2` is the family with the same index set as `Family1` such that `Family2`\\[i\\] is the [field](https://erlang.org/doc/man/sofs.html#field) of `Family1`\\[i\\]\\.
+
+```erlang
+1> FR = sofs:from_term([{a,[{1,a},{2,b},{3,c}]},{b,[]},{c,[{4,d},{5,e}]}]),
+F = sofs:family_field(FR),
+sofs:to_external(F).
+[{a,[1,2,3,a,b,c]},{b,[]},{c,[4,5,d,e]}]
+```
+
+`family_field(Family1)` is equivalent to `family_union(family_domain(Family1), family_range(Family1))`\\.".
 -spec(family_field(Family1) -> Family2 when
       Family1 :: family(),
       Family2 :: family()).
 family_field(F) ->
     family_union(family_domain(F), family_range(F)).
 
+-doc "If `Family1` and `Family2` are [families](https://erlang.org/doc/man/sofs.html#family), then `Family3` is the family such that the index set is the union of `Family1`:s and `Family2`:s index sets, and `Family3`\\[i\\] is the union of `Family1`\\[i\\] and `Family2`\\[i\\] if both map i, otherwise `Family1`\\[i\\] or `Family2`\\[i\\]\\.
+
+```erlang
+1> F1 = sofs:family([{a,[1,2]},{b,[3,4]},{c,[5,6]}]),
+F2 = sofs:family([{b,[4,5]},{c,[7,8]},{d,[9,10]}]),
+F3 = sofs:family_union(F1, F2),
+sofs:to_external(F3).
+[{a,[1,2]},{b,[3,4,5]},{c,[5,6,7,8]},{d,[9,10]}]
+```".
 -spec(family_union(Family1, Family2) -> Family3 when
       Family1 :: family(),
       Family2 :: family(),
@@ -1375,6 +1867,15 @@ family_field(F) ->
 family_union(F1, F2) ->
     fam_binop(F1, F2, fun fam_union/3).
 
+-doc "If `Family1` and `Family2` are [families](https://erlang.org/doc/man/sofs.html#family), then `Family3` is the family such that the index set is the intersection of `Family1`:s and `Family2`:s index sets, and `Family3`\\[i\\] is the intersection of `Family1`\\[i\\] and `Family2`\\[i\\]\\.
+
+```erlang
+1> F1 = sofs:family([{a,[1,2]},{b,[3,4]},{c,[5,6]}]),
+F2 = sofs:family([{b,[4,5]},{c,[7,8]},{d,[9,10]}]),
+F3 = sofs:family_intersection(F1, F2),
+sofs:to_external(F3).
+[{b,[4]},{c,[]}]
+```".
 -spec(family_intersection(Family1, Family2) -> Family3 when
       Family1 :: family(),
       Family2 :: family(),
@@ -1382,6 +1883,15 @@ family_union(F1, F2) ->
 family_intersection(F1, F2) ->
     fam_binop(F1, F2, fun fam_intersect/3).
 
+-doc "If `Family1` and `Family2` are [families](https://erlang.org/doc/man/sofs.html#family), then `Family3` is the family such that the index set is equal to the index set of `Family1`, and `Family3`\\[i\\] is the difference between `Family1`\\[i\\] and `Family2`\\[i\\] if `Family2` maps i, otherwise `Family1[i]`\\.
+
+```erlang
+1> F1 = sofs:family([{a,[1,2]},{b,[3,4]}]),
+F2 = sofs:family([{b,[4,5]},{c,[6,7]}]),
+F3 = sofs:family_difference(F1, F2),
+sofs:to_external(F3).
+[{a,[1,2]},{b,[3]}]
+```".
 -spec(family_difference(Family1, Family2) -> Family3 when
       Family1 :: family(),
       Family2 :: family(),
@@ -1401,6 +1911,15 @@ fam_binop(F1, F2, FF) when ?IS_SET(F1), ?IS_SET(F2) ->
         _ ->  erlang:error(badarg)
     end.
 
+-doc "Returns [family](https://erlang.org/doc/man/sofs.html#family) `Family` where the indexed set is a [partition](https://erlang.org/doc/man/sofs.html#partition) of `Set` such that two elements are considered equal if the results of applying `SetFun` are the same value i\\. This i is the index that `Family` maps onto the [equivalence class](https://erlang.org/doc/man/sofs.html#equivalence_class)\\.
+
+```erlang
+1> S = sofs:relation([{a,a,a,a},{a,a,b,b},{a,b,b,b}]),
+SetFun = {external, fun({A,_,C,_}) -> {A,C} end},
+F = sofs:partition_family(SetFun, S),
+sofs:to_external(F).
+[{{a,a},[{a,a,a,a}]},{{a,b},[{a,a,b,b},{a,b,b,b}]}]
+```".
 -spec(partition_family(SetFun, Set) -> Family when
       Family :: family(),
       SetFun :: set_fun(),
@@ -1448,6 +1967,14 @@ partition_family(SetFun, Set) when ?IS_SET(Set) ->
 	    end
     end.
 
+-doc "If `Family1` is a [family](https://erlang.org/doc/man/sofs.html#family), then `Family2` is the family with the same index set as `Family1` such that `Family2`\\[i\\] is the result of calling `SetFun` with `Family1`\\[i\\] as argument\\.
+
+```erlang
+1> F1 = sofs:from_term([{a,[[1,2],[2,3]]},{b,[[]]}]),
+F2 = sofs:family_projection(fun sofs:union/1, F1),
+sofs:to_external(F2).
+[{a,[1,2,3]},{b,[]}]
+```".
 -spec(family_projection(SetFun, Family1) -> Family2 when
       SetFun :: set_fun(),
       Family1 :: family(),
@@ -1476,6 +2003,13 @@ family_projection(SetFun, F) when ?IS_SET(F) ->
 %%% Digraph functions
 %%%
 
+-doc "Creates a directed graph from [family](https://erlang.org/doc/man/sofs.html#family) `Family`\\. For each pair \\(a, \\{b\\[1\\], \\.\\.\\., b\\[n\\]\\}\\) of `Family`, vertex a and the edges \\(a, b\\[i\\]\\) for 1 \\<= i \\<= n are added to a newly created directed graph\\.
+
+If no graph type is specified, [`digraph:new/0`](https://erlang.org/doc/man/digraph.html#new-0) is used for creating the directed graph, otherwise argument `GraphType` is passed on as second argument to [`digraph:new/1`](https://erlang.org/doc/man/digraph.html#new-1)\\.
+
+It F is a family, it holds that F is a subset of `digraph_to_family(family_to_digraph(F), type(F))`\\. Equality holds if `union_of_family(F)` is a subset of `domain(F)`\\.
+
+Creating a cycle in an acyclic graph exits the process with a `cyclic` message\\.".
 -spec(family_to_digraph(Family) -> Graph when
       Graph :: digraph:graph(),
       Family :: family()).
@@ -1508,6 +2042,9 @@ family_to_digraph(F, Type) when ?IS_SET(F) ->
         error:badarg -> erlang:error(badarg)
     end.
 
+-doc "Creates a [family](https://erlang.org/doc/man/sofs.html#family) from the directed graph `Graph`\\. Each vertex a of `Graph` is represented by a pair \\(a, \\{b\\[1\\], \\.\\.\\., b\\[n\\]\\}\\), where the b\\[i\\]:s are the out\\-neighbors of a\\. If no type is explicitly specified, \\[\\{atom, \\[atom\\]\\}\\] is used as type of the family\\. It is assumed that `Type` is a [valid type](https://erlang.org/doc/man/sofs.html#valid_type) of the external set of the family\\.
+
+If G is a directed graph, it holds that the vertices and edges of G are the same as the vertices and edges of `family_to_digraph(digraph_to_family(G))`\\.".
 -spec(digraph_to_family(Graph) -> Family when
       Graph :: digraph:graph(),
       Family :: family()).
@@ -2807,3 +3344,4 @@ sort(true, L) ->
     sort(L);
 sort(false, L) ->
     reverse(L).
+
