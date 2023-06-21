@@ -124,38 +124,60 @@ convert(Module) ->
           [{debug_info,
             {debug_info_v1, erl_abstract_code,
              {AST, Meta}}}]}} = beam_lib:chunks(code:which(Module),[debug_info]),
-    {_, _, file, {File, _}} = lists:keyfind(file, 3, AST),
-    Cwd = proplists:get_value(cwd, Meta, ""),
-    Filename = filename:join(Cwd, File),
-    {ok, FileBin} = file:read_file(Filename),
     {ok, #docs_v1{ module_doc = #{ <<"en">> := ModuleDoc },
                    docs = Docs } } = code:get_doc(Module, #{ sources => [eep48] }),
 
-    FileModuleDoc = convert_moduledoc(ModuleDoc),
-    FileFunDoc = convert(FileBin, filter_and_fix_anno(AST, Docs)),
-    FormattedFile = structure_doc(AST, FileModuleDoc, FileFunDoc),
+    NewFiles = convert(#{ meta => Meta }, filter_and_fix_anno(expand_anno(AST), Docs)),
 
-    %% io:format("~p~n", [filter_and_fix_anno(AST, Docs)]),
+    %% io:format("~p~n", [AST]),
+    {attribute, _, file, {File,_}} = lists:keyfind(file, 3, AST),
+    {attribute, Anno, module, _} = lists:keyfind(module, 3, AST),
+    Filename = filename:join(proplists:get_value(cwd, Meta, ""), File),
+    {BeforeModule, AfterModule} = lists:split(erl_anno:line(Anno), maps:get(Filename, NewFiles)),
+
+    NewFilesWithModuleDoc =
+        NewFiles#{ Filename => BeforeModule ++ convert_moduledoc(ModuleDoc) ++ AfterModule },
+
     %% io:format("~ts~n",[NewFileBin2]),
     %% {AST, Meta}.
-    file:write_file(Filename, FormattedFile),
+    [ file:write_file(Key, unicode:characters_to_binary([[A,$\n] || A <- Value]))
+      || Key := Value <- NewFilesWithModuleDoc, not is_atom(Key)],
     ok.
 
-convert(File, Docs) ->
+convert(Files, Docs) ->
     SortedDocs =
         lists:sort(
           fun(MFA1, MFA2) ->
-                  erl_anno:line(element(2, MFA1)) >= erl_anno:line(element(2, MFA2))
+                  Anno1 = element(2, MFA1),
+                  Anno2 = element(2, MFA2),
+                  case erl_anno:file(Anno1) =:= erl_anno:file(Anno2) of
+                      true ->
+                          erl_anno:line(Anno1) >= erl_anno:line(Anno2);
+                      false ->
+                          erl_anno:file(Anno1) >= erl_anno:file(Anno2)
+                  end
           end, Docs),
-    Lines = string:split(File, "\n", all),
-    {ModuleHeader, ModuleBody} =
-        lists:foldl(fun document_module/2, {Lines, []}, SortedDocs),
-    ModuleHeader ++ ModuleBody.
-
-document_module({_, Anno, _, #{ <<"en">> := D }, _}, {File, Acc}) ->
-    {Before, After} = lists:split(erl_anno:line(Anno)-1, File),
-    DocModule = comment(render_docs(D, init_config(D, #{}))),
-    {Before, [DocModule|After] ++ Acc}.
+    %% io:format("~p",[SortedDocs]),
+    convert([], [], SortedDocs, Files).
+convert(Lines, Acc, [], Files) ->
+    Files#{ maps:get(filename, Files) => Lines ++ Acc};
+convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T] = Docs, Files) ->
+    case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
+        true ->
+            {Before, After} = lists:split(erl_anno:line(Anno)-1, Lines),
+            convert(Before, [comment(render_docs(D, init_config(D, #{})))|After] ++ Acc, T, Files);
+        false ->
+            Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
+            Filename = filename:join(Cwd, erl_anno:file(Anno)),
+            {ok, Bin} = file:read_file(Filename),
+            NewFiles =
+                case maps:get(current, Files, undefined) of
+                    undefined -> Files;
+                    _ -> Files#{ maps:get(filename, Files) => unicode:characters_to_binary([[A,$\n] || A <- Lines ++ Acc]) }
+                end,
+            convert(string:split(Bin,"\n",all), [], Docs,
+                    NewFiles#{ current => erl_anno:file(Anno), filename => Filename })
+    end.
 
 %% Convert module documentation
 convert_moduledoc(ModuleHeader) ->
@@ -165,29 +187,30 @@ convert_moduledoc(ModuleHeader) ->
                   end, ModuleHeader),
     moduledoc(DocHeader).
 
-structure_doc(AST, FileModuleDoc, FileFunDoc) ->
-    {attribute, Anno, module, _} = lists:keyfind(module, 3, AST),
-    {Copyright, Module} = lists:split(erl_anno:line(Anno)-1, FileFunDoc),
-    ModuleWithDocs = Copyright ++ FileModuleDoc ++ Module,
-    unicode:characters_to_binary([[A,$\n] || A <- ModuleWithDocs]).
-
 formatter(String) ->
     %% TODO: fix re so that the Text1 string:replace is not needed
-    Text0 = string:trim(re:replace(String, "\\\.( )?", ".\n", [global])),
-    Text1 = string:replace(Text0, "\.", "."),
 
-    Filename = "formatter.md",
-    file:write_file(Filename, list_to_binary(Text1)),
-    os:cmd("mdformat --wrap 80 formatter.md"),
-    {ok, FormattedText} = file:read_file(Filename),
-    file:delete(Filename),
-    string:trim(FormattedText).
+    Text =
+        case os:find_executable("mdformat") of
+            false -> String;
+            _ ->
+                Text0 = string:trim(re:replace(String, "\\\.( )?", ".\n", [global])),
+                Text1 = string:replace(Text0, "\.", "."),
+                
+                Filename = "formatter.md",
+                file:write_file(Filename, list_to_binary(Text1)),
+                os:cmd("mdformat --wrap 80 formatter.md"),
+                {ok, FormattedText} = file:read_file(Filename),
+                file:delete(Filename),
+                FormattedText
+        end,
+    string:trim(re:replace(Text, "(\"|\\\\)", "\\\\\\1", [global, unicode])).
+
 
 comment(String) ->
     ["-doc \"\n",
      formatter(String),
      "\n\"."].
-     %% [["%%% ", L, $\n] || L <- string:split(string:trim(String), "\n", all)]].
 
 moduledoc(String) ->
     %% NewLines = re:replace(String, "\\\.( )?", ".\n", [global]),
@@ -197,9 +220,8 @@ moduledoc(String) ->
 
 filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T]) ->
     NewAnno =
-        case erl_anno:line(Anno) of
-            0 when What =:= function ->
-                case lists:search(fun({attribute, _, spec, {FA, _}}) when is_tuple(FA) ->
+        if What =:= function ->
+                case lists:search(fun({attribute, _SpecAnno, spec, {FA, _}}) when is_tuple(FA) ->
                                           {F, A} =:= FA;
                                      %% ({attribute, _, spec, {Spec, _}}) when is_atom(Spec) ->
                                      %%      {F, A} =:= {Spec, 0};
@@ -209,19 +231,24 @@ filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T
                     {value, {attribute, SpecAnno, _, _}} ->
                         SpecAnno;
                     false ->
-                        case lists:search(fun({function, _, FF, FA, _}) when is_tuple(FA) ->
+                        case lists:search(fun({function, _FuncAnno, FF, FA, _}) when is_tuple(FA) ->
                                                   {F, A} =:= {FF, FA};
                                              (_) ->
                                                   false
                                           end, AST) of
                             {value, {function, FuncAnno, _, _, _}} ->
-                                FuncAnno
+                                FuncAnno;
+                            false ->
+                                io:format("~p~n",[AST]),
+                                io:format("Could not find func: ~p/~p~n",[F,A])
                         end
                 end;
-            0 when What =:= type ->
-                case lists:search(fun({attribute, _, type, {FA, _}}) when is_tuple(FA) ->
+           What =:= type ->
+                case lists:search(fun({attribute, _TypeAnno, TO, {FA, _}}) when
+                                            is_tuple(FA), TO =:= type orelse TO =:= opaque ->
                                           {F, A} =:= FA;
-                                     ({attribute, _, type, {Type, _, Args}}) when is_atom(Type) ->
+                                     ({attribute, _TypeAnno, TO, {Type, _, Args}}) when
+                                            is_atom(Type), TO =:= type orelse TO =:= opaque ->
                                           {F, A} =:= {Type, length(Args)};
                                      (_) ->
                                           false
@@ -232,15 +259,23 @@ filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T
                         io:format("~p~n",[AST]),
                         io:format("Could not find type: ~p/~p~n",[F,A]),
                         error(badarg)
-                end;
-            _Line ->
-                Anno
+                end
         end,
-    [{{What, F, A}, erl_anno:set_file(erl_anno:file(Anno), NewAnno), S, D, M} | filter_and_fix_anno(AST, T)];
+    [{{What, F, A}, NewAnno, S, D, M} | filter_and_fix_anno(AST, T)];
 filter_and_fix_anno(AST, [_ | T]) ->
     filter_and_fix_anno(AST, T);
 filter_and_fix_anno(_, []) ->
     [].
+
+expand_anno(AST) ->
+    {NewAST, _} =
+        lists:mapfoldl(fun F({attribute, _, file, {NewFile, _}} = E, File) when NewFile =/= File ->
+                               F(E, NewFile);
+                           F(E, File) ->
+                               {setelement(2, E, erl_anno:set_file(File, element(2, E))), File}
+                       end, undefined, AST),
+    %% io:format("NewAST: ~p~n",[NewAST]),
+    NewAST.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% API function for dealing with the function documentation
@@ -758,45 +793,31 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
             [Mod, FA] = string:split(MFA, "#"),
             [Func, Arity] = string:split(FA, "/"),
             {
-                ["[", Docs, "](https://erlang.org/doc/man/", Mod, ".html#", Func, "-", Arity, ")"],
-                NewPos
+             [
+              "[", Docs, "](",Mod,":",Func,"/",Arity,")"
+             ],
+             NewPos
             };
         <<"https://erlang.org/doc/link/seetype">> ->
             case string:lexemes(Href, ":#/") of
                 [_App, Mod, Type, Arity] ->
                     {
-                        [
-                            "[",
-                            Docs,
-                            "](https://erlang.org/doc/man/",
-                            Mod,
-                            ".html#",
-                            "type-",
-                            Type,
-                            "-",
-                            Arity,
-                            ")"
-                        ],
-                        NewPos
+                     [
+                      "[", Docs, "](t:",Mod,":",Type,"/",Arity,")"
+                     ],
+                     NewPos
                     };
                 [_App, Mod, Type] ->
                     {
-                        [
-                            "[",
-                            Docs,
-                            "](https://erlang.org/doc/man/",
-                            Mod,
-                            ".html#",
-                            "type-",
-                            Type,
-                            ")"
-                        ],
-                        NewPos
+                     [
+                      "[", Docs, "](t:",Mod,":",Type,"/0)"
+                     ],
+                     NewPos
                     }
             end;
         <<"https://erlang.org/doc/link/seeerl">> ->
             [_App, Mod | Anchor] = string:lexemes(Href, ":#"),
-            {["[", Docs, "](https://erlang.org/doc/man/", Mod, ".html#", Anchor, ")"], NewPos};
+            {["[", Docs, "](", Mod, "#", Anchor, ")"], NewPos};
         _ ->
             {Docs, NewPos}
     end;
@@ -918,7 +939,7 @@ render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
                     Pre,
                     ["(", lists:join($|, [["\\", C] || C <- EscapeChars]), ")"],
                     "\\\\\\1",
-                    [global]
+                    [global, unicode]
                 )
         end,
     {Str, Pos + lastline(Str)};
