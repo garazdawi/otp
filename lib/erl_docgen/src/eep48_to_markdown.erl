@@ -151,10 +151,14 @@ convert(File, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T]) ->
     {Before, After} = lists:split(erl_anno:line(Anno)-1, File),
     convert(Before, [comment(render_docs(D, init_config(D, #{})))|After] ++ Acc, T).
 
+%% Comments are context-dependent:
+%% - a comment in the doc chunk cannot be considered a document attribute unless it relates to a function
+%% - a comment at the top level is a -moduledoc attribute
+%% - future work: doc strings if there are examples in code
 comment(String) ->
-    ["-doc \"",
-     string:trim(re:replace(String, "(\"|\\\\)", "\\\\\\1", [global])),
-     "\"."].
+    ["-doc \"\"\"\n",
+     string:trim(String),
+     "\"\"\"."].
      %% [["%%% ", L, $\n] || L <- string:split(string:trim(String), "\n", all)]].
 
 filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T]) ->
