@@ -147,13 +147,15 @@ convert(File, Docs) ->
           fun(MFA1, MFA2) ->
                   erl_anno:line(element(2, MFA1)) >= erl_anno:line(element(2, MFA2))
           end, Docs),
-    convert(string:split(File, "\n", all), [], SortedDocs).
+    Lines = string:split(File, "\n", all),
+    {ModuleHeader, ModuleBody} =
+        lists:foldl(fun document_module/2, {Lines, []}, SortedDocs),
+    ModuleHeader ++ ModuleBody.
 
-convert(File, Acc, []) ->
-    File ++ Acc;
-convert(File, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T]) ->
+document_module({_, Anno, _, #{ <<"en">> := D }, _}, {File, Acc}) ->
     {Before, After} = lists:split(erl_anno:line(Anno)-1, File),
-    convert(Before, [comment(render_docs(D, init_config(D, #{})))|After] ++ Acc, T).
+    DocModule = comment(render_docs(D, init_config(D, #{}))),
+    {Before, [DocModule|After] ++ Acc}.
 
 %% Convert module documentation
 convert_moduledoc(ModuleHeader) ->
