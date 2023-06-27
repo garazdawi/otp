@@ -128,14 +128,17 @@ convert(Module) ->
     Cwd = proplists:get_value(cwd, Meta, ""),
     Filename = filename:join(Cwd, File),
     {ok, FileBin} = file:read_file(Filename),
-    {ok, #docs_v1{ module_doc = #{ <<"en">> := _ModuleDoc },
+    {ok, #docs_v1{ module_doc = #{ <<"en">> := ModuleDoc },
                    docs = Docs } } = code:get_doc(Module, #{ sources => [eep48] }),
-    NewFileBin = convert(FileBin, filter_and_fix_anno(AST, Docs)),
-    %% io:format("~p~n",[hd(NewFileBin)]),
-    io:format("~ts~n",[NewFileBin]),
-    %% io:format("~p~n",[hd(lists:reverse(NewFileBin))]),
+
+    FileModuleDoc = convert_moduledoc(ModuleDoc),
+    FileFunDoc = convert(FileBin, filter_and_fix_anno(AST, Docs)),
+    FormattedFile = format_doc(FileModuleDoc, FileFunDoc),
+
+    %% io:format("~p~n", [filter_and_fix_anno(AST, Docs)]),
+    %% io:format("~ts~n",[NewFileBin2]),
     %% {AST, Meta}.
-    file:write_file(Filename, NewFileBin),
+    file:write_file(Filename, FormattedFile),
     ok.
 
 convert(File, Docs) ->
@@ -145,11 +148,33 @@ convert(File, Docs) ->
                   erl_anno:line(element(2, MFA1)) >= erl_anno:line(element(2, MFA2))
           end, Docs),
     convert(string:split(File, "\n", all), [], SortedDocs).
+
 convert(File, Acc, []) ->
-    unicode:characters_to_binary([[A,$\n] || A <- File ++ Acc]);
+    File ++ Acc;
 convert(File, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T]) ->
     {Before, After} = lists:split(erl_anno:line(Anno)-1, File),
     convert(Before, [comment(render_docs(D, init_config(D, #{})))|After] ++ Acc, T).
+
+%% Convert module documentation
+convert_moduledoc(ModuleHeader) ->
+    DocHeader = lists:flatmap(
+                  fun (Doc) ->
+                          render_docs(Doc, init_config(Doc, #{}))
+                  end, ModuleHeader),
+    moduledoc(DocHeader).
+
+format_doc(FileModuleDoc, FileFunDoc) ->
+    {Copyright, Module} = split_by_copyright(FileFunDoc),
+    ModuleWithDocs = Copyright ++ FileModuleDoc ++ Module,
+    unicode:characters_to_binary([[A,$\n] || A <- ModuleWithDocs]).
+
+split_by_copyright(File) ->
+    split_by_copyright(File, []).
+split_by_copyright([<<"-module", _/binary>> | _]=Module, Acc) ->
+    {lists:reverse(Acc), Module};
+split_by_copyright([B | Bs], Acc) when is_binary(B); is_list(B) ->
+    split_by_copyright(Bs, [B | Acc]).
+
 
 %% Comments are context-dependent:
 %% - a comment in the doc chunk cannot be considered a document attribute unless it relates to a function
@@ -160,6 +185,11 @@ comment(String) ->
      string:trim(String),
      "\"\"\"."].
      %% [["%%% ", L, $\n] || L <- string:split(string:trim(String), "\n", all)]].
+
+moduledoc(String) ->
+    ["-moduledoc \"\"\"",
+     string:trim(String),
+     "\"\"\"."].
 
 filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T]) ->
     NewAnno =
