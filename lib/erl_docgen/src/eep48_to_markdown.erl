@@ -184,8 +184,8 @@ split_by_copyright([B | Bs], Acc) when is_binary(B); is_list(B) ->
 %% - future work: doc strings if there are examples in code
 comment(String) ->
     ["-doc \"\"\"\n",
-     string:trim(String),
-     "\"\"\"."].
+     string:trim(re:replace(String, "(\"|\\\\)", "\\\\\\1", [global])),
+     "\n\"\"\"."].
      %% [["%%% ", L, $\n] || L <- string:split(string:trim(String), "\n", all)]].
 
 moduledoc(String) ->
