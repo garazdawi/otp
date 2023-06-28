@@ -133,7 +133,7 @@ convert(Module) ->
 
     FileModuleDoc = convert_moduledoc(ModuleDoc),
     FileFunDoc = convert(FileBin, filter_and_fix_anno(AST, Docs)),
-    FormattedFile = format_doc(FileModuleDoc, FileFunDoc),
+    FormattedFile = format_doc(AST, FileModuleDoc, FileFunDoc),
 
     %% io:format("~p~n", [filter_and_fix_anno(AST, Docs)]),
     %% io:format("~ts~n",[NewFileBin2]),
@@ -165,33 +165,26 @@ convert_moduledoc(ModuleHeader) ->
                   end, ModuleHeader),
     moduledoc(DocHeader).
 
-format_doc(FileModuleDoc, FileFunDoc) ->
-    {Copyright, Module} = split_by_copyright(FileFunDoc),
+format_doc(AST, FileModuleDoc, FileFunDoc) ->
+    {attribute, Anno, module, _} = lists:keyfind(module, 3, AST),
+    {Copyright, Module} = lists:split(erl_anno:line(Anno)-1, FileFunDoc),
     ModuleWithDocs = Copyright ++ FileModuleDoc ++ Module,
     unicode:characters_to_binary([[A,$\n] || A <- ModuleWithDocs]).
-
-split_by_copyright(File) ->
-    split_by_copyright(File, []).
-split_by_copyright([<<"-module", _/binary>> | _]=Module, Acc) ->
-    {lists:reverse(Acc), Module};
-split_by_copyright([B | Bs], Acc) when is_binary(B); is_list(B) ->
-    split_by_copyright(Bs, [B | Acc]).
-
 
 %% Comments are context-dependent:
 %% - a comment in the doc chunk cannot be considered a document attribute unless it relates to a function
 %% - a comment at the top level is a -moduledoc attribute
 %% - future work: doc strings if there are examples in code
 comment(String) ->
-    ["-doc \"\"\"\n",
+    ["-doc \"\n",
      string:trim(re:replace(String, "(\"|\\\\)", "\\\\\\1", [global])),
-     "\n\"\"\"."].
+     "\n\"."].
      %% [["%%% ", L, $\n] || L <- string:split(string:trim(String), "\n", all)]].
 
 moduledoc(String) ->
-    ["-moduledoc \"\"\"",
+    ["-moduledoc \"",
      string:trim(String),
-     "\"\"\"."].
+     "\"."].
 
 filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T]) ->
     NewAnno =
