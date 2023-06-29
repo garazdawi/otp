@@ -133,7 +133,7 @@ convert(Module) ->
 
     FileModuleDoc = convert_moduledoc(ModuleDoc),
     FileFunDoc = convert(FileBin, filter_and_fix_anno(AST, Docs)),
-    FormattedFile = format_doc(AST, FileModuleDoc, FileFunDoc),
+    FormattedFile = structure_doc(AST, FileModuleDoc, FileFunDoc),
 
     %% io:format("~p~n", [filter_and_fix_anno(AST, Docs)]),
     %% io:format("~ts~n",[NewFileBin2]),
@@ -165,25 +165,34 @@ convert_moduledoc(ModuleHeader) ->
                   end, ModuleHeader),
     moduledoc(DocHeader).
 
-format_doc(AST, FileModuleDoc, FileFunDoc) ->
+structure_doc(AST, FileModuleDoc, FileFunDoc) ->
     {attribute, Anno, module, _} = lists:keyfind(module, 3, AST),
     {Copyright, Module} = lists:split(erl_anno:line(Anno)-1, FileFunDoc),
     ModuleWithDocs = Copyright ++ FileModuleDoc ++ Module,
     unicode:characters_to_binary([[A,$\n] || A <- ModuleWithDocs]).
 
-%% Comments are context-dependent:
-%% - a comment in the doc chunk cannot be considered a document attribute unless it relates to a function
-%% - a comment at the top level is a -moduledoc attribute
-%% - future work: doc strings if there are examples in code
+formatter(String) ->
+    %% TODO: fix re so that the Text1 string:replace is not needed
+    Text0 = string:trim(re:replace(String, "\\\.( )?", ".\n", [global])),
+    Text1 = string:replace(Text0, "\.", "."),
+
+    Filename = "formatter.md",
+    file:write_file(Filename, list_to_binary(Text1)),
+    os:cmd("mdformat --wrap 80 formatter.md"),
+    {ok, FormattedText} = file:read_file(Filename),
+    file:delete(Filename),
+    string:trim(FormattedText).
+
 comment(String) ->
     ["-doc \"\n",
-     string:trim(re:replace(String, "(\"|\\\\)", "\\\\\\1", [global])),
+     formatter(String),
      "\n\"."].
      %% [["%%% ", L, $\n] || L <- string:split(string:trim(String), "\n", all)]].
 
 moduledoc(String) ->
+    %% NewLines = re:replace(String, "\\\.( )?", ".\n", [global]),
     ["-moduledoc \"",
-     string:trim(String),
+     formatter(String),
      "\"."].
 
 filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T]) ->
