@@ -135,13 +135,21 @@ convert(Module) ->
              {AST, Meta}}}]}} = beam_lib:chunks(code:which(Module),[debug_info]),
 
     case code:get_doc(Module, #{ sources => [eep48] }) of
-        {ok, #docs_v1{ module_doc = #{ <<"en">> := _ModuleDoc }, docs = Docs } = DocsV1 } ->
-            NewFiles = convert(#{ meta => Meta, docs => DocsV1 },
+        {ok, #docs_v1{ module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
+            NewFiles = convert(#{ meta => Meta, ast => AST, docs => DocsV1 },
                                filter_and_fix_anno(expand_anno(AST), Docs)),
 
             %% io:format("~p~n", [AST]),
-            {attribute, _, file, {File,_}} = lists:keyfind(file, 3, AST),
-            {attribute, Anno, module, _} = lists:keyfind(module, 3, AST),
+            {_, File, Anno} = lists:foldl(
+                                fun({attribute, [{generated,true}|_], file, {File, Line}}, {false, _, _}) ->
+                                        {true, File, Line};
+                                   (_, FileAnno) when is_tuple(FileAnno) ->
+                                        FileAnno;
+                                   ({attribute, _, file, {File,_}}, _) ->
+                                        File;
+                                   ({attribute, Anno, module, _}, File) ->
+                                        {false, File, Anno}
+                                end, undefined, AST),
             Filename = filename:join(proplists:get_value(cwd, Meta, ""), File),
             {BeforeModule, AfterModule} = lists:split(erl_anno:line(Anno), maps:get(Filename, NewFiles)),
 
@@ -181,8 +189,12 @@ convert(Files, Docs) ->
           end, Docs),
     %% io:format("~p",[SortedDocs]),
     convert([], [], SortedDocs, Files).
-convert(_Lines, [], [], Files) ->
-    Files;
+convert([], [], [], Files) ->
+    %% When there are no documented functions in module, eg. gen_fsm
+    Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
+    {attribute, _, file, {Filename, _}} = lists:keyfind(file, 3, maps:get(ast, Files)),
+    {ok, Bin} = file:read_file(filename:join(Cwd, Filename)),
+    Files#{ filename:join(Cwd, Filename) => string:split(Bin,"\n",all) };
 convert(Lines, Acc, [], Files) ->
     Files#{ maps:get(filename, Files) => Lines ++ Acc};
 convert(Lines, Acc, [{{callback,F,A}, _, _, _, _} | T], Files) ->
@@ -200,7 +212,7 @@ convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T] = Docs, Files) ->
             NewFiles =
                 case maps:get(current, Files, undefined) of
                     undefined -> Files;
-                    _ -> Files#{ maps:get(filename, Files) => unicode:characters_to_binary([[A,$\n] || A <- Lines ++ Acc]) }
+                    _ -> Files#{ maps:get(filename, Files) => Lines ++ Acc }
                 end,
             convert(string:split(Bin,"\n",all), [], Docs,
                     NewFiles#{ current => erl_anno:file(Anno), filename => Filename })
@@ -218,18 +230,16 @@ formatter(String) ->
     %% TODO: fix re so that the Text1 string:replace is not needed
 
     Text =
-        case os:find_executable("mdformat") of
-            false -> String;
-            _ ->
-                Text0 = string:trim(re:replace(String, "\\\.( )?", ".\n", [global])),
-                Text1 = string:replace(Text0, "\.", "."),
-                
-                Filename = "formatter.md",
-                file:write_file(Filename, list_to_binary(Text1)),
-                os:cmd("mdformat --wrap 80 formatter.md"),
-                {ok, FormattedText} = file:read_file(Filename),
-                file:delete(Filename),
-                FormattedText
+        begin
+            Text0 = string:trim(re:replace(String, "\\\\\\\.( )?", ".\n", [unicode, global])),
+            Text1 = string:replace(Text0, "\\\\\\.", "."),
+
+            Filename = "formatter.md",
+            file:write_file(Filename, list_to_binary(Text1)),
+            os:cmd("npx prettier --write --prose-wrap always formatter.md"),
+            {ok, FormattedText} = file:read_file("formatter.md"),
+            file:delete(Filename),
+            FormattedText
         end,
     string:trim(re:replace(Text, "(\"|\\\\)", "\\\\\\1", [global, unicode])).
 
