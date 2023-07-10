@@ -249,7 +249,7 @@ format_error({error,Term}) ->
 format_error({warning,Term}) ->
     io_lib:format("-warning(~tp).", [Term]);
 format_error(ftr_after_prefix) ->
-    "feature directive not allowed after exports or record definitions";
+    "only the module directive is allowed before the feature directive";
 format_error(E) -> file:format_error(E).
 
 -spec scan_file(FileName, Options) ->
