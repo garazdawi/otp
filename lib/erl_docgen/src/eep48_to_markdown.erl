@@ -27,6 +27,7 @@
 
 -include_lib("kernel/include/eep48.hrl").
 
+-export([render_docs/1]).
 -export([render/3, render/4, render/5]).
 -export([render_type/3, render_type/4, render_type/5]).
 -export([render_callback/3, render_callback/4, render_callback/5]).
@@ -111,7 +112,7 @@
     | h5
     | h6.
 
--export([convert/1]).
+-export([convert/1, convert_application/1]).
 
 -spec normalize(Docs) -> NormalizedDocs when
     Docs :: chunk_elements(),
@@ -119,30 +120,51 @@
 normalize(Docs) ->
     shell_docs:normalize(Docs).
 
+convert_application(App) ->
+    application:load(App),
+    {ok, Modules} = application:get_key(App, modules),
+    [convert(M) || M <- Modules],
+    docgen_xml_to_markdown:convert_application(App),
+    ok.
+
 convert(Module) ->
+    io:format("Converting: ~p~n",[Module]),
     {ok, {Module,
           [{debug_info,
             {debug_info_v1, erl_abstract_code,
              {AST, Meta}}}]}} = beam_lib:chunks(code:which(Module),[debug_info]),
-    {ok, #docs_v1{ module_doc = #{ <<"en">> := ModuleDoc },
-                   docs = Docs } } = code:get_doc(Module, #{ sources => [eep48] }),
 
-    NewFiles = convert(#{ meta => Meta }, filter_and_fix_anno(expand_anno(AST), Docs)),
+    case code:get_doc(Module, #{ sources => [eep48] }) of
+        {ok, #docs_v1{ module_doc = #{ <<"en">> := _ModuleDoc }, docs = Docs } = DocsV1 } ->
+            NewFiles = convert(#{ meta => Meta, docs => DocsV1 },
+                               filter_and_fix_anno(expand_anno(AST), Docs)),
 
-    %% io:format("~p~n", [AST]),
-    {attribute, _, file, {File,_}} = lists:keyfind(file, 3, AST),
-    {attribute, Anno, module, _} = lists:keyfind(module, 3, AST),
-    Filename = filename:join(proplists:get_value(cwd, Meta, ""), File),
-    {BeforeModule, AfterModule} = lists:split(erl_anno:line(Anno), maps:get(Filename, NewFiles)),
+            %% io:format("~p~n", [AST]),
+            {attribute, _, file, {File,_}} = lists:keyfind(file, 3, AST),
+            {attribute, Anno, module, _} = lists:keyfind(module, 3, AST),
+            Filename = filename:join(proplists:get_value(cwd, Meta, ""), File),
+            {BeforeModule, AfterModule} = lists:split(erl_anno:line(Anno), maps:get(Filename, NewFiles)),
 
-    NewFilesWithModuleDoc =
-        NewFiles#{ Filename => BeforeModule ++ convert_moduledoc(ModuleDoc) ++ AfterModule },
+            NewFilesWithModuleDoc =
+                NewFiles#{ Filename => BeforeModule ++ convert_moduledoc(ModuleDoc) ++ AfterModule },
 
-    %% io:format("~ts~n",[NewFileBin2]),
-    %% {AST, Meta}.
-    [ file:write_file(Key, unicode:characters_to_binary([[A,$\n] || A <- Value]))
-      || Key := Value <- NewFilesWithModuleDoc, not is_atom(Key)],
-    ok.
+
+            %% io:format("~p~n",[hd(NewFileBin)]),
+            %%    io:format("~p~n",[NewFiles]),
+            %%    ok = nok,
+            %% io:format("~p~n",[hd(lists:reverse(NewFileBin))]),
+            %%    io:format("~p~n",[AST]),
+            %% {AST, Meta}.
+            %%    [ io:format("~ts:~n~ts~n", [Key, ""]) || Key := Value <- NewFiles, not is_atom(Key)],
+            [ begin
+                  io:format("\tUpdated ~ts~n",[Key]),
+                  file:write_file(Key, unicode:characters_to_binary([[A,$\n] || A <- Value]))
+              end || Key := Value <- NewFilesWithModuleDoc, not is_atom(Key)],
+            ok;
+        Error ->
+            io:format("Error: ~p~n",[Error]),
+            ok
+    end.
 
 convert(Files, Docs) ->
     SortedDocs =
@@ -159,13 +181,18 @@ convert(Files, Docs) ->
           end, Docs),
     %% io:format("~p",[SortedDocs]),
     convert([], [], SortedDocs, Files).
+convert(_Lines, [], [], Files) ->
+    Files;
 convert(Lines, Acc, [], Files) ->
     Files#{ maps:get(filename, Files) => Lines ++ Acc};
+convert(Lines, Acc, [{{callback,F,A}, _, _, _, _} | T], Files) ->
+    io:format("Skipping callback ~p/~p~n",[F,A]),
+    convert(Lines, Acc, T, Files);
 convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T] = Docs, Files) ->
     case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
         true ->
             {Before, After} = lists:split(erl_anno:line(Anno)-1, Lines),
-            convert(Before, [comment(render_docs(D, init_config(D, #{})))|After] ++ Acc, T, Files);
+            convert(Before, [comment(render_docs(D, init_config(maps:get(docs, Files), #{})))|After] ++ Acc, T, Files);
         false ->
             Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
             Filename = filename:join(Cwd, erl_anno:file(Anno)),
@@ -220,7 +247,8 @@ moduledoc(String) ->
 
 filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T]) ->
     NewAnno =
-        if What =:= function ->
+        case What of
+            function ->
                 case lists:search(fun({attribute, _SpecAnno, spec, {FA, _}}) when is_tuple(FA) ->
                                           {F, A} =:= FA;
                                      %% ({attribute, _, spec, {Spec, _}}) when is_atom(Spec) ->
@@ -231,7 +259,7 @@ filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T
                     {value, {attribute, SpecAnno, _, _}} ->
                         SpecAnno;
                     false ->
-                        case lists:search(fun({function, _FuncAnno, FF, FA, _}) when is_tuple(FA) ->
+                        case lists:search(fun({function, _FuncAnno, FF, FA, _}) ->
                                                   {F, A} =:= {FF, FA};
                                              (_) ->
                                                   false
@@ -240,10 +268,11 @@ filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T
                                 FuncAnno;
                             false ->
                                 io:format("~p~n",[AST]),
-                                io:format("Could not find func: ~p/~p~n",[F,A])
+                                io:format("Could not find func: ~p/~p~n",[F,A]),
+                                error(badarg)
                         end
                 end;
-           What =:= type ->
+           type ->
                 case lists:search(fun({attribute, _TypeAnno, TO, {FA, _}}) when
                                             is_tuple(FA), TO =:= type orelse TO =:= opaque ->
                                           {F, A} =:= FA;
@@ -259,7 +288,9 @@ filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T
                         io:format("~p~n",[AST]),
                         io:format("Could not find type: ~p/~p~n",[F,A]),
                         error(badarg)
-                end
+                end;
+            callback ->
+                Anno
         end,
     [{{What, F, A}, NewAnno, S, D, M} | filter_and_fix_anno(AST, T)];
 filter_and_fix_anno(AST, [_ | T]) ->
@@ -685,6 +716,8 @@ render_typecb_docs(Docs, D, Config) ->
     render_typecb_docs(Docs, init_config(D, Config)).
 
 %%% General rendering functions
+render_docs(DocContents) ->
+    render_docs(DocContents, init_config(undefined, [])).
 -spec render_docs([chunk_element()], #config{}) -> unicode:chardata().
 render_docs(DocContents, #config{} = Config) ->
     render_docs(DocContents, 0, Config).
@@ -746,23 +779,23 @@ render_docs(Elem, State, Pos, Ind, D) ->
 %%     render_docs(Content, State, Pos, Ind,D);
 
 %% Catch h* before the padding is done as they reset padding
-render_element({h1, _, Content}, State, 0 = Pos, _Ind, D) ->
-    {Docs, NewPos} = render_docs(Content, State, Pos, 0, D),
+render_element({Tag = h1, _, Content}, State, 0 = Pos, _Ind, D) ->
+    {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
     trimnlnl({["# ", Docs], NewPos});
-render_element({h2, _, Content}, State, 0 = Pos, _Ind, D) ->
-    {Docs, NewPos} = render_docs(Content, State, Pos, 0, D),
+render_element({Tag = h2, _, Content}, State, 0 = Pos, _Ind, D) ->
+    {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
     trimnlnl({["## ", Docs], NewPos});
-render_element({h3, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
-    {Docs, NewPos} = render_docs(Content, State, Pos, 0, D),
+render_element({Tag = h3, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
+    {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
     trimnlnl({["### ", Docs], NewPos});
-render_element({h4, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
-    {Docs, NewPos} = render_docs(Content, State, Pos, 0, D),
+render_element({Tag = h4, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
+    {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
     trimnlnl({["#### ", Docs], NewPos});
-render_element({h5, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
-    {Docs, NewPos} = render_docs(Content, State, Pos, 0, D),
+render_element({Tag = h5, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
+    {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
     trimnlnl({["##### ", Docs], NewPos});
-render_element({h6, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
-    {Docs, NewPos} = render_docs(Content, State, Pos, 0, D),
+render_element({Tag = h6, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
+    {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
     trimnlnl({["###### ", Docs], NewPos});
 render_element({pre, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
     %% We pad `pre` with two newlines if the previous section did not indent the region.
@@ -771,11 +804,13 @@ render_element({pre, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
 render_element({Elem, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind, ?IS_BLOCK(Elem) ->
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
     {["\n", Docs], NewPos};
+render_element({'div', [{class, <<"note">>}], Content}, State, Pos, Ind, D) ->
+    render_element({'div', [{class, <<"info">>}], Content}, State, Pos, Ind, D);
 render_element({'div', [{class, What}], Content}, State, Pos, Ind, D) ->
-    Title = unicode:characters_to_binary([string:titlecase(What), ":"]),
-    {Header, 0} = render_element({h3, [], [Title]}, State, Pos, Ind, D),
-    {Docs, 0} = render_element({'div', [], Content}, ['div' | State], 0, Ind + 2, D),
-    {[Header, Docs], 0};
+    Title = unicode:characters_to_binary([string:titlecase(What), " {: .", What, "}"]),
+    {Header, 0} = render_element({h4, [], [Title]}, State, Pos, Ind, D),
+    {Docs, 0} = render_element({'div', [], Content}, ['div' | State], 0, Ind+2, D),
+    trimnlnl([["> ",Line,"\n"] || Line <- string:split([Header, trim(Docs)],"\n",all)]);
 render_element({Tag, _, Content}, State, Pos, Ind, D) when Tag =:= p; Tag =:= 'div' ->
     trimnlnl(render_docs(Content, [Tag | State], Pos, Ind, D));
 render_element(Elem, State, Pos, Ind, D) when Pos < Ind ->
@@ -794,7 +829,7 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
             [Func, Arity] = string:split(FA, "/"),
             {
              [
-              "[", Docs, "](",Mod,":",Func,"/",Arity,")"
+              "[", Docs, "](m:",Mod,":",Func,"/",Arity,")"
              ],
              NewPos
             };
@@ -817,7 +852,7 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
             end;
         <<"https://erlang.org/doc/link/seeerl">> ->
             [_App, Mod | Anchor] = string:lexemes(Href, ":#"),
-            {["[", Docs, "](", Mod, "#", Anchor, ")"], NewPos};
+            {["[", Docs, "](m:", Mod, "#", Anchor, ")"], NewPos};
         _ ->
             {Docs, NewPos}
     end;
@@ -851,10 +886,15 @@ render_element({b, _, Content}, State, Pos, Ind, D) ->
         false ->
             {["**", Docs, "**"], NewPos}
     end;
-render_element({pre, _, Content}, State, Pos, Ind, D) ->
+render_element({pre, Attr, Content}, State, Pos, Ind, D) ->
     %% For pre we make sure to respect the newlines in pre
     {Docs, _} = trimnl(render_docs(Content, [pre | State], Pos, Ind, D)),
-    trimnlnl(["```erlang\n", pad(Ind), Docs, pad(Ind), "```"]);
+    Type =
+        case proplists:get_value(type, Attr) of
+            undefined -> "";
+            "erl" -> "erlang"
+        end,
+    trimnlnl(["```",Type,"\n", pad(Ind), Docs, pad(Ind), "```"]);
 render_element({ul, [{class, <<"types">>}], Content}, State, _Pos, Ind, D) ->
     {Docs, _} = render_docs(Content, [types | State], 0, Ind, D),
     trimnlnl(Docs);
@@ -934,6 +974,8 @@ render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
                 Pre;
             [code | _] ->
                 Pre;
+            [h4 | _] ->
+                Pre;
             _ ->
                 re:replace(
                     Pre,
@@ -1002,6 +1044,8 @@ trimnl({Chars, _Pos}) ->
     nl(string:trim(Chars, trailing, "\n"));
 trimnl(Chars) ->
     nl(string:trim(Chars, trailing, "\n")).
+trim(Chars) ->
+    string:trim(Chars, trailing, "\n").
 -spec nl(unicode:chardata() | {unicode:chardata(), non_neg_integer()}) -> {unicode:chardata(), 0}.
 nl({Chars, _Pos}) ->
     nl(Chars);
