@@ -32,7 +32,10 @@ main([Application, FromXML, ToMarkdown]) ->
     case docs(Application, FromXML) of
         {error, Reason} ->
             io:format("Failed to create chunks: ~p~n",[Reason]),
-            erlang:halt(1);
+            throw({error, Reason});
+        skip ->
+            io:format("Skipping: ~ts~n",[FromXML]),
+            ok;
         EEP48 ->
 %%            io:format("~p~n",[EEP48]),
             Markdown = eep48_to_markdown:render_docs(shell_docs:normalize(EEP48)),
@@ -41,18 +44,23 @@ main([Application, FromXML, ToMarkdown]) ->
     end.
 
 convert_application(App) ->
-    SrcDir = filename:join([code:lib_dir(App),"doc","src"]),
-    FromXML = filename:join([SrcDir,"part.xml"]),
-    case xmerl_sax_parser:file(FromXML,
+    SrcDir = filename:join([code:lib_dir(App),"doc","xml"]),
+    DstDir = filename:join([code:lib_dir(App),"doc","src"]),
+%    ok = convert_xml_include(App, SrcDir, filename:join([SrcDir,"part.xml"])),
+    ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,"ref_man.xml"])),
+    ok.
+
+convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
+    case xmerl_sax_parser:file(IncludeXML,
                                [skip_external_dtd,
                                 {event_fun,fun event/3},
                                 {event_state,initial_state()}]) of
         {ok,Tree,_} ->
-            [{part, _, C}] = get_dom(Tree),
+            [{_, _, C}] = get_dom(Tree),
             lists:foreach(
               fun({include,[{href,Path}],_}) ->
                       main([atom_to_list(App), filename:join(SrcDir,Path),
-                            filename:join(SrcDir, filename:rootname(Path) ++ ".md")]);
+                            filename:join(DstDir, filename:rootname(Path) ++ ".md")]);
                  ({Tag, _, _}) when Tag =:= header; Tag =:= description ->
                       ok
               end, C);
@@ -188,13 +196,21 @@ build_dom({endElement, _Uri, LocalName, _QName},
 %% Text
 %%----------------------------------------------------------------------
 build_dom({characters, String},
+	  #state{ tags = [startCDATA|_],
+                  dom = [{Name, Attributes, Content}| D]} = State) ->
+    NewContent =
+        [unicode:characters_to_binary(String,utf8)| Content],
+    State#state{dom=[{Name, Attributes, NewContent} | D]};
+build_dom({characters, String},
 	  #state{dom=[{Name, Attributes, Content}| D]} = State) ->
     HtmlEnts = [{"&nbsp;",[160]},
                 {"&times;",[215]},
                 {"&plusmn;",[177]},
                 {"&ouml;","ö"},
                 {"&auml;","ä"},
-                {"&aring;","å"}
+                {"&aring;","å"},
+                {"&eacute;","é"},
+                {"&shy;",[173]}
                ],
 
     NoHtmlEnt =
@@ -212,6 +228,11 @@ build_dom({characters, String},
     NewContent =
         [unicode:characters_to_binary(NoHtmlEnt,utf8)| Content],
     State#state{dom=[{Name, Attributes, NewContent} | D]};
+build_dom(startCDATA, State) ->
+    State#state{ tags = [startCDATA | State#state.tags ] };
+build_dom(endCDATA, #state{ tags = [ CData | T ] } = State) ->
+    CData = startCDATA,
+    State#state{ tags = T };
 
 build_dom({ignorableWhitespace, String},
           #state{dom=[{Name,_,_} = _E|_]} = State) ->
@@ -234,7 +255,8 @@ build_dom({startEntity, SysId}, State) ->
 
 %% Default
 %%----------------------------------------------------------------------
-build_dom(_E, State) ->
+build_dom(E, State) ->
+    %% io:format("IgnoredEvent: ~p~n",[E]),
     State.
 
 %%----------------------------------------------------------------------
@@ -258,24 +280,70 @@ docs(Application, OTPXml)->
                                 {event_state,initial_state()}]) of
         {ok,Tree,_} ->
             put(application, Application),
-            transform(get_dom(Tree), []);
+            Dom = get_dom(Tree),
+            case lists:member(
+                   element(1, hd(Dom)),
+                   [chapter,
+                    %% cref,
+                    comref, fileref, appref]) of
+                true ->
+                    transform(Dom, []);
+                false ->
+                    skip
+            end;
         Else ->
             {error,Else}
     end.
 
 %% skip <chapter> but transform and keep its content
-transform([{chapter,[],Content}|T],Acc) ->
+transform([{TopTag,[],Content}|T],Acc) when TopTag =:= chapter;
+                                            TopTag =:= cref;
+                                            TopTag =:= comref;
+                                            TopTag =:= fileref;
+                                            TopTag =:= appref ->
+    put(toptag, TopTag),
     NewContent = transform(Content, []),
-    transform(T, [{chapter, get(module), NewContent}|Acc]);
+    transform(T, [{TopTag, get(module), NewContent}|Acc]);
 
 %% skip <header> and all of its content
 transform([{header,_Attr,Content}|T],Acc) ->
-    {file, _, Filename} = lists:keyfind(file, 1, Content),
-    put(module, Filename),
-    {h1, _, Title} = lists:keyfind(h1, 1, Content),
-    transform(T,[{h1,[],Title}|Acc]);
+    case get(toptag) of
+        chapter ->
+            {file, _, Filename} = lists:keyfind(file, 1, Content),
+            put(module, Filename),
+            {h1, _, Title} = lists:keyfind(h1, 1, Content),
+            transform(T,[{h1,[],Title}|Acc]);
+        _ ->
+            transform(T,Acc)
+    end;
+
+transform([{app, [], Content}|T], Acc) ->
+    put(module, Content ++ "_app"),
+    transform(T, [{h1,[],Content}|Acc]);
+transform([{appsummary, [], Content}|T], Acc) ->
+    transform(T, [{p,[],transform(Content,[])}|Acc]);
+
+transform([{com, [], Content}|T], Acc) ->
+    put(module, Content ++ "_cmd"),
+    transform(T, [{h1,[],Content}|Acc]);
+transform([{comsummary, [], Content}|T], Acc) ->
+    transform(T, [{p,[],transform(Content,[])}|Acc]);
+
+transform([{lib, [], Content}|T], Acc) ->
+    put(module, Content),
+    transform(T, [{h1,[],Content}|Acc]);
+transform([{libsummary, [], Content}|T], Acc) ->
+    transform(T, [{p,[],transform(Content,[])}|Acc]);
+transform([{file, [], Content}|T], Acc) ->
+    put(module, Content),
+    transform(T, [{h1,[],Content}|Acc]);
+transform([{filesummary, [], Content}|T], Acc) ->
+    transform(T, [{p,[],transform(Content,[])}|Acc]);
+
 transform([{section,Attr,Content}|T],Acc) ->
     transform(T,[{section,Attr,transform(Content,[])}|Acc]);
+transform([{description,Attr,Content}|T],Acc) ->
+    transform(T,[{section,Attr,[{h2,[],[<<"Description">>]}|transform(Content,[])]}|Acc]);
 
 %% transform <list><item> to <ul><li> or <ol><li> depending on type attribute
 transform([{list,Attr,Content}|T],Acc) ->
@@ -302,8 +370,15 @@ transform([{pre,Attr,Content}|T],Acc) ->
 
 %% transform <funcs> with <func> as children
 transform([{funcs,_Attr,Content}|T],Acc) ->
-    Fns = {functions,[],transform_funcs(Content, [])},
-    transform(T,[Fns|Acc]);
+    case get(toptag) of
+        comref ->
+            transform(T, [transform(Content, []) | Acc])
+    end;
+transform([{func,_, Content}|T], Acc) ->
+    {name, _, Name} = lists:keyfind(name, 1, Content),
+    {desc, _, Desc} = lists:keyfind(desc, 1, Content),
+    transform(T, [[{h2,[],Name}|transform(Desc,[])]|Acc]);
+
 %% transform <datatypes> with <datatype> as children
 transform([{datatypes,_Attr,Content}|T],Acc) ->
     Dts = transform(Content, []),
@@ -437,120 +512,6 @@ transform_tag({tag, Attr0, C}) ->
                       Attr0),
     {dt,Attr1,C}.
 
-%% if we have {func,[],[{name,...},{name,....},...]}
-%% we convert it to one {func,[],[{name,...}] per arity lowest first.
-transform_funcs([Func|T],Acc) ->
-    transform_funcs(T,func2func(Func) ++ Acc);
-transform_funcs([],Acc) ->
-    lists:reverse(Acc).
-
-func2func({fsdescription,_Attr,_Contents}) ->
-    [];
-func2func({func,Attr,Contents}) ->
-
-    ContentsNoName = [NC||NC <- Contents, element(1,NC) /= name],
-
-    EditLink =
-        case proplists:get_value(ghlink,Attr) of
-            undefined ->
-                #{};
-            GhLink ->
-                #{ edit_url =>
-                       iolist_to_binary(["https://github.com/erlang/otp/edit/",GhLink]) }
-        end,
-
-    VerifyNameList =
-        fun(NameList, Test) ->
-                %% Assert that we don't mix ways to write <name>
-                [begin
-                     ok = Test(C),
-                     {proplists:get_value(name,T),proplists:get_value(arity,T)}
-                 end || {name,T,C} <- NameList]
-        end,
-
-    NameList = [Name || {name,_,_} = Name <- Contents],
-
-    %% "Since" is hard to accurately as there can be multiple <name> per <func> and they
-    %% can refer to the same or other arities. This should be improved in the future but
-    %% for now we set since to a comma separated list of all since attributes.
-    SinceMD =
-        case [proplists:get_value(since, SinceAttr) ||
-                 {name,SinceAttr,_} <- NameList, proplists:get_value(since, SinceAttr) =/= []] of
-            [] -> EditLink;
-            Sinces ->
-                EditLink#{ since => unicode:characters_to_binary(
-                                      lists:join(",",lists:usort(Sinces))) }
-        end,
-
-    Functions =
-        case NameList of
-            [{name,_,[]}|_] ->
-                %% Spec style function docs
-                TagsToFA =
-                    fun(Tags) ->
-                            {proplists:get_value(name,Tags),
-                             proplists:get_value(arity,Tags)}
-                    end,
-
-                _ = VerifyNameList(NameList,fun([]) -> ok end),
-
-                FAs = [TagsToFA(FAttr) || {name,FAttr,[]} <- NameList ],
-                SortedFAs = lists:usort(FAs),
-                FAClauses = lists:usort([{TagsToFA(FAttr),proplists:get_value(clause_i,FAttr)}
-                                         || {name,FAttr,[]} <- NameList ]),
-
-                MakeFunc = fun({F,A}, MD, Doc) ->
-                                   Specs = [begin
-                                                {function,Name} = func_to_atom(CF),
-                                                {Name,list_to_integer(CA),C}
-                                            end || {{CF,CA},C} <- FAClauses,
-                                                   F =:= CF, A =:= CA],
-                                   {function,[{name,F},{arity,list_to_integer(A)},
-                                              {signature,[iolist_to_binary([F,"/",A])]},
-                                              {meta,MD#{ signature => Specs }}],
-                                    Doc}
-                           end,
-
-                Base = MakeFunc(hd(SortedFAs), SinceMD, ContentsNoName),
-
-                {BaseF,BaseA} = hd(SortedFAs),
-                MD = SinceMD#{ equiv => {function,list_to_atom(BaseF),list_to_integer(BaseA)}},
-                Equiv = lists:map(
-                          fun(FA) ->
-                                  MakeFunc(FA, MD, [])
-                          end, tl(SortedFAs)),
-                [Base | Equiv];
-            NameList ->
-                %% Manual style function docs
-                FAs = lists:foldl(
-                        fun({name,_,NameString}, Acc) ->
-                                FAs = func_to_tuple(NameString),
-                                lists:foldl(
-                                  fun(FA, FAAcc) ->
-                                          Slogan = maps:get(FA, FAAcc, []),
-                                          FAAcc#{ FA => [strip_tags(NameString)|Slogan] }
-                                  end, Acc, FAs)
-                        end, #{}, NameList),
-
-                _ = VerifyNameList(NameList,fun([_|_]) -> ok end),
-
-                SortedFAs = lists:usort(maps:to_list(FAs)),
-
-                {{BaseF, BaseA}, BaseSig} = hd(SortedFAs),
-
-                Base = {function,[{name,BaseF},{arity,BaseA},
-                                  {signature,BaseSig},
-                                  {meta,SinceMD}],
-                        ContentsNoName},
-
-                Equiv = [{function,
-                          [{name,F},{arity,A},
-                           {signature,Signature},
-                           {meta,SinceMD#{ equiv => {function,list_to_atom(BaseF),BaseA}}}],[]}
-                         || {{F,A},Signature} <- tl(SortedFAs)],
-                [Base | Equiv]
-        end,
-    transform(Functions,[]).
 
 func_to_tuple(Chars) ->
     try
