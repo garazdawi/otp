@@ -920,6 +920,10 @@ function_state({attribute,A,opaque,{TypeName,TypeDef,Args}}, St) ->
     type_def(opaque, A, TypeName, TypeDef, Args, St);
 function_state({attribute,A,spec,{Fun,Types}}, St) ->
     spec_decl(A, Fun, Types, St);
+function_state({attribute,_A,doc,_Val}, St) ->
+    St;
+function_state({attribute,_A,moduledoc,_Val}, St) ->
+    St;
 function_state({attribute,_A,dialyzer,_Val}, St) ->
     St;
 function_state({attribute,Aa,Attr,_Val}, St) ->
