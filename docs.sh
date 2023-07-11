@@ -12,8 +12,8 @@ for app in $(ls -d lib/${APPS}/ebin | awk -F "/" '{print $2}'); do
     APP="lib/$app" $HOME/git/ex_doc/ex_doc $app "${VSN}" "lib/$app/ebin" -o "docs/$app" -c ex_doc.exs || exit
 done
 
-if [ $APPS = '*' ] || [ $APPS = 'erts' ]; then
+if [ "$APPS" = '*' ] || [ $APPS = 'erts' ]; then
     app=erts
     VSN=$(cat $app/vsn.mk | grep -i "^VSN" | awk '{print $3}')
-    APP=$app $HOME/git/ex_doc/ex_doc $app "${VSN}" "lib/$app/ebin" -o "docs/$app" -c ex_doc.exs || exit
+    APP=$app $HOME/git/ex_doc/ex_doc $app "${VSN}" "$app/preloaded/ebin" -o "docs/$app" -c ex_doc.exs || exit
 fi

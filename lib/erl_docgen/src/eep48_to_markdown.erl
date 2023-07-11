@@ -811,6 +811,9 @@ render_element({pre, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
     %% We pad `pre` with two newlines if the previous section did not indent the region.
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
     {["\n\n", Docs], NewPos};
+render_element({br, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
+    {Docs, NewPos} = render_element(E, State, 0, Ind, D),
+    {["  \n", Docs], NewPos};
 render_element({Elem, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind, ?IS_BLOCK(Elem) ->
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
     {["\n", Docs], NewPos};
@@ -830,41 +833,64 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
     {Docs, NewPos} = render_docs(Content, State, Pos, Ind, D),
     Href = proplists:get_value(href, Attr),
     IsOTPLink = Href =/= undefined andalso string:find(Href, ":") =/= nomatch,
-    case proplists:get_value(rel, Attr) of
-        _ when not IsOTPLink ->
-            {Docs, NewPos};
-        <<"https://erlang.org/doc/link/seemfa">> ->
-            [_App, MFA] = string:split(Href, ":"),
-            [Mod, FA] = string:split(MFA, "#"),
-            [Func, Arity] = string:split(FA, "/"),
-            {
-             [
-              "[", Docs, "](m:",Mod,":",Func,"/",Arity,")"
-             ],
-             NewPos
-            };
-        <<"https://erlang.org/doc/link/seetype">> ->
-            case string:lexemes(Href, ":#/") of
-                [_App, Mod, Type, Arity] ->
-                    {
-                     [
-                      "[", Docs, "](t:",Mod,":",Type,"/",Arity,")"
-                     ],
-                     NewPos
-                    };
-                [_App, Mod, Type] ->
-                    {
-                     [
-                      "[", Docs, "](t:",Mod,":",Type,"/0)"
-                     ],
-                     NewPos
-                    }
-            end;
-        <<"https://erlang.org/doc/link/seeerl">> ->
-            [_App, Mod | Anchor] = string:lexemes(Href, ":#"),
-            {["[", Docs, "](m:", Mod, "#", Anchor, ")"], NewPos};
-        _ ->
-            {Docs, NewPos}
+    {DocsWithLink, PosWithLink} =
+        case proplists:get_value(rel, Attr) of
+            undefined when Href =/= undefined ->
+                {["[", Docs, "](", Href, ")"], NewPos};
+            _ when not IsOTPLink ->
+                {Docs, NewPos};
+            <<"https://erlang.org/doc/link/seemfa">> ->
+                [_App, MFA] = string:split(Href, ":"),
+                [Mod, FA] = string:split(MFA, "#"),
+                [Func, Arity] = string:split(FA, "/"),
+                {
+                 [
+                  "[", Docs, "](m:",Mod,":",Func,"/",Arity,")"
+                 ],
+                 NewPos
+                };
+            <<"https://erlang.org/doc/link/seetype">> ->
+                case string:lexemes(Href, ":#/") of
+                    [_App, Mod, Type, Arity] ->
+                        {
+                         [
+                          "[", Docs, "](t:",Mod,":",Type,"/",Arity,")"
+                         ],
+                         NewPos
+                        };
+                    [_App, Mod, Type] ->
+                        {
+                         [
+                          "[", Docs, "](t:",Mod,":",Type,"/0)"
+                         ],
+                         NewPos
+                        }
+                end;
+            <<"https://erlang.org/doc/link/seeerl">> ->
+                case string:lexemes(Href, ":#") of
+                    [_App, Mod] ->
+                        {["[", Docs, "](m:", Mod, ")"], NewPos};
+                    [_App, Mod, Anchor] ->
+                        {["[", Docs, "](m:", Mod, "#", Anchor, ")"], NewPos}
+                end;
+            <<"https://erlang.org/doc/link/seeguide">> ->
+                CurrentApplication = unicode:characters_to_binary(get(application)),
+                case string:lexemes(Href, ":#") of
+                    [App, Guide] when App =:= CurrentApplication ->
+                        {["[", Docs, "](",Guide,")"], NewPos};
+                    [App, Guide, Anchor] when App =:= CurrentApplication ->
+                        {["[", Docs, "](",Guide,"#",Anchor,")"], NewPos};
+                    [App, Guide] ->
+                        {["[", Docs, "](p:",App,":",Guide,")"], NewPos};
+                    [App, Guide, Anchor] ->
+                        {["[", Docs, "](p:",App,":",Guide,"#",Anchor,")"], NewPos}
+                end;
+            _ ->
+                {Docs, NewPos}
+        end,
+    case proplists:get_value(id, Attr) of
+        undefined -> {DocsWithLink, PosWithLink};
+        Id -> {["<a id=\"", Id, "\"/>\n", pad(Pos), DocsWithLink], PosWithLink}
     end;
 render_element({code, _, Content}, [pre | _] = State, Pos, Ind, D) ->
     %% When code is within a pre we don't emit any underline
@@ -894,7 +920,7 @@ render_element({b, _, Content}, State, Pos, Ind, D) ->
         true ->
             {[Docs], NewPos};
         false ->
-            {["**", Docs, "**"], NewPos}
+            {["**", Docs, "**"], NewPos + 4}
     end;
 render_element({pre, Attr, Content}, State, Pos, Ind, D) ->
     %% For pre we make sure to respect the newlines in pre
@@ -942,20 +968,30 @@ render_element({li, [], Content}, [ul | _] = State, Pos, Ind, D) ->
 render_element({li, [], Content}, [ol | _] = State, Pos, Ind, D) ->
     {Docs, _NewPos} = render_docs(Content, [li | State], Pos + 2, Ind + 2, D),
     trimnl(["1. ", Docs]);
-render_element({dl, _, Content}, State, Pos, Ind, D) ->
-    trimnlnl(render_docs(Content, [dl | State], Pos, Ind, D));
-render_element({dt, _, Content}, [dl | _] = State, Pos, Ind, D) ->
-    {Docs, NewPos} = render_docs(
-        [{b, [], Content}],
-        [li | State],
-        Pos + 2,
-        Ind + 2,
-        D
-    ),
-    trimnl({["* ", string:trim(Docs, trailing, "\n"), "  "], NewPos});
-render_element({dd, _, Content}, [dl | _] = State, Pos, Ind, D) ->
-    {Docs, _NewPos} = render_docs(Content, [li | State], Pos + 2, Ind + 2, D),
-    trimnlnl([pad(2 + Ind - Pos), Docs]);
+render_element({dl, [], [{dt,[],[{a,[{id,_}],_} = A | DTContent]} | Content]}, State, Pos, Ind, D) ->
+     {ADocs, _APos} = trimnl(render_element(A, State, Pos, 0, D)),
+     {Docs, NewPos} = render_element({dl, [], [{dt, [], DTContent} | Content]}, State, 0, Ind, D),
+     {[ADocs,Docs], NewPos};
+render_element({dl, [], [{dt,[],DTContent}, {dd,[],DDContent} | Content]}, State, Pos, Ind, D) ->
+    {DTDocs, DTNewPos} =
+        render_docs(
+          [{b, [], DTContent}],
+          [li, dl | State],
+          Pos + 2,
+          Ind + 2,
+          D),
+    {DDDocs, DDNewPos} = render_docs(DDContent, [li, dl | State], Pos + 2, Ind + 2, D),
+    {Docs, NewPos} =
+        case string:find(trim(DTDocs), "\n") of
+            nomatch ->
+                trimnlnl({["* ", trim(DTDocs), " - ", string:trim(string:trim(DDDocs, both, "\n"), leading, " ")], DDNewPos});
+            _ ->
+                trimnlnl({["* ", trim(DTDocs), "  \n", pad(2 + Ind - Pos), DDDocs], DDNewPos})
+        end,
+    {DLDocs, DLPos} = render_element({dl, [], Content}, State, NewPos, Ind, D),
+    {[Docs,DLDocs], DLPos};
+render_element({dl, [], []}, _State, Pos, _Ind, _D) ->
+    {"", Pos};
 render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
     Pre = string:replace(B, "\n", [nlpad(Ind)], all),
     EscapeChars = [

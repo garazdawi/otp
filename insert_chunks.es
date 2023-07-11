@@ -2,7 +2,7 @@
 
 -include_lib("kernel/include/eep48.hrl").
 
-main([BeamFile]) ->
+main([BeamFile | T]) ->
     {ok, _Module, Chunks} = beam_lib:all_chunks(BeamFile),
     {debug_info_v1, _, {AST, _Meta}} = binary_to_term(proplists:get_value("Dbgi", Chunks)),
     D = #docs_v1{ format = <<"text/markdown">> },
@@ -16,6 +16,8 @@ main([BeamFile]) ->
     NewChunks = [{"Docs",term_to_binary(MD#docs_v1{ docs = extract_docs(AST) } )} | proplists:delete("Docs", Chunks)],
     {ok, NewBeamFile} = beam_lib:build_module(NewChunks),
     file:write_file(BeamFile, NewBeamFile),
+    main(T);
+main([]) ->
     ok.
 
 extract_docs(AST) ->

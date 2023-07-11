@@ -37,18 +37,29 @@ main([Application, FromXML, ToMarkdown]) ->
             io:format("Skipping: ~ts~n",[FromXML]),
             ok;
         EEP48 ->
-%%            io:format("~p~n",[EEP48]),
-            Markdown = eep48_to_markdown:render_docs(shell_docs:normalize(EEP48)),
-            %% io:format("~p",[lists:flatten(Markdown)]),
+            %% [io:format("~tp~n",[EEP48]) || filename:rootname(filename:basename(FromXML)) =:= "alt_dist"],
+            Markdown = unicode:characters_to_binary(eep48_to_markdown:render_docs(shell_docs:normalize(EEP48))),
+            %% io:format("~ts~n",[Markdown]),
             ok = file:write_file(ToMarkdown, Markdown)
     end.
 
 convert_application(App) ->
     SrcDir = filename:join([code:lib_dir(App),"doc","xml"]),
     DstDir = filename:join([code:lib_dir(App),"doc","src"]),
-%    ok = convert_xml_include(App, SrcDir, filename:join([SrcDir,"part.xml"])),
-    ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,"ref_man.xml"])),
-    ok.
+    case xmerl_sax_parser:file(filename:join(SrcDir, "book.xml"),
+                               [skip_external_dtd,
+                                {event_fun,fun event/3},
+                                {event_state,initial_state()}]) of
+        {ok, Tree, _} ->
+            [{book, _, C}] = get_dom(Tree),
+            {parts, _, [{include, [{href, Part}],[]}]}  = lists:keyfind(parts, 1, C),
+            ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Part])),
+            {applications, _, [{include, [{href, Applications}],[]}]}  = lists:keyfind(applications, 1, C),
+            ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Applications])),
+            ok;
+        Error ->
+            Error
+    end.
 
 convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
     case xmerl_sax_parser:file(IncludeXML,
@@ -500,6 +511,7 @@ transform_taglist(Attr,Content) ->
                      ({item,A,C}) ->
                           {dd,A,C}
                   end, Content),
+    %% io:format("Items: ~p~n",[Items]),
     {dl,Attr,Items}.
 
 transform_tag({tag, Attr0, C}) ->
@@ -581,7 +593,7 @@ transform_see({See,[{marker,Marker}],Content}) ->
          {rel,<<"https://erlang.org/doc/link/",(atom_to_binary(See))/binary>>}], Content}.
 
 marker_defaults("") ->
-    [get(application), ":", get(module)];
+    [get(application), ":", filename:rootname(unicode:characters_to_list(get(module)))];
 marker_defaults(AppFile) ->
     case string:split(AppFile, ":") of
         [File] -> [get(application), ":", File];
