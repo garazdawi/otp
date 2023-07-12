@@ -492,11 +492,16 @@ jobs:
           path: otp_doc_man.tar.gz
       - name: Setup Pages
         uses: actions/configure-pages@v3
+      - name: Release ex-docs to publish
+        run: |
+          docker run -v $PWD/ex-docs:/github otp \
+            "make ex-docs && cp -r docs/* /github/"
+            sudo chown -R `whoami` ex-docs
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v1
         with:
           # Upload entire repository
-          path: 'docs'
+          path: 'ex-docs'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v2
