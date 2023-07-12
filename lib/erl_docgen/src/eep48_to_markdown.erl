@@ -1035,7 +1035,7 @@ render_element({img,Attr,Content}, _State, Pos, _Ind, _D) ->
                       C
               end,
     trimnl({["![",Caption,"](",proplists:get_value(file,Attr)," \"",Caption,"\")"], Pos});
-render_element({quote, [], Content}, State, Pos, Ind, D) ->
+render_element({quote, [], Content}, State, _Pos, Ind, D) ->
     {Docs, 0} = render_element({'div', [], Content}, ['div' | State], 0, 0, D),
     trimnlnl([[pad(Ind), "> ",Line,"\n"] || Line <- string:split(trim(Docs),"\n",all)]);
 render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
