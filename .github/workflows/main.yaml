@@ -565,7 +565,7 @@ jobs:
       matrix:
         # type: ${{ fromJson(needs.pack.outputs.all) }}
         # type: ${{ fromJson(needs.pack.outputs.changes) }}
-        type: []
+        type: ["os_mon"]
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
