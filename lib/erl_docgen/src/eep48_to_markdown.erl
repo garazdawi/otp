@@ -1008,8 +1008,13 @@ render_element({dl, [], [{dt,DTAttr,DTContent}, {dd,[],DDContent} | Content]}, S
     {[Docs,DLDocs], DLPos};
 render_element({dl, [], []}, _State, Pos, _Ind, _D) ->
     {"", Pos};
-render_element({table, _, [{tr,[],Head}|Rows]}, State, Pos, Ind, D) ->
-    trimnl(render_docs([{th, [], Head} | Rows], State, Pos, Ind, D));
+render_element({table, _, Rows}, State, Pos, Ind, D) ->
+    [{tr,_,Head} | RowsNoCaption] = [Row || {tr,_,_} = Row <- Rows],
+    trimnl(
+      render_docs(
+        [{th, [], Head} | RowsNoCaption] ++
+            [{em, [], [<<"Table: ">>, C]} || {caption,_,C} <- Rows],
+        State, Pos, Ind, D));
 render_element({th, [], Head}, State, _Pos, _Ind, D) ->
     Header =
         [begin {Docs, _} = render_docs(TdContent, State, 0, 0, D),
@@ -1022,7 +1027,17 @@ render_element({tr, [], Row}, State, _Pos, _Ind, D) ->
         [begin {Docs, _} = render_docs(TdContent, State, 0, 0, D),
                ["| ", Docs, " "]
          end || {td, _, TdContent} <- Row],
-    trimnl({[ Rows, "|\n"], 0});
+    trimnlnl({[ Rows, "|"], 0});
+render_element({img,Attr,Content}, _State, Pos, _Ind, _D) ->
+    Caption = case lists:keyfind(caption, 1, Content) of
+                  false -> "";
+                  {caption, _, C} ->
+                      C
+              end,
+    trimnl({["![",Caption,"](",proplists:get_value(file,Attr)," \"",Caption,"\")"], Pos});
+render_element({quote, [], Content}, State, Pos, Ind, D) ->
+    {Docs, 0} = render_element({'div', [], Content}, ['div' | State], 0, 0, D),
+    trimnlnl([[pad(Ind), "> ",Line,"\n"] || Line <- string:split(trim(Docs),"\n",all)]);
 render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
     Pre = string:replace(B, "\n", [nlpad(Ind)], all),
     EscapeChars = [
@@ -1067,7 +1082,7 @@ render_element({Tag, Attr, Content}, State, Pos, Ind, D) ->
         true ->
             throw({unhandled_element, Tag, Attr, Content});
         false ->
-            %% We ignore tags that we do not care about
+            throw({unknown_element, Tag, Attr, Content}),
             ok
     end,
     render_docs(Content, State, Pos, Ind, D).

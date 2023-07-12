@@ -337,9 +337,9 @@ transform([{file, [], Content}|T], Acc) ->
 transform([{filesummary, [], Content}|T], Acc) ->
     transform(T, [{p,[],transform(Content,[])}|Acc]);
 
-transform([{section,[],Content}|T],Acc) ->
+transform([{section,_,Content}|T],Acc) ->
     transform(T,transform(Content,[]) ++ Acc);
-transform([{description,[],Content}|T],Acc) ->
+transform([{description,_,Content}|T],Acc) ->
     transform(T,[{h2,[],[<<"Description">>]}|transform(Content,[])] ++ Acc);
 
 %% transform <list><item> to <ul><li> or <ol><li> depending on type attribute
@@ -458,6 +458,13 @@ transform([{row,Attr,Content}|T],Acc) ->
     transform(T,[{tr,a2b(Attr),transform(Content,[])}|Acc]);
 transform([{cell,Attr,Content}|T],Acc) ->
     transform(T,[{td,a2b(Attr),transform(Content,[])}|Acc]);
+transform([{tcaption,Attr,Content}|T],Acc) ->
+    transform(T,[{caption,a2b(Attr),transform(Content,[])}|Acc]);
+
+transform([{image,Attr,Content}|T],Acc) ->
+    transform(T,[{img,a2b(Attr),transform(Content,[])}|Acc]);
+transform([{icaption,Attr,Content}|T],Acc) ->
+    transform(T,[{caption,a2b(Attr),transform(Content,[])}|Acc]);
 
 %% Tag and Attr is used as is but Content is transformed
 transform([{Tag,Attr,Content}|T],Acc) ->
