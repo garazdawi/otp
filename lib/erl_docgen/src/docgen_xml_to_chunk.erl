@@ -215,7 +215,9 @@ build_dom({characters, String},
                 {"&plusmn;",[177]},
                 {"&ouml;","ö"},
                 {"&auml;","ä"},
-                {"&aring;","å"}
+                {"&aring;","å"},
+                {"&eacute;","é"},
+                {"&shy;",[173]}
                ],
 
     NoHtmlEnt =

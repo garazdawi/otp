@@ -3,22 +3,57 @@
 -include_lib("kernel/include/eep48.hrl").
 
 main([BeamFile | T]) ->
-    {ok, _Module, Chunks} = beam_lib:all_chunks(BeamFile),
-    {debug_info_v1, _, {AST, _Meta}} = binary_to_term(proplists:get_value("Dbgi", Chunks)),
-    D = #docs_v1{ format = <<"text/markdown">> },
-    MD =
-        case lists:keysearch(moduledoc, 3, AST) of
-            {value, {attribute, ModuleDocAnno, moduledoc, ModuleDoc}} ->
-                D#docs_v1{ anno = ModuleDocAnno, module_doc = #{ <<"en">> => unicode:characters_to_binary(ModuleDoc) } };
-            false ->
-                D#docs_v1{ anno = erl_anno:new(0), module_doc = none }
-        end,
-    NewChunks = [{"Docs",term_to_binary(MD#docs_v1{ docs = extract_docs(AST) } )} | proplists:delete("Docs", Chunks)],
-    {ok, NewBeamFile} = beam_lib:build_module(NewChunks),
-    file:write_file(BeamFile, NewBeamFile),
+    try
+        {ok, Module, Chunks} = beam_lib:all_chunks(BeamFile),
+        {debug_info_v1, _, {AST, _Meta}} = binary_to_term(proplists:get_value("Dbgi", Chunks)),
+        NewDocs =
+            case lists:keysearch(moduledoc, 3, AST) of
+                {value, {attribute, ModuleDocAnno, moduledoc, ModuleDoc}} ->
+                    D = #docs_v1{ format = <<"text/markdown">> },
+                    MD = D#docs_v1{ anno = ModuleDocAnno, module_doc = #{ <<"en">> => unicode:characters_to_binary(ModuleDoc) } },
+                    MD#docs_v1{ docs = extract_docs(AST) };
+                _ ->
+                    case get_doc_chunk(BeamFile, atom_to_list(Module)) of
+                        {ok, Docs} ->
+                            case lists:reverse(filename:split(code:which(Module))) of
+                                ["preloaded"] ->
+                                    put(application, "erts");
+                                [_File,_Ebin,App | _] ->
+                                    put(application, App)
+                            end,
+                            convert_docs(Docs);
+                        Else ->
+                            exit(Else)
+                    end
+            end,
+        {ok, NewBeamFile} = beam_lib:build_module([{"Docs",term_to_binary(NewDocs)} | proplists:delete("Docs", Chunks)]),
+        file:write_file(BeamFile, NewBeamFile)
+    catch E:R:ST ->
+            io:format("Failed to convert ~ts~n",[BeamFile]),
+            erlang:raise(E, R, ST)
+    end,
     main(T);
 main([]) ->
     ok.
+
+get_doc_chunk(Filename, Mod) ->
+    RootDir = code:root_dir(),
+    case filename:dirname(Filename) of
+        Filename ->
+            {error,missing};
+        RootDir ->
+            {error,missing};
+        Dir ->
+            ChunkFile = filename:join([Dir,"doc","chunks",Mod ++ ".chunk"]),
+            case file:read_file(ChunkFile) of
+                {ok, Bin} ->
+                    {ok, binary_to_term(Bin)};
+                {error,enoent} ->
+                    get_doc_chunk(Dir, Mod);
+                {error,Reason} ->
+                    {error,Reason}
+            end
+    end.
 
 extract_docs(AST) ->
     extract_docs(expand_anno(AST), undefined).
@@ -42,3 +77,27 @@ expand_anno(AST) ->
     %% io:format("NewAST: ~p~n",[NewAST]),
     NewAST.
 
+convert_docs(#docs_v1{ format = ?NATIVE_FORMAT, module_doc = #{ <<"en">> := ModuleDoc } } = D) ->
+    D#docs_v1{ format = <<"text/markdown">>,
+               module_doc = #{ <<"en">> =>
+                                   try eep48_to_markdown:render_docs(ModuleDoc, D)
+                                   catch E:R:ST ->
+                                           io:format("Failed to convert moduledoc~n"),
+                                           erlang:raise(E,R,ST)
+                                   end},
+               docs = [convert_docs(F, D) || F <- D#docs_v1.docs] };
+convert_docs(#docs_v1{ format = ?NATIVE_FORMAT, module_doc = hidden } = D) ->
+    D#docs_v1{ format = <<"text/markdown">> };
+convert_docs(#docs_v1{ format = <<"text/markdown">> } = D) ->
+    %% Already converted
+    D.
+
+convert_docs({What, Anno, Sig, #{ <<"en">> := Docs }, Meta}, D) ->
+    try
+        {What, Anno, Sig, #{ <<"en">> => eep48_to_markdown:render_docs(Docs, D) }, Meta}
+    catch E:R:ST ->
+            io:format("Failed to convert ~p~n",[What]),
+            erlang:raise(E,R,ST)
+    end;
+convert_docs(F, _) ->
+    F.

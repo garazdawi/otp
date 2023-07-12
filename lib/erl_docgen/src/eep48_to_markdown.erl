@@ -27,7 +27,7 @@
 
 -include_lib("kernel/include/eep48.hrl").
 
--export([render_docs/1]).
+-export([render_docs/1, render_docs/2]).
 -export([render/3, render/4, render/5]).
 -export([render_type/3, render_type/4, render_type/5]).
 -export([render_callback/3, render_callback/4, render_callback/5]).
@@ -59,7 +59,10 @@
     li,
     dl,
     dt,
-    dd
+    dd,
+    table,
+    tr,
+    td
 ]).
 %% inline elements are:
 -define(INLINE, [i, b, em, strong, code, a]).
@@ -69,7 +72,7 @@
         ((ELEM) =:= b) orelse ((ELEM) =:= strong))
 ).
 %% non-inline elements are:
--define(BLOCK, [p, 'div', pre, br, ul, ol, li, dl, dt, dd, h1, h2, h3, h4, h5, h6, hr]).
+-define(BLOCK, [p, 'div', pre, br, ul, ol, li, dl, dt, dd, h1, h2, h3, h4, h5, h6, hr, table, tr, td]).
 -define(IS_BLOCK(ELEM), not ?IS_INLINE(ELEM)).
 -define(IS_PRE(ELEM), ((ELEM) =:= pre)).
 
@@ -227,33 +230,34 @@ convert_moduledoc(ModuleHeader) ->
     moduledoc(DocHeader).
 
 formatter(String) ->
-    %% TODO: fix re so that the Text1 string:replace is not needed
 
     Text =
-        begin
-            Text0 = string:trim(re:replace(String, "\\\\\\\.( )?", ".\n", [unicode, global])),
-            Text1 = string:replace(Text0, "\\\\\\.", "."),
+        case {os:getenv("FORMAT_MD"),os:find_executable("npx")} of
+            {"true",Npx} when Npx =/= false ->
+                Text0 = string:trim(re:replace(String, "\\\\\\\.( )?", ".\n", [unicode, global])),
+                %% TODO: fix re so that the Text1 string:replace is not needed
+                Text1 = string:replace(Text0, "\\\\\\.", "."),
 
-            Filename = "formatter.md",
-            file:write_file(Filename, list_to_binary(Text1)),
-            os:cmd("npx prettier --write --prose-wrap always formatter.md"),
-            {ok, FormattedText} = file:read_file("formatter.md"),
-            file:delete(Filename),
-            FormattedText
+                Filename = os:cmd("mktemp"),
+                file:write_file(Filename, list_to_binary(Text1)),
+                os:cmd("npx prettier --write --prose-wrap always " ++ Filename),
+                {ok, FormattedText} = file:read_file(Filename),
+                file:delete(Filename),
+                FormattedText;
+            _ ->
+                String
         end,
-    string:trim(re:replace(Text, "(\"|\\\\)", "\\\\\\1", [global, unicode])).
-
+    unicode:characters_to_binary(Text).
 
 comment(String) ->
-    ["-doc \"\n",
-     formatter(String),
-     "\n\"."].
+    ["-doc \"\n", to_erlang_string(formatter(String)), "\n\"."].
 
 moduledoc(String) ->
     %% NewLines = re:replace(String, "\\\.( )?", ".\n", [global]),
-    ["-moduledoc \"",
-     formatter(String),
-     "\"."].
+    ["-moduledoc \"", to_erlang_string(formatter(String)), "\"."].
+
+to_erlang_string(Text) ->
+     string:trim(re:replace(Text, "(\"|\\\\)", "\\\\\\1", [global, unicode])).
 
 filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T]) ->
     NewAnno =
@@ -730,11 +734,21 @@ render_docs(DocContents) ->
     render_docs(DocContents, init_config(undefined, [])).
 -spec render_docs([chunk_element()], #config{}) -> unicode:chardata().
 render_docs(DocContents, #config{} = Config) ->
-    render_docs(DocContents, 0, Config).
+    render_docs(DocContents, 0, Config);
+render_docs(DocContents, #docs_v1{} = D) ->
+    render_docs(DocContents, init_config(D, [])).
 -spec render_docs([chunk_element()], 0, #config{}) -> unicode:chardata().
 render_docs(DocContents, Ind, D = #config{}) when is_integer(Ind) ->
-    {Doc, _} = trimnl(render_docs(DocContents, [], 0, Ind, D)),
-    Doc.
+    try
+        {Doc, _} = trimnl(render_docs(DocContents, [], 0, Ind, D)),
+        formatter(Doc)
+    catch throw:R:ST ->
+            io:format("Failed to render: ~tp~n",[R]),
+            erlang:raise(throw,R,ST);
+          E:R:ST ->
+            io:format("Failed to render: ~tp~n",[DocContents]),
+            erlang:raise(E,R,ST)
+    end.
 
 -spec init_config(#docs_v1{}, _) -> #config{}.
 init_config(D, _Config) ->
@@ -968,12 +982,13 @@ render_element({li, [], Content}, [ul | _] = State, Pos, Ind, D) ->
 render_element({li, [], Content}, [ol | _] = State, Pos, Ind, D) ->
     {Docs, _NewPos} = render_docs(Content, [li | State], Pos + 2, Ind + 2, D),
     trimnl(["1. ", Docs]);
-render_element({dl, [], [{dt,[],[{a,[{id,_}],_} = A | DTContent]} | Content]}, State, Pos, Ind, D) ->
+render_element({dl, [], [{dt,DTAttr,[{a,[{id,_}],_} = A | DTContent]} | Content]}, State, Pos, Ind, D) ->
      {ADocs, _APos} = trimnl(render_element(A, State, Pos, 0, D)),
-     {Docs, NewPos} = render_element({dl, [], [{dt, [], DTContent} | Content]}, State, 0, Ind, D),
+     {Docs, NewPos} = render_element({dl, [], [{dt, DTAttr, DTContent} | Content]}, State, 0, Ind, D),
      {[ADocs,Docs], NewPos};
-render_element({dl, [], [{dt,[],DTContent}, {dd,[],DDContent} | Content]}, State, Pos, Ind, D) ->
-    {DTDocs, DTNewPos} =
+render_element({dl, [], [{dt,DTAttr,DTContent}, {dd,[],DDContent} | Content]}, State, Pos, Ind, D) ->
+    Since = proplists:get_value(since, DTAttr),
+    {DTDocs, _DTNewPos} =
         render_docs(
           [{b, [], DTContent}],
           [li, dl | State],
@@ -983,15 +998,31 @@ render_element({dl, [], [{dt,[],DTContent}, {dd,[],DDContent} | Content]}, State
     {DDDocs, DDNewPos} = render_docs(DDContent, [li, dl | State], Pos + 2, Ind + 2, D),
     {Docs, NewPos} =
         case string:find(trim(DTDocs), "\n") of
-            nomatch ->
+            nomatch when Since =:= undefined ->
                 trimnlnl({["* ", trim(DTDocs), " - ", string:trim(string:trim(DDDocs, both, "\n"), leading, " ")], DDNewPos});
             _ ->
-                trimnlnl({["* ", trim(DTDocs), "  \n", pad(2 + Ind - Pos), DDDocs], DDNewPos})
+                trimnlnl({["* ", trim(DTDocs), [["(Since ",Since,")"] || Since =/= undefined],"  \n",
+                           pad(2 + Ind - Pos), DDDocs], DDNewPos})
         end,
     {DLDocs, DLPos} = render_element({dl, [], Content}, State, NewPos, Ind, D),
     {[Docs,DLDocs], DLPos};
 render_element({dl, [], []}, _State, Pos, _Ind, _D) ->
     {"", Pos};
+render_element({table, _, [{tr,[],Head}|Rows]}, State, Pos, Ind, D) ->
+    trimnl(render_docs([{th, [], Head} | Rows], State, Pos, Ind, D));
+render_element({th, [], Head}, State, Pos, Ind, D) ->
+    Header =
+        [begin {Docs, _} = render_docs(TdContent, State, 0, 0, D),
+               {["| ", Docs, " "], ["|-", lists:duplicate(string:length(Docs), $-), "-"]}
+         end || {td, _, TdContent} <- Head],
+    trimnl({[[ Docs || {Docs,_} <- Header ], "|\n",
+             [ Lines || {_, Lines} <- Header ], "|\n"], 0});
+render_element({tr, [], Row}, State, Pos, Ind, D) ->
+    Rows =
+        [begin {Docs, _} = render_docs(TdContent, State, 0, 0, D),
+               ["| ", Docs, " "]
+         end || {td, _, TdContent} <- Row],
+    trimnl({[ Rows, "|\n"], 0});
 render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
     Pre = string:replace(B, "\n", [nlpad(Ind)], all),
     EscapeChars = [

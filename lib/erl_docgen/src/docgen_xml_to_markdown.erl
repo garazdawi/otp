@@ -52,10 +52,20 @@ convert_application(App) ->
                                 {event_state,initial_state()}]) of
         {ok, Tree, _} ->
             [{book, _, C}] = get_dom(Tree),
-            {parts, _, [{include, [{href, Part}],[]}]}  = lists:keyfind(parts, 1, C),
-            ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Part])),
+            case lists:keyfind(parts, 1, C) of
+                {parts, _, [{include, [{href, Part}],[]}]} ->
+                    ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Part]));
+                false ->
+                    no_users_guides
+            end,
             {applications, _, [{include, [{href, Applications}],[]}]}  = lists:keyfind(applications, 1, C),
             ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Applications])),
+            case lists:keyfind(internals, 1, C) of
+                {internals, _, [{include, [{href, Internal}],[]}]} ->
+                    ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Internal]));
+                false ->
+                    no_internal_docs
+            end,
             ok;
         Error ->
             Error
@@ -214,14 +224,16 @@ build_dom({characters, String},
     State#state{dom=[{Name, Attributes, NewContent} | D]};
 build_dom({characters, String},
 	  #state{dom=[{Name, Attributes, Content}| D]} = State) ->
-    HtmlEnts = [{"&nbsp;",[160]},
-                {"&times;",[215]},
-                {"&plusmn;",[177]},
-                {"&ouml;","ö"},
-                {"&auml;","ä"},
-                {"&aring;","å"},
-                {"&eacute;","é"},
-                {"&shy;",[173]}
+    HtmlEnts = [%% {"&nbsp;",[160]},
+                %% {"&times;",[215]},
+                %% {"&plusmn;",[177]},
+                %% {"&ouml;","ö"},
+                %% {"&auml;","ä"},
+                %% {"&aring;","å"},
+                %% {"&eacute;","é"},
+                %% {"&aacute;","á"},
+                %% {"&iexcl;","¡"},
+                %% {"&shy;",[173]}
                ],
 
     NoHtmlEnt =
@@ -232,9 +244,10 @@ build_dom({characters, String},
 
     case re:run(NoHtmlEnt,"&[a-z]*;",[{capture,first,binary},unicode]) of
         nomatch -> ok;
+        {match,[<<"&amp;">>]} -> ok;
         {match,[<<"&lt;">>]} -> ok;
         {match,[<<"&gt;">>]} -> ok;
-        Else -> throw({found_illigal_thing,Else,String})
+        Else -> ok %% throw({found_illigal_thing,Else,String})
     end,
     NewContent =
         [unicode:characters_to_binary(NoHtmlEnt,utf8)| Content],
@@ -261,13 +274,13 @@ build_dom({ignorableWhitespace, String},
     end;
 
 build_dom({startEntity, SysId}, State) ->
-    io:format("startEntity:~p~n",[SysId]),
+    %% io:format("startEntity:~p~n",[SysId]),
     State;
 
 %% Default
 %%----------------------------------------------------------------------
-build_dom(E, State) ->
-    %% io:format("IgnoredEvent: ~p~n",[E]),
+build_dom(_E, State) ->
+    %% io:format("IgnoredEvent: ~p~n",[_E]),
     State.
 
 %%----------------------------------------------------------------------
@@ -285,11 +298,18 @@ parse_attributes(ElName, [{_Uri, _Prefix, LocalName, AttrValue} |As], N, Acc) ->
     parse_attributes(ElName, As, N+1, [{list_to_atom(LocalName), AttrValue} |Acc]).
 
 docs(Application, OTPXml)->
+    DtdFiles =
+        [begin
+             To = filename:join(filename:dirname(OTPXml),filename:basename(From)),
+             {ok, _} = file:copy(From, To),
+             To
+         end || From <- filelib:wildcard(filename:join([code:priv_dir(erl_docgen),"dtd","*.dtd"]))
+                    ++ filelib:wildcard(filename:join([code:priv_dir(erl_docgen),"dtd_html_entities","*.ent"]))],
     case xmerl_sax_parser:file(OTPXml,
-                               [skip_external_dtd,
-                                {event_fun,fun event/3},
+                               [{event_fun,fun event/3},
                                 {event_state,initial_state()}]) of
         {ok,Tree,_} ->
+            [ok = file:delete(Dtd) || Dtd <- DtdFiles],
             put(application, Application),
             Dom = get_dom(Tree),
             case lists:member(
@@ -468,6 +488,10 @@ transform([{p,Attr,Content}|T],Acc) ->
     transform(T,[{p,a2b(Attr),transform(Content,[])}|Acc]);
 transform([{'div',Attr,Content}|T],Acc) ->
     transform(T,[{'div',a2b(Attr),transform(Content,[])}|Acc]);
+transform([{row,Attr,Content}|T],Acc) ->
+    transform(T,[{tr,a2b(Attr),transform(Content,[])}|Acc]);
+transform([{cell,Attr,Content}|T],Acc) ->
+    transform(T,[{td,a2b(Attr),transform(Content,[])}|Acc]);
 
 %% Tag and Attr is used as is but Content is transformed
 transform([{Tag,Attr,Content}|T],Acc) ->
@@ -599,26 +623,6 @@ marker_defaults(AppFile) ->
         [File] -> [get(application), ":", File];
         [App, File] -> [App, ":", File]
     end.
-
-
-%% A special list_to_atom that handles
-%%  'and'
-%%  Destroy
-%%  'begin'
-func_to_atom(List) ->
-    case erl_scan:string(List) of
-        {ok,[{atom,_,Fn}],_} ->
-            {function, Fn};
-        {ok,[{var,_,Fn}],_} ->
-            {function, Fn};
-        {ok,[{Fn,_}],_} ->
-            {function, Fn};
-        {ok,[{var,_,_},{':',_},{atom,_,Fn}],_} ->
-            {callback, Fn};
-        {ok,[{var,_,_},{':',_},{var,_,Fn}],_} ->
-            {callback, Fn}
-    end.
-
 
 a2b(Attrs) ->
     [{Tag,unicode:characters_to_binary(Value)} || {Tag,Value} <- Attrs].

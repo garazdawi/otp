@@ -40,7 +40,8 @@ MODULES = \
 	docgen_edoc_xml_cb \
 	docgen_xmerl_xml_cb \
 	docgen_xml_to_chunk \
-	eep48_to_markdown
+	eep48_to_markdown \
+	docgen_xml_to_markdown
 
 HRL_FILES = 
 
