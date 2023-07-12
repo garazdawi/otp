@@ -76,7 +76,7 @@
 
   <funcs>
     <func>
-      <name since="">delivery_targets(Tag, Targets, Extra) -> void()</name>
+      <name since="">Module:delivery_targets(Tag, Targets, Extra) -> void()</name>
       <fsummary>Inform about target addresses</fsummary>
       <type>
         <v>Tag = term()</v>
@@ -97,7 +97,7 @@
     </func>
 
     <func>
-      <name since="">delivery_info(Tag, Target, DeliveryResult, Extra) -> void()</name>
+      <name since="">Module:delivery_info(Tag, Target, DeliveryResult, Extra) -> void()</name>
       <fsummary>Inform about delivery result</fsummary>
       <type>
         <v>Tag = term()</v>

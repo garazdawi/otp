@@ -28,6 +28,8 @@ behaviour_info(callbacks) ->
      {accept_send,     2},
      {accept_recv_pdu, 3},
      {accept_send_pdu, 2}];
+behaviour_info(optional_callbacks) ->
+    [];
 behaviour_info(_) ->
     undefined.
 
