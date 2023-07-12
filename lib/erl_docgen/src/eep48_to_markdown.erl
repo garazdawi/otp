@@ -1010,14 +1010,14 @@ render_element({dl, [], []}, _State, Pos, _Ind, _D) ->
     {"", Pos};
 render_element({table, _, [{tr,[],Head}|Rows]}, State, Pos, Ind, D) ->
     trimnl(render_docs([{th, [], Head} | Rows], State, Pos, Ind, D));
-render_element({th, [], Head}, State, Pos, Ind, D) ->
+render_element({th, [], Head}, State, _Pos, _Ind, D) ->
     Header =
         [begin {Docs, _} = render_docs(TdContent, State, 0, 0, D),
                {["| ", Docs, " "], ["|-", lists:duplicate(string:length(Docs), $-), "-"]}
          end || {td, _, TdContent} <- Head],
     trimnl({[[ Docs || {Docs,_} <- Header ], "|\n",
              [ Lines || {_, Lines} <- Header ], "|\n"], 0});
-render_element({tr, [], Row}, State, Pos, Ind, D) ->
+render_element({tr, [], Row}, State, _Pos, _Ind, D) ->
     Rows =
         [begin {Docs, _} = render_docs(TdContent, State, 0, 0, D),
                ["| ", Docs, " "]

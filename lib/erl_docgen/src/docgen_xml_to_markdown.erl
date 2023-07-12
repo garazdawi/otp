@@ -217,41 +217,8 @@ build_dom({endElement, _Uri, LocalName, _QName},
 %% Text
 %%----------------------------------------------------------------------
 build_dom({characters, String},
-	  #state{ tags = [startCDATA|_],
-                  dom = [{Name, Attributes, Content}| D]} = State) ->
-    NewContent =
-        [unicode:characters_to_binary(String,utf8)| Content],
-    State#state{dom=[{Name, Attributes, NewContent} | D]};
-build_dom({characters, String},
 	  #state{dom=[{Name, Attributes, Content}| D]} = State) ->
-    HtmlEnts = [%% {"&nbsp;",[160]},
-                %% {"&times;",[215]},
-                %% {"&plusmn;",[177]},
-                %% {"&ouml;","ö"},
-                %% {"&auml;","ä"},
-                %% {"&aring;","å"},
-                %% {"&eacute;","é"},
-                %% {"&aacute;","á"},
-                %% {"&iexcl;","¡"},
-                %% {"&shy;",[173]}
-               ],
-
-    NoHtmlEnt =
-        lists:foldl(
-          fun({Pat,Sub},Str) ->
-                  re:replace(Str,Pat,Sub,[global,unicode])
-          end,String,HtmlEnts),
-
-    case re:run(NoHtmlEnt,"&[a-z]*;",[{capture,first,binary},unicode]) of
-        nomatch -> ok;
-        {match,[<<"&amp;">>]} -> ok;
-        {match,[<<"&lt;">>]} -> ok;
-        {match,[<<"&gt;">>]} -> ok;
-        Else -> ok %% throw({found_illigal_thing,Else,String})
-    end,
-    NewContent =
-        [unicode:characters_to_binary(NoHtmlEnt,utf8)| Content],
-    State#state{dom=[{Name, Attributes, NewContent} | D]};
+    State#state{dom=[{Name, Attributes, [unicode:characters_to_binary(String,utf8)| Content]} | D]};
 build_dom(startCDATA, State) ->
     State#state{ tags = [startCDATA | State#state.tags ] };
 build_dom(endCDATA, #state{ tags = [ CData | T ] } = State) ->
@@ -273,8 +240,8 @@ build_dom({ignorableWhitespace, String},
             State
     end;
 
-build_dom({startEntity, SysId}, State) ->
-    %% io:format("startEntity:~p~n",[SysId]),
+build_dom({startEntity, _SysId}, State) ->
+    %% io:format("startEntity:~p~n",[_SysId]),
     State;
 
 %% Default
@@ -327,14 +294,13 @@ docs(Application, OTPXml)->
     end.
 
 %% skip <chapter> but transform and keep its content
-transform([{TopTag,[],Content}|T],Acc) when TopTag =:= chapter;
-                                            TopTag =:= cref;
-                                            TopTag =:= comref;
-                                            TopTag =:= fileref;
-                                            TopTag =:= appref ->
+transform([{TopTag,[],Content}], []) when TopTag =:= chapter;
+                                          TopTag =:= cref;
+                                          TopTag =:= comref;
+                                          TopTag =:= fileref;
+                                          TopTag =:= appref ->
     put(toptag, TopTag),
-    NewContent = transform(Content, []),
-    transform(T, [{TopTag, get(module), NewContent}|Acc]);
+    transform(Content, []);
 
 %% skip <header> and all of its content
 transform([{header,_Attr,Content}|T],Acc) ->
@@ -371,10 +337,10 @@ transform([{file, [], Content}|T], Acc) ->
 transform([{filesummary, [], Content}|T], Acc) ->
     transform(T, [{p,[],transform(Content,[])}|Acc]);
 
-transform([{section,Attr,Content}|T],Acc) ->
-    transform(T,[{section,Attr,transform(Content,[])}|Acc]);
-transform([{description,Attr,Content}|T],Acc) ->
-    transform(T,[{section,Attr,[{h2,[],[<<"Description">>]}|transform(Content,[])]}|Acc]);
+transform([{section,[],Content}|T],Acc) ->
+    transform(T,transform(Content,[]) ++ Acc);
+transform([{description,[],Content}|T],Acc) ->
+    transform(T,[{h2,[],[<<"Description">>]}|transform(Content,[])] ++ Acc);
 
 %% transform <list><item> to <ul><li> or <ol><li> depending on type attribute
 transform([{list,Attr,Content}|T],Acc) ->
