@@ -53,12 +53,11 @@ convert_application(system) ->
         {ok, Tree, _} ->
             [{book, _, C}] = get_dom(Tree),
             {parts, _, Includes} = lists:keyfind(parts, 1, C),
-            Guides =
-                [convert_xml_include(
-                   system, filename:dirname(filename:join([SrcDir,Part])),
-                   filename:join(DstDir, filename:basename(filename:dirname(filename:join([SrcDir,Part])))),
-                   filename:join([SrcDir,Part]))
-                 || {include, [{href, Part}],[]} <- Includes];
+            [convert_xml_include(
+               system, filename:dirname(filename:join([SrcDir,Part])),
+               filename:join(DstDir, filename:basename(filename:dirname(filename:join([SrcDir,Part])))),
+               filename:join([SrcDir,Part]))
+             || {include, [{href, Part}],[]} <- Includes];
         Error ->
             Error
     end;
