@@ -825,6 +825,8 @@ render_element({pre, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
     %% We pad `pre` with two newlines if the previous section did not indent the region.
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
     {["\n\n", Docs], NewPos};
+render_element({br, _Attr, _Content} = E, [td|State], Pos, Ind, D)  ->
+    {" ", Pos + 1};
 render_element({br, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
     {["  \n", Docs], NewPos};
@@ -917,7 +919,12 @@ render_element({code, _, Content}, [pre | _] = State, Pos, Ind, D) ->
     render_docs(Content, [code | State], Pos, Ind, D);
 render_element({code, _, Content}, State, Pos, Ind, D) ->
     {Docs, NewPos} = render_docs(Content, [code | State], Pos, Ind, D),
-    {["`` ", Docs, " ``"], NewPos};
+    case string:find(Docs, "`") of
+        nomatch ->
+            {["`", Docs, "`"], NewPos};
+        _ ->
+            {["`` ", Docs, " ``"], NewPos}
+    end;
 render_element({em, Attr, Content}, State, Pos, Ind, D) ->
     render_element({i, Attr, Content}, State, Pos, Ind, D);
 render_element({i, _, Content}, State, Pos, Ind, D) ->
@@ -1016,24 +1023,26 @@ render_element({dl, [], []}, _State, Pos, _Ind, _D) ->
     {"", Pos};
 render_element({table, _, Rows}, State, Pos, Ind, D) ->
     [{tr,_,Head} | RowsNoCaption] = [Row || {tr,_,_} = Row <- Rows],
-    trimnl(
+    trimnlnl(
       render_docs(
         [{th, [], Head} | RowsNoCaption] ++
             [{em, [], [<<"Table: ">>, C]} || {caption,_,C} <- Rows],
-        State, Pos, Ind, D));
+        [table|State], Pos, Ind, D));
 render_element({th, [], Head}, State, _Pos, _Ind, D) ->
     Header =
-        [begin {Docs, _} = render_docs(TdContent, State, 0, 0, D),
+        [begin {Docs, _} = render_docs(Td, [th|State], 0, 0, D),
                {["| ", Docs, " "], ["|-", lists:duplicate(string:length(Docs), $-), "-"]}
-         end || {td, _, TdContent} <- Head],
+         end || Td <- Head],
     trimnl({[[ Docs || {Docs,_} <- Header ], "|\n",
              [ Lines || {_, Lines} <- Header ], "|\n"], 0});
 render_element({tr, [], Row}, State, _Pos, _Ind, D) ->
     Rows =
-        [begin {Docs, _} = render_docs(TdContent, State, 0, 0, D),
+        [begin {Docs, _} = render_docs(Td, [tr|State], 0, 0, D),
                ["| ", Docs, " "]
-         end || {td, _, TdContent} <- Row],
-    trimnlnl({[ Rows, "|"], 0});
+         end || Td <- Row],
+    trimnl({[ Rows, "|"], 0});
+render_element({td, _, TDContent}, State, Pos, Ind, D) ->
+    render_docs(TDContent, [td|State], Pos, Ind, D);
 render_element({img,Attr,Content}, _State, Pos, _Ind, _D) ->
     Caption = case lists:keyfind(caption, 1, Content) of
                   false -> "";

@@ -493,6 +493,7 @@ jobs:
         uses: actions/configure-pages@v3
       - name: Release ex-docs to publish
         run: |
+          mkdir ex-docs
           docker run -v $PWD/ex-docs:/github otp \
             'PATH=$(pwd)/bin:$PATH make ex-docs && cp -r docs/* /github/'
             sudo chown -R `whoami` ex-docs
