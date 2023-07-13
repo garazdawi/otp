@@ -494,7 +494,7 @@ jobs:
       - name: Release ex-docs to publish
         run: |
           docker run -v $PWD/ex-docs:/github otp \
-            "make ex-docs && cp -r docs/* /github/"
+            'PATH=$(pwd)/bin:$PATH make ex-docs && cp -r docs/* /github/'
             sudo chown -R `whoami` ex-docs
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v1
