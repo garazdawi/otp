@@ -54,7 +54,7 @@ $(DIA_PLT): $(DIA_PLT_DIR)
 	@echo "Building $(APPLICATION) plt file"
 	dialyzer --build_plt \
                   --output_plt $@ \
-		  -o $(DIA_ANALYSIS) \
+		  --output $(DIA_ANALYSIS) \
                   --verbose \
 		  --apps $(sort $(DIA_PLT_APPS) $(DIA_DEFAULT_PLT_APPS))
 
