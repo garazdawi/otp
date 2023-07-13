@@ -34,7 +34,12 @@ for app in $(ls -d lib/${APPS}/ebin | awk -F "/" '{print $2}'); do
     VSN=$(cat lib/$app/vsn.mk | grep -i "^${app}_vsn" | awk '{print $3}')
     erl -noinput -eval "docgen_xml_to_markdown:convert_application(${app}), halt()"
     ./insert_chunks.es lib/$app/ebin/*.beam
-    APP="lib/$app" ex_doc $app "${VSN}" "lib/$app/ebin" -o "docs/$app" -c ex_doc.exs || exit
+    if [ -f lib/$app/doc/src/ex_doc.exs ]; then
+        EX_DOCS_EXS=lib/$app/doc/src/ex_doc.exs
+    else
+        EX_DOCS_EXS=$ERL_TOP/ex_doc.exs
+    fi
+    APP="lib/$app" ex_doc $app "${VSN}" "lib/$app/ebin" -o "docs/$app" -c $EX_DOCS_EXS || exit
 done
 
 if [ "$APPS" = '*' ] || [ $APPS = 'erts' ]; then
@@ -42,5 +47,10 @@ if [ "$APPS" = '*' ] || [ $APPS = 'erts' ]; then
     VSN=$(cat $app/vsn.mk | grep -i "^VSN" | awk '{print $3}')
     erl -noinput -eval "docgen_xml_to_markdown:convert_application(${app}), halt()"
     ./insert_chunks.es $app/preloaded/ebin/*.beam
-    APP=$app ex_doc $app "${VSN}" "$app/preloaded/ebin" -o "docs/$app" -c ex_doc.exs || exit
+    if [ -f $app/doc/src/ex_doc.exs ]; then
+        EX_DOCS_EXS=$app/doc/src/ex_doc.exs
+    else
+        EX_DOCS_EXS=$ERL_TOP/ex_doc.exs
+    fi
+    APP=$app ex_doc $app "${VSN}" "$app/preloaded/ebin" -o "docs/$app" -c $EX_DOCS_EXS || exit
 fi

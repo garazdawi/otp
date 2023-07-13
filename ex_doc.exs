@@ -1,4 +1,4 @@
-a = [
+[
 	proglang: :erlang,
         source_url: "https://github.com/erlang/otp",
         source_ref: "master",
@@ -7,5 +7,3 @@ a = [
               fn path -> app = Path.split(path) |> Enum.at(1);
               {String.to_atom(app), Path.join(["..",app])} end)) ++ [erts: "../erts"]
 ]
-IO.inspect a
-a

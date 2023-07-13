@@ -831,10 +831,16 @@ render_element({br, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
 render_element({Elem, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind, ?IS_BLOCK(Elem) ->
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
     {["\n", Docs], NewPos};
-render_element({'div', [{class, <<"note">>}], Content}, State, Pos, Ind, D) ->
-    render_element({'div', [{class, <<"info">>}], Content}, State, Pos, Ind, D);
 render_element({'div', [{class, What}], Content}, State, Pos, Ind, D) ->
-    Title = unicode:characters_to_binary([string:titlecase(What), " {: .", What, "}"]),
+    Type = case What of
+               <<"warning">> -> What;
+               <<"error">> -> What;
+               <<"note">> -> <<"info">>;
+               <<"change">> -> <<"neutral">>;
+               <<"do">> -> <<"neutral">>;
+               <<"dont">> -> <<"neutral">>
+           end,
+    Title = unicode:characters_to_binary([string:titlecase(What), " {: .", Type, "}"]),
     {Header, 0} = render_element({h4, [], [Title]}, State, Pos, Ind, D),
     {Docs, 0} = render_element({'div', [], Content}, ['div' | State], 0, 0, D),
     trimnlnl([[pad(Ind), "> ",Line,"\n"] || Line <- string:split([Header, trim(Docs)],"\n",all)]);
@@ -911,7 +917,7 @@ render_element({code, _, Content}, [pre | _] = State, Pos, Ind, D) ->
     render_docs(Content, [code | State], Pos, Ind, D);
 render_element({code, _, Content}, State, Pos, Ind, D) ->
     {Docs, NewPos} = render_docs(Content, [code | State], Pos, Ind, D),
-    {["`", Docs, "`"], NewPos};
+    {["`` ", Docs, " ``"], NewPos};
 render_element({em, Attr, Content}, State, Pos, Ind, D) ->
     render_element({i, Attr, Content}, State, Pos, Ind, D);
 render_element({i, _, Content}, State, Pos, Ind, D) ->

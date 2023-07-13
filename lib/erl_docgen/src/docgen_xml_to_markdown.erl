@@ -35,9 +35,9 @@ main([Application, FromXML, ToMarkdown]) ->
             throw({error, Reason});
         skip ->
             io:format("Skipping: ~ts~n",[FromXML]),
-            ok;
+            skip;
         EEP48 ->
-            %% [io:format("~tp~n",[EEP48]) || filename:rootname(filename:basename(FromXML)) =:= "alt_dist"],
+            %% [io:format("~tp~n",[EEP48])], %% || filename:rootname(filename:basename(FromXML)) =:= "alt_dist"],
             Markdown = unicode:characters_to_binary(eep48_to_markdown:render_docs(shell_docs:normalize(EEP48))),
             %% io:format("~ts~n",[Markdown]),
             ok = file:write_file(ToMarkdown, Markdown)
@@ -52,20 +52,30 @@ convert_application(App) ->
                                 {event_state,initial_state()}]) of
         {ok, Tree, _} ->
             [{book, _, C}] = get_dom(Tree),
-            case lists:keyfind(parts, 1, C) of
-                {parts, _, [{include, [{href, Part}],[]}]} ->
-                    ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Part]));
-                false ->
-                    no_users_guides
-            end,
+            Guides =
+                case lists:keyfind(parts, 1, C) of
+                    {parts, _, [{include, [{href, Part}],[]}]} ->
+                        to_group("User's Guides",convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Part])));
+                    false ->
+                        []
+                end,
             {applications, _, [{include, [{href, Applications}],[]}]}  = lists:keyfind(applications, 1, C),
-            ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Applications])),
-            case lists:keyfind(internals, 1, C) of
-                {internals, _, [{include, [{href, Internal}],[]}]} ->
-                    ok = convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Internal]));
-                false ->
-                    no_internal_docs
-            end,
+            Apps = to_group("References", convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Applications]))),
+            {releasenotes, _, [{include, [{href, ReleaseNotes}],[]}]}  = lists:keyfind(releasenotes, 1, C),
+            ok = main([atom_to_list(App), filename:join(SrcDir,ReleaseNotes),
+                       filename:join(DstDir, filename:rootname(ReleaseNotes) ++ ".md")]),
+            Internals =
+                case lists:keyfind(internals, 1, C) of
+                    {internals, _, [{include, [{href, Internal}],[]}]} ->
+                        to_group("Internal Docs",
+                                 convert_xml_include(App, SrcDir, DstDir, filename:join([SrcDir,Internal])));
+                    false ->
+                        []
+                end,
+            ok = file:write_file(
+                   filename:join(DstDir,"ex_doc.exs"),
+                   ["{global,_} = Code.eval_file Path.join(System.get_env(\"ERL_TOP\"),\"ex_doc.exs\")\n"
+                    "[ groups_for_extras: [",Guides, Apps, Internals," ] ] ++ global"]),
             ok;
         Error ->
             Error
@@ -78,16 +88,36 @@ convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
                                 {event_state,initial_state()}]) of
         {ok,Tree,_} ->
             [{_, _, C}] = get_dom(Tree),
-            lists:foreach(
+            lists:flatmap(
               fun({include,[{href,Path}],_}) ->
-                      main([atom_to_list(App), filename:join(SrcDir,Path),
-                            filename:join(DstDir, filename:rootname(Path) ++ ".md")]);
+                      Dst = filename:join(DstDir, filename:rootname(Path) ++ ".md"),
+                      case main([atom_to_list(App), filename:join(SrcDir,Path), Dst]) of
+                          skip ->
+                              [];
+                          ok ->
+                              [Dst]
+                      end;
                  ({Tag, _, _}) when Tag =:= header; Tag =:= description ->
-                      ok
+                      []
               end, C);
         Else ->
             {error,Else}
     end.
+
+to_group(_GroupName, []) ->
+    "";
+to_group(GroupName, Paths) ->
+    lists:flatten(["\"", GroupName ,"\": [", [["\"", remove_cwd(Path) ,"\","] || Path <- Paths], "],"]).
+
+remove_cwd(Path) ->
+    {ok, Cwd} = file:get_cwd(),
+    remove_cwd(Cwd ++ "/", Path).
+remove_cwd([H|T],[H|P]) ->
+    remove_cwd(T,P);
+remove_cwd(_, P) ->
+    P.
+
+    
 
 %% Error handling
 %%----------------------------------------------------------------------
@@ -338,7 +368,7 @@ transform([{filesummary, [], Content}|T], Acc) ->
     transform(T, [{p,[],transform(Content,[])}|Acc]);
 
 transform([{section,_,Content}|T],Acc) ->
-    transform(T,transform(Content,[]) ++ Acc);
+    transform(T,[transform(Content,[])|Acc]);
 transform([{description,_,Content}|T],Acc) ->
     transform(T,[{h2,[],[<<"Description">>]}|transform(Content,[])] ++ Acc);
 
