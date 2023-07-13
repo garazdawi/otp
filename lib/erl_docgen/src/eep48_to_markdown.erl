@@ -825,7 +825,7 @@ render_element({pre, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
     %% We pad `pre` with two newlines if the previous section did not indent the region.
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
     {["\n\n", Docs], NewPos};
-render_element({br, _Attr, _Content} = E, [td|State], Pos, Ind, D)  ->
+render_element({br, _Attr, _Content}, [td|_State], Pos, _Ind, _D)  ->
     {" ", Pos + 1};
 render_element({br, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
