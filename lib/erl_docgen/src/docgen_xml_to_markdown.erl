@@ -43,6 +43,25 @@ main([Application, FromXML, ToMarkdown]) ->
             ok = file:write_file(ToMarkdown, Markdown)
     end.
 
+convert_application(system) ->
+    SrcDir = filename:join([code:root_dir(),"system","doc","xml"]),
+    DstDir = filename:join([code:root_dir(),"system","doc"]),
+    case xmerl_sax_parser:file(filename:join(SrcDir, "book.xml"),
+                               [skip_external_dtd,
+                                {event_fun,fun event/3},
+                                {event_state,initial_state()}]) of
+        {ok, Tree, _} ->
+            [{book, _, C}] = get_dom(Tree),
+            {parts, _, Includes} = lists:keyfind(parts, 1, C),
+            Guides =
+                [convert_xml_include(
+                   system, filename:dirname(filename:join([SrcDir,Part])),
+                   filename:join(DstDir, filename:basename(filename:dirname(filename:join([SrcDir,Part])))),
+                   filename:join([SrcDir,Part]))
+                 || {include, [{href, Part}],[]} <- Includes];
+        Error ->
+            Error
+    end;
 convert_application(App) ->
     SrcDir = filename:join([code:lib_dir(App),"doc","xml"]),
     DstDir = filename:join([code:lib_dir(App),"doc","src"]),
@@ -88,26 +107,31 @@ convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
                                 {event_state,initial_state()}]) of
         {ok,Tree,_} ->
             [{_, _, C}] = get_dom(Tree),
-            lists:flatmap(
-              fun({include,[{href,Path}],_}) ->
-                      Dst = filename:join(DstDir, filename:rootname(Path) ++ ".md"),
-                      case main([atom_to_list(App), filename:join(SrcDir,Path), Dst]) of
-                          skip ->
-                              [];
-                          ok ->
-                              [Dst]
-                      end;
-                 ({Tag, _, _}) when Tag =:= header; Tag =:= description ->
-                      []
-              end, C);
+            {header, _, Header} = lists:keyfind(header, 1, C),
+            {h1, _, Title} = lists:keyfind(h1, 1, Header),
+            {Title,
+             lists:flatmap(
+               fun({include,[{href,Path}],_}) ->
+                       Dst = filename:join(DstDir, filename:rootname(Path) ++ ".md"),
+                       case main([atom_to_list(App), filename:join(SrcDir,Path), Dst]) of
+                           skip ->
+                               [];
+                           ok ->
+                               [Dst]
+                       end;
+                  ({Tag, _, _}) when Tag =:= header; Tag =:= description ->
+                       []
+               end, C)};
         Else ->
             {error,Else}
     end.
 
 to_group(_GroupName, []) ->
     "";
-to_group(GroupName, Paths) ->
-    lists:flatten(["\"", GroupName ,"\": [", [["\"", remove_cwd(Path) ,"\","] || Path <- Paths], "],"]).
+to_group(GroupName, {_Title, Paths}) ->
+    to_group({GroupName, Paths}).
+to_group({Title, Paths}) ->
+    lists:flatten(["\"", Title ,"\": [", [["\"", remove_cwd(Path) ,"\","] || Path <- Paths], "],"]).
 
 remove_cwd(Path) ->
     {ok, Cwd} = file:get_cwd(),

@@ -46,10 +46,10 @@
       must export the following functions: </p>
     <list type="bulleted">
       <item>
-        <p><seemfa marker="#delivery_targets/3">delivery_targets/3</seemfa></p>
+        <p><seemfa marker="#Module:delivery_targets/3">delivery_targets/3</seemfa></p>
       </item>
       <item>
-        <p><seemfa marker="#delivery_info/4">delivery_info/4</seemfa></p>
+        <p><seemfa marker="#Module:delivery_info/4">delivery_info/4</seemfa></p>
       </item>
     </list>
     <p>The semantics of them and their exact signatures are explained

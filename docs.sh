@@ -54,3 +54,11 @@ if [ "$APPS" = '*' ] || [ $APPS = 'erts' ]; then
     fi
     APP=$app ex_doc $app "${VSN}" "$app/preloaded/ebin" -o "docs/$app" -c $EX_DOCS_EXS || exit
 fi
+
+if [ "$APPS" = '*' ] || [ $APPS = 'system' ]; then
+    VSN=$(cat OTP_VERSION)
+    erl -noinput -eval "docgen_xml_to_markdown:convert_application(system), halt()"
+    APP=$app ex_doc system "${VSN}" "lib/erl_interface/ebin" -o "docs/system" -c system/ex_doc.exs || exit
+    cp -R docs/system/* docs/
+    rm -rf docs/system
+fi
