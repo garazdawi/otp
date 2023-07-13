@@ -34,7 +34,7 @@
 
 -export_type([chunk_elements/0, chunk_element_attr/0]).
 
--record(config, {docs :: docs_v1()}).
+-record(config, {docs :: docs_v1() | undefined}).
 
 -define(ALL_ELEMENTS, [
     a,
@@ -79,7 +79,7 @@
 %% If you update the below types, make sure to update the documentation in
 %% erl_docgen/doc/src/doc_storage.xml as well!!!
 -type docs_v1() :: #docs_v1{
-    docs :: [chunk_entry()], format :: binary(), module_doc :: chunk_elements()
+    docs :: [chunk_entry()], format :: binary(), module_doc :: none | hidden | #{ binary() => chunk_elements() }
 }.
 -type chunk_entry() :: {
     {Type :: function | type | callback, Name :: atom(), Arity :: non_neg_integer()},
@@ -124,7 +124,7 @@ normalize(Docs) ->
     shell_docs:normalize(Docs).
 
 convert_application(App) ->
-    application:load(App),
+    _= application:load(App),
     {ok, Modules} = application:get_key(App, modules),
     [convert(M) || M <- Modules],
     docgen_xml_to_markdown:convert_application(App),
@@ -167,10 +167,10 @@ convert(Module) ->
             %%    io:format("~p~n",[AST]),
             %% {AST, Meta}.
             %%    [ io:format("~ts:~n~ts~n", [Key, ""]) || Key := Value <- NewFiles, not is_atom(Key)],
-            [ begin
-                  io:format("\tUpdated ~ts~n",[Key]),
-                  file:write_file(Key, unicode:characters_to_binary([[A,$\n] || A <- Value]))
-              end || Key := Value <- NewFilesWithModuleDoc, not is_atom(Key)],
+            _ = [ begin
+                      io:format("\tUpdated ~ts~n",[Key]),
+                      ok = file:write_file(Key, unicode:characters_to_binary([[A,$\n] || A <- Value]))
+                  end || Key := Value <- NewFilesWithModuleDoc, not is_atom(Key)],
             ok;
         Error ->
             io:format("Error: ~p~n",[Error]),
@@ -225,7 +225,7 @@ convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T] = Docs, Files) ->
 convert_moduledoc(ModuleHeader) ->
     DocHeader = lists:flatmap(
                   fun (Doc) ->
-                          render_docs(Doc, init_config(Doc, #{}))
+                          render_docs(Doc, init_config(undefined, #{}))
                   end, ModuleHeader),
     moduledoc(DocHeader).
 
@@ -750,7 +750,7 @@ render_docs(DocContents, Ind, D = #config{}) when is_integer(Ind) ->
             erlang:raise(E,R,ST)
     end.
 
--spec init_config(#docs_v1{}, _) -> #config{}.
+-spec init_config(#docs_v1{} | undefined, _) -> #config{}.
 init_config(D, _Config) ->
     #config{docs = D}.
 

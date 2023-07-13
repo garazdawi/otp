@@ -125,7 +125,7 @@ convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
             {error,Else}
     end.
 
-to_group(_GroupName, []) ->
+to_group(_GroupName, {_, []}) ->
     "";
 to_group(GroupName, {_Title, Paths}) ->
     to_group({GroupName, Paths}).
