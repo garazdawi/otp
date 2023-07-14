@@ -899,9 +899,9 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                 CurrentApplication = unicode:characters_to_binary(get(application)),
                 case string:lexemes(Href, ":#") of
                     [App, Guide] when App =:= CurrentApplication ->
-                        {["[", Docs, "](",Guide,")"], NewPos};
+                        {["[", Docs, "](",Guide,".md)"], NewPos};
                     [App, Guide, Anchor] when App =:= CurrentApplication ->
-                        {["[", Docs, "](",Guide,"#",Anchor,")"], NewPos};
+                        {["[", Docs, "](",Guide,".md#",Anchor,")"], NewPos};
                     [App, Guide] ->
                         {["[", Docs, "](`p:",App,":",Guide,"`)"], NewPos};
                     [App, Guide, Anchor] ->

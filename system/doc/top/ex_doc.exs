@@ -14,6 +14,9 @@ Keyword.merge(global,
                          "Test": ~r/test/,
                          "Documentation": ~r/docs/
                        ],
+    skip_undefined_reference_warnings_on:
+    ["dbg:stop_clear/0", "code:is_module_native/1"],
+
     deps: (Path.wildcard("lib/*/ebin") |> Enum.map(
     fn path -> app = Path.split(path) |> Enum.at(1);
       {String.to_atom(app), Path.join([app])} end)) ++ [erts: "erts", system: "system"]
