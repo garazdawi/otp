@@ -92,11 +92,11 @@ convert_application(App) ->
             ok = file:write_file(
                    filename:join(DstDir,"ex_doc.exs"),
                    ["{global,_} = Code.eval_file Path.join(System.get_env(\"ERL_TOP\"),\"ex_doc.exs\")\n"
-                    "[ extras: ", to_group(element(2,Guides) ++ element(2,Apps) ++ element(2, Internals)), " groups_for_extras: [",
-                    [to_group("Internal Docs",Guides),
+                    "Keyword.merge(global,[ extras: ", to_group(element(2,Guides) ++ element(2,Apps) ++ element(2, Internals)), " groups_for_extras: [",
+                    [to_group("User's Guides",Guides),
                      to_group("References", Apps),
-                     to_group("User's Guides",Internals)],
-                    " ] ] ++ global"]),
+                     to_group("Internal Docs",Internals)],
+                    " ] ])"]),
             ok;
         Error ->
             Error
@@ -111,16 +111,14 @@ convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
             [{_, _, C}] = get_dom(Tree),
             {header, _, Header} = lists:keyfind(header, 1, C),
             {h1, _, Title} = lists:keyfind(h1, 1, Header),
-            put(cnt, 0),
             {Title,
              lists:flatmap(
                fun({include,[{href,Path}],_}) ->
-                       Dst = filename:join(DstDir, [$a+get(cnt),$_] ++ filename:rootname(Path) ++ ".md"),
+                       Dst = filename:join(DstDir, filename:rootname(Path) ++ ".md"),
                        case main([atom_to_list(App), filename:join(SrcDir,Path), Dst]) of
                            skip ->
                                [];
                            ok ->
-                               put(cnt, get(cnt) + 1),
                                [Dst]
                        end;
                   ({Tag, _, _}) when Tag =:= header; Tag =:= description ->
