@@ -867,7 +867,7 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                 [Func, Arity] = string:split(FA, "/"),
                 {
                  [
-                  "[", Docs, "](m:",Mod,":",Func,"/",Arity,")"
+                  "[", Docs, "](`",Mod,":",Func,"/",Arity,"`)"
                  ],
                  NewPos
                 };
@@ -876,14 +876,14 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                     [_App, Mod, Type, Arity] ->
                         {
                          [
-                          "[", Docs, "](t:",Mod,":",Type,"/",Arity,")"
+                          "[", Docs, "](`t:",Mod,":",Type,"/",Arity,"`)"
                          ],
                          NewPos
                         };
                     [_App, Mod, Type] ->
                         {
                          [
-                          "[", Docs, "](t:",Mod,":",Type,"/0)"
+                          "[", Docs, "](`t:",Mod,":",Type,"/0`)"
                          ],
                          NewPos
                         }
@@ -891,9 +891,9 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
             <<"https://erlang.org/doc/link/seeerl">> ->
                 case string:lexemes(Href, ":#") of
                     [_App, Mod] ->
-                        {["[", Docs, "](m:", Mod, ")"], NewPos};
+                        {["[", Docs, "](`m:", Mod, "`)"], NewPos};
                     [_App, Mod, Anchor] ->
-                        {["[", Docs, "](m:", Mod, "#", Anchor, ")"], NewPos}
+                        {["[", Docs, "](`m:", Mod, "#", Anchor, "`)"], NewPos}
                 end;
             <<"https://erlang.org/doc/link/seeguide">> ->
                 CurrentApplication = unicode:characters_to_binary(get(application)),
@@ -903,9 +903,9 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                     [App, Guide, Anchor] when App =:= CurrentApplication ->
                         {["[", Docs, "](",Guide,"#",Anchor,")"], NewPos};
                     [App, Guide] ->
-                        {["[", Docs, "](p:",App,":",Guide,")"], NewPos};
+                        {["[", Docs, "](`p:",App,":",Guide,"`)"], NewPos};
                     [App, Guide, Anchor] ->
-                        {["[", Docs, "](p:",App,":",Guide,"#",Anchor,")"], NewPos}
+                        {["[", Docs, "](`p:",App,":",Guide,"#",Anchor,"`)"], NewPos}
                 end;
             _ ->
                 {Docs, NewPos}

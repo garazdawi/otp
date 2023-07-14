@@ -55,10 +55,69 @@ if [ "$APPS" = '*' ] || [ $APPS = 'erts' ]; then
     APP=$app ex_doc $app "${VSN}" "$app/preloaded/ebin" -o "docs/$app" -c $EX_DOCS_EXS || exit
 fi
 
+function system_guide_title {
+    case $1 in
+        installation_guide) echo -n "Installation Guide";;
+        system_principles) echo -n "System Principles";;
+        embedded) echo -n "Embedded Systems User's Guide";;
+        getting_started) echo -n "Getting Started With Erlang";;
+        reference_manual) echo -n "Erlang Reference Manual";;
+        programming_examples) echo -n "Programming Examples";;
+        efficiency_guide) echo -n "Efficiency Guide";;
+        tutorial) echo -n "Interoperability Tutorial";;
+        design_principles) echo -n "OTP Design Principles";;
+        oam) echo -n "OAM Principles";;
+        *) echo -n "$1";;
+    esac
+    return 0
+}
+
 if [ "$APPS" = '*' ] || [ $APPS = 'system' ]; then
     VSN=$(cat OTP_VERSION)
+    for guide in installation_guide system_principles embedded getting_started reference_manual programming_examples efficiency_guide tutorial design_principles oam; do
+        TITLE=$(system_guide_title $guide)
+        echo "# $TITLE" > system/doc/$guide/1_$guide-readme.md
+    done
     erl -noinput -eval "docgen_xml_to_markdown:convert_application(system), halt()"
-    APP=$app ex_doc system "${VSN}" "lib/erl_interface/ebin" -o "docs/system" -c system/ex_doc.exs || exit
-    cp -R docs/system/* docs/
-    rm -rf docs/system
+    APP=$app ex_doc "Erlang System" "${VSN}" "lib/erl_interface/ebin" -o "docs/system" -c system/doc/ex_doc.exs || exit
+fi
+
+
+if [ "$APPS" = '*' ] || [ $APPS = 'index' ]; then
+    function create_redirect {
+        local DIR=$1
+        shift
+        rm -rf $DIR
+        mkdir $DIR
+        for app in $*; do
+            local TITLE=$(system_guide_title $app)
+            case $app in
+                installation_guide |\
+                system_principles |\
+                embedded |\
+                getting_started |\
+                reference_manual |\
+                programming_examples |\
+                efficiency_guide |\
+                tutorial |\
+                design_principles |\
+                oam)
+                    LOCATION="$app/1_$app-readme.html";;
+                *) LOCATION="$app/index.html";;
+            esac
+            echo -e "# $TITLE\n\n<script>window.location.replace(\"$LOCATION\");</script>" > $DIR/$app.md
+        done
+    }
+    VSN=$(cat OTP_VERSION)
+    create_redirect system/doc/top/basic compiler erts kernel sasl stdlib
+    create_redirect system/doc/top/database mnesia odbc
+    create_redirect system/doc/top/oam os_mon snmp
+    create_redirect system/doc/top/interfaces asn1 crypto diameter eldap erl_interface ftp inets jinterface megaco public_key ssh ssl tftp wx xmerl
+    create_redirect system/doc/top/tools debugger dialyzer et observer parsetools reltool runtime_tools syntax_tools tools
+    create_redirect system/doc/top/test common_test eunit
+    create_redirect system/doc/top/docs erl_docgen edoc
+    create_redirect system/doc/top/system installation_guide system_principles embedded getting_started reference_manual programming_examples efficiency_guide tutorial design_principles oam
+    APP=$app ex_doc "Erlang/OTP" "${VSN}" "lib/erl_interface/ebin" -o "docs/index" -c system/doc/top/ex_doc.exs || exit
+    cp -r docs/index/* docs/
+    rm -rf docs/index
 fi
