@@ -102,7 +102,7 @@ if [ "$APPS" = '*' ] || [ $APPS = 'index' ]; then
                 tutorial |\
                 design_principles |\
                 oam)
-                    LOCATION="$app/1_$app-readme.html";;
+                    LOCATION="system/1_$app-readme.html";;
                 *) LOCATION="$app/index.html";;
             esac
             echo -e "# $TITLE\n\n<script>window.location.replace(\"$LOCATION\");</script>" > $DIR/$app.md
