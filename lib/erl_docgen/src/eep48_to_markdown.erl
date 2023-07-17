@@ -864,10 +864,16 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
             <<"https://erlang.org/doc/link/seemfa">> ->
                 [_App, MFA] = string:split(Href, ":"),
                 [Mod, FA] = string:split(MFA, "#"),
-                [Func, Arity] = string:split(FA, "/"),
+                {Prefix, Func, Arity} =
+                    case string:split(FA, "/") of
+                        [<<"Module:", F/binary>>, A] ->
+                            {"c:",F, A};
+                        [F, A] ->
+                            {"", F, A}
+                    end,
                 {
                  [
-                  "[", Docs, "](`",Mod,":",Func,"/",Arity,"`)"
+                  "[", Docs, "](`",Prefix,Mod,":",Func,"/",Arity,"`)"
                  ],
                  NewPos
                 };
@@ -897,15 +903,20 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                 end;
             <<"https://erlang.org/doc/link/seeguide">> ->
                 CurrentApplication = unicode:characters_to_binary(get(application)),
+                RemoveSystemApp = fun(<<"system",_/binary>>) ->
+                                          <<"system">>;
+                                     (Else) ->
+                                          Else
+                                  end,
                 case string:lexemes(Href, ":#") of
                     [App, Guide] when App =:= CurrentApplication ->
                         {["[", Docs, "](",Guide,".md)"], NewPos};
                     [App, Guide, Anchor] when App =:= CurrentApplication ->
                         {["[", Docs, "](",Guide,".md#",Anchor,")"], NewPos};
                     [App, Guide] ->
-                        {["[", Docs, "](`p:",App,":",Guide,"`)"], NewPos};
+                        {["[", Docs, "](`p:",RemoveSystemApp(App),":",Guide,"`)"], NewPos};
                     [App, Guide, Anchor] ->
-                        {["[", Docs, "](`p:",App,":",Guide,"#",Anchor,"`)"], NewPos}
+                        {["[", Docs, "](`p:",RemoveSystemApp(App),":",Guide,"#",Anchor,"`)"], NewPos}
                 end;
             _ ->
                 {Docs, NewPos}
