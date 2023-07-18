@@ -133,10 +133,24 @@ convert_application(App) ->
 
 convert(Module) ->
     io:format("Converting: ~p~n",[Module]),
+    ModulePath =
+        case code:which(Module) of
+            preloaded ->
+                filename:join(["erts","preloaded","ebin",Module]);
+            Path -> Path
+        end,
     {ok, {Module,
           [{debug_info,
             {debug_info_v1, erl_abstract_code,
-             {AST, Meta}}}]}} = beam_lib:chunks(code:which(Module),[debug_info]),
+             {AST, Meta0}}}]}} = beam_lib:chunks(ModulePath,[debug_info]),
+
+    Meta =
+        case code:which(Module) of
+            preloaded ->
+                [{cwd,"erts/preloaded/src"}|Meta0];
+            _ ->
+                Meta0
+        end,
 
     case code:get_doc(Module, #{ sources => [eep48] }) of
         {ok, #docs_v1{ module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
