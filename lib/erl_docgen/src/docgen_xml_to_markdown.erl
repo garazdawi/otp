@@ -111,7 +111,7 @@ convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
             [{_, _, C}] = get_dom(Tree),
             {header, _, Header} = lists:keyfind(header, 1, C),
             {h1, _, Title} = lists:keyfind(h1, 1, Header),
-            put(first, filename:basename(DstDir) =/= "general_info" ),
+            put(first, filename:basename(DstDir) =/= "general_info" andalso App =:= system),
             {Title,
              lists:flatmap(
                fun({include,[{href,Path}],_}) ->
