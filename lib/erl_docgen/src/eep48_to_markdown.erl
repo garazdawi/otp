@@ -124,9 +124,10 @@ normalize(Docs) ->
     shell_docs:normalize(Docs).
 
 convert_application(App) ->
-    _= application:load(App),
-    {ok, Modules} = application:get_key(App, modules),
-    [convert(M) || M <- Modules],
+    put(application, atom_to_list(App)),
+    Modules = [list_to_atom(filename:basename(filename:rootname(File)))
+               || File <- filelib:wildcard(filename:join(filename:dirname(code:priv_dir(App)),"doc/chunks/*.chunk"))],
+    [try convert(M) catch E:R:ST -> io:format("~p:~p:~p~n",[E,R,ST]), erlang:raise(E,R,ST) end || M <- Modules],
     docgen_xml_to_markdown:convert_application(App),
     ok.
 
@@ -172,6 +173,8 @@ convert(Module) ->
                       ok = file:write_file(Key, unicode:characters_to_binary([[A,$\n] || A <- Value]))
                   end || Key := Value <- NewFilesWithModuleDoc, not is_atom(Key)],
             ok;
+        {ok, #docs_v1{ module_doc = hidden }} ->
+            ok;
         Error ->
             io:format("Error: ~p~n",[Error]),
             ok
@@ -203,6 +206,8 @@ convert(Lines, Acc, [], Files) ->
 convert(Lines, Acc, [{{callback,F,A}, _, _, _, _} | T], Files) ->
     io:format("Skipping callback ~p/~p~n",[F,A]),
     convert(Lines, Acc, T, Files);
+convert(Lines, Acc, [{_, 0, _, _, _} | T], Files) ->
+    convert(Lines, Acc, T, Files);
 convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T] = Docs, Files) ->
     case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
         true ->
@@ -225,7 +230,7 @@ convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T] = Docs, Files) ->
 convert_moduledoc(ModuleHeader) ->
     DocHeader = lists:flatmap(
                   fun (Doc) ->
-                          render_docs(Doc, init_config(undefined, #{}))
+                          [render_docs(Doc, init_config(undefined, #{}))]
                   end, ModuleHeader),
     moduledoc(DocHeader).
 
@@ -299,9 +304,8 @@ filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T
                     {value, {attribute, TypeAnno, _, _}} ->
                         TypeAnno;
                     false ->
-                        io:format("~p~n",[AST]),
                         io:format("Could not find type: ~p/~p~n",[F,A]),
-                        error(badarg)
+                        erl_anno:new(0)
                 end;
             callback ->
                 Anno
