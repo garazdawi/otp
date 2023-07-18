@@ -465,8 +465,9 @@ jobs:
       - name: Release docs to publish
         run: |
           docker run -v $PWD/:/github otp \
-          'for file in lib/*/doc/src/*.md erts/doc/src/*.md system/doc/*/*.md; do cp $file /github/$file; done && \
-           rsync -vr --existing `pwd`/ /github/'
+          'cd $ERL_TOP && \
+          for file in lib/*/doc/src/*.md erts/doc/src/*.md system/doc/*/*.md; do cp $file /github/$file; done && \
+           sudo apt install rsync && rsync -vr --existing `pwd`/ /github/'
       - name: Commit changes
         run: |
             git checkout -b lukas/erl_docgen/markdown
