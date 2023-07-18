@@ -28,6 +28,12 @@ if ! is_bin_in_path ex_doc; then
     export PATH=`pwd`/ex_doc/:$PATH
 fi
 
+function copy_assets {
+    local FROM="$1"
+    local TO="$2"
+    mkdir -p "$TO"
+    find "$FROM"  \! -name "*.html" \! -name ".*" -type f \! -name "*.js" \! -name "*.eix" -exec cp {} "$TO/" \;
+}
 
 for app in $(ls -d lib/${APPS}/ebin | awk -F "/" '{print $2}'); do
     echo "Creating docs for $app"
@@ -38,6 +44,9 @@ for app in $(ls -d lib/${APPS}/ebin | awk -F "/" '{print $2}'); do
         EX_DOCS_EXS=lib/$app/doc/src/ex_doc.exs
     else
         EX_DOCS_EXS=$ERL_TOP/ex_doc.exs
+    fi
+    if [ $app != "jinterface" ]; then
+        copy_assets lib/$app/doc/html lib/$app/doc/assets
     fi
     APP="lib/$app" ex_doc $app "${VSN}" "lib/$app/ebin" -o "docs/$app" -c $EX_DOCS_EXS || exit
 done
@@ -52,6 +61,7 @@ if [ "$APPS" = '*' ] || [ $APPS = 'erts' ]; then
     else
         EX_DOCS_EXS=$ERL_TOP/ex_doc.exs
     fi
+    copy_assets erts/doc/html erts/doc/assets
     APP=$app ex_doc $app "${VSN}" "$app/preloaded/ebin" -o "docs/$app" -c $EX_DOCS_EXS || exit
 fi
 
@@ -74,12 +84,9 @@ function system_guide_title {
 
 if [ "$APPS" = '*' ] || [ $APPS = 'system' ]; then
     VSN=$(cat OTP_VERSION)
-    for guide in installation_guide system_principles embedded getting_started reference_manual programming_examples efficiency_guide tutorial design_principles oam; do
-        TITLE=$(system_guide_title $guide)
-        echo "# $TITLE" > system/doc/$guide/$guide-README.md
-    done
+    copy_assets system/doc/html system/doc/assets
     erl -noinput -eval "docgen_xml_to_markdown:convert_application(system), halt()"
-    APP=$app ex_doc "Erlang System" "${VSN}" "lib/erl_interface/ebin" -o "docs/system" -c system/doc/ex_doc.exs || exit
+    APP=$app ex_doc "Erlang System Documentation" "${VSN}" "lib/erl_interface/ebin" -o "docs/system" -c system/doc/ex_doc.exs || exit
 fi
 
 
@@ -102,7 +109,7 @@ if [ "$APPS" = '*' ] || [ $APPS = 'index' ]; then
                 tutorial |\
                 design_principles |\
                 oam)
-                    LOCATION="system/$app-readme.html";;
+                    LOCATION="system/$app.html";;
                 *) LOCATION="$app/index.html";;
             esac
             echo -e "# $TITLE\n\n<script>window.location.replace(\"$LOCATION\");</script>" > $DIR/$app.md

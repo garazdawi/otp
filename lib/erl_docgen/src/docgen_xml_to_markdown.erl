@@ -111,17 +111,33 @@ convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
             [{_, _, C}] = get_dom(Tree),
             {header, _, Header} = lists:keyfind(header, 1, C),
             {h1, _, Title} = lists:keyfind(h1, 1, Header),
+            put(first, true),
             {Title,
              lists:flatmap(
                fun({include,[{href,Path}],_}) ->
-                       Dst = filename:join(DstDir, filename:rootname(Path) ++ ".md"),
+                       Dst = case get(first) of
+                                 false ->
+                                     filename:join(DstDir, filename:rootname(Path) ++ ".md");
+                                 true ->
+                                     put(first, false),
+                                     filename:join(DstDir, filename:basename(DstDir) ++ ".md")
+                             end,
                        case main([atom_to_list(App), filename:join(SrcDir,Path), Dst]) of
                            skip ->
                                [];
                            ok ->
                                [Dst]
                        end;
-                  ({Tag, _, _}) when Tag =:= header; Tag =:= description ->
+                  ({description, _, Content}) when App =:= system ->
+                       EEP48 = transform(Content, []),
+                       Markdown = unicode:characters_to_binary(
+                                    ["# Introduction\n\n", eep48_to_markdown:render_docs(shell_docs:normalize(EEP48))]),
+                       Dst = filename:join(DstDir, filename:basename(DstDir) ++ ".md"),
+                       put(first, false),
+                       ok = file:write_file(Dst, Markdown),
+                       [Dst];
+                  ({Tag, _, _}) when Tag =:= header;
+                                     Tag =:= description ->
                        []
                end, C)};
         Else ->

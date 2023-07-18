@@ -1,7 +1,7 @@
 {global,_} = Code.eval_file Path.join(System.get_env("ERL_TOP"),"ex_doc.exs");
 Keyword.merge(global,
   [
-    extras: Path.wildcard("system/doc/{top,general_info}/*.md") ++
+    extras: ["system/doc/top/README.md"] ++ Path.wildcard("system/doc/general_info/*.md") ++
     Path.wildcard("system/doc/top/*/*.md"),
     main: "readme",
     api_reference: false,
