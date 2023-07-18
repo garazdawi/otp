@@ -1,8 +1,21 @@
 {global,_} = Code.eval_file Path.join(System.get_env("ERL_TOP"),"ex_doc.exs");
 Keyword.merge(global,
   [
-    extras: ["system/doc/top/README.md"] ++ Path.wildcard("system/doc/general_info/*.md") ++
-    Path.wildcard("system/doc/top/*/*.md"),
+    extras: (["top/README.md",
+             "general_info/deprecations.md",
+             "general_info/removed.md",
+             "general_info/scheduled_for_removal.md",
+             "general_info/upcoming_incompatibilities.md",
+             "top/system/installation_guide.md",
+             "top/system/getting_started.md",
+             "top/system/system_principles.md",
+             "top/system/programming_examples.md",
+             "top/system/reference_manual.md",
+             "top/system/design_principles.md",
+             "top/system/efficiency_guide.md",
+             "top/system/embedded.md",
+             "top/system/oam.md"] |> Enum.map(& Path.join("system/doc/", &1) ))
+    ++ Path.wildcard("system/doc/top/{basic,database,oam,interface,tools,test,docs}/*.md"),
     main: "readme",
     api_reference: false,
     groups_for_extras: [ "System Documentation": ~r{top/system},
