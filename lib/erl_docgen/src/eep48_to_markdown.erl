@@ -242,11 +242,7 @@ convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T] = Docs, Files) ->
 
 %% Convert module documentation
 convert_moduledoc(ModuleHeader) ->
-    DocHeader = lists:flatmap(
-                  fun (Doc) ->
-                          [render_docs(Doc, init_config(undefined, #{}))]
-                  end, ModuleHeader),
-    moduledoc(DocHeader).
+    moduledoc(render_docs(ModuleHeader, init_config(undefined, #{}))).
 
 formatter(String) ->
 
@@ -863,7 +859,7 @@ render_element({'div', [{class, What}], Content}, State, Pos, Ind, D) ->
     Title = unicode:characters_to_binary([string:titlecase(What), " {: .", Type, "}"]),
     {Header, 0} = render_element({h4, [], [Title]}, State, Pos, Ind, D),
     {Docs, 0} = render_element({'div', [], Content}, ['div' | State], 0, 0, D),
-    trimnlnl([[pad(Ind), "> ",Line,"\n"] || Line <- string:split([Header, trim(Docs)],"\n",all)]);
+    trimnlnl([[pad(Ind), string:trim(["> ",Line]),"\n"] || Line <- string:split([Header, trim(Docs)],"\n",all)]);
 render_element({Tag, _, Content}, State, Pos, Ind, D) when Tag =:= p; Tag =:= 'div' ->
     trimnlnl(render_docs(Content, [Tag | State], Pos, Ind, D));
 render_element(Elem, State, Pos, Ind, D) when Pos < Ind ->
@@ -941,7 +937,7 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
         end,
     case proplists:get_value(id, Attr) of
         undefined -> {DocsWithLink, PosWithLink};
-        Id -> {["<a id=\"", Id, "\"/>\n", pad(Pos), DocsWithLink], PosWithLink}
+        Id -> {string:trim(["<a id=\"", Id, "\"/>\n", pad(Pos), DocsWithLink]), PosWithLink}
     end;
 render_element({code, _, Content}, [pre | _] = State, Pos, Ind, D) ->
     %% When code is within a pre we don't emit any underline

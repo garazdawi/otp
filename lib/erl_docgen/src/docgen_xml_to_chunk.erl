@@ -701,6 +701,8 @@ to_chunk(Dom, Source, Module, AST) ->
                    fun({Tag,_,Content}) when Tag =:= description;
                                              Tag =:= section ->
                            Content;
+                      ({modulesummary, _, Content}) ->
+                           [{p, [], Content}];
                       ({_,_,_}) ->
                            []
                    end, Mcontent),

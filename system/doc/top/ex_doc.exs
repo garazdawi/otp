@@ -15,7 +15,7 @@ Keyword.merge(global,
              "top/system/efficiency_guide.md",
              "top/system/embedded.md",
              "top/system/oam.md"] |> Enum.map(& Path.join("system/doc/", &1) ))
-    ++ Path.wildcard("system/doc/top/{basic,database,oam,interface,tools,test,docs}/*.md"),
+    ++ Path.wildcard("system/doc/top/{basic,database,oam,interfaces,tools,test,docs}/*.md"),
     main: "readme",
     api_reference: false,
     groups_for_extras: [ "System Documentation": ~r{top/system},
