@@ -153,7 +153,8 @@ convert(Module) ->
         end,
 
     case code:get_doc(Module, #{ sources => [eep48] }) of
-        {ok, #docs_v1{ module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
+        {ok, #docs_v1{ format = <<"application/erlang+html">>,
+                       module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
             NewFiles = convert(#{ meta => Meta, ast => AST, docs => DocsV1 },
                                filter_and_fix_anno(expand_anno(AST), Docs)),
 
