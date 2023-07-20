@@ -10176,7 +10176,7 @@ Metadata = #{ pid => pid(),
             <c>allocator</c></tag>
           <item>
             <p>Returns <c>{<anno>Allocator</anno>, <anno>Version</anno>,
-              <anno>Features</anno>, <anno>Settings</anno></c>, where:</p>
+              <anno>Features</anno>, <anno>Settings</anno></c>}, where:</p>
             <list type="bulleted">
               <item>
                 <p><c><anno>Allocator</anno></c> corresponds to the
