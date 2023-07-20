@@ -862,82 +862,98 @@ render_element({'div', [{class, What}], Content}, State, Pos, Ind, D) ->
     trimnlnl([[pad(Ind), string:trim(["> ",Line]),"\n"] || Line <- string:split([Header, trim(Docs)],"\n",all)]);
 render_element({Tag, _, Content}, State, Pos, Ind, D) when Tag =:= p; Tag =:= 'div' ->
     trimnlnl(render_docs(Content, [Tag | State], Pos, Ind, D));
+render_element({a, [{id,_Id}], []} = A, State, Pos, Ind, D) when Pos > 0 ->
+    {Docs, NewPos} = render_element(A, State, 0, Ind, D),
+    {["\n",Docs], NewPos};
+render_element({a, [{id,Id}], []}, _State, Pos, _Ind, _D) ->
+    trimnl({["<a id=\"", Id, "\"/>\n"], Pos});
+render_element({dl, [], [{dt,DTAttr,DTContent}, {dd, DDAttr, DDContent} | DLContent]}, State, Pos, Ind, D) when State =:= []; hd(State) =/= a_fix ->
+    FilterFun = fun F({a,[{id,_}],_} = A, {As, Acc}) ->
+                        {[A | As], Acc};
+                    F({Tag, Attr, C}, {As, Acc}) when Tag =/= dl ->
+                        {NewAs, NewC} = lists:foldl(F, {As, []}, C),
+                        {NewAs, [{Tag, Attr, lists:reverse(NewC)} | Acc]};
+                    F(Elem, {As, Acc}) when is_binary(Elem); element(1, Elem) =:= dl ->
+                        {As, [Elem | Acc]}
+                end,
+    {DTAs, NewDTContent} = lists:foldl(FilterFun, {[],[]}, DTContent),
+    {As,   NewDDContent} = lists:foldl(FilterFun, {DTAs,[]}, DDContent),
+    %% io:format("Hoist: ~p~n",[As]),
+    render_docs(lists:reverse(As) ++ [{dl, [], [{dt,DTAttr, lists:reverse(NewDTContent)},
+                                                {dd, DDAttr, lists:reverse(NewDDContent)} | DLContent]}],
+                [a_fix | State], Pos, Ind, D);
 render_element(Elem, State, Pos, Ind, D) when Pos < Ind ->
     {Docs, NewPos} = render_element(Elem, State, Ind, Ind, D),
     {[pad(Ind - Pos), Docs], NewPos};
 render_element({a, Attr, Content}, State, Pos, Ind, D) ->
     {Docs, NewPos} = render_docs(Content, State, Pos, Ind, D),
     Href = proplists:get_value(href, Attr),
+    undefined = proplists:get_value(id, Attr),
     IsOTPLink = Href =/= undefined andalso string:find(Href, ":") =/= nomatch,
-    {DocsWithLink, PosWithLink} =
-        case proplists:get_value(rel, Attr) of
-            undefined when Href =/= undefined ->
-                {["[", Docs, "](", Href, ")"], NewPos};
-            _ when not IsOTPLink ->
-                {Docs, NewPos};
-            <<"https://erlang.org/doc/link/seemfa">> ->
-                [_App, MFA] = string:split(Href, ":"),
-                [Mod, FA] = string:split(MFA, "#"),
-                {Prefix, Func, Arity} =
-                    case string:split(FA, "/") of
-                        [<<"Module:", F/binary>>, A] ->
-                            {"c:",F, A};
-                        [F, A] ->
-                            {"", F, A}
-                    end,
-                {
-                 [
-                  "[", Docs, "](`",Prefix,Mod,":",Func,"/",Arity,"`)"
-                 ],
-                 NewPos
-                };
-            <<"https://erlang.org/doc/link/seetype">> ->
-                case string:lexemes(Href, ":#/") of
-                    [_App, Mod, Type, Arity] ->
-                        {
-                         [
-                          "[", Docs, "](`t:",Mod,":",Type,"/",Arity,"`)"
-                         ],
-                         NewPos
-                        };
-                    [_App, Mod, Type] ->
-                        {
-                         [
-                          "[", Docs, "](`t:",Mod,":",Type,"/0`)"
-                         ],
-                         NewPos
-                        }
-                end;
-            <<"https://erlang.org/doc/link/seeerl">> ->
-                case string:lexemes(Href, ":#") of
-                    [_App, Mod] ->
-                        {["[", Docs, "](`m:", Mod, "`)"], NewPos};
-                    [_App, Mod, Anchor] ->
-                        {["[", Docs, "](`m:", Mod, "#", Anchor, "`)"], NewPos}
-                end;
-            <<"https://erlang.org/doc/link/seeguide">> ->
-                CurrentApplication = unicode:characters_to_binary(get(application)),
-                RemoveSystemApp = fun(<<"system",_/binary>>) ->
-                                          <<"system">>;
-                                     (Else) ->
-                                          Else
-                                  end,
-                case string:lexemes(Href, ":#") of
-                    [App, Guide] when App =:= CurrentApplication ->
-                        {["[", Docs, "](",Guide,".md)"], NewPos};
-                    [App, Guide, Anchor] when App =:= CurrentApplication ->
-                        {["[", Docs, "](",Guide,".md#",Anchor,")"], NewPos};
-                    [App, Guide] ->
-                        {["[", Docs, "](`p:",RemoveSystemApp(App),":",Guide,"`)"], NewPos};
-                    [App, Guide, Anchor] ->
-                        {["[", Docs, "](`p:",RemoveSystemApp(App),":",Guide,"#",Anchor,"`)"], NewPos}
-                end;
-            _ ->
-                {Docs, NewPos}
-        end,
-    case proplists:get_value(id, Attr) of
-        undefined -> {DocsWithLink, PosWithLink};
-        Id -> {string:trim(["<a id=\"", Id, "\"/>\n", pad(Pos), DocsWithLink]), PosWithLink}
+    case proplists:get_value(rel, Attr) of
+        undefined when Href =/= undefined ->
+            {["[", Docs, "](", Href, ")"], NewPos};
+        _ when not IsOTPLink ->
+            {Docs, NewPos};
+        <<"https://erlang.org/doc/link/seemfa">> ->
+            [_App, MFA] = string:split(Href, ":"),
+            [Mod, FA] = string:split(MFA, "#"),
+            {Prefix, Func, Arity} =
+                case string:split(FA, "/") of
+                    [<<"Module:", F/binary>>, A] ->
+                        {"c:",F, A};
+                    [F, A] ->
+                        {"", F, A}
+                end,
+            {
+             [
+              "[", Docs, "](`",Prefix,Mod,":",Func,"/",Arity,"`)"
+             ],
+             NewPos
+            };
+        <<"https://erlang.org/doc/link/seetype">> ->
+            case string:lexemes(Href, ":#/") of
+                [_App, Mod, Type, Arity] ->
+                    {
+                     [
+                      "[", Docs, "](`t:",Mod,":",Type,"/",Arity,"`)"
+                     ],
+                     NewPos
+                    };
+                [_App, Mod, Type] ->
+                    {
+                     [
+                      "[", Docs, "](`t:",Mod,":",Type,"/0`)"
+                     ],
+                     NewPos
+                    }
+            end;
+        <<"https://erlang.org/doc/link/seeerl">> ->
+            case string:lexemes(Href, ":#") of
+                [_App, Mod] ->
+                    {["[", Docs, "](`m:", Mod, "`)"], NewPos};
+                [_App, Mod, Anchor] ->
+                    {["[", Docs, "](`m:", Mod, "#", Anchor, "`)"], NewPos}
+            end;
+        <<"https://erlang.org/doc/link/seeguide">> ->
+            CurrentApplication = unicode:characters_to_binary(get(application)),
+            RemoveSystemApp = fun(<<"system",_/binary>>) ->
+                                      <<"system">>;
+                                 (Else) ->
+                                      Else
+                              end,
+            case string:lexemes(Href, ":#") of
+                [App, Guide] when App =:= CurrentApplication ->
+                    {["[", Docs, "](",Guide,".md)"], NewPos};
+                [App, Guide, Anchor] when App =:= CurrentApplication ->
+                    {["[", Docs, "](",Guide,".md#",Anchor,")"], NewPos};
+                [App, Guide] ->
+                    {["[", Docs, "](`p:",RemoveSystemApp(App),":",Guide,"`)"], NewPos};
+                [App, Guide, Anchor] ->
+                    {["[", Docs, "](`p:",RemoveSystemApp(App),":",Guide,"#",Anchor,"`)"], NewPos}
+            end;
+        _ ->
+            {Docs, NewPos}
     end;
 render_element({code, _, Content}, [pre | _] = State, Pos, Ind, D) ->
     %% When code is within a pre we don't emit any underline
@@ -1020,11 +1036,7 @@ render_element({li, [], Content}, [ul | _] = State, Pos, Ind, D) ->
 render_element({li, [], Content}, [ol | _] = State, Pos, Ind, D) ->
     {Docs, _NewPos} = render_docs(Content, [li | State], Pos + 2, Ind + 2, D),
     trimnl(["1. ", Docs]);
-render_element({dl, [], [{dt,DTAttr,[{a,[{id,_}],_} = A | DTContent]} | Content]}, State, Pos, Ind, D) ->
-     {ADocs, _APos} = trimnl(render_element(A, State, Pos, 0, D)),
-     {Docs, NewPos} = render_element({dl, [], [{dt, DTAttr, DTContent} | Content]}, State, 0, Ind, D),
-     {[ADocs,Docs], NewPos};
-render_element({dl, [], [{dt,DTAttr,DTContent}, {dd,[],DDContent} | Content]}, State, Pos, Ind, D) ->
+render_element({dl, [], [{dt,DTAttr,DTContent}, {dd,[],DDContent} | Content]}, [a_fix | State], Pos, Ind, D) ->
     Since = proplists:get_value(since, DTAttr),
     {DTDocs, _DTNewPos} =
         render_docs(
