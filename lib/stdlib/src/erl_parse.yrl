@@ -1406,6 +1406,33 @@ build_attribute({atom,Aa,file}, Val) ->
 	    {attribute,Aa,file,{Name,Line}};
         [Other|_] -> error_bad_decl(Other, file)
     end;
+build_attribute({atom,Aa,doc}, Val) ->
+    case Val of
+	[{string,_,Value}] ->
+	    {attribute,Aa,doc,Value};
+	[{map,_,Pairs}] ->
+            Value =
+                try
+                    maps:from_list(
+                      lists:map(
+                        fun({map_field_assoc,_,K,V}) ->
+                                case normalise(K) of
+                                    equiv ->
+                                        {equiv, V};
+                                    NormalK ->
+                                        {NormalK, normalise(V)}
+                                end;
+                           (E) ->
+                                throw({badarg, E})
+                        end, Pairs))
+                catch {badarg,E} ->
+                        ret_abstr_err(E, "bad attribute")
+                end,
+            {attribute,Aa,doc,Value};
+        [{tuple,_,[{atom,_,file},{string,_,Value}]}] ->
+            {attribute,Aa,doc,{file,Value}};
+	[Other|_] -> error_bad_decl(Other, doc)
+    end;
 build_attribute({atom,Aa,Attr}, Val) ->
     case Val of
 	[Expr0] ->
