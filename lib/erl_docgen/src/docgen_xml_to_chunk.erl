@@ -575,7 +575,7 @@ func2func({func,Attr,Contents}) ->
                 _ = VerifyNameList(NameList,fun([]) -> ok end),
 
                 FAs = [TagsToFA(FAttr) || {name,FAttr,[]} <- NameList ],
-                SortedFAs = lists:usort(FAs),
+                SortedFAs = lists:reverse(lists:usort(FAs)),
                 FAClauses = lists:usort([{TagsToFA(FAttr),proplists:get_value(clause_i,FAttr)}
                                          || {name,FAttr,[]} <- NameList ]),
 
@@ -599,7 +599,7 @@ func2func({func,Attr,Contents}) ->
                           fun(FA) ->
                                   MakeFunc(FA, MD, [])
                           end, tl(SortedFAs)),
-                [Base | Equiv];
+                lists:reverse([Base | Equiv]);
             NameList ->
                 %% Manual style function docs
                 FAs = lists:foldl(
@@ -614,7 +614,7 @@ func2func({func,Attr,Contents}) ->
 
                 _ = VerifyNameList(NameList,fun([_|_]) -> ok end),
 
-                SortedFAs = lists:usort(maps:to_list(FAs)),
+                SortedFAs = lists:reverse(lists:usort(maps:to_list(FAs))),
 
                 {{BaseF, BaseA}, BaseSig} = hd(SortedFAs),
 
@@ -628,7 +628,7 @@ func2func({func,Attr,Contents}) ->
                            {signature,Signature},
                            {meta,SinceMD#{ equiv => {function,list_to_atom(BaseF),BaseA}}}],[]}
                          || {{F,A},Signature} <- tl(SortedFAs)],
-                [Base | Equiv]
+                lists:reverse([Base | Equiv])
         end,
     transform(Functions,[]).
 

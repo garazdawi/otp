@@ -234,12 +234,18 @@ convert(Lines, Acc, [{{callback,F,A}, _, _, _, _} | T], Files) ->
     convert(Lines, Acc, T, Files);
 convert(Lines, Acc, [{_, 0, _, _, _} | T], Files) ->
     convert(Lines, Acc, T, Files);
-convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, Meta} | T] = Docs, Files) ->
+convert(Lines, Acc, [{_, Anno, _, D, Meta} | T] = Docs, Files) ->
     case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
         true ->
+            DocString =
+                case D of
+                    #{ <<"en">> := ErlangHtml } when not is_map_key(equiv, Meta) ->
+                        [doc(render_docs(ErlangHtml, init_config(maps:get(docs, Files), #{})))];
+                    D when D =:= #{}, is_map_key(equiv, Meta) ->
+                        []
+                end,
             {Before, After} = lists:split(erl_anno:line(Anno)-1, Lines),
-            Markdown = render_docs(D, init_config(maps:get(docs, Files), #{})),
-            convert(Before, [doc(Markdown), meta(Meta)|After] ++ Acc, T, Files);
+            convert(Before, DocString ++ meta(Meta) ++ After ++ Acc, T, Files);
         false ->
             Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
             Filename = filename:join(Cwd, erl_anno:file(Anno)),
@@ -297,16 +303,19 @@ meta(#{ edit_url := _} = Meta) ->
     meta(maps:remove(edit_url, Meta));
 meta(#{ signature := _} = Meta) ->
     meta(maps:remove(signature, Meta));
+meta(#{ equiv := {function,F,A} } = Meta) ->
+    [io_lib:format("-doc(#{ equiv => ~p(~ts) }).",[F,lists:join($,,lists:duplicate(A,$_))])|
+     meta(maps:remove(equiv, Meta))];
 meta(Meta) when Meta =:= #{} ->
     "";
 meta(Meta) ->
-    io_lib:format("-doc(~p).",[Meta]).
+    [io_lib:format("-doc(~p).",[Meta])].
 
 
 to_erlang_string(Text) ->
      string:trim(re:replace(Text, "(\"|\\\\)", "\\\\\\1", [global, unicode])).
 
-filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, #{ <<"en">> := _ } = D, M} | T]) ->
+filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, D, M} | T]) when is_map_key(<<"en">>, D); is_map_key(equiv, M) ->
     NewAnno =
         case What of
             function ->

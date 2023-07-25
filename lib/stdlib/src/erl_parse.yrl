@@ -1417,10 +1417,10 @@ build_attribute({atom,Aa,Attr}, Val) when Attr =:= doc; Attr =:= moduledoc ->
                       lists:map(
                         fun({map_field_assoc,_,K,V}) ->
                                 case normalise(K) of
-                                    equiv when Attr =:= doc ->
+                                    equiv when Attr =:= doc, element(1, V) =:= call ->
                                         {equiv, V};
                                     NormalK ->
-                                        {NormalK, normalise(V)}
+                                        {NormalK, normalise(attribute_farity(V))}
                                 end;
                            (E) ->
                                 throw({badarg, E})
