@@ -158,6 +158,9 @@ convert(Module) ->
     case code:get_doc(Module, #{ sources => [eep48] }) of
         {ok, #docs_v1{ format = <<"application/erlang+html">>,
                        module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
+
+            [put(application, get_app(Module)) || get(application) =:= undefined],
+
             NewFiles = convert(#{ meta => Meta, ast => AST, docs => DocsV1 },
                                filter_and_fix_anno(expand_anno(AST), Docs)),
 
@@ -193,6 +196,11 @@ convert(Module) ->
             ok;
         {ok, #docs_v1{ module_doc = hidden }} ->
             ok;
+        {ok, #docs_v1{ format = <<"text/markdown">> }} ->
+            {ok, Module, Chunks} = beam_lib:all_chunks(ModulePath),
+            {ok, NewBeamFile} = beam_lib:build_module(proplists:delete("Docs", Chunks)),
+            file:write_file(ModulePath, NewBeamFile),
+            convert(Module);
         Error ->
             io:format("Error: ~p~n",[Error]),
             ok
