@@ -275,6 +275,8 @@
      <datatype>
       <name name="bloom_filter_bits"/>
      </datatype>
+     </datatypes>
+     <datatypes>
 
     <datatype_title>TLS/DTLS OPTION DESCRIPTIONS - COMMON for SERVER and CLIENT</datatype_title>
     
@@ -987,6 +989,9 @@ fun(srp, Username :: binary(), UserState :: term()) ->
       </desc>
     </datatype>
 
+    </datatypes>
+     <datatypes>
+
     <datatype_title>TLS/DTLS OPTION DESCRIPTIONS - CLIENT</datatype_title>
     
     <datatype>
@@ -1273,7 +1278,10 @@ fun(srp, Username :: binary(), UserState :: term()) ->
   <!-- 	</desc> -->
   <!--     </datatype> -->
 
-      <datatype_title>TLS/DTLS OPTION DESCRIPTIONS - SERVER</datatype_title>
+      </datatypes>
+     <datatypes>
+
+    <datatype_title>TLS/DTLS OPTION DESCRIPTIONS - SERVER</datatype_title>
 
       <datatype>
 	<name name="server_option"/>
