@@ -115,7 +115,7 @@
     | h5
     | h6.
 
--export([convert/1, convert_application/1]).
+-export([convert/1, convert_application/1, modules/1]).
 
 -spec normalize(Docs) -> NormalizedDocs when
     Docs :: chunk_elements(),
@@ -125,11 +125,14 @@ normalize(Docs) ->
 
 convert_application(App) ->
     put(application, atom_to_list(App)),
-    Modules = [list_to_atom(filename:basename(filename:rootname(File)))
-               || File <- filelib:wildcard(filename:join(filename:dirname(code:priv_dir(App)),"doc/chunks/*.chunk"))],
+    Modules = modules(App),
     [try convert(M) catch E:R:ST -> io:format("~p:~p:~p~n",[E,R,ST]), erlang:raise(E,R,ST) end || M <- Modules],
     docgen_xml_to_markdown:convert_application(App),
     ok.
+
+modules(App) ->
+    [list_to_atom(filename:basename(filename:rootname(File)))
+     || File <- filelib:wildcard(filename:join(filename:dirname(code:priv_dir(App)),"doc/chunks/*.chunk"))].
 
 convert(Module) ->
     io:format("Converting: ~p~n",[Module]),
@@ -239,6 +242,15 @@ convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T] = Docs, Files) ->
                 end,
             convert(string:split(Bin,"\n",all), [], Docs,
                     NewFiles#{ current => erl_anno:file(Anno), filename => Filename })
+    end.
+
+get_app(Module) ->
+    case code:which(Module) of
+        preloaded ->
+            "erts";
+        Path ->
+            [_Module, _Ebin, App | _] = lists:reverse(filename:split(Path)),
+            App
     end.
 
 %% Convert module documentation

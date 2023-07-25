@@ -25,6 +25,7 @@
 %%----------------------------------------------------------------------
 -module(docgen_xml_to_markdown).
 -export([main/1, convert_application/1]).
+-include_lib("kernel/include/eep48.hrl").
 
 main([Application, FromXML, ToMarkdown]) ->
     io:format("Converting: ~ts (~ts)~n",[FromXML, ToMarkdown]),
@@ -89,6 +90,9 @@ convert_application(App) ->
                     false ->
                         {undefined,[]}
                 end,
+            Modules = eep48_to_markdown:modules(App),
+            Titles = [["\"",T, "\": fn(a) -> a[:title] == \"",T,"\" end,"]
+                      || T <- lists:uniq(titles(Modules))],
             ok = file:write_file(
                    filename:join(DstDir,"ex_doc.exs"),
                    ["{global,_} = Code.eval_file Path.join(System.get_env(\"ERL_TOP\"),\"ex_doc.exs\")\n"
@@ -96,11 +100,19 @@ convert_application(App) ->
                     [to_group("User's Guides",Guides),
                      to_group("References", Apps),
                      to_group("Internal Docs",Internals)],
-                    " ] ])"]),
+                    " ], groups_for_docs: [", Titles,"] ])"]),
             ok;
         Error ->
             Error
     end.
+
+titles([H|T]) ->
+    {ok, #docs_v1{ docs = Ds } } = code:get_doc(H),
+    [Title || {{type,_,_}, _, _, _, #{ title := Title }} <- Ds] ++
+        [Title || {{function,_,_}, _, _, _, #{ title := Title }} <- Ds] ++
+        titles(T);
+titles([]) ->
+    [].
 
 convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
     case xmerl_sax_parser:file(IncludeXML,
