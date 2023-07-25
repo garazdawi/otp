@@ -234,11 +234,12 @@ convert(Lines, Acc, [{{callback,F,A}, _, _, _, _} | T], Files) ->
     convert(Lines, Acc, T, Files);
 convert(Lines, Acc, [{_, 0, _, _, _} | T], Files) ->
     convert(Lines, Acc, T, Files);
-convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, _} | T] = Docs, Files) ->
+convert(Lines, Acc, [{_, Anno, _, #{ <<"en">> := D }, Meta} | T] = Docs, Files) ->
     case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
         true ->
             {Before, After} = lists:split(erl_anno:line(Anno)-1, Lines),
-            convert(Before, [comment(render_docs(D, init_config(maps:get(docs, Files), #{})))|After] ++ Acc, T, Files);
+            Markdown = render_docs(D, init_config(maps:get(docs, Files), #{})),
+            convert(Before, [doc(Markdown), meta(Meta)|After] ++ Acc, T, Files);
         false ->
             Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
             Filename = filename:join(Cwd, erl_anno:file(Anno)),
@@ -285,12 +286,22 @@ formatter(String) ->
         end,
     unicode:characters_to_binary(Text).
 
-comment(String) ->
+doc(String) ->
     ["-doc \"\n", to_erlang_string(formatter(String)), "\n\"."].
 
 moduledoc(String) ->
     %% NewLines = re:replace(String, "\\\.( )?", ".\n", [global]),
     ["-moduledoc \"", to_erlang_string(formatter(String)), "\"."].
+
+meta(#{ edit_url := _} = Meta) ->
+    meta(maps:remove(edit_url, Meta));
+meta(#{ signature := _} = Meta) ->
+    meta(maps:remove(signature, Meta));
+meta(Meta) when Meta =:= #{} ->
+    "";
+meta(Meta) ->
+    io_lib:format("-doc(~p).",[Meta]).
+
 
 to_erlang_string(Text) ->
      string:trim(re:replace(Text, "(\"|\\\\)", "\\\\\\1", [global, unicode])).
