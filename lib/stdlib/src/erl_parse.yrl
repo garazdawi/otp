@@ -1406,18 +1406,18 @@ build_attribute({atom,Aa,file}, Val) ->
 	    {attribute,Aa,file,{Name,Line}};
         [Other|_] -> error_bad_decl(Other, file)
     end;
-build_attribute({atom,Aa,doc}, Val) ->
+build_attribute({atom,Aa,Attr}, Val) when Attr =:= doc; Attr =:= moduledoc ->
     case Val of
 	[{string,_,Value}] ->
-	    {attribute,Aa,doc,Value};
-	[{map,_,Pairs}] ->
+	    {attribute,Aa,Attr,Value};
+	[{map,_,Pairs} = Expr] ->
             Value =
                 try
                     maps:from_list(
                       lists:map(
                         fun({map_field_assoc,_,K,V}) ->
                                 case normalise(K) of
-                                    equiv ->
+                                    equiv when Attr =:= doc ->
                                         {equiv, V};
                                     NormalK ->
                                         {NormalK, normalise(V)}
@@ -1426,11 +1426,13 @@ build_attribute({atom,Aa,doc}, Val) ->
                                 throw({badarg, E})
                         end, Pairs))
                 catch {badarg,E} ->
-                        ret_abstr_err(E, "bad attribute")
+                        ret_abstr_err(E, "bad attribute");
+                      _:_ ->
+                        ret_abstr_err(Expr, "bad attribute")
                 end,
-            {attribute,Aa,doc,Value};
+            {attribute,Aa,Attr,Value};
         [{tuple,_,[{atom,_,file},{string,_,Value}]}] ->
-            {attribute,Aa,doc,{file,Value}};
+            {attribute,Aa,Attr,{file,Value}};
 	[Other|_] -> error_bad_decl(Other, doc)
     end;
 build_attribute({atom,Aa,Attr}, Val) ->
