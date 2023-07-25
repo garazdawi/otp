@@ -91,8 +91,8 @@ convert_application(App) ->
                         {undefined,[]}
                 end,
             Modules = eep48_to_markdown:modules(App),
-            Titles = [["\"",T, "\": fn(a) -> a[:title] == \"",T,"\" end,"]
-                      || T <- lists:uniq(titles(Modules))],
+            Titles = [["\"",Title, "\": fn(a) -> a[:title] == \"",Tag,"\" end,"]
+                      || {Title,Tag} <- lists:uniq(titles(Modules))],
             ok = file:write_file(
                    filename:join(DstDir,"ex_doc.exs"),
                    ["{global,_} = Code.eval_file Path.join(System.get_env(\"ERL_TOP\"),\"ex_doc.exs\")\n"
@@ -108,8 +108,8 @@ convert_application(App) ->
 
 titles([H|T]) ->
     {ok, #docs_v1{ docs = Ds } } = code:get_doc(H),
-    [Title || {{type,_,_}, _, _, _, #{ title := Title }} <- Ds] ++
-        [Title || {{function,_,_}, _, _, _, #{ title := Title }} <- Ds] ++
+    [{["Types: ", Title], Title} || {{type,_,_}, _, _, _, #{ title := Title }} <- Ds] ++
+        [{Title, Title} || {{function,_,_}, _, _, _, #{ title := Title }} <- Ds] ++
         titles(T);
 titles([]) ->
     [].
