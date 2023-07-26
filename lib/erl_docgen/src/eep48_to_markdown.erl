@@ -1080,7 +1080,7 @@ render_element({b, _, Content}, State, Pos, Ind, D) ->
         true ->
             {[Docs], NewPos};
         false ->
-            {["**", Docs, "**"], NewPos + 4}
+            {["__", Docs, "__"], NewPos + 4}
     end;
 render_element({pre, Attr, Content}, State, Pos, Ind, D) ->
     %% For pre we make sure to respect the newlines in pre
