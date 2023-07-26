@@ -960,8 +960,8 @@ render_element({a, [{id,_Id}], []} = A, State, Pos, Ind, D) when Pos > 0 ->
 render_element({a, [{id,Id}], []}, _State, Pos, _Ind, _D) ->
     trimnl({["<a id=\"", Id, "\"/>\n"], Pos});
 render_element({dl, [], [{dt,DTAttr,DTContent}, {dd, DDAttr, DDContent} | DLContent]}, State, Pos, Ind, D) when State =:= []; hd(State) =/= a_fix ->
-    FilterFun = fun F({a,[{id,_}],_} = A, {As, Acc}) ->
-                        {[{p,[],[A]} | As], Acc};
+    FilterFun = fun F({a,[Id],_} = A, {As, Acc}) ->
+                        {[Id | As], Acc};
                     F({Tag, Attr, C}, {As, Acc}) when Tag =/= dl ->
                         {NewAs, NewC} = lists:foldl(F, {As, []}, C),
                         {NewAs, [{Tag, Attr, lists:reverse(NewC)} | Acc]};
@@ -971,8 +971,8 @@ render_element({dl, [], [{dt,DTAttr,DTContent}, {dd, DDAttr, DDContent} | DLCont
     {DTAs, NewDTContent} = lists:foldl(FilterFun, {[],[]}, DTContent),
     {As,   NewDDContent} = lists:foldl(FilterFun, {DTAs,[]}, DDContent),
     %% io:format("Hoist: ~p~n",[As]),
-    render_docs(lists:reverse(As) ++ [{dl, [], [{dt,DTAttr, lists:reverse(NewDTContent)},
-                                                {dd, DDAttr, lists:reverse(NewDDContent)} | DLContent]}],
+    render_docs([{dl, [], [{dt, As ++ DTAttr, lists:reverse(NewDTContent)},
+                           {dd, DDAttr, lists:reverse(NewDDContent)} | DLContent]}],
                 [a_fix | State], Pos, Ind, D);
 render_element(Elem, State, Pos, Ind, D) when Pos < Ind ->
     {Docs, NewPos} = render_element(Elem, State, Ind, Ind, D),
@@ -1137,13 +1137,18 @@ render_element({dl, [], [{dt,DTAttr,DTContent}, {dd,[],DDContent} | Content]}, [
           Pos + 2,
           Ind + 2,
           D),
+    Ids = [Id || {id,Id} <- DTAttr],
+    DTDocsWAnchors = case Ids of
+                         [] -> trim(DTDocs);
+                         Ids -> [trim(DTDocs),"{:",[[" #",Id] || Id <- Ids]," }"]
+                     end,
     {DDDocs, DDNewPos} = render_docs(DDContent, [li, dl | State], Pos + 2, Ind + 2, D),
     {Docs, NewPos} =
-        case string:find(trim(DTDocs), "\n") of
-            nomatch when Since =:= undefined ->
-                trimnlnl({["* ", trim(DTDocs), " - ", string:trim(string:trim(DDDocs, both, "\n"), leading, " ")], DDNewPos});
+        case string:find(DTDocs, "\n") of
+            nomatch when Since =:= undefined, is_binary(hd(DDContent)) orelse element(1,hd(DDContent)) =/= pre ->
+                trimnlnl({["* ", trim(DTDocsWAnchors), " - ", string:trim(string:trim(DDDocs, both, "\n"), leading, " ")], DDNewPos});
             _ ->
-                trimnlnl({["* ", trim(DTDocs), [["(Since ",Since,")"] || Since =/= undefined],"  \n",
+                trimnlnl({["* ", trim(DTDocsWAnchors), [["(Since ",Since,")"] || Since =/= undefined],"  \n",
                            pad(2 + Ind - Pos), DDDocs], DDNewPos})
         end,
     {DLDocs, DLPos} = render_element({dl, [], Content}, State, NewPos, Ind, D),
