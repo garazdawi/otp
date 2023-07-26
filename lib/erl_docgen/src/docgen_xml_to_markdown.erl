@@ -34,11 +34,13 @@ main([Application, FromXML, ToMarkdown]) ->
         {error, Reason} ->
             io:format("Failed to create chunks: ~p~n",[Reason]),
             throw({error, Reason});
-        skip ->
-            io:format("Skipping: ~ts~n",[FromXML]),
+        {skip, erlref} ->
+            skip;
+        {skip, What} ->
+            io:format("Skipping ~p: ~ts~n",[What, FromXML]),
             skip;
         EEP48 ->
-            %% [io:format("~tp~n",[EEP48])], %% || filename:rootname(filename:basename(FromXML)) =:= "alt_dist"],
+            [io:format("~tp~n",[EEP48]) || filename:rootname(filename:basename(FromXML)) =:= "erl_nif"],
             Markdown = unicode:characters_to_binary(eep48_to_markdown:render_docs(shell_docs:normalize(EEP48))),
             %% io:format("~ts~n",[Markdown]),
             ok = file:write_file(ToMarkdown, Markdown)
@@ -374,7 +376,7 @@ docs(Application, OTPXml)->
                 true ->
                     transform(Dom, []);
                 false ->
-                    skip
+                    {skip,element(1, hd(Dom))}
             end;
         Else ->
             {error,Else}
