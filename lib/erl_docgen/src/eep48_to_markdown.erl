@@ -846,7 +846,7 @@ render_docs(DocContents, #docs_v1{} = D) ->
 render_docs(DocContents, Ind, D = #config{}) when is_integer(Ind) ->
     try
         {Doc, _} = trimnl(render_docs(DocContents, [], 0, Ind, D)),
-        Doc
+        unicode:characters_to_binary(Doc)
     catch throw:R:ST ->
             io:format("Failed to render: ~tp~n",[R]),
             erlang:raise(throw,R,ST);
