@@ -1063,8 +1063,12 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
             case string:lexemes(Href, ":#") of
                 [App, Guide] when App =:= CurrentApplication ->
                     {["[", Docs, "](",Guide,")"], NewPos};
+                [App, Guide, Anchor] when App =:= CurrentApplication ->
+                    {["[", Docs, "](",Guide,".md#",Anchor,")"], NewPos};
                 [App, Guide] ->
-                    {["[", Docs, "](`p:",App,":",Guide,"`)"], NewPos}
+                    {["[", Docs, "](`p:",App,":",Guide,"`)"], NewPos};
+                [App, Guide, Anchor] ->
+                    {["[", Docs, "](`p:",App,":",Guide,"#",Anchor,"`)"], NewPos}
             end;
         _ ->
             {Docs, NewPos}
