@@ -198,7 +198,7 @@ convert(Module) ->
             %%    [ io:format("~ts:~n~ts~n", [Key, ""]) || Key := Value <- NewFiles, not is_atom(Key)],
             _ = [ begin
                       io:format("\tUpdated ~ts~n",[Key]),
-                      ok = file:write_file(Key, unicode:characters_to_binary([[A,$\n] || A <- Value]))
+                      ok = file:write_file(Key, formatter(Key, lists:flatten([[A,$\n] || A <- Value])))
                   end || Key := Value <- NewFilesWithModuleDoc, not is_atom(Key)],
             ok;
         {ok, #docs_v1{ module_doc = hidden }} ->
@@ -247,7 +247,7 @@ convert(Lines, Acc, [{_, Anno, _, D, Meta} | T] = Docs, Files) ->
             DocString =
                 case D of
                     #{ <<"en">> := ErlangHtml } when not is_map_key(equiv, Meta) ->
-                        [doc(render_docs(ErlangHtml, init_config(maps:get(docs, Files), #{})))];
+                        [{doc,render_docs(ErlangHtml, init_config(maps:get(docs, Files), #{}))}];
                     D when D =:= #{}, is_map_key(equiv, Meta) ->
                         []
                 end,
@@ -277,35 +277,72 @@ get_app(Module) ->
 
 %% Convert module documentation
 convert_moduledoc(ModuleHeader) ->
-    moduledoc(render_docs(ModuleHeader, init_config(undefined, #{}))).
+    String = render_docs(ModuleHeader, init_config(undefined, #{})),
+    FixDiameterDepsBug = re:replace(String, "```\n(-include_lib\\(\"diameter/include/diameter.hrl\"\\).)\n```", "\n    \\1\n"),
+    [{moduledoc,FixDiameterDepsBug}].
 
 formatter(String) ->
+    unicode:characters_to_binary(
+      case {os:getenv("FORMAT_MD"),os:find_executable("npx")} of
+          {"true",Npx} when Npx =/= false ->
+              run_formatter("",String);
+          _ ->
+              String
+      end).
+formatter(Module, String) ->
 
     Text =
         case {os:getenv("FORMAT_MD"),os:find_executable("npx")} of
             {"true",Npx} when Npx =/= false ->
-                Text0 = string:trim(re:replace(String, "\\\\\\\.( )?", ".\n", [unicode, global])),
-                %% TODO: fix re so that the Text1 string:replace is not needed
-                Text1 = string:replace(Text0, "\\\\\\.", "."),
+                %% Text0 = string:trim(re:replace(String, "\\\\\\\.( )?", ".\n", [unicode, global])),
+                %% %% TODO: fix re so that the Text1 string:replace is not needed
+                %% Text1 = string:replace(Text0, "\\\\\\.", "."),
 
-                Filename = os:cmd("mktemp"),
-                file:write_file(Filename, list_to_binary(Text1)),
-                os:cmd("npx prettier --write --prose-wrap always " ++ Filename),
-                {ok, FormattedText} = file:read_file(Filename),
-                file:delete(Filename),
-                FormattedText;
+                Header = "# FORMAT HEADER\n\n",
+
+                FormatString =
+                    lists:foldl(
+                      fun({_, Doc}, Acc) ->
+                              [[Header, Doc, "\n\n"]|Acc];
+                         (_, Acc) ->
+                              Acc
+                      end, [], String),
+
+                FormattedText = run_formatter(Module, lists:reverse(FormatString)),
+                [<<>>|Split] = string:split(FormattedText, Header, all),
+                {[], FormattedString} =
+                    lists:foldl(fun({Type, _Doc}, {[FormattedDoc|T], Acc}) ->
+                                        {T, [{Type, FormattedDoc} | Acc]};
+                                   (Else, {FormattedDoc, Acc}) ->
+                                        {FormattedDoc, [Else | Acc]}
+                                end, {Split,[]}, String),
+                lists:reverse(FormattedString);
             _ ->
                 String
         end,
-    unicode:characters_to_binary(Text).
+    unicode:characters_to_binary(
+      lists:map(fun({doc, Doc}) ->
+                        doc(Doc);
+                   ({moduledoc, Doc}) ->
+                        moduledoc(Doc);
+                   (Else) ->
+                        Else
+                end, Text)).
+
+run_formatter(Module, String) ->
+    Filename = string:trim(os:cmd("mktemp --suffix=."++filename:basename(Module)++".md")),
+    ok = file:write_file(Filename, String),
+    os:cmd("npx prettier --parser markdown --prose-wrap always --write " ++ Filename),
+    {ok, FormattedText} = file:read_file(Filename),
+    %% file:delete(Filename),
+    FormattedText.
 
 doc(String) ->
-    ["-doc \"\n", to_erlang_string(formatter(String)), "\n\"."].
+    ["-doc \"\n", to_erlang_string(String), "\n\"."].
 
 moduledoc(String) ->
-    FixDiameterDepsBug = re:replace(String, "```\n(-include_lib\\(\"diameter/include/diameter.hrl\"\\).)\n```", "\n    \\1\n"),
     %% NewLines = re:replace(String, "\\\.( )?", ".\n", [global]),
-    ["-moduledoc \"", to_erlang_string(formatter(FixDiameterDepsBug)), "\"."].
+    ["-moduledoc \"", to_erlang_string(String), "\"."].
 
 meta(#{ edit_url := _} = Meta) ->
     meta(maps:remove(edit_url, Meta));
@@ -794,7 +831,7 @@ render_typecb_docs(Docs, D, Config) ->
 
 %%% General rendering functions
 render_docs(DocContents) ->
-    render_docs(DocContents, init_config(undefined, [])).
+    formatter(render_docs(DocContents, init_config(undefined, []))).
 -spec render_docs([chunk_element()], #config{}) -> unicode:chardata().
 render_docs(DocContents, #config{} = Config) ->
     render_docs(DocContents, 0, Config);
@@ -804,7 +841,7 @@ render_docs(DocContents, #docs_v1{} = D) ->
 render_docs(DocContents, Ind, D = #config{}) when is_integer(Ind) ->
     try
         {Doc, _} = trimnl(render_docs(DocContents, [], 0, Ind, D)),
-        formatter(Doc)
+        Doc
     catch throw:R:ST ->
             io:format("Failed to render: ~tp~n",[R]),
             erlang:raise(throw,R,ST);
