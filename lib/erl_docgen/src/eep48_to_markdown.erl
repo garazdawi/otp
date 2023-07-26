@@ -126,7 +126,12 @@ normalize(Docs) ->
 convert_application(App) ->
     put(application, atom_to_list(App)),
     Modules = modules(App),
-    [try convert(M) catch E:R:ST -> io:format("~p:~p:~p~n",[E,R,ST]), erlang:raise(E,R,ST) end || M <- Modules],
+    Pids =
+        [spawn_monitor(
+           fun() ->
+                   try convert(M) catch E:R:ST -> io:format("~p:~p:~p~n",[E,R,ST]) end
+           end) || M <- Modules],
+    [receive {'DOWN',Ref,_,_,_} -> ok end || {_P,Ref} <- Pids],
     docgen_xml_to_markdown:convert_application(App),
     ok.
 
