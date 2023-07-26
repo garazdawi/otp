@@ -960,7 +960,7 @@ render_element({a, [{id,_Id}], []} = A, State, Pos, Ind, D) when Pos > 0 ->
 render_element({a, [{id,Id}], []}, _State, Pos, _Ind, _D) ->
     trimnl({["<a id=\"", Id, "\"/>\n"], Pos});
 render_element({dl, [], [{dt,DTAttr,DTContent}, {dd, DDAttr, DDContent} | DLContent]}, State, Pos, Ind, D) when State =:= []; hd(State) =/= a_fix ->
-    FilterFun = fun F({a,[Id],_} = A, {As, Acc}) ->
+    FilterFun = fun F({a,[Id],_}, {As, Acc}) ->
                         {[Id | As], Acc};
                     F({Tag, Attr, C}, {As, Acc}) when Tag =/= dl ->
                         {NewAs, NewC} = lists:foldl(F, {As, []}, C),
@@ -1046,7 +1046,6 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
             end;
         See when See =:= <<"https://erlang.org/doc/link/seecref">>;
                  See =:= <<"https://erlang.org/doc/link/seecom">>;
-                 See =:= <<"https://erlang.org/doc/link/seefile">>;
                  See =:= <<"https://erlang.org/doc/link/seeapp">> ->
             CurrentApplication = unicode:characters_to_binary(get(application)),
             case string:lexemes(Href, ":#") of
@@ -1056,6 +1055,14 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                     {["[", Docs, "](",Guide,".md#",Anchor,")"], NewPos};
                 [App, Guide] ->
                     {["[", Docs, "](`p:",App,":",Guide,"`)"], NewPos};
+                [App, Guide, Anchor] ->
+                    {["[", Docs, "](`p:",App,":",Guide,"#",Anchor,"`)"], NewPos}
+            end;
+        <<"https://erlang.org/doc/link/seefile">> ->
+            CurrentApplication = unicode:characters_to_binary(get(application)),
+            case string:lexemes(Href, ":#") of
+                [App, Guide] when App =:= CurrentApplication ->
+                    {["[", Docs, "](",Guide,")"], NewPos};
                 [App, Guide, Anchor] ->
                     {["[", Docs, "](`p:",App,":",Guide,"#",Anchor,"`)"], NewPos}
             end;
