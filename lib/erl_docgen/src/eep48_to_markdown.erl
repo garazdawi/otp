@@ -336,7 +336,7 @@ formatter(Module, String) ->
 
 run_formatter(Module, String) ->
     Filename = string:trim(os:cmd("mktemp --suffix=."++filename:basename(Module)++".md")),
-    ok = file:write_file(Filename, String),
+    ok = file:write_file(Filename, unicode:characters_to_binary(String)),
     os:cmd("npx prettier --parser markdown --prose-wrap always --write " ++ Filename),
     {ok, FormattedText} = file:read_file(Filename),
     %% file:delete(Filename),
