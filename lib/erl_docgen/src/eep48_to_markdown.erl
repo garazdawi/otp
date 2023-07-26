@@ -1087,8 +1087,9 @@ render_element({pre, Attr, Content}, State, Pos, Ind, D) ->
     {Docs, _} = trimnl(render_docs(Content, [pre | State], Pos, Ind, D)),
     Type =
         case proplists:get_value(type, Attr) of
-            undefined -> "";
-            "erl" -> "erlang"
+            undefined -> "text";
+            "erl" -> "erlang";
+            "c" -> "c"
         end,
     trimnlnl(["```",Type,"\n", pad(Ind), Docs, pad(Ind), "```"]);
 render_element({ul, [{class, <<"types">>}], Content}, State, _Pos, Ind, D) ->
