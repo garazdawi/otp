@@ -955,7 +955,7 @@ render_element({a, [{id,Id}], []}, _State, Pos, _Ind, _D) ->
     trimnl({["<a id=\"", Id, "\"/>\n"], Pos});
 render_element({dl, [], [{dt,DTAttr,DTContent}, {dd, DDAttr, DDContent} | DLContent]}, State, Pos, Ind, D) when State =:= []; hd(State) =/= a_fix ->
     FilterFun = fun F({a,[{id,_}],_} = A, {As, Acc}) ->
-                        {[A | As], Acc};
+                        {[{p,[],[A]} | As], Acc};
                     F({Tag, Attr, C}, {As, Acc}) when Tag =/= dl ->
                         {NewAs, NewC} = lists:foldl(F, {As, []}, C),
                         {NewAs, [{Tag, Attr, lists:reverse(NewC)} | Acc]};
