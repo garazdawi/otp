@@ -303,8 +303,9 @@ doc(String) ->
     ["-doc \"\n", to_erlang_string(formatter(String)), "\n\"."].
 
 moduledoc(String) ->
+    FixDiameterDepsBug = re:replace(String, "```\n(-include_lib\\(\"diameter/include/diameter.hrl\"\\).)\n```", "\n    \\1\n"),
     %% NewLines = re:replace(String, "\\\.( )?", ".\n", [global]),
-    ["-moduledoc \"", to_erlang_string(formatter(String)), "\"."].
+    ["-moduledoc \"", to_erlang_string(formatter(FixDiameterDepsBug)), "\"."].
 
 meta(#{ edit_url := _} = Meta) ->
     meta(maps:remove(edit_url, Meta));
