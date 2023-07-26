@@ -176,7 +176,14 @@ convert(Module) ->
                                         {false, File, Anno}
                                 end, undefined, AST),
             Filename = filename:join(proplists:get_value(cwd, Meta, ""), File),
-            {BeforeModule, AfterModule} = lists:split(erl_anno:line(Anno), maps:get(Filename, NewFiles)),
+
+            %% These modules have a -feature macro at top that needs to be above the -moduledoc line.
+            %% So we adjust the docs down one step.
+            ModuleDocLine = case lists:member(Module, [asn1ct, erl_features, erl_lint]) of
+                                true -> erl_anno:line(Anno) + 1;
+                                false -> erl_anno:line(Anno)
+                            end,
+            {BeforeModule, AfterModule} = lists:split(ModuleDocLine, maps:get(Filename, NewFiles)),
 
             NewFilesWithModuleDoc =
                 NewFiles#{ Filename => BeforeModule ++ convert_moduledoc(ModuleDoc) ++ AfterModule },
