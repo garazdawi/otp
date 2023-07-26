@@ -371,7 +371,7 @@ docs(Application, OTPXml)->
             case lists:member(
                    element(1, hd(Dom)),
                    [chapter,
-                    %% cref,
+                    cref,
                     comref, fileref, appref]) of
                 true ->
                     transform(Dom, []);
@@ -429,7 +429,7 @@ transform([{filesummary, [], Content}|T], Acc) ->
 transform([{section,_,Content}|T],Acc) ->
     transform(T,[transform(Content,[])|Acc]);
 transform([{description,_,Content}|T],Acc) ->
-    transform(T,[{h2,[],[<<"Description">>]}|transform(Content,[])] ++ Acc);
+    transform(T,[transform(Content,[]), {h2,[],[<<"Description">>]} | Acc]);
 
 %% transform <list><item> to <ul><li> or <ol><li> depending on type attribute
 transform([{list,Attr,Content}|T],Acc) ->
@@ -456,14 +456,21 @@ transform([{pre,Attr,Content}|T],Acc) ->
 
 %% transform <funcs> with <func> as children
 transform([{funcs,_Attr,Content}|T],Acc) ->
-    case get(toptag) of
-        comref ->
-            transform(T, [transform(Content, []) | Acc])
-    end;
+    true = lists:member(get(toptag),[comref,cref]),
+    transform(T, [transform(Content, [])|Acc]);
 transform([{func,_, Content}|T], Acc) ->
-    {name, _, Name} = lists:keyfind(name, 1, Content),
+    Name =
+        case lists:keyfind(name, 1, Content) of
+            {name, _, [{ret, _, Ret},{nametext,_,NameText}]} ->
+                [FunctionName | Rest] = string:split(NameText,"("),
+                Arguments = re:split(Rest,",",[trim]),
+                [{h2,[],[unicode:characters_to_binary(io_lib:format("~ts/~p",[FunctionName, length(Arguments)]))]},
+                 {pre,[{type,"c"}],[unicode:characters_to_binary(string:trim([Ret, " ", string:trim(NameText),";"]))]}];
+            {name, _, NameText} ->
+                [{h2,[],NameText}]
+        end,
     {desc, _, Desc} = lists:keyfind(desc, 1, Content),
-    transform(T, [[{h2,[],Name}|transform(Desc,[])]|Acc]);
+    transform(T, [transform(Desc,[]),Name] ++ Acc);
 
 %% transform <datatypes> with <datatype> as children
 transform([{datatypes,_Attr,Content}|T],Acc) ->
