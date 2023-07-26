@@ -950,7 +950,8 @@ render_element({'div', [{class, What}], Content}, State, Pos, Ind, D) ->
     Title = unicode:characters_to_binary([string:titlecase(What), " {: .", Type, "}"]),
     {Header, 0} = render_element({h4, [], [Title]}, State, Pos, Ind, D),
     {Docs, 0} = render_element({'div', [], Content}, ['div' | State], 0, 0, D),
-    trimnlnl([[pad(Ind), string:trim(["> ",Line]),"\n"] || Line <- string:split([Header, trim(Docs)],"\n",all)]);
+    trimnlnl([pad(Ind - Pos), "> ", string:trim(Header), "\n",
+              [[pad(Ind), string:trim(["> ",Line]),"\n"] || Line <- string:split([trim(Docs)],"\n",all)]]);
 render_element({Tag, _, Content}, State, Pos, Ind, D) when Tag =:= p; Tag =:= 'div' ->
     trimnlnl(render_docs(Content, [Tag | State], Pos, Ind, D));
 render_element({a, [{id,_Id}], []} = A, State, Pos, Ind, D) when Pos > 0 ->
