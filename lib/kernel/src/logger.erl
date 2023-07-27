@@ -163,12 +163,31 @@
 
 %%%-----------------------------------------------------------------
 %%% API
-emergency(X) ->
-    log(emergency,X).
-emergency(X,Y) ->
-    log(emergency,X,Y).
-emergency(X,Y,Z) ->
-    log(emergency,X,Y,Z).
+-spec emergency(StringOrReport) -> ok when
+      StringOrReport :: unicode:chardata() | report().
+emergency(StringOrReport) ->
+    log(emergency,StringOrReport).
+-spec emergency(StringOrReport,Metadata) -> ok when
+      StringOrReport :: unicode:chardata() | report(),
+      Metadata :: metadata();
+         (Format,Args) -> ok when
+      Format :: io:format(),
+      Args ::[term()];
+         (Fun,FunArgs) -> ok when
+      Fun :: msg_fun(),
+      FunArgs :: term().
+emergency(FormatOrFun,Args) ->
+    log(emergency,FormatOrFun,Args).
+-spec emergency(Format, Args, Metadata) -> ok when
+      Format :: io:format(),
+      Args :: [term()],
+      Metadata :: metadata();
+         (Fun,FunArgs,Metadata) -> ok when
+      Fun :: msg_fun(),
+      FunArgs :: term(),
+      Metadata :: metadata().
+emergency(FormatOrFun,Args,Metadata) ->
+    log(emergency,FormatOrFun,Args,Metadata).
 
 alert(X) ->
     log(alert,X).
