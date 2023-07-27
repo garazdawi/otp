@@ -300,7 +300,7 @@ get_app(Module) ->
 %% Convert module documentation
 convert_moduledoc(ModuleHeader) ->
     String = render_docs(normalize(ModuleHeader), init_config(undefined, #{})),
-    FixDiameterDepsBug = re:replace(String, "```\n(-include_lib\\(\"diameter/include/diameter.hrl\"\\).)\n```", "\n    \\1\n"),
+    FixDiameterDepsBug = re:replace(String, "```text\n(-include_lib\\(\"diameter/include/diameter.hrl\"\\).)\n```", "\n    \\1\n"),
     [{moduledoc,FixDiameterDepsBug}].
 
 formatter(String) ->
