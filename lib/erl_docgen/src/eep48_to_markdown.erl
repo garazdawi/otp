@@ -263,7 +263,7 @@ convert(Lines, Acc, [{{callback,F,A}, _, _, _, _} | T], Files) ->
     convert(Lines, Acc, T, Files);
 convert(Lines, Acc, [{_, 0, _, _, _} | T], Files) ->
     convert(Lines, Acc, T, Files);
-convert(Lines, Acc, [{_, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
+convert(Lines, Acc, [{_Kind, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
     case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
         true ->
             DocString =
@@ -271,7 +271,9 @@ convert(Lines, Acc, [{_, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
                     #{ <<"en">> := ErlangHtml } when not is_map_key(equiv, Meta) ->
                         [{doc,render_docs(normalize(ErlangHtml), init_config(maps:get(docs, Files), #{}))}];
                     D when D =:= #{}, is_map_key(equiv, Meta) ->
-                        []
+                        [];
+                    D when D =:= #{} ->
+                        [{doc,""}]
                 end,
             {Before, After} = lists:split(erl_anno:line(Anno)-1, Lines),
             convert(Before, DocString ++ meta(Meta) ++ After ++ Acc, T, Files);
@@ -381,7 +383,7 @@ meta(Meta) ->
 to_erlang_string(Text) ->
      string:trim(re:replace(Text, "(\"|\\\\)", "\\\\\\1", [global, unicode])).
 
-filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, D, M} | T]) when is_map_key(<<"en">>, D); is_map_key(equiv, M) ->
+filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, D, M} | T]) when is_map(D); is_map_key(equiv, M) ->
     NewAnno =
         case What of
             function ->
