@@ -231,8 +231,21 @@ convert(Files, Docs) ->
                           erl_anno:file(Anno1) >= erl_anno:file(Anno2)
                   end
           end, Docs),
+    {Prev, Acc} =
+        lists:foldl(
+          fun(MFA,{[H|_] = Prev,Acc}) ->
+                  MFAAnno = element(2, MFA),
+                  HAnno = element(2, H),
+                  case erl_anno:file(MFAAnno) =:= erl_anno:file(HAnno) andalso
+                      erl_anno:line(MFAAnno) =:= erl_anno:line(HAnno) of
+                      true ->
+                          {[MFA|Prev],Acc};
+                      false ->
+                          {[MFA],lists:reverse(Prev) ++ Acc}
+                  end
+          end, {[hd(SortedDocs)],[]}, tl(SortedDocs)),
     %% io:format("~p",[SortedDocs]),
-    convert([], [], SortedDocs, Files).
+    convert([], [], lists:reverse(Prev ++ Acc), Files).
 convert([], [], [], Files) ->
     %% When there are no documented functions in module, eg. gen_fsm
     Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
