@@ -66,6 +66,13 @@ extract_docs([{attribute, _Anno, doc, MoreMeta}|T], {Doc, Meta}) when is_map(Mor
         extract_docs(T, {Doc, maps:merge(Meta, MoreMeta)});
 extract_docs([{attribute, _Anno, doc, Doc}|T], {undefined, Meta}) ->
     extract_docs(T, {string:trim(Doc), Meta});
+extract_docs([{Kind, Anno, F, A, Body}|T],{undefined, #{ equiv := {EquivF,EquivA} } = Meta}) ->
+    extract_docs([{Kind, Anno, F, A, Body}|T],
+                 {io_lib:format("Equivalent to `~ts~p/~p`",[prefix(Kind), EquivF,EquivA]), Meta});
+extract_docs([{Kind, Anno, F, A, Body}|T],{undefined, #{ equiv := {call,_,{atom,_,EquivF},Args} = Call} = Meta}) ->
+    extract_docs([{Kind, Anno, F, A, Body}|T],
+                 {io_lib:format("Equivalent to `~ts~ts`",[prefix(Kind),erl_pp:exprs([Call])]),
+                  Meta#{ equiv := {EquivF, length(Args)}}});
 extract_docs([{function, Anno, F, A, Body}|T],{Doc, Meta}) when Doc =/= undefined ->
 
     %% io:format("Converting ~p/~p~n",[F,A]),
@@ -93,7 +100,7 @@ extract_docs([{function, Anno, F, A, Body}|T],{Doc, Meta}) when Doc =/= undefine
       #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}})];
 extract_docs([{attribute, Anno, type, {Type, _, Args}}|T],{Doc, Meta}) when Doc =/= undefined ->
 
-    io:format("Converting ~p/~p~n",[Type,length(Args)]),
+    %% io:format("Converting ~p/~p~n",[Type,length(Args)]),
 
     {Slogan, DocsWithoutSlogan} =
         %% First we check if there is a doc prototype
@@ -110,10 +117,15 @@ extract_docs([{attribute, Anno, type, {Type, _, Args}}|T],{Doc, Meta}) when Doc 
         end,
     [{{type, Type, length(Args)}, Anno, [unicode:characters_to_binary(Slogan)],
       #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}})];
-extract_docs([_|T], Doc) ->
+extract_docs([_H|T], Doc) ->
+    %% [io:format("Skipping: ~p ~p~n",[{element(3,_H),element(4,_H)}, Doc]) || element(1,_H) =:= function],
     extract_docs(T, Doc);
 extract_docs([], {undefined, _}) ->
     [].
+
+prefix(function) -> "";
+prefix(type) -> "t:";
+prefix(callback) -> "c:".
 
 extract_slogan(Doc, F, A) ->
     maybe

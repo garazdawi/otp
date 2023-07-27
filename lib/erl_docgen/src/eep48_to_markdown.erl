@@ -354,8 +354,7 @@ meta(#{ edit_url := _} = Meta) ->
 meta(#{ signature := _} = Meta) ->
     meta(maps:remove(signature, Meta));
 meta(#{ equiv := {function,F,A} } = Meta) ->
-    [io_lib:format("-doc(#{ equiv => ~p(~ts) }).",[F,lists:join($,,lists:duplicate(A,$_))])|
-     meta(maps:remove(equiv, Meta))];
+    [io_lib:format("-doc(#{equiv => ~p/~p}).",[F,A]) | meta(maps:remove(equiv, Meta))];
 meta(Meta) when Meta =:= #{} ->
     "";
 meta(Meta) ->
