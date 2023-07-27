@@ -129,9 +129,9 @@ convert_application(App) ->
     Pids =
         [spawn_monitor(
            fun() ->
-                   try convert(M) catch E:R:ST -> io:format("~p:~p:~p~n",[E,R,ST]) end
+                   try convert(M) catch E:R:ST -> io:format("~p:~p:~p~n",[E,R,ST]),exit({error,E,R,ST}) end
            end) || M <- Modules],
-    [receive {'DOWN',Ref,_,_,_} -> ok end || {_P,Ref} <- Pids],
+    [receive {'DOWN',Ref,_,_,normal} -> ok; {'DOWN',Ref,_,_,{error,E,R,ST}} -> erlang:raise(E,R,ST) end || {_P,Ref} <- Pids],
     docgen_xml_to_markdown:convert_application(App),
     ok.
 
@@ -232,18 +232,22 @@ convert(Files, Docs) ->
                   end
           end, Docs),
     {Prev, Acc} =
-        lists:foldl(
-          fun(MFA,{[H|_] = Prev,Acc}) ->
-                  MFAAnno = element(2, MFA),
-                  HAnno = element(2, H),
-                  case erl_anno:file(MFAAnno) =:= erl_anno:file(HAnno) andalso
-                      erl_anno:line(MFAAnno) =:= erl_anno:line(HAnno) of
-                      true ->
-                          {[MFA|Prev],Acc};
-                      false ->
-                          {[MFA],lists:reverse(Prev) ++ Acc}
-                  end
-          end, {[hd(SortedDocs)],[]}, tl(SortedDocs)),
+        case SortedDocs of
+            [] -> {[],[]};
+            SortedDocs ->
+                lists:foldl(
+                  fun(MFA,{[H|_] = Prev,Acc}) ->
+                          MFAAnno = element(2, MFA),
+                          HAnno = element(2, H),
+                          case erl_anno:file(MFAAnno) =:= erl_anno:file(HAnno) andalso
+                              erl_anno:line(MFAAnno) =:= erl_anno:line(HAnno) of
+                              true ->
+                                  {[MFA|Prev],Acc};
+                              false ->
+                                  {[MFA],lists:reverse(Prev) ++ Acc}
+                          end
+                  end, {[hd(SortedDocs)],[]}, tl(SortedDocs))
+        end,
     %% io:format("~p",[SortedDocs]),
     convert([], [], lists:reverse(Prev ++ Acc), Files).
 convert([], [], [], Files) ->
