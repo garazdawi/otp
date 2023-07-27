@@ -347,7 +347,7 @@ doc(String) ->
 
 moduledoc(String) ->
     %% NewLines = re:replace(String, "\\\.( )?", ".\n", [global]),
-    ["-moduledoc \"", to_erlang_string(String), "\"."].
+    ["-moduledoc \"", to_erlang_string(String), "\n\"."].
 
 meta(#{ edit_url := _} = Meta) ->
     meta(maps:remove(edit_url, Meta));
