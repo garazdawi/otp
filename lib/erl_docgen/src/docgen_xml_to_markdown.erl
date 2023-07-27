@@ -93,8 +93,11 @@ convert_application(App) ->
                         {undefined,[]}
                 end,
             Modules = eep48_to_markdown:modules(App),
-            Titles = [["\"",Title, "\": fn(a) -> a[:title] == \"",Tag,"\" end,"]
-                      || {Title,Tag} <- lists:uniq(titles(Modules))],
+            Titles = [[["\"",Title, "\": fn(a) -> a[:title] == \"",Tag,"\" end,"]
+                       || {Title,Tag} <- lists:uniq(type_titles(Modules))],
+                      "Types: &(&1[:__doc__] == :type),",
+                      [["\"",Title, "\": fn(a) -> a[:title] == \"",Tag,"\" end,"]
+                       || {Title,Tag} <- lists:uniq(function_titles(Modules))]],
             ok = file:write_file(
                    filename:join(DstDir,"ex_doc.exs"),
                    ["{global,_} = Code.eval_file Path.join(System.get_env(\"ERL_TOP\"),\"ex_doc.exs\")\n"
@@ -108,12 +111,18 @@ convert_application(App) ->
             Error
     end.
 
-titles([H|T]) ->
+type_titles([H|T]) ->
     {ok, #docs_v1{ docs = Ds } } = code:get_doc(H),
     [{["Types: ", Title], Title} || {{type,_,_}, _, _, _, #{ title := Title }} <- Ds] ++
-        [{Title, Title} || {{function,_,_}, _, _, _, #{ title := Title }} <- Ds] ++
-        titles(T);
-titles([]) ->
+        type_titles(T);
+type_titles([]) ->
+    [].
+
+function_titles([H|T]) ->
+    {ok, #docs_v1{ docs = Ds } } = code:get_doc(H),
+    [{Title, Title} || {{function,_,_}, _, _, _, #{ title := Title }} <- Ds] ++
+        function_titles(T);
+function_titles([]) ->
     [].
 
 convert_xml_include(App, SrcDir, DstDir, IncludeXML) ->
