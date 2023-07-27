@@ -143,7 +143,7 @@ expand_anno(AST) ->
 convert_docs(#docs_v1{ format = ?NATIVE_FORMAT, module_doc = #{ <<"en">> := ModuleDoc } } = D) ->
     D#docs_v1{ format = <<"text/markdown">>,
                module_doc = #{ <<"en">> =>
-                                   try eep48_to_markdown:render_docs(ModuleDoc, D)
+                                   try eep48_to_markdown:render_docs(shell_docs:normalize(ModuleDoc), D)
                                    catch E:R:ST ->
                                            io:format("Failed to convert moduledoc~n"),
                                            erlang:raise(E,R,ST)
@@ -157,7 +157,7 @@ convert_docs(#docs_v1{ format = <<"text/markdown">> } = D) ->
 
 convert_docs({What, Anno, Sig, #{ <<"en">> := Docs }, Meta}, D) ->
     try
-        {What, Anno, Sig, #{ <<"en">> => eep48_to_markdown:render_docs(Docs, D) }, Meta}
+        {What, Anno, Sig, #{ <<"en">> => eep48_to_markdown:render_docs(shell_docs:normalize(Docs), D) }, Meta}
     catch E:R:ST ->
             io:format("Failed to convert ~p~n",[What]),
             erlang:raise(E,R,ST)

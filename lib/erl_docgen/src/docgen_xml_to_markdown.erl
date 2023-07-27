@@ -40,7 +40,7 @@ main([Application, FromXML, ToMarkdown]) ->
             io:format("Skipping ~p: ~ts~n",[What, FromXML]),
             skip;
         EEP48 ->
-            [io:format("~tp~n",[EEP48]) || filename:rootname(filename:basename(FromXML)) =:= "erl_nif"],
+            %% [io:format("~tp~n",[EEP48]) || filename:rootname(filename:basename(FromXML)) =:= "erl_nif"],
             Markdown = unicode:characters_to_binary(eep48_to_markdown:render_docs(shell_docs:normalize(EEP48))),
             %% io:format("~ts~n",[Markdown]),
             ok = file:write_file(ToMarkdown, Markdown)
@@ -465,7 +465,12 @@ transform([{func,_, Content}|T], Acc) ->
                 [FunctionName | Rest] = string:split(NameText,"("),
                 Arguments = re:split(Rest,",",[trim]),
                 [{h2,[],[unicode:characters_to_binary(io_lib:format("~ts/~p",[FunctionName, length(Arguments)]))]},
-                 {pre,[{type,"c"}],[unicode:characters_to_binary(string:trim([Ret, " ", string:trim(NameText),";"]))]}];
+                 {pre,[],
+                  [{code,[{type,<<"c">>}],
+                    [unicode:characters_to_binary(string:trim([Ret, " ", string:trim(NameText),";"]))]
+                   }]
+                 }
+                ];
             {name, _, NameText} ->
                 [{h2,[],NameText}]
         end,

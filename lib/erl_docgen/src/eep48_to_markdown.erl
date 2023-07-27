@@ -252,7 +252,7 @@ convert(Lines, Acc, [{_, Anno, _, D, Meta} | T] = Docs, Files) ->
             DocString =
                 case D of
                     #{ <<"en">> := ErlangHtml } when not is_map_key(equiv, Meta) ->
-                        [{doc,render_docs(ErlangHtml, init_config(maps:get(docs, Files), #{}))}];
+                        [{doc,render_docs(normalize(ErlangHtml), init_config(maps:get(docs, Files), #{}))}];
                     D when D =:= #{}, is_map_key(equiv, Meta) ->
                         []
                 end,
@@ -282,7 +282,7 @@ get_app(Module) ->
 
 %% Convert module documentation
 convert_moduledoc(ModuleHeader) ->
-    String = render_docs(ModuleHeader, init_config(undefined, #{})),
+    String = render_docs(normalize(ModuleHeader), init_config(undefined, #{})),
     FixDiameterDepsBug = re:replace(String, "```\n(-include_lib\\(\"diameter/include/diameter.hrl\"\\).)\n```", "\n    \\1\n"),
     [{moduledoc,FixDiameterDepsBug}].
 
@@ -1108,14 +1108,18 @@ render_element({b, _, Content}, State, Pos, Ind, D) ->
         false ->
             {["__", Docs, "__"], NewPos + 4}
     end;
-render_element({pre, Attr, Content}, State, Pos, Ind, D) ->
+render_element({pre, [], [{code,Attr,Content}]}, State, Pos, Ind, D) ->
+    %% This is a pre without any links or emphasis, so we use markdown
+
     %% For pre we make sure to respect the newlines in pre
-    {Docs, _} = trimnl(render_docs(Content, [pre | State], Pos, Ind, D)),
+    {Docs, _} = trimnl(render_docs(strip_tags(Content), [pre | State], Pos, Ind, D)),
     Type =
         case proplists:get_value(type, Attr) of
             undefined -> "text";
-            "erl" -> "erlang";
-            "c" -> "c"
+            <<"none">> -> "text";
+            <<"erl">> -> "erlang";
+            <<"erl-repl">> -> "erlang";
+            <<"c">> -> "c"
         end,
     trimnlnl(["```",Type,"\n", pad(Ind), Docs, pad(Ind), "```"]);
 render_element({ul, [{class, <<"types">>}], Content}, State, _Pos, Ind, D) ->
@@ -1296,6 +1300,13 @@ lastline(Str) ->
                 tl(string:next_codepoint(Match))
         end,
     string:length(LastStr).
+
+strip_tags([H|T]) when is_binary(H) ->
+    [H|strip_tags(T)];
+strip_tags([{_Tag,_,C}|T]) ->
+    [strip_tags(C)|strip_tags(T)];
+strip_tags([]) ->
+    [].
 
 %% These functions make sure that we trim extra newlines added
 %% by the renderer. For example if we do <li><p></p></li>
