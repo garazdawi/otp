@@ -117,7 +117,7 @@ extract_docs([{function, Anno, F, A, Body}|T],{Doc, Meta}, Cwd) when Doc =/= und
         end,
     [{{function, F, A}, Anno, [unicode:characters_to_binary(Slogan)],
       #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}}, Cwd)];
-extract_docs([{attribute, Anno, type, {Type, _, Args}}|T],{Doc, Meta}, Cwd) when Doc =/= undefined ->
+extract_docs([{attribute, Anno, TypeOrOpaque, {Type, _, Args}}|T],{Doc, Meta}, Cwd) when Doc =/= undefined, TypeOrOpaque =:= type orelse TypeOrOpaque =:= opaque ->
 
     %% io:format("Converting ~p/~p~n",[Type,length(Args)]),
 
