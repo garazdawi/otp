@@ -259,7 +259,7 @@ convert(Lines, Acc, [{{callback,F,A}, _, _, _, _} | T], Files) ->
     convert(Lines, Acc, T, Files);
 convert(Lines, Acc, [{_, 0, _, _, _} | T], Files) ->
     convert(Lines, Acc, T, Files);
-convert(Lines, Acc, [{_, Anno, _, D, Meta} | T] = Docs, Files) ->
+convert(Lines, Acc, [{_, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
     case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
         true ->
             DocString =
@@ -382,7 +382,7 @@ filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, D, M} | T]) when is_map_key(<<
         case What of
             function ->
                 case lists:search(fun({attribute, _SpecAnno, spec, {FA, _}}) when is_tuple(FA) ->
-                                          {F, A} =:= FA;
+                                          {F, A} =:= FA orelse {erlang, F, A} =:= FA;
                                      %% ({attribute, _, spec, {Spec, _}}) when is_atom(Spec) ->
                                      %%      {F, A} =:= {Spec, 0};
                                      (_) ->
