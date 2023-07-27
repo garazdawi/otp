@@ -3179,6 +3179,7 @@ tuple_to_list(_Tuple) ->
          (overview) -> boolean();
          %% Deliberately left undocumented
          (sequential_tracer) -> {sequential_tracer, pid() | port() | {module(),term()} | false}.
+-doc {file,"../../doc/src/erlang_system_info.md"}.
 system_info(_Item) ->
     erlang:nif_error(undefined).
 

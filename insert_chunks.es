@@ -8,7 +8,17 @@ main([BeamFile | T]) ->
     try
         {ok, Module, Chunks} = beam_lib:all_chunks(BeamFile),
         {debug_info_v1, _, {AST, Meta}} = binary_to_term(proplists:get_value("Dbgi", Chunks)),
-        put(meta, Meta),
+        {_, File} = lists:foldl(
+                            fun({attribute, [{generated,true}|_], file, {File, _}}, {false, _}) ->
+                                    {true, File};
+                               (_, File) when is_tuple(File) ->
+                                    File;
+                               ({attribute, _, file, {File,_}}, _) ->
+                                    File;
+                               ({attribute, _Anno, module, _}, File) ->
+                                    {false, File}
+                            end, undefined, AST),
+        Filename = filename:join(proplists:get_value(cwd, Meta, ""), File),
         NewDocs =
             case lists:keysearch(moduledoc, 3, AST) of
                 {value, {attribute, ModuleDocAnno, moduledoc, ModuleDoc}} ->
@@ -16,7 +26,7 @@ main([BeamFile | T]) ->
                     MD = D#docs_v1{
                            anno = ModuleDocAnno,
                            module_doc = #{ <<"en">> => unicode:characters_to_binary(ModuleDoc) } },
-                    MD#docs_v1{ docs = extract_docs(AST) };
+                    MD#docs_v1{ docs = extract_docs(AST, filename:dirname(Filename)) };
                 _ ->
                     case get_doc_chunk(BeamFile, atom_to_list(Module)) of
                         {ok, Docs} ->
@@ -60,20 +70,29 @@ get_doc_chunk(Filename, Mod) ->
             end
     end.
 
-extract_docs(AST) ->
-    extract_docs(expand_anno(AST), {undefined, #{}}).
-extract_docs([{attribute, _Anno, doc, MoreMeta}|T], {Doc, Meta}) when is_map(MoreMeta) ->
-        extract_docs(T, {Doc, maps:merge(Meta, MoreMeta)});
-extract_docs([{attribute, _Anno, doc, Doc}|T], {undefined, Meta}) ->
-    extract_docs(T, {string:trim(Doc), Meta});
-extract_docs([{Kind, Anno, F, A, Body}|T],{undefined, #{ equiv := {EquivF,EquivA} } = Meta}) ->
+extract_docs(AST, Cwd) ->
+    extract_docs(expand_anno(AST), {undefined, #{}}, Cwd).
+extract_docs([{attribute, _Anno, doc, MoreMeta}|T], {Doc, Meta}, Cwd) when is_map(MoreMeta) ->
+        extract_docs(T, {Doc, maps:merge(Meta, MoreMeta)}, Cwd);
+extract_docs([{attribute, _Anno, doc, {file, Path}}|T], {undefined, Meta}, Cwd) ->
+    maybe
+        {ok, Doc} ?= file:read_file(filename:join(Cwd, Path)),
+        extract_docs(T, {string:trim(Doc), Meta}, Cwd)
+    else
+        _ ->
+            io:format("Failed to open: ~p~n",[filename:join(Cwd, Path)]),
+            exit(1)
+    end;
+extract_docs([{attribute, _Anno, doc, Doc}|T], {undefined, Meta}, Cwd) ->
+    extract_docs(T, {string:trim(Doc), Meta}, Cwd);
+extract_docs([{Kind, Anno, F, A, Body}|T],{undefined, #{ equiv := {EquivF,EquivA} } = Meta}, Cwd) ->
     extract_docs([{Kind, Anno, F, A, Body}|T],
-                 {io_lib:format("Equivalent to `~ts~p/~p`",[prefix(Kind), EquivF,EquivA]), Meta});
-extract_docs([{Kind, Anno, F, A, Body}|T],{undefined, #{ equiv := {call,_,{atom,_,EquivF},Args} = Call} = Meta}) ->
+                 {io_lib:format("Equivalent to `~ts~p/~p`",[prefix(Kind), EquivF,EquivA]), Meta}, Cwd);
+extract_docs([{Kind, Anno, F, A, Body}|T],{undefined, #{ equiv := {call,_,{atom,_,EquivF},Args} = Call} = Meta}, Cwd) ->
     extract_docs([{Kind, Anno, F, A, Body}|T],
                  {io_lib:format("Equivalent to `~ts~ts`",[prefix(Kind),erl_pp:exprs([Call])]),
-                  Meta#{ equiv := {EquivF, length(Args)}}});
-extract_docs([{function, Anno, F, A, Body}|T],{Doc, Meta}) when Doc =/= undefined ->
+                  Meta#{ equiv := {EquivF, length(Args)}}}, Cwd);
+extract_docs([{function, Anno, F, A, Body}|T],{Doc, Meta}, Cwd) when Doc =/= undefined ->
 
     %% io:format("Converting ~p/~p~n",[F,A]),
 
@@ -97,8 +116,8 @@ extract_docs([{function, Anno, F, A, Body}|T],{Doc, Meta}) when Doc =/= undefine
                 SloganDocs
         end,
     [{{function, F, A}, Anno, [unicode:characters_to_binary(Slogan)],
-      #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}})];
-extract_docs([{attribute, Anno, type, {Type, _, Args}}|T],{Doc, Meta}) when Doc =/= undefined ->
+      #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}}, Cwd)];
+extract_docs([{attribute, Anno, type, {Type, _, Args}}|T],{Doc, Meta}, Cwd) when Doc =/= undefined ->
 
     %% io:format("Converting ~p/~p~n",[Type,length(Args)]),
 
@@ -116,11 +135,11 @@ extract_docs([{attribute, Anno, type, {Type, _, Args}}|T],{Doc, Meta}) when Doc 
                 SloganDocs
         end,
     [{{type, Type, length(Args)}, Anno, [unicode:characters_to_binary(Slogan)],
-      #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}})];
-extract_docs([_H|T], Doc) ->
+      #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}}, Cwd)];
+extract_docs([_H|T], Doc, Cwd) ->
     %% [io:format("Skipping: ~p ~p~n",[{element(3,_H),element(4,_H)}, Doc]) || element(1,_H) =:= function],
-    extract_docs(T, Doc);
-extract_docs([], {undefined, _}) ->
+    extract_docs(T, Doc, Cwd);
+extract_docs([], {undefined, _}, _Cwd) ->
     [].
 
 prefix(function) -> "";
