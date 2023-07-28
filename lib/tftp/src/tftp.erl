@@ -268,6 +268,13 @@
 
 -callback abort(Code :: error_code(), string(), State :: term()) -> 'ok'.
 
+
+-callback warning_msg(Format :: string(), Data :: [term()]) -> ok.
+-callback info_msg(Format :: string(), Data :: [term()]) -> ok.
+-callback error_msg(Format :: string(), Data :: [term()]) -> ok.
+
+-optional_callbacks([warning_msg/2,error_msg/2,info_msg/2]).
+
 -include("tftp.hrl").
 
 
