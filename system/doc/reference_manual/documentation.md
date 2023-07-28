@@ -175,6 +175,54 @@ There are three reserved metadata keys for `-moduledoc`:
   by the compiler that `One` and `Two` are variable names in the `-spec` of the
   function.
 
+### Doc slogans
+
+The doc slogan is a short text shown to describe the function when hovering.
+By default it is taken from the source code by looking at the names of the
+arguments:
+
+```
+add(One, Two) -> One + Two.
+```
+
+will have a slogan of `add(One, Two)`. For types/opaques/callbacks,
+the implementation will look at the type/opaque/callback
+specification for what to use as slogan. For example:
+
+```
+-type number(Value) :: {number, Value}.
+%% slogan will be `number(Value)`
+
+-opaque number() :: {number, number()}.
+%% slogan will be `number()`
+
+-callback increment(In :: number()) -> Out.
+%% slogan will be `increment(In)`
+
+-callback increment(In) -> Out when
+   In :: number().
+%% slogan will be `increment(In)`
+```
+
+If it cannot "easily" figure out a nice slogan from the code, it will use the
+MFA syntax instead, i.e. `add/2`, `number/1`, `increment/1` etc.
+
+It is possible to supply your own slogan by placing it as the first line of
+the `-doc` attribute. The provided slogan must be in the form of a function
+declaration up until the `->`. For example:
+
+```
+-doc "
+add(One, Two)
+
+Adds two numbers.
+"
+add(A, B) -> A + B.
+```
+
+Will create the slogan `add(One, Two)`. This works for functions, types, opaques
+and callbacks.
+
 ## Links
 
 When writing documentation in markdown links are automatically found in any
@@ -355,3 +403,10 @@ For example `c:ct_suite:Testcase/0` and `c:ct_suite:Testcase/1`. We have no way 
 these in the -callback type language, so there is no way to express them in ex_doc either...
 
 [erlang:system\_info(allocator)]: https://www.erlang.org/doc/man/erlang.html#system_info_allocator
+
+### Document multi clause functions
+
+If using `-doc` attributes we cannot document function clauses. Instead we need to rewrite the docs
+for all function like I've done for `erlang:system_info/1` ([erlang_system_info.md]).
+
+[erlang_system_info.md]: https://github.com/garazdawi/otp/blob/lukas/erl_docgen/eep48_to_markdown/erts/doc/src/erlang_system_info.md
