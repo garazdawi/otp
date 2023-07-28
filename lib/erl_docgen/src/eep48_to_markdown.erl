@@ -162,34 +162,35 @@ modules(App) ->
 convert(Module) ->
     io:format("Converting: ~p~n",[Module]),
 
-    %% We first recompile the file in order to make sure we have the correct AST
-    %% The AST may have changed due to partial .hrl files being converted already.
-    [{ok, _} = c:c(Module) || not lists:member(get(application),["compiler","stdlib","kernel","diameter","eunit"])],
-
-    ModulePath =
-        case code:which(Module) of
-            preloaded ->
-                filename:join(["erts","preloaded","ebin",Module]);
-            Path -> Path
-        end,
-    {ok, {Module,
-          [{debug_info,
-            {debug_info_v1, erl_abstract_code,
-             {AST, Meta0}}}]}} = beam_lib:chunks(ModulePath,[debug_info]),
-
-    Meta =
-        case code:which(Module) of
-            preloaded ->
-                [{cwd,"erts/preloaded/src"}|Meta0];
-            _ ->
-                Meta0
-        end,
-
     case code:get_doc(Module, #{ sources => [eep48] }) of
         {ok, #docs_v1{ format = <<"application/erlang+html">>,
                        module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
 
             [put(application, get_app(Module)) || get(application) =:= undefined],
+
+            %% We first recompile the file in order to make sure we have the correct AST
+            %% The AST may have changed due to partial .hrl files being converted already.
+            [{ok, _} = c:c(Module) || not lists:member(get(application),["compiler","stdlib","kernel","diameter","eunit","syntax_tools"])],
+
+            ModulePath =
+                case code:which(Module) of
+                    preloaded ->
+                        filename:join(["erts","preloaded","ebin",Module]);
+                    Path -> Path
+                end,
+            {ok, {Module,
+                  [{debug_info,
+                    {debug_info_v1, erl_abstract_code,
+                     {AST, Meta0}}}]}} = beam_lib:chunks(ModulePath,[debug_info]),
+
+            Meta =
+                case code:which(Module) of
+                    preloaded ->
+                        [{cwd,"erts/preloaded/src"}|Meta0];
+                    _ ->
+                        Meta0
+                end,
+
 
             NewFiles = convert(#{ meta => Meta, ast => AST, docs => DocsV1 },
                                filter_and_fix_anno(expand_anno(AST), Docs)),
