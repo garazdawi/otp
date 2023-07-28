@@ -286,7 +286,7 @@ convert([], [], [], Files) ->
     Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
     {attribute, _, file, {Filename, _}} = lists:keyfind(file, 3, maps:get(ast, Files)),
     {ok, Bin} = file:read_file(filename:join(Cwd, Filename)),
-    Files#{ filename:join(Cwd, Filename) => string:split(Bin,"\n",all) };
+    Files#{ filename:join(Cwd, Filename) => string:split(strip_beh_info(Bin),"\n",all) };
 convert(Lines, Acc, [], Files) ->
     Files#{ maps:get(filename, Files) => Lines ++ Acc};
 convert(Lines, Acc, [{{K,F,A}, 0, _, _, _} = E | T], Files) ->
@@ -302,14 +302,20 @@ convert(Lines, Acc, [{_Kind, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
             Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
             Filename = filename:join(Cwd, erl_anno:file(Anno)),
             {ok, Bin} = file:read_file(Filename),
+
             NewFiles =
                 case maps:get(current, Files, undefined) of
                     undefined -> Files;
                     _ -> Files#{ maps:get(filename, Files) => Lines ++ Acc }
                 end,
-            convert(string:split(Bin,"\n",all), [], Docs,
+            convert(string:split(strip_beh_info(Bin),"\n",all), [], Docs,
                     NewFiles#{ current => erl_anno:file(Anno), filename => Filename })
     end.
+
+strip_beh_info(Str) ->
+    re:replace(
+      re:replace(Str, "\n-export\\(\\[behaviour_info/1\\]\\)\\.\n","",[global,unicode]),
+      "\nbehaviour_info\\((.|\n)*\\.\n","",[global,unicode,ungreedy]).
 
 generate_doc_attributes(D, Meta, Files) ->
     DocString =
@@ -334,12 +340,12 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], Files) 
                        [],
                        [{var, _, Result}]}]}} ?= erl_parse:parse_form(Toks),
             true ?= lists:any(fun(E) -> element(1,E) =:= var end, Args),
-            {lists:join(", ", [[atom_to_list(A), " :: term()"] || {var,_,A} <- Args]),
+            {lists:join(", ", [[atom_to_list(Arg), " :: term()"] || {var,_,Arg} <- Args]),
              [atom_to_list(Result), " :: term()"]}
         else
             E ->
                 io:format("~p~n",[E]),
-                {lists:join(", ", ["term()" || I <- lists:seq(1, A)]), "term()"}
+                {lists:join(", ", ["term()" || _I <- lists:seq(1, A)]), "term()"}
         end,
     generate_doc_attributes(D, Meta, Files) ++
         [io_lib:format("-callback ~p(~ts) -> ~ts.",[F, ArgString, Return]),""]
