@@ -74,7 +74,7 @@ extract_docs(AST, Cwd) ->
     extract_docs(expand_anno(AST), {undefined, #{}}, Cwd).
 extract_docs([{attribute, _Anno, doc, MoreMeta}|T], {Doc, Meta}, Cwd) when is_map(MoreMeta) ->
         extract_docs(T, {Doc, maps:merge(Meta, MoreMeta)}, Cwd);
-extract_docs([{attribute, _Anno, doc, {file, Path}}|T], {undefined, Meta}, Cwd) ->
+extract_docs([{attribute, _Anno, doc, {file, Path}}|T], {_, Meta}, Cwd) ->
     maybe
         {ok, Doc} ?= file:read_file(filename:join(Cwd, Path)),
         extract_docs(T, {string:trim(Doc), Meta}, Cwd)
@@ -83,7 +83,7 @@ extract_docs([{attribute, _Anno, doc, {file, Path}}|T], {undefined, Meta}, Cwd) 
             io:format("Failed to open: ~p~n",[filename:join(Cwd, Path)]),
             exit(1)
     end;
-extract_docs([{attribute, _Anno, doc, Doc}|T], {undefined, Meta}, Cwd) ->
+extract_docs([{attribute, _Anno, doc, Doc}|T], {_, Meta}, Cwd) ->
     extract_docs(T, {string:trim(Doc), Meta}, Cwd);
 extract_docs([{Kind, Anno, F, A, Body}|T],{undefined, #{ equiv := {EquivF,EquivA} } = Meta}, Cwd) ->
     extract_docs([{Kind, Anno, F, A, Body}|T],
