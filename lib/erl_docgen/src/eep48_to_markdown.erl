@@ -18,6 +18,7 @@
 %% %CopyrightEnd%
 %%
 -module(eep48_to_markdown).
+-feature(maybe_expr, enable).
 
 %% This module takes care of rendering and normalization of
 %% application/erlang+html style documentation.
@@ -218,7 +219,10 @@ convert(Module) ->
             {BeforeModule, AfterModule} = lists:split(ModuleDocLine, maps:get(Filename, NewFiles)),
 
             NewFilesWithModuleDoc =
-                NewFiles#{ Filename => BeforeModule ++ convert_moduledoc(ModuleDoc) ++ AfterModule },
+                NewFiles#{ Filename => BeforeModule ++ convert_moduledoc(ModuleDoc)
+                           ++ generate_skipped_callbacks(maps:get(skipped, NewFiles, []), NewFiles)
+                           ++ AfterModule
+                         },
 
 
             %% io:format("~p~n",[hd(NewFileBin)]),
@@ -285,23 +289,15 @@ convert([], [], [], Files) ->
     Files#{ filename:join(Cwd, Filename) => string:split(Bin,"\n",all) };
 convert(Lines, Acc, [], Files) ->
     Files#{ maps:get(filename, Files) => Lines ++ Acc};
-convert(Lines, Acc, [{{K,F,A}, 0, _, _, _} | T], Files) ->
+convert(Lines, Acc, [{{K,F,A}, 0, _, _, _} = E | T], Files) ->
     io:format("Skipping ~p ~p/~p~n",[K,F,A]),
-    convert(Lines, Acc, T, Files);
+    convert(Lines, Acc, T, Files#{ skipped => [E | maps:get(skipped, Files, [])] });
 convert(Lines, Acc, [{_Kind, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
     case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
         true ->
-            DocString =
-                case D of
-                    #{ <<"en">> := ErlangHtml } when not is_map_key(equiv, Meta) ->
-                        [{doc,render_docs(normalize(ErlangHtml), init_config(maps:get(docs, Files), #{}))}];
-                    D when D =:= #{}, is_map_key(equiv, Meta) ->
-                        [];
-                    D when D =:= #{} ->
-                        [{doc,""}]
-                end,
+            DocString = generate_doc_attributes(D, Meta, Files),
             {Before, After} = lists:split(erl_anno:line(Anno)-1, Lines),
-            convert(Before, DocString ++ meta(Meta) ++ After ++ Acc, T, Files);
+            convert(Before, DocString ++ After ++ Acc, T, Files);
         false ->
             Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
             Filename = filename:join(Cwd, erl_anno:file(Anno)),
@@ -314,6 +310,43 @@ convert(Lines, Acc, [{_Kind, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
             convert(string:split(Bin,"\n",all), [], Docs,
                     NewFiles#{ current => erl_anno:file(Anno), filename => Filename })
     end.
+
+generate_doc_attributes(D, Meta, Files) ->
+    DocString =
+        case D of
+            #{ <<"en">> := ErlangHtml } when not is_map_key(equiv, Meta) ->
+                [{doc,render_docs(normalize(ErlangHtml), init_config(maps:get(docs, Files), #{}))}];
+            D when D =:= #{}, is_map_key(equiv, Meta) ->
+                [];
+            D when D =:= #{} ->
+                [{doc,""}]
+        end,
+    DocString ++ meta(Meta).
+
+generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], Files) ->
+    {ArgString, Return} =
+        maybe
+            [_, Call] ?= string:split(Slogan,":"),
+            {ok, Toks, _} ?= erl_scan:string(unicode:characters_to_list(Call) ++ "."),
+            {ok,{function,1,F,A,
+                 [{clause,1,
+                       Args,
+                       [],
+                       [{var, _, Result}]}]}} ?= erl_parse:parse_form(Toks),
+            true ?= lists:any(fun(E) -> element(1,E) =:= var end, Args),
+            {lists:join(", ", [[atom_to_list(A), " :: term()"] || {var,_,A} <- Args]),
+             [atom_to_list(Result), " :: term()"]}
+        else
+            E ->
+                io:format("~p~n",[E]),
+                {lists:join(", ", ["term()" || I <- lists:seq(1, A)]), "term()"}
+        end,
+    generate_doc_attributes(D, Meta, Files) ++
+        [io_lib:format("-callback ~p(~ts) -> ~ts.",[F, ArgString, Return]),""]
+        ++ generate_skipped_callbacks(T, Files);
+generate_skipped_callbacks([], _Files) ->
+    [].
+
 
 get_app(Module) ->
     case code:which(Module) of
