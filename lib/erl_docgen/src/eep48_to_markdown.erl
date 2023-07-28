@@ -449,7 +449,7 @@ filter_and_fix_anno(AST, [{{What, F, A}, _Anno, S, D, M} | T]) when is_map(D); i
                         TypeAnno;
                     false ->
                         io:format("Could not find type: ~p/~p~n",[F,A]),
-                        erl_anno:new(0)
+                        error(badarg)
                 end;
             callback ->
                 case lists:search(fun({attribute, _CBAnno, callback, {FA, _}}) ->
