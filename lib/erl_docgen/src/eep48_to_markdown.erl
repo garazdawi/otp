@@ -126,12 +126,19 @@ normalize(Docs) ->
 convert_application(App) ->
     put(application, atom_to_list(App)),
     Modules = modules(App),
-    Pids =
-        [spawn_monitor(
-           fun() ->
-                   try convert(M) catch E:R:ST -> io:format("~p:~p:~p~n",[E,R,ST]),exit({error,E,R,ST}) end
-           end) || M <- Modules],
-    [receive {'DOWN',Ref,_,_,normal} -> ok; {'DOWN',Ref,_,_,{error,E,R,ST}} -> erlang:raise(E,R,ST) end || {_P,Ref} <- Pids],
+    case App of
+        wx ->
+            %% We cannot run wx in parallel as there are docs in wx.hrl and many different
+            %% modules have types defined in it.
+            [try convert(M) catch E:R:ST -> io:format("~p:~p:~p~n",[E,R,ST]),exit({error,E,R,ST}) end || M <- Modules];
+        _ ->
+            Pids =
+                [spawn_monitor(
+                   fun() ->
+                           try convert(M) catch E:R:ST -> io:format("~p:~p:~p~n",[E,R,ST]),exit({error,E,R,ST}) end
+                   end) || M <- Modules],
+            [receive {'DOWN',Ref,_,_,normal} -> ok; {'DOWN',Ref,_,_,{error,E,R,ST}} -> erlang:raise(E,R,ST) end || {_P,Ref} <- Pids]
+    end,
     docgen_xml_to_markdown:convert_application(App),
     ok.
 
@@ -141,6 +148,11 @@ modules(App) ->
 
 convert(Module) ->
     io:format("Converting: ~p~n",[Module]),
+
+    %% We first recompile the file in order to make sure we have the correct AST
+    %% The AST may have changed due to partial .hrl files being converted already.
+    c:c(Module),
+
     ModulePath =
         case code:which(Module) of
             preloaded ->
