@@ -162,6 +162,13 @@ modules(App) ->
 convert(Module) ->
     io:format("Converting: ~p~n",[Module]),
 
+    ModulePath =
+        case code:which(Module) of
+            preloaded ->
+                filename:join(["erts","preloaded","ebin",Module]);
+            Path -> Path
+        end,
+
     case code:get_doc(Module, #{ sources => [eep48] }) of
         {ok, #docs_v1{ format = <<"application/erlang+html">>,
                        module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
@@ -170,14 +177,8 @@ convert(Module) ->
 
             %% We first recompile the file in order to make sure we have the correct AST
             %% The AST may have changed due to partial .hrl files being converted already.
-            [{ok, _} = c:c(Module) || not lists:member(get(application),["compiler","stdlib","kernel","diameter","eunit","syntax_tools"])],
+            [{ok, _} = c:c(Module) || lists:member(get(application),["wx"])],
 
-            ModulePath =
-                case code:which(Module) of
-                    preloaded ->
-                        filename:join(["erts","preloaded","ebin",Module]);
-                    Path -> Path
-                end,
             {ok, {Module,
                   [{debug_info,
                     {debug_info_v1, erl_abstract_code,
