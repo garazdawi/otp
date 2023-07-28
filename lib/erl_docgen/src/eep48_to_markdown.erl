@@ -164,7 +164,7 @@ convert(Module) ->
 
     %% We first recompile the file in order to make sure we have the correct AST
     %% The AST may have changed due to partial .hrl files being converted already.
-    [{ok, _} = c:c(Module) || not lists:member(get(application),["compiler","stdlib","kernel"])],
+    [{ok, _} = c:c(Module) || not lists:member(get(application),["compiler","stdlib","kernel","diameter"])],
 
     ModulePath =
         case code:which(Module) of
