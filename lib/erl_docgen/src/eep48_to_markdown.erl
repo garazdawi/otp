@@ -173,7 +173,7 @@ convert(Module) ->
         {ok, #docs_v1{ format = <<"application/erlang+html">>,
                        module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
 
-            [put(application, get_app(Module)) || get(application) =:= undefined],
+            put(application, get_app(Module)),
 
             %% We first recompile the file in order to make sure we have the correct AST
             %% The AST may have changed due to partial .hrl files being converted already.
@@ -285,10 +285,8 @@ convert([], [], [], Files) ->
     Files#{ filename:join(Cwd, Filename) => string:split(Bin,"\n",all) };
 convert(Lines, Acc, [], Files) ->
     Files#{ maps:get(filename, Files) => Lines ++ Acc};
-convert(Lines, Acc, [{{callback,F,A}, _, _, _, _} | T], Files) ->
-    io:format("Skipping callback ~p/~p~n",[F,A]),
-    convert(Lines, Acc, T, Files);
-convert(Lines, Acc, [{_, 0, _, _, _} | T], Files) ->
+convert(Lines, Acc, [{{K,F,A}, 0, _, _, _} | T], Files) ->
+    io:format("Skipping ~p ~p/~p~n",[K,F,A]),
     convert(Lines, Acc, T, Files);
 convert(Lines, Acc, [{_Kind, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
     case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
@@ -410,7 +408,7 @@ meta(Meta) ->
 to_erlang_string(Text) ->
      string:trim(re:replace(Text, "(\"|\\\\)", "\\\\\\1", [global, unicode])).
 
-filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, D, M} | T]) when is_map(D); is_map_key(equiv, M) ->
+filter_and_fix_anno(AST, [{{What, F, A}, _Anno, S, D, M} | T]) when is_map(D); is_map_key(equiv, M) ->
     NewAnno =
         case What of
             function ->
@@ -454,7 +452,17 @@ filter_and_fix_anno(AST, [{{What, F, A}, Anno, S, D, M} | T]) when is_map(D); is
                         erl_anno:new(0)
                 end;
             callback ->
-                Anno
+                case lists:search(fun({attribute, _CBAnno, callback, {FA, _}}) ->
+                                          {F, A} =:= FA;
+                                     (_) ->
+                                          false
+                                  end, AST) of
+                    {value, {attribute, CBAnno, _, _}} ->
+                        CBAnno;
+                    false ->
+                        io:format("Could not find callback: ~p/~p~n",[F,A]),
+                        erl_anno:new(0)
+                end
         end,
     [{{What, F, A}, NewAnno, S, D, M} | filter_and_fix_anno(AST, T)];
 filter_and_fix_anno(AST, [_ | T]) ->
