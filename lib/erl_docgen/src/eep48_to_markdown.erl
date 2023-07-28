@@ -139,6 +139,7 @@ convert_application(App) ->
             Pids =
                 [spawn_monitor(
                    fun() ->
+                           put(application, atom_to_list(App)),
                            try convert(M)
                            catch E:R:ST ->
                                    io:format("~p:~p:~p~n",[E,R,ST]),
