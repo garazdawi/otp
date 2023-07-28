@@ -349,4 +349,9 @@ in the browser. However for IDEs it is still impractical.
 ex_doc cannot generate docs for man pages and pdf's. Instead it generated for epub
 and html only.
 
+### Variable callback function names
+
+For example `c:ct_suite:Testcase/0` and `c:ct_suite:Testcase/1`. We have no way to express
+these in the -callback type language, so there is no way to express them in ex_doc either...
+
 [erlang:system\_info(allocator)]: https://www.erlang.org/doc/man/erlang.html#system_info_allocator
