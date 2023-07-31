@@ -2891,6 +2891,7 @@ statistics(_Item) ->
 subtract(_,_) ->
     erlang:nif_error(undefined).
 
+-doc "The requested scheduler bind type.".
 -type scheduler_bind_type() ::
       'no_node_processor_spread' |
       'no_node_thread_spread' |
@@ -3057,17 +3058,45 @@ trace_pattern(MFA, MatchSpec, FlagList) ->
 tuple_to_list(_Tuple) ->
     erlang:nif_error(undefined).
 
+-doc "The current cpu topology.
+
+`node` refers to Non-Uniform Memory Access (NUMA) nodes. `thread` refers
+to hardware threads (for example, Intel hyper-threads).
+
+A level in term `CpuTopology` can be omitted if only one entry exists and
+`InfoList` is empty.
+
+`thread` can only be a sublevel to `core`. `core` can be a sublevel to
+`processor` or `node`. `processor` can be on the top level or a sublevel to
+`node`. `node` can be on the top level or a sublevel to `processor`. That
+is, NUMA nodes can be processor internal or processor external. A CPU
+topology can consist of a mix of processor internal and external NUMA nodes,
+as long as each logical CPU belongs to _one_ NUMA node. Cache hierarchy is
+not part of the `CpuTopology` type, but will be in a future release. Other
+things can also make it into the CPU topology in a future release. So, expect
+the `CpuTopology` type to change.
+".
 -type cpu_topology() ::
         [LevelEntry :: level_entry()] | undefined.
+-doc "".
 -type level_entry() ::
         {LevelTag :: level_tag(), SubLevel :: sub_level()}
       | {LevelTag :: level_tag(),
          InfoList :: info_list(),
          SubLevel :: sub_level()}.
+-doc "".
 -type level_tag() :: core | node | processor | thread.
+-doc "".
 -type sub_level() :: [LevelEntry :: level_entry()]
                    | (LogicalCpuId :: {logical, non_neg_integer()}).
+-doc "".
 -type info_list() :: [].
+
+-doc "A list with the system wide garbage collection defaults.".
+-type garbage_collection_defaults() :: [{max_heap_size, non_neg_integer()} |
+                                        {min_bin_heap_size, non_neg_integer()} |
+                                        {min_heap_size, non_neg_integer()} |
+                                        {fullsweep_after, non_neg_integer()}].
 
 %% Note: changing the ordering number of a clause will change the docs!
 %% Shadowed by erl_bif_types: erlang:system_info/1
@@ -3119,7 +3148,7 @@ tuple_to_list(_Tuple) ->
          (ets_count) -> pos_integer();
          (ets_limit) -> pos_integer();
          (fullsweep_after) -> {fullsweep_after, non_neg_integer()};
-         (garbage_collection) -> [{atom(), integer()}];
+         (garbage_collection) -> garbage_collection_defaults();
          (heap_sizes) -> [non_neg_integer()];
          (heap_type) -> private;
          (info) -> binary();
@@ -3149,14 +3178,7 @@ tuple_to_list(_Tuple) ->
          (process_count) -> pos_integer();
          (process_limit) -> pos_integer();
          (procs) -> binary();
-         (scheduler_bind_type) -> spread |
-                                  processor_spread |
-                                  thread_spread |
-                                  thread_no_node_processor_spread |
-                                  no_node_processor_spread |
-                                  no_node_thread_spread |
-                                  no_spread |
-                                  unbound;
+         (scheduler_bind_type) -> scheduler_bind_type();
          (scheduler_bindings) ->  tuple();
          (scheduler_id) -> SchedulerId :: pos_integer();
          (schedulers | schedulers_online) -> pos_integer();
