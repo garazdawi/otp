@@ -19,6 +19,7 @@
 %%
 %%
 -module(mod_esi).
+-callback 'Function'(term(), term(), term()) -> term().
 
 %% API
 %% Functions provided to help erl scheme alias programmer to 

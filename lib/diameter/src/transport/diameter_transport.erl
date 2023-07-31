@@ -19,6 +19,7 @@
 %%
 
 -module(diameter_transport).
+-callback start(term(), term(), term()) -> term().
 
 %%
 %% This module implements a transport start function that

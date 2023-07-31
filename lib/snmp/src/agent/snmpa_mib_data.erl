@@ -18,6 +18,7 @@
 %% %CopyrightEnd%
 %%
 -module(snmpa_mib_data).
+-callback unload_mib(term(), term()) -> term().
 
 -include_lib("snmp/include/snmp_types.hrl").
 

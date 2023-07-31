@@ -18,7 +18,9 @@
 %% %CopyrightEnd%
 %%
 -module(application).
+-callback prep_stop(State :: term()) -> NewState :: term().
 
+-callback start_phase(term(), term(), term()) -> term().
 -export([ensure_all_started/1, ensure_all_started/2, ensure_all_started/3,
 	 start/1, start/2,
 	 start_boot/1, start_boot/2, stop/1, 

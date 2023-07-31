@@ -1,5 +1,24 @@
 -module(erl_tracer).
+-callback trace_send(TraceTag :: term(), TracerState :: term(), Tracee :: term(), TraceTerm :: term(), Opts :: term()) -> Result :: term().
 
+-callback trace_running_procs(TraceTag :: term(), TracerState :: term(), Tracee :: term(), TraceTerm :: term(), Opts :: term()) -> Result :: term().
+-callback trace_running_ports(TraceTag :: term(), TracerState :: term(), Tracee :: term(), TraceTerm :: term(), Opts :: term()) -> Result :: term().
+-callback trace_receive(TraceTag :: term(), TracerState :: term(), Tracee :: term(), TraceTerm :: term(), Opts :: term()) -> Result :: term().
+-callback trace_procs(TraceTag :: term(), TracerState :: term(), Tracee :: term(), TraceTerm :: term(), Opts :: term()) -> Result :: term().
+-callback trace_ports(TraceTag :: term(), TracerState :: term(), Tracee :: term(), TraceTerm :: term(), Opts :: term()) -> Result :: term().
+-callback trace_garbage_collection(TraceTag :: term(), TracerState :: term(), Tracee :: term(), TraceTerm :: term(), Opts :: term()) -> Result :: term().
+-callback trace_call(TraceTag :: term(), TracerState :: term(), Tracee :: term(), TraceTerm :: term(), Opts :: term()) -> Result :: term().
+-callback trace(TracerState :: term(), Label :: term(), SeqTraceInfo :: term(), Opts :: term()) -> Result :: term().
+-callback trace(TraceTag :: term(), TracerState :: term(), Tracee :: term(), TraceTerm :: term(), Opts :: term()) -> Result :: term().
+-callback enabled_send(TraceTag :: term(), TracerState :: term(), Tracee :: term()) -> Result :: term().
+-callback enabled_running_procs(TraceTag :: term(), TracerState :: term(), Tracee :: term()) -> Result :: term().
+-callback enabled_running_ports(TraceTag :: term(), TracerState :: term(), Tracee :: term()) -> Result :: term().
+-callback enabled_receive(TraceTag :: term(), TracerState :: term(), Tracee :: term()) -> Result :: term().
+-callback enabled_procs(TraceTag :: term(), TracerState :: term(), Tracee :: term()) -> Result :: term().
+-callback enabled_ports(TraceTag :: term(), TracerState :: term(), Tracee :: term()) -> Result :: term().
+-callback enabled_garbage_collection(TraceTag :: term(), TracerState :: term(), Tracee :: term()) -> Result :: term().
+-callback enabled_call(TraceTag :: term(), TracerState :: term(), Tracee :: term()) -> Result :: term().
+-callback enabled(TraceTag :: term(), TracerState :: term(), Tracee :: term()) -> Result :: term().
 -export([enabled/3, trace/5, on_load/0]).
 
 -nifs([enabled/3, trace/5]).

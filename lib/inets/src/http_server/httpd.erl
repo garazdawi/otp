@@ -20,7 +20,10 @@
 %%
 
 -module(httpd).
+-callback store(term(), term()) -> term().
 
+-callback remove(term()) -> term().
+-callback do(term()) -> term().
 -behaviour(inets_service).
 
 -include("httpd_internal.hrl").

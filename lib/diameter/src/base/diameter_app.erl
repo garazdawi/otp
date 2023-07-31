@@ -19,7 +19,15 @@
 %%
 
 -module(diameter_app).
+-callback handle_request(Packet :: term(), SvcName :: term(), Peer :: term()) -> Action :: term().
+-callback handle_error(Reason :: term(), Request :: term(), SvcName :: term(), Peer :: term()) -> Result :: term().
+-callback handle_answer(Packet :: term(), Request :: term(), SvcName :: term(), Peer :: term()) -> Result :: term().
+-callback prepare_retransmit(Packet :: term(), SvcName :: term(), Peer :: term()) -> Action :: term().
 
+-callback prepare_request(Packet :: term(), SvcName :: term(), Peer :: term()) -> Action :: term().
+-callback pick_peer(term(), term(), term(), term()) -> term().
+-callback peer_down(SvcName :: term(), Peer :: term(), State :: term()) -> NewState :: term().
+-callback peer_up(SvcName :: term(), Peer :: term(), State :: term()) -> NewState :: term().
 -behaviour(application).
 
 %% application callbacks

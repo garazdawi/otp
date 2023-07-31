@@ -20,16 +20,10 @@
 
 -module(snmpa_notification_delivery_info_receiver).
 
--export([behaviour_info/1]).
 -export([verify/1]).
 
-behaviour_info(callbacks) ->
-    [
-     {delivery_targets, 3},
-     {delivery_info,    4}
-    ];
-behaviour_info(_) ->
-    undefined.
+-callback delivery_info(term(), term(), term(), term()) -> term().
+-callback delivery_targets(term(), term(), term()) -> term().
 
 
 verify(Module) ->

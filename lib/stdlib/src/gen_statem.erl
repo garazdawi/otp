@@ -18,6 +18,7 @@
 %% %CopyrightEnd%
 %%
 -module(gen_statem).
+-callback 'StateName'(term(), term(), term()) -> term().
 
 -include("logger.hrl").
 

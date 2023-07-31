@@ -18,6 +18,7 @@
 %% %CopyrightEnd%
 %%
 -module(erl_error).
+-callback format_error(Reason :: term(), StackTrace :: term()) -> ErrorDescription :: term().
 
 %% Supported and documented exported functions in this module.
 -export([format_exception/3, format_exception/4]).
