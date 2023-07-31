@@ -292,12 +292,13 @@ convert(Lines, Acc, [], Files) ->
 convert(Lines, Acc, [{{K,F,A}, 0, _, _, _} = E | T], Files) ->
     io:format("Skipping ~p ~p/~p~n",[K,F,A]),
     convert(Lines, Acc, T, Files#{ skipped => [E | maps:get(skipped, Files, [])] });
-convert(Lines, Acc, [{_Kind, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
+convert(Lines, Acc, [{Kind, Anno, Slogan, _D, _Meta} = E | T] = Docs, Files) ->
     case erl_anno:file(Anno) =:= maps:get(current, Files, undefined) of
         true ->
-            DocString = generate_doc_attributes(D, Meta, Files),
             {Before, After} = lists:split(erl_anno:line(Anno)-1, Lines),
-            convert(Before, DocString ++ After ++ Acc, T, Files);
+            {{Kind, Anno, Slogan, D, Meta}, NewT} = maybe_merge_entries(E, T),
+            DocString = generate_doc_attributes(D, Meta, Files),
+            convert(Before, DocString ++ After ++ Acc, NewT, Files);
         false ->
             Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
             Filename = filename:join(Cwd, erl_anno:file(Anno)),
@@ -311,6 +312,21 @@ convert(Lines, Acc, [{_Kind, Anno, _Slogan, D, Meta} | T] = Docs, Files) ->
             convert(string:split(strip_beh_info(Bin),"\n",all), [], Docs,
                     NewFiles#{ current => erl_anno:file(Anno), filename => Filename })
     end.
+
+%% We merge any duplicate entries into the same "-doc" entry
+maybe_merge_entries({Kind, Anno, Slogan, #{ <<"en">> := D }, Meta},
+                    [{Kind, _, _, #{ <<"en">> := D2 }, M2} | T]) ->
+    maybe_merge_entries(
+      {Kind, Anno, Slogan, #{ <<"en">> => D2 ++ D },
+       maps:merge_with(fun(since, V1, V2) ->
+                               unicode:characters_to_binary(
+                                 lists:join(", ",
+                                            lists:usort(re:split(V1,", ?") ++ re:split(V2,", ?"))));
+                          (_, _, V) ->
+                               V
+                       end, Meta, M2)}, T);
+maybe_merge_entries(E, T) ->
+    {E, T}.
 
 strip_beh_info(Str) ->
     re:replace(
