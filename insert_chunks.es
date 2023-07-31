@@ -128,7 +128,7 @@ extract_docs([{attribute, Anno, TypeOrOpaque, {Type, _, TypeArgs}}|T],{Doc, Meta
         case extract_slogan(Doc, Type, length(Args)) of
             undefined ->
                 maybe
-                    true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, ClauseArgs),
+                    true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, Args),
                     {extract_slogan_from_args(Type, Args), Doc}
                 else
                     _ -> {io_lib:format("~p/~p",[Type,length(Args)]), Doc}
@@ -148,7 +148,7 @@ extract_docs([{attribute, Anno, callback, {{CB, A}, [Fun]}}|T],{Doc, Meta}, Cwd)
             undefined ->
                 Args = fun_to_varargs(Fun),
                 maybe
-                    true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, ClauseArgs),
+                    true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, Args),
                     {extract_slogan_from_args(CB, Args), Doc}
                 else
                     _ -> {io_lib:format("~p/~p",[CB,A]), Doc}
