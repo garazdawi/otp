@@ -345,35 +345,30 @@ generate_doc_attributes(D, Meta, Files) ->
         end,
     DocString ++ meta(Meta).
 
-generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], Files) ->
+generate_skipped_callbacks(CBs, Files) ->
+    generate_skipped_callbacks(CBs, CBs, Files).
+generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], AllCBs, Files) ->
     {Callback, NewD} =
         maybe
-            [_, Call] ?= string:split(Slogan,":"),
-            {ok, Toks, _} ?= erl_scan:string(unicode:characters_to_list(Call) ++ "."),
-            {ok,{function,1,F,A,
-                 [{clause,1,
-                   Args,
-                   [],
-                   [{var, _, Result}]}]}} ?= erl_parse:parse_form(Toks),
-            true ?= lists:any(fun(E) -> element(1,E) =:= var end, Args),
-            maybe
-                #{ <<"en">> := [{ul,[{class,<<"types">>}],Types} | Rest] } ?= D,
-                {io_lib:format(
-                   "-callback ~p(~ts) -> ~ts when ~ts.",
-                   [F,
-                    lists:join(", ", [atom_to_list(Arg) || {var,_,Arg} <- Args]),
-                    atom_to_list(Result),
-                    lists:join(", ", munge_types(Types))
-                   ]), #{ <<"en">> => Rest } }
-            else
-                _ ->
-                    {io_lib:format(
-                       "-callback ~p(~ts) -> ~ts.",
-                       [F,
-                        lists:join(", ", [[atom_to_list(Arg), " :: term()"] || {var,_,Arg} <- Args]),
-                        [atom_to_list(Result), " :: term()"]]),
-                     D}
-            end
+            [_, Call] = string:split(Slogan,":"),
+            {ok, Toks, _} = erl_scan:string("-callback " ++ unicode:characters_to_list(Call) ++ "."),
+            {ok,{attribute, _, callback, {{F,A}, _}}} = erl_parse:parse_form(Toks),
+
+            {Types, DwithoutTypes} =
+                case maps:find(equiv, Meta) of
+                    error ->
+                        #{ <<"en">> := [{ul,[{class,<<"types">>}],Ts} | Rest] } = D,
+                        {Ts, #{ <<"en">> => Rest }};
+                    {ok, Equiv} when D =:= #{} ->
+                        {Equiv, _, _, EquivD, _} = lists:keyfind(Equiv, 1, AllCBs),
+                        #{ <<"en">> := [{ul,[{class,<<"types">>}],Ts} | _] } = EquivD,
+                        {Ts, D}
+                end,
+            {io_lib:format(
+               "-callback ~ts when ~ts.",
+               [Call,
+                lists:join(", ", munge_types(Types))
+               ]), DwithoutTypes}
         else
             _ ->
                 {io_lib:format(
@@ -385,8 +380,8 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], Files) 
         end,
     generate_doc_attributes(NewD, Meta, Files) ++
         [pp(Callback), ""]
-        ++ generate_skipped_callbacks(T, Files);
-generate_skipped_callbacks([], _Files) ->
+        ++ generate_skipped_callbacks(T, AllCBs, Files);
+generate_skipped_callbacks([], _AllCBs, _Files) ->
     [].
 
 munge_types([{li,Attr,C},{li,_,[<<" "/utf8,_/binary>>|_] = LIC}|T]) ->
@@ -394,8 +389,9 @@ munge_types([{li,Attr,C},{li,_,[<<" "/utf8,_/binary>>|_] = LIC}|T]) ->
     %% it is a continuation of it.
     munge_types([{li,Attr,C ++ LIC}|T]);
 munge_types([{li,_,C}|T]) ->
-    io:format("~tp~n",[re:replace(unicode:characters_to_binary(strip_tags(C)),"\\h"," ",[unicode, global])]),
-    [string:replace(re:replace(strip_tags(C),"\\h"," ",[unicode,global])," = "," :: ",all) | munge_types(T)];
+    NoNBSP = re:replace(strip_tags(C),"\\h"," ",[unicode,global]),
+    [Body | Variables] = lists:reverse(string:split(NoNBSP, " = ", all)),
+    [[Var, " :: ", Body] || Var <- lists:reverse(Variables)] ++ munge_types(T);
 munge_types([]) ->
     [].
 
