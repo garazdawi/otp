@@ -410,14 +410,16 @@ munge_types([]) ->
     [].
 
 pp(String) ->
-    io:format("~ts~n",[String]),
     maybe
         {ok, T, _} ?= erl_scan:string(lists:flatten(String), {1,1}),
         {ok, {attribute, _, _, _} = Attr} ?= erl_parse:parse_form(T),
         erl_pp:attribute(Attr)
     else
         {ok, {function, _, _, _, _} = Function} ->
-            erl_pp:function(Function)
+            erl_pp:function(Function);
+        Else ->
+            io:format("Failed to parse: ~ts~n ~p",[String, Else]),
+            error(Else)
     end.
 
 get_app(Module) ->
