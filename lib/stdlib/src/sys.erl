@@ -18,12 +18,7 @@
 %% %CopyrightEnd%
 %%
 -module(sys).
--callback system_terminate(term(), term(), term(), term()) -> term().
 
--callback system_replace_state(term(), term()) -> term().
--callback system_get_state(term()) -> term().
--callback system_continue(term(), term(), term()) -> term().
--callback system_code_change(term(), term(), term(), term()) -> term().
 %% External exports
 -export([suspend/1, suspend/2, resume/1, resume/2,
 	 get_status/1, get_status/2,

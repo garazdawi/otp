@@ -19,26 +19,7 @@
 %%
 
 -module(ct_hooks).
--callback id(Opts :: term()) -> Id :: term().
--callback terminate(term()) -> term().
 
--callback on_tc_skip(SuiteName :: term(), TestName :: term(), Reason :: term(), CTHState :: term()) -> NewCTHState :: term().
--callback on_tc_fail(SuiteName :: term(), TestName :: term(), Reason :: term(), CTHState :: term()) -> NewCTHState :: term().
--callback post_end_per_suite(SuiteName :: term(), Config :: term(), Return :: term(), CTHState :: term()) -> Result :: term().
--callback pre_end_per_suite(SuiteName :: term(), EndData :: term(), CTHState :: term()) -> Result :: term().
--callback post_end_per_group(SuiteName :: term(), GroupName :: term(), Config :: term(), Return :: term(), CTHState :: term()) -> Result :: term().
--callback pre_end_per_group(SuiteName :: term(), GroupName :: term(), EndData :: term(), CTHState :: term()) -> Result :: term().
--callback post_end_per_testcase(SuiteName :: term(), TestcaseName :: term(), Config :: term(), Return :: term(), CTHState :: term()) -> Result :: term().
--callback pre_end_per_testcase(SuiteName :: term(), TestcaseName :: term(), EndData :: term(), CTHState :: term()) -> Result :: term().
--callback post_init_per_testcase(SuiteName :: term(), TestcaseName :: term(), Config :: term(), Return :: term(), CTHState :: term()) -> Result :: term().
--callback pre_init_per_testcase(SuiteName :: term(), TestcaseName :: term(), InitData :: term(), CTHState :: term()) -> Result :: term().
--callback post_init_per_group(SuiteName :: term(), GroupName :: term(), Config :: term(), Return :: term(), CTHState :: term()) -> Result :: term().
--callback pre_init_per_group(SuiteName :: term(), GroupName :: term(), InitData :: term(), CTHState :: term()) -> Result :: term().
--callback post_init_per_suite(SuiteName :: term(), Config :: term(), Return :: term(), CTHState :: term()) -> Result :: term().
--callback pre_init_per_suite(SuiteName :: term(), InitData :: term(), CTHState :: term()) -> Result :: term().
--callback post_all(SuiteName :: term(), Return :: term(), GroupDefs :: term()) -> NewReturn :: term().
--callback post_groups(SuiteName :: term(), GroupDefs :: term()) -> NewGroupDefs :: term().
--callback init(term(), term()) -> term().
 %% API Exports
 -export([init/1]).
 -export([groups/2]).

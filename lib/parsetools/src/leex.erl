@@ -31,13 +31,7 @@
 %%% Hollub.
 
 -module(leex).
--callback tokens(term(), term()) -> term().
--callback tokens(term(), term(), term()) -> term().
 
--callback token(term(), term()) -> term().
--callback token(term(), term(), term()) -> term().
--callback string(String :: term()) -> StringRet :: term().
--callback string(String :: term(), StartLoc :: term()) -> StringRet :: term().
 -export([compile/3,file/1,file/2,format_error/1]).
 
 -import(lists, [member/2,reverse/1,sort/1,keysort/2,

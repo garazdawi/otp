@@ -19,8 +19,12 @@
 %%
 -module(snmpa_notification_filter).
 
--callback handle_notification(Notif :: term(), Data :: term()) -> Reply :: term().
+-export([behaviour_info/1]).
 
+behaviour_info(callbacks) ->
+    [{handle_notification, 2}];
+behaviour_info(_) ->
+    undefined.
 
 %% handle_notification(Notification, Data) -> Reply
 %% Notification -> notification() | trap()

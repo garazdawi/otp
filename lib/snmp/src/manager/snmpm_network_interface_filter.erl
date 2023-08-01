@@ -19,13 +19,17 @@
 %%
 -module(snmpm_network_interface_filter).
 
+-export([behaviour_info/1]).
 -export([verify/1]).
--callback accept_send_pdu(term(), term(), term()) -> term().
 
--callback accept_recv_pdu(term(), term(), term()) -> term().
--callback accept_send(term(), term()) -> term().
 
--callback accept_recv(term(), term()) -> term().
+behaviour_info(callbacks) ->
+    [{accept_recv,     2}, 
+     {accept_send,     2},
+     {accept_recv_pdu, 3},
+     {accept_send_pdu, 3}];
+behaviour_info(_) ->
+    undefined.
 
 
 %% accept_recv(address(), port()) -> boolean() 

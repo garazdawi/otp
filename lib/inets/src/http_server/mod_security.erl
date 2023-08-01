@@ -19,8 +19,6 @@
 %%
 %%
 -module(mod_security).
--callback event(term(), term(), term(), term()) -> term().
--callback event(term(), term(), term(), term(), term()) -> term().
 
 %% Security Audit Functionality
 

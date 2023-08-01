@@ -18,14 +18,7 @@
 %% %CopyrightEnd%
 %%
 -module(logger).
--callback format(LogEvent :: term(), FConfig :: term()) -> FormattedLogEntry :: term().
 
--callback check_config(term()) -> term().
--callback removing_handler(term()) -> term().
--callback log(term(), term()) -> term().
--callback filter_config(Config :: term()) -> FilteredConfig :: term().
--callback changing_config(term(), term(), term()) -> term().
--callback adding_handler(term()) -> term().
 %% Log interface
 -export([emergency/1,emergency/2,emergency/3,
          alert/1,alert/2,alert/3,
