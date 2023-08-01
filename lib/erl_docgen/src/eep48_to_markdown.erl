@@ -354,10 +354,10 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], AllCBs,
             [_, Args] = string:split(Call,"("),
             CallbackProto = lists:flatten(
                               io_lib:format(
-                                "-callback ~ts(~ts.",
+                                "-callback ~ts(~ts",
                                 [io_lib:write_atom(F),Args])),
             io:format("Parsing: ~p~n",[CallbackProto]),
-            {ok, Toks, _} = erl_scan:string(CallbackProto ++ "."),
+            {ok, Toks, _} = erl_scan:string(CallbackProto ++ ".",{1, 1}),
             {ok,{attribute, _, callback, {{F,A}, _}}} = erl_parse:parse_form(Toks),
 
             {Types, DwithoutTypes} =
@@ -404,7 +404,7 @@ munge_types([]) ->
 pp(String) ->
     io:format("~ts~n",[String]),
     maybe
-        {ok, T, _} ?= erl_scan:string(lists:flatten(String)),
+        {ok, T, _} ?= erl_scan:string(lists:flatten(String), {1,1}),
         {ok, {attribute, _, _, _} = Attr} ?= erl_parse:parse_form(T),
         erl_pp:attribute(Attr)
     else
