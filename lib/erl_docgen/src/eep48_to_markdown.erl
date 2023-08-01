@@ -345,30 +345,61 @@ generate_doc_attributes(D, Meta, Files) ->
         end,
     DocString ++ meta(Meta).
 
-generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], Files) ->
-    {ArgString, Return} =
+generate_skipped_callbacks([{{callback, F, A}, _, Slogan, #{ <<"en">> := D }, Meta} | T], Files) ->
+    {Callback, NewD} =
         maybe
             [_, Call] ?= string:split(Slogan,":"),
             {ok, Toks, _} ?= erl_scan:string(unicode:characters_to_list(Call) ++ "."),
             {ok,{function,1,F,A,
                  [{clause,1,
-                       Args,
-                       [],
-                       [{var, _, Result}]}]}} ?= erl_parse:parse_form(Toks),
+                   Args,
+                   [],
+                   [{var, _, Result}]}]}} ?= erl_parse:parse_form(Toks),
             true ?= lists:any(fun(E) -> element(1,E) =:= var end, Args),
-            {lists:join(", ", [[atom_to_list(Arg), " :: term()"] || {var,_,Arg} <- Args]),
-             [atom_to_list(Result), " :: term()"]}
+            maybe
+                [{ul,[{class,<<"types">>}],Types} | Rest] ?= D,
+                {io_lib:format(
+                   "-callback ~p(~ts) -> ~ts when ~ts.",
+                   [F,
+                    lists:join(", ", [atom_to_list(Arg) || {var,_,Arg} <- Args]),
+                    atom_to_list(Result),
+                    lists:join(", ", [string:replace(strip_tags(C),"=","::") || {li,_,C} <- Types])
+                   ]), Rest}
+            else
+                E2 ->
+                    {io_lib:format(
+                       "-callback ~p(~ts) -> ~ts.",
+                       [F,
+                        lists:join(", ", [[atom_to_list(Arg), " :: term()"] || {var,_,Arg} <- Args]),
+                        [atom_to_list(Result), " :: term()"]]),
+                     D}
+            end
         else
             E ->
-                io:format("~p~n",[E]),
-                {lists:join(", ", ["term()" || _I <- lists:seq(1, A)]), "term()"}
+                {io_lib:format(
+                   "-callback ~p(~ts) -> ~ts.",
+                   [F,
+                    lists:join(", ", ["term()" || _I <- lists:seq(1, A)]),
+                    "term()"]),
+                 D}
         end,
-    generate_doc_attributes(D, Meta, Files) ++
-        [io_lib:format("-callback ~p(~ts) -> ~ts.",[F, ArgString, Return]),""]
+    generate_doc_attributes(#{ <<"en">> => NewD }, Meta, Files) ++
+        [pp(Callback), ""]
         ++ generate_skipped_callbacks(T, Files);
 generate_skipped_callbacks([], _Files) ->
     [].
 
+
+pp(String) ->
+    io:format("~ts~n",[String]),
+    maybe
+        {ok, T, _} ?= erl_scan:string(lists:flatten(String)),
+        {ok, {attribute, _, _, _} = Attr} ?= erl_parse:parse_form(T),
+        erl_pp:attribute(Attr)
+    else
+        {ok, {function, _, _, _, _} = Function} ->
+            erl_pp:function(Function)
+    end.
 
 get_app(Module) ->
     case code:which(Module) of
