@@ -623,10 +623,12 @@ func2func({func,Attr,Contents}) ->
                                   {meta,SinceMD}],
                         ContentsNoName},
 
+                {EquivKind, EquivF} = func_to_atom(BaseF),
+
                 Equiv = [{function,
                           [{name,F},{arity,A},
                            {signature,Signature},
-                           {meta,SinceMD#{ equiv => {function,list_to_atom(BaseF),BaseA}}}],[]}
+                           {meta,SinceMD#{ equiv => {EquivKind,EquivF,BaseA}}}],[]}
                          || {{F,A},Signature} <- tl(SortedFAs)],
                 lists:reverse([Base | Equiv])
         end,
