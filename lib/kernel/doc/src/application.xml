@@ -653,8 +653,8 @@ Nodes = [cp1@cave, {cp2@cave, cp3@cave}]</code>
         <v>Changed = [{Par,Val}]</v>
         <v>New = [{Par,Val}]</v>
         <v>Removed = [Par]</v>
-        <v>&nbsp;Par = atom()</v>
-        <v>&nbsp;Val = term()</v>
+        <v>Par = atom()</v>
+        <v>Val = term()</v>
       </type>
       <desc>
         <p>This function is called by an application after a code
