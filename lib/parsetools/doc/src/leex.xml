@@ -169,6 +169,8 @@
         <v>String = string()</v>
         <v>StringRet = {ok,Tokens,EndLoc} | ErrorInfo</v>
         <v>Tokens = [Token]</v>
+        <v>Token = term()</v>
+        <v>ErrorInfo = term()</v>
         <v>StartLoc = EndLoc = erl_anno:location()</v>
       </type>
       <desc>
@@ -194,6 +196,8 @@
         <v>TokenRet = {ok, Token, EndLoc}
                     | {eof, EndLoc}
                     | ErrorInfo</v>
+        <v>ErrorInfo = term()</v>
+        <v>Token = term()</v>
         <v>StartLoc = EndLoc = erl_anno:location()</v>
       </type>
       <desc>
@@ -230,6 +234,8 @@ io:request(InFile, {get_until,unicode,Prompt,Module,token,[Loc]})
                      | {eof, EndLoc}
                      | ErrorInfo</v>
         <v>Tokens = [Token]</v>
+        <v>Token = term()</v>
+        <v>ErrorInfo = term()</v>
         <v>StartLoc = EndLoc = erl_anno:location()</v>
       </type>
       <desc>
