@@ -1,5 +1,17 @@
 -module(ct_suite).
+-callback 'Testcase'(Config) ->
+                        term() |
+                        {skip, Reason} |
+                        {comment, Comment} |
+                        {save_config, SaveConfig} |
+                        {skip_and_save, Reason, SaveConfig}
+                        when
+                            Config :: ct_config(),
+                            SaveConfig :: ct_config(),
+                            Reason :: term(),
+                            Comment :: string().
 
+-callback 'Testcase'() -> [ct_info()].
 %%------------------------------------------------------------------
 %% Test Suite Behaviour
 %% ------------------------------------------------------------------

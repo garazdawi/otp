@@ -1,5 +1,160 @@
 -module(erl_tracer).
+-callback trace_send(TraceTag, TracerState, Tracee, TraceTerm, Opts) ->
+                        Result
+                        when
+                            TraceTag :: trace_tag_send(),
+                            TracerState :: term(),
+                            Tracee :: tracee(),
+                            TraceTerm :: term(),
+                            Opts :: trace_opts(),
+                            Result :: ok.
 
+-callback trace_running_procs(TraceTag, TracerState, Tracee, TraceTerm,
+                              Opts) ->
+                                 Result
+                                 when
+                                     TraceTag ::
+                                         trace_tag_running_procs(),
+                                     TracerState :: term(),
+                                     Tracee :: tracee(),
+                                     TraceTerm :: term(),
+                                     Opts :: trace_opts(),
+                                     Result :: ok.
+-callback trace_running_ports(TraceTag, TracerState, Tracee, TraceTerm,
+                              Opts) ->
+                                 Result
+                                 when
+                                     TraceTag ::
+                                         trace_tag_running_ports(),
+                                     TracerState :: term(),
+                                     Tracee :: tracee(),
+                                     TraceTerm :: term(),
+                                     Opts :: trace_opts(),
+                                     Result :: ok.
+-callback trace_receive(TraceTag, TracerState, Tracee, TraceTerm, Opts) ->
+                           Result
+                           when
+                               TraceTag :: trace_tag_receive(),
+                               TracerState :: term(),
+                               Tracee :: tracee(),
+                               TraceTerm :: term(),
+                               Opts :: trace_opts(),
+                               Result :: ok.
+-callback trace_procs(TraceTag, TracerState, Tracee, TraceTerm, Opts) ->
+                         Result
+                         when
+                             TraceTag :: trace_tag(),
+                             TracerState :: term(),
+                             Tracee :: tracee(),
+                             TraceTerm :: term(),
+                             Opts :: trace_opts(),
+                             Result :: ok.
+-callback trace_ports(TraceTag, TracerState, Tracee, TraceTerm, Opts) ->
+                         Result
+                         when
+                             TraceTag :: trace_tag(),
+                             TracerState :: term(),
+                             Tracee :: tracee(),
+                             TraceTerm :: term(),
+                             Opts :: trace_opts(),
+                             Result :: ok.
+-callback trace_garbage_collection(TraceTag, TracerState, Tracee,
+                                   TraceTerm, Opts) ->
+                                      Result
+                                      when
+                                          TraceTag :: trace_tag_gc(),
+                                          TracerState :: term(),
+                                          Tracee :: tracee(),
+                                          TraceTerm :: term(),
+                                          Opts :: trace_opts(),
+                                          Result :: ok.
+-callback trace_call(TraceTag, TracerState, Tracee, TraceTerm, Opts) ->
+                        Result
+                        when
+                            TraceTag :: trace_tag_call(),
+                            TracerState :: term(),
+                            Tracee :: tracee(),
+                            TraceTerm :: term(),
+                            Opts :: trace_opts(),
+                            Result :: ok.
+
+-callback trace(seq_trace, TracerState, Label, SeqTraceInfo, Opts) ->
+    Result
+        when
+      TracerState :: term(),
+      Label :: term(),
+      SeqTraceInfo :: term(),
+      Opts :: trace_opts(),
+      Result :: ok;
+                (TraceTag, TracerState, Tracee, TraceTerm, Opts) ->
+                     Result
+                         when
+      TraceTag :: trace_tag(),
+      TracerState :: term(),
+      Tracee :: tracee(),
+      TraceTerm :: term(),
+      Opts :: trace_opts(),
+      Result :: ok.
+-callback enabled_send(TraceTag, TracerState, Tracee) -> Result
+                          when
+                              TraceTag :: trace_tag_send(),
+                              TracerState :: term(),
+                              Tracee :: tracee(),
+                              Result :: trace | discard | remove.
+-callback enabled_running_procs(TraceTag, TracerState, Tracee) -> Result
+                                   when
+                                       TraceTag ::
+                                           trace_tag_running_procs(),
+                                       TracerState :: term(),
+                                       Tracee :: tracee(),
+                                       Result ::
+                                           trace | discard | remove.
+-callback enabled_running_ports(TraceTag, TracerState, Tracee) -> Result
+                                   when
+                                       TraceTag ::
+                                           trace_tag_running_ports(),
+                                       TracerState :: term(),
+                                       Tracee :: tracee(),
+                                       Result ::
+                                           trace | discard | remove.
+-callback enabled_receive(TraceTag, TracerState, Tracee) -> Result
+                             when
+                                 TraceTag :: trace_tag_receive(),
+                                 TracerState :: term(),
+                                 Tracee :: tracee(),
+                                 Result :: trace | discard | remove.
+-callback enabled_procs(TraceTag, TracerState, Tracee) -> Result
+                           when
+                               TraceTag :: trace_tag_procs(),
+                               TracerState :: term(),
+                               Tracee :: tracee(),
+                               Result :: trace | discard | remove.
+-callback enabled_ports(TraceTag, TracerState, Tracee) -> Result
+                           when
+                               TraceTag :: trace_tag_ports(),
+                               TracerState :: term(),
+                               Tracee :: tracee(),
+                               Result :: trace | discard | remove.
+-callback enabled_garbage_collection(TraceTag, TracerState, Tracee) ->
+                                        Result
+                                        when
+                                            TraceTag :: trace_tag_gc(),
+                                            TracerState :: term(),
+                                            Tracee :: tracee(),
+                                            Result ::
+                                                trace | discard | remove.
+-callback enabled_call(TraceTag, TracerState, Tracee) -> Result
+                          when
+                              TraceTag :: trace_tag_call(),
+                              TracerState :: term(),
+                              Tracee :: tracee(),
+                              Result :: trace | discard | remove.
+-callback enabled(TraceTag, TracerState, Tracee) -> Result
+                     when
+                         TraceTag :: trace_tag() | trace_status,
+                         TracerState :: term(),
+                         Tracee :: tracee(),
+                         Result :: trace | discard | remove.
 -export([enabled/3, trace/5, on_load/0]).
 
 -nifs([enabled/3, trace/5]).

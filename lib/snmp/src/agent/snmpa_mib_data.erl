@@ -18,6 +18,13 @@
 %% %CopyrightEnd%
 %%
 -module(snmpa_mib_data).
+-callback unload_mib(State, Filename) ->
+                        {ok, NewState} | {error, Reason}
+                        when
+                            State :: term(),
+                            NewState :: term(),
+                            Filename :: filename(),
+                            Reason :: not_loaded | term().
 
 -include_lib("snmp/include/snmp_types.hrl").
 

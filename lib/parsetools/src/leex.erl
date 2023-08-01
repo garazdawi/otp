@@ -31,7 +31,84 @@
 %%% Hollub.
 
 -module(leex).
+-callback tokens(Cont, Chars) ->
+                    {more, Cont1} | {done, TokensRet, RestChars}
+                    when
+                        Cont :: [] | Cont1,
+                        Cont1 :: tuple(),
+                        Chars :: string() | eof,
+                        RestChars :: string() | eof,
+                        TokensRet ::
+                            {ok, Tokens, EndLoc} |
+                            {eof, EndLoc} |
+                            ErrorInfo,
+                        Tokens :: [Token],
+                        Token :: term(),
+                        ErrorInfo :: term(),
+                        EndLoc :: erl_anno:location().
 
+-callback tokens(Cont, Chars, StartLoc) ->
+                    {more, Cont1} | {done, TokensRet, RestChars}
+                    when
+                        Cont :: [] | Cont1,
+                        Cont1 :: tuple(),
+                        Chars :: string() | eof,
+                        RestChars :: string() | eof,
+                        TokensRet ::
+                            {ok, Tokens, EndLoc} |
+                            {eof, EndLoc} |
+                            ErrorInfo,
+                        Tokens :: [Token],
+                        Token :: term(),
+                        ErrorInfo :: term(),
+                        StartLoc :: erl_anno:location(),
+                        EndLoc :: erl_anno:location().
+-callback token(Cont, Chars) ->
+                   {more, Cont1} | {done, TokenRet, RestChars}
+                   when
+                       Cont :: [] | Cont1,
+                       Cont1 :: tuple(),
+                       Chars :: string() | eof,
+                       RestChars :: string() | eof,
+                       TokenRet ::
+                           {ok, Token, EndLoc} |
+                           {eof, EndLoc} |
+                           ErrorInfo,
+                       ErrorInfo :: term(),
+                       Token :: term(),
+                       EndLoc :: erl_anno:location().
+-callback token(Cont, Chars, StartLoc) ->
+                   {more, Cont1} | {done, TokenRet, RestChars}
+                   when
+                       Cont :: [] | Cont1,
+                       Cont1 :: tuple(),
+                       Chars :: string() | eof,
+                       RestChars :: string() | eof,
+                       TokenRet ::
+                           {ok, Token, EndLoc} |
+                           {eof, EndLoc} |
+                           ErrorInfo,
+                       ErrorInfo :: term(),
+                       Token :: term(),
+                       StartLoc :: erl_anno:location(),
+                       EndLoc :: erl_anno:location().
+-callback string(String) -> StringRet
+                    when
+                        String :: string(),
+                        StringRet :: {ok, Tokens, EndLoc} | ErrorInfo,
+                        Tokens :: [Token],
+                        Token :: term(),
+                        ErrorInfo :: term(),
+                        EndLoc :: erl_anno:location().
+-callback string(String, StartLoc) -> StringRet
+                    when
+                        String :: string(),
+                        StringRet :: {ok, Tokens, EndLoc} | ErrorInfo,
+                        Tokens :: [Token],
+                        Token :: term(),
+                        ErrorInfo :: term(),
+                        StartLoc :: erl_anno:location(),
+                        EndLoc :: erl_anno:location().
 -export([compile/3,file/1,file/2,format_error/1]).
 
 -import(lists, [member/2,reverse/1,sort/1,keysort/2,

@@ -18,6 +18,16 @@
 %% %CopyrightEnd%
 %%
 -module(erl_error).
+-callback format_error(Reason, StackTrace) -> ErrorDescription
+                          when
+                              Reason :: term(),
+                              StackTrace :: erlang:stacktrace(),
+                              ArgumentPosition :: pos_integer(),
+                              ErrorDescription ::
+                                  #{ArgumentPosition =>
+                                        unicode:chardata(),
+                                    general => unicode:chardata(),
+                                    reason => unicode:chardata()}.
 
 %% Supported and documented exported functions in this module.
 -export([format_exception/3, format_exception/4]).

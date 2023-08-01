@@ -18,20 +18,39 @@
 %% %CopyrightEnd%
 %%
 -module(snmpa_network_interface_filter).
+-callback accept_send_pdu(Targets, PduType) -> Reply
+                             when
+                                 Targets :: [Target],
+                                 Target :: {Domain, Addr},
+                                 Domain :: transportDomain(),
+                                 Addr :: transportAddressWithPort(),
+                                 PduType :: pdu_type(),
+                                 Reply :: boolean() | NewTargets,
+                                 NewTargets :: Targets.
 
--export([behaviour_info/1]).
+
+-callback accept_recv_pdu(Domain, Addr, PduType) -> boolean()
+                             when
+                                 Domain :: transportDomain(),
+                                 Addr :: transportAddressWithPort(),
+                                 PduType :: pdu_type().
+
+-callback accept_send(Domain, Addr) -> boolean()
+                         when
+                             Domain :: transportDomain(),
+                             Addr :: transportAddressWithPort().
+
+-callback accept_recv(Domain, Addr) -> boolean()
+                         when
+                             Domain :: transportDomain(),
+                             Addr :: transportAddressWithPort().
+
+-type transportDomain() :: term().
+-type transportAddressWithPort() :: term().
+-type pdu_type() :: term().
+
 -export([verify/1]).
 
-
-behaviour_info(callbacks) ->
-    [{accept_recv,     2},
-     {accept_send,     2},
-     {accept_recv_pdu, 3},
-     {accept_send_pdu, 2}];
-behaviour_info(optional_callbacks) ->
-    [];
-behaviour_info(_) ->
-    undefined.
 
 
 %% accept_recv({domain(), address()}) -> boolean()

@@ -19,6 +19,21 @@
 %%
 %%
 -module(mod_security).
+-callback event(What, Port, Dir, Data) -> ignored
+                   when
+                       What :: atom(),
+                       Port :: integer(),
+                       Dir :: string(),
+                       Data :: [Info],
+                       Info :: {Name :: term(), Value :: term()}.
+-callback event(What, Address, Port, Dir, Data) -> ignored
+                   when
+                       What :: atom(),
+                       Port :: integer(),
+                       Address :: {A :: term(), B :: term(), C :: term(), D :: term()} | string(),
+                       Dir :: string(),
+                       Data :: [Info],
+                       Info :: {Name :: term(), Value :: term()}.
 
 %% Security Audit Functionality
 

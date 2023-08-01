@@ -19,17 +19,36 @@
 %%
 -module(snmpm_network_interface_filter).
 
--export([behaviour_info/1]).
+
+-callback accept_send_pdu(Domain, Addr, PduType) -> boolean()
+                             when
+                                 Domain :: transportDomain(),
+                                 Addr :: transportAddressWithPort(),
+                                 PduType :: pdu_type().
+
+
+-callback accept_recv_pdu(Domain, Addr, PduType) -> boolean()
+                             when
+                                 Domain :: transportDomain(),
+                                 Addr :: transportAddressWithPort(),
+                                 PduType :: pdu_type().
+
+-callback accept_send(Domain, Addr) -> boolean()
+                         when
+                             Domain :: transportDomain(),
+                             Addr :: transportAddressWithPort().
+-callback accept_recv(Domain, Addr) -> boolean()
+                         when
+                             Domain :: transportDomain(),
+                             Addr :: transportAddressWithPort().
+
+-type transportDomain() :: term().
+-type transportAddressWithPort() :: term().
+-type pdu_type() :: term().
+
+
 -export([verify/1]).
 
-
-behaviour_info(callbacks) ->
-    [{accept_recv,     2}, 
-     {accept_send,     2},
-     {accept_recv_pdu, 3},
-     {accept_send_pdu, 3}];
-behaviour_info(_) ->
-    undefined.
 
 
 %% accept_recv(address(), port()) -> boolean() 

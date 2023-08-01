@@ -19,6 +19,21 @@
 %%
 %%
 -module(mod_esi).
+-callback 'Function'(SessionID, Env, Input) -> {continue, State} | _
+                        when
+                            SessionID :: term(),
+                            Env :: env(),
+                            Input :: string() | ChunkedData,
+                            ChunkedData ::
+                                {first, Data :: binary()} |
+                                {continue,
+                                 Data :: binary(),
+                                 State :: term()} |
+                                {last,
+                                 Data :: binary(),
+                                 State :: term()},
+                            State :: term().
+-type env() :: term().
 
 %% API
 %% Functions provided to help erl scheme alias programmer to 

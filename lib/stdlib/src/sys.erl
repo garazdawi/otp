@@ -18,7 +18,35 @@
 %% %CopyrightEnd%
 %%
 -module(sys).
+-callback system_terminate(Reason, Parent, Debug, Misc) -> none()
+                              when
+                                  Reason :: term(),
+                                  Parent :: pid(),
+                                  Debug :: [dbg_opt()],
+                                  Misc :: term().
 
+-callback system_replace_state(StateFun, Misc) -> {ok, NState, NMisc}
+                                  when
+                                      StateFun ::
+                                          fun((State :: term()) ->
+                                                  NState),
+                                      Misc :: term(),
+                                      NState :: term(),
+                                      NMisc :: term().
+-callback system_get_state(Misc) -> {ok, State}
+                              when Misc :: term(), State :: term().
+-callback system_continue(Parent, Debug, Misc) -> none()
+                             when
+                                 Parent :: pid(),
+                                 Debug :: [dbg_opt()],
+                                 Misc :: term().
+-callback system_code_change(Misc, Module, OldVsn, Extra) -> {ok, NMisc}
+                                when
+                                    Misc :: term(),
+                                    OldVsn :: undefined | term(),
+                                    Module :: atom(),
+                                    Extra :: term(),
+                                    NMisc :: term().
 %% External exports
 -export([suspend/1, suspend/2, resume/1, resume/2,
 	 get_status/1, get_status/2,

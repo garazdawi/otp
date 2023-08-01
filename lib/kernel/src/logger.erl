@@ -18,6 +18,42 @@
 %% %CopyrightEnd%
 %%
 -module(logger).
+-callback format(LogEvent, FConfig) -> FormattedLogEntry
+                    when
+                        LogEvent :: log_event(),
+                        FConfig :: formatter_config(),
+                        FormattedLogEntry :: unicode:chardata().
+
+-callback check_config(FConfig) -> ok | {error, Reason}
+                          when
+                              FConfig :: formatter_config(),
+                              Reason :: term().
+
+-callback removing_handler(Config) -> ok when Config :: handler_config().
+
+-callback log(LogEvent, Config) -> term() when
+      LogEvent :: log_event(), Config :: handler_config().
+
+-callback filter_config(Config) -> FilteredConfig
+                           when
+                               Config :: handler_config(),
+                               FilteredConfig :: handler_config().
+
+-callback changing_config(SetOrUpdate, OldConfig, NewConfig) ->
+                             {ok, Config} | {error, Reason}
+                             when
+                                 SetOrUpdate :: set | update,
+                                 OldConfig :: handler_config(),
+                                 NewConfig :: handler_config(),
+                                 Config :: handler_config(),
+                                 Reason :: term().
+
+-callback adding_handler(Config1) -> {ok, Config2} | {error, Reason}
+                            when
+                                Config1 :: handler_config(),
+                                Config2 :: handler_config(),
+                                Reason :: term().
+
 
 %% Log interface
 -export([emergency/1,emergency/2,emergency/3,

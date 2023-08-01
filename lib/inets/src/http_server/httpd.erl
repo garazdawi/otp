@@ -20,6 +20,37 @@
 %%
 
 -module(httpd).
+-callback store({Option, Value}, Config) ->
+    {ok, {Option, NewValue}} | {error, Reason} when
+      Option :: property(),
+      Config :: [{Option, Value}],
+      Value :: term(),
+      NewValue :: term(),
+      Reason :: term().
+
+-type property() :: term().
+-callback remove(ConfigDB) -> ok | {error, Reason}
+                    when ConfigDB :: ets_table(), Reason :: term().
+-type ets_table() :: term().
+
+-callback do(ModData) ->
+    {proceed, OldData} |
+    {proceed, NewData} |
+    {break, NewData} |
+    done when
+      ModData :: [{data,NewData} | {'Body', Body} | {'Head',Head}],
+      OldData :: list(),
+      NewData :: [{response, {StatusCode, Body}}],
+      StatusCode :: integer(),
+      Body :: iolist() | nobody | {Fun, Arg},
+      Head :: [HeaderOption],
+      HeaderOption :: {Option, Value} | {code, StatusCode},
+      Option :: accept_ranges | allow,
+      Value :: string(),
+      Fun :: fun((Arg) -> sent | close | Body),
+                Arg :: [term()].
+
+
 
 -behaviour(inets_service).
 
