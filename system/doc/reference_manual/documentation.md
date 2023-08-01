@@ -439,6 +439,10 @@ for example: `./generate-docs.sh stdlib` or `./generate-docs.sh system`.
 
 You can also only build part of the docs by calling `./docs.sh stdlib`.
 
+`./docs.sh` will clone a [special version of ex_doc](https://github.com/garazdawi/ex_doc/tree/lukas/fix-erlang-doc-support)
+for use. If ex_doc already is in the path it will use
+that instead.
+
 Important files:
 
 - `lib/erl_docgen/src/eep48_to_markdown.erl` - This module converts the docs for

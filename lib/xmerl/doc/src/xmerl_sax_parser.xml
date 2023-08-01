@@ -54,7 +54,7 @@
         <taglist>
           <tag><c>{continuation_fun, ContinuationFun :: continuation_fun()}</c></tag>
           <item>
-            <seetype marker="#continuation_fun/0">ContinuationFun</seetype> is a
+            <seetype marker="#continuation_fun">ContinuationFun</seetype> is a
             call back function to decide what to do if the parser runs into EOF
             before the document is complete.
           </item>
@@ -64,7 +64,7 @@
           </item>
           <tag><c>{event_fun, EventFun :: event_fun()}</c></tag>
           <item>
-            <seetype marker="#event_fun/0">EventFun</seetype> is the call back function for parser events.
+            <seetype marker="#event_fun">EventFun</seetype> is the call back function for parser events.
           </item>
           <tag><c>{event_state, term()}</c></tag>
           <item>
