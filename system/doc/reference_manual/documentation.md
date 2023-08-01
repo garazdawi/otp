@@ -410,3 +410,46 @@ If using `-doc` attributes we cannot document function clauses. Instead we need 
 for all function like I've done for `erlang:system_info/1` ([erlang_system_info.md]).
 
 [erlang_system_info.md]: https://github.com/garazdawi/otp/blob/lukas/erl_docgen/eep48_to_markdown/erts/doc/src/erlang_system_info.md
+
+## The conversion code
+
+To generate documentation you first must build all of Erlang/OTP with docs.
+Then you can run `./generate-docs.sh` to update all files with inline
+documentation and generate all other things needed for `ex_doc` to create
+documentation. Then you need to build everything again in order to update
+the debug\_info of all beam files. Then you can run `./docs.sh` to run
+`ex_doc` to create html docs in `docs` folder.
+
+```
+./configure && make
+make docs
+./generate-docs.sh
+make && ./otp_build update_preloaded --no-commit
+./docs.sh
+```
+
+or you can just call `./configure && make && make ex-docs` which does all
+of the above in one step.
+
+If you set `FORMAT_MD=true`, all docs will be formatted using `npx prettier`.
+This will considerable slow generation down, but will create a much nicer result.
+
+You can generate only a single application by calling `./generate-docs.sh APP`,
+for example: `./generate-docs.sh stdlib` or `./generate-docs.sh system`.
+
+You can also only build part of the docs by calling `./docs.sh stdlib`.
+
+Important files:
+
+- `lib/erl_docgen/src/eep48_to_markdown.erl` - This module converts the docs for
+  `.erl` files and also converts `application/erlang+html` to markdown.
+- `lib/erl_docgen/src/docgen_xml_to_markdown.erl` - This module parses all
+  non-reference manual docs and then uses `eep48_to_markdown` to generate
+  markdown for it all. It also generates the `ex_doc.exs` files needed
+  to build the docs.
+- `generate-docs.sh` - This script generates all documentation.
+- `docs.sh` - This script builds all documentation.
+- `insert_chunks.es` - This script parses the debug_info of a module, looks for `-doc`
+  tags and updates the `.beam` file with the contained docs.
+- `check_links.esx` - This script can parse html and check that all local links are
+  valid and point to anchors that works.
