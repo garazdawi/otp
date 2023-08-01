@@ -81,7 +81,7 @@
       <type>
         <v>Tag = term()</v>
         <v>Targets = [Target]</v>
-        <v>Target = {transportDomain(), transportAddressWithPort()</v>
+        <v>Target = {transportDomain(), transportAddressWithPort()}</v>
         <v>Extra = term()</v>
       </type>
       <desc>
@@ -102,9 +102,8 @@
       <type>
         <v>Tag = term()</v>
         <v>Targets = [Target]</v>
-        <v>Target = {transportDomain(), transportAddressWithPort()</v>
-        <v>DeliveryResult = delivery_result()</v>
-        <v>delivery_result() = no_response | got_response</v>
+        <v>Target = {transportDomain(), transportAddressWithPort()}</v>
+        <v>DeliveryResult = no_response | got_response</v>
         <v>Extra = term()</v>
       </type>
       <desc>
