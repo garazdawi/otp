@@ -363,7 +363,7 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, #{ <<"en">> := D }, Me
                    [F,
                     lists:join(", ", [atom_to_list(Arg) || {var,_,Arg} <- Args]),
                     atom_to_list(Result),
-                    lists:join(", ", [string:replace(strip_tags(C),"=","::") || {li,_,C} <- Types])
+                    lists:join(", ", [string:replace(strip_tags(C),"=","::",all) || {li,_,C} <- Types])
                    ]), Rest}
             else
                 _ ->
