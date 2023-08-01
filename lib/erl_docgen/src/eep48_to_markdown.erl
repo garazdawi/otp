@@ -363,7 +363,7 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], Files) 
                    [F,
                     lists:join(", ", [atom_to_list(Arg) || {var,_,Arg} <- Args]),
                     atom_to_list(Result),
-                    lists:join(", ", [string:replace(strip_tags(C),"=","::",all) || {li,_,C} <- Types])
+                    lists:join(", ", munge_types(Types))
                    ]), #{ <<"en">> => Rest } }
             else
                 _ ->
@@ -389,6 +389,15 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], Files) 
 generate_skipped_callbacks([], _Files) ->
     [].
 
+munge_types([{li,Attr,C},{li,_,[<<" "/utf8,_/binary>>|_] = LIC}|T]) ->
+    %% If the next li starts with a nbsp we join it to the previous list item as
+    %% it is a continuation of it.
+    munge_types([{li,Attr,C ++ LIC}|T]);
+munge_types([{li,_,C}|T]) ->
+    io:format("~tp~n",[re:replace(unicode:characters_to_binary(strip_tags(C)),"\\h"," ",[unicode, global])]),
+    [string:replace(re:replace(strip_tags(C),"\\h"," ",[unicode,global])," = "," :: ",all) | munge_types(T)];
+munge_types([]) ->
+    [].
 
 pp(String) ->
     io:format("~ts~n",[String]),
