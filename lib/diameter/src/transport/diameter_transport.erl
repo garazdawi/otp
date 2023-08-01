@@ -19,6 +19,9 @@
 %%
 
 -module(diameter_transport).
+
+-include_lib("diameter/include/diameter.hrl").
+
 -callback start({Type, Ref}, Svc, Config) ->
                    {ok, Pid} | {ok, Pid, LAddrs} | {error, Reason}
                    when
