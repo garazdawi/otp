@@ -155,7 +155,7 @@ pdu_type() = 'get-request' | 'get-next-request' | 'get-response' |
       <type>
 	<v>Domain = transportDomain()</v>
 	<v>Addr = transportAddressWithPort()</v>
-        <v>PduType = pdu_type() > 0</v>
+        <v>PduType = pdu_type()</v>
       </type>
       <desc>
         <p>Called before the basic message processing (MPD) is done, 

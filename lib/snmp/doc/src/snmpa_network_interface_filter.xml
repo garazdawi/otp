@@ -151,12 +151,11 @@ pdu_type() = 'get-request' | 'get-next-request' | 'get-response' |
       <name since="">Module:accept_send_pdu(Targets, PduType) -> Reply</name>
       <fsummary>Shall the pdu be sent</fsummary>
       <type>
-        <v>Targets = targets()</v>
-        <v>targets() = [target()]</v>
-        <v>target() = {Domain, Addr}</v>
+        <v>Targets = [Target]</v>
+        <v>Target = {Domain, Addr}</v>
 	<v>Domain = transportDomain()</v>
 	<v>Addr = transportAddressWithPort()</v>
-        <v>PduType = pdu_type() > 0</v>
+        <v>PduType = pdu_type()</v>
         <v>Reply = boolean() | NewTargets</v>
         <v>NewTargets = targets()</v>
       </type>
