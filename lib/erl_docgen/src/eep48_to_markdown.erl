@@ -366,7 +366,7 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, #{ <<"en">> := D }, Me
                     lists:join(", ", [string:replace(strip_tags(C),"=","::") || {li,_,C} <- Types])
                    ]), Rest}
             else
-                E2 ->
+                _ ->
                     {io_lib:format(
                        "-callback ~p(~ts) -> ~ts.",
                        [F,
@@ -375,7 +375,7 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, #{ <<"en">> := D }, Me
                      D}
             end
         else
-            E ->
+            _ ->
                 {io_lib:format(
                    "-callback ~p(~ts) -> ~ts.",
                    [F,
