@@ -351,7 +351,13 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], AllCBs,
     {Callback, NewD} =
         maybe
             [_, Call] = string:split(Slogan,":"),
-            {ok, Toks, _} = erl_scan:string("-callback " ++ unicode:characters_to_list(Call) ++ "."),
+            [_, Args] = string:split(Call,"("),
+            CallbackProto = lists:flatten(
+                              io_lib:format(
+                                "-callback ~ts(~ts.",
+                                [io_lib:write_atom(F),Args])),
+            io:format("Parsing: ~p~n",[CallbackProto]),
+            {ok, Toks, _} = erl_scan:string(CallbackProto ++ "."),
             {ok,{attribute, _, callback, {{F,A}, _}}} = erl_parse:parse_form(Toks),
 
             {Types, DwithoutTypes} =
@@ -365,8 +371,8 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], AllCBs,
                         {Ts, D}
                 end,
             {io_lib:format(
-               "-callback ~ts when ~ts.",
-               [Call,
+               "~ts when ~ts.",
+               [CallbackProto,
                 lists:join(", ", munge_types(Types))
                ]), DwithoutTypes}
         else
