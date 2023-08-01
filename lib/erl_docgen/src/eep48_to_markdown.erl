@@ -242,7 +242,7 @@ convert(Module) ->
         {ok, #docs_v1{ format = <<"text/markdown">> }} ->
             {ok, Module, Chunks} = beam_lib:all_chunks(ModulePath),
             {ok, NewBeamFile} = beam_lib:build_module(proplists:delete("Docs", Chunks)),
-            file:write_file(ModulePath, NewBeamFile),
+            file:write_file(ModulePath ++ ".beam", NewBeamFile),
             convert(Module);
         Error ->
             io:format("Error: ~p~n",[Error]),
