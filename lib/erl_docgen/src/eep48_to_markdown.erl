@@ -348,41 +348,49 @@ generate_doc_attributes(D, Meta, Files) ->
 generate_skipped_callbacks(CBs, Files) ->
     generate_skipped_callbacks(CBs, CBs, Files).
 generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], AllCBs, Files) ->
+    [_, Call] = string:split(Slogan,":"),
+    [_, Args] = string:split(Call,"("),
+    CallbackProto = lists:flatten(
+                      io_lib:format(
+                        "-callback ~ts(~ts",
+                        [io_lib:write_atom(F),Args])),
+    {ok, Toks, _} = erl_scan:string(CallbackProto ++ ".",{1, 1}),
     {Callback, NewD} =
-        maybe
-            [_, Call] = string:split(Slogan,":"),
-            [_, Args] = string:split(Call,"("),
-            CallbackProto = lists:flatten(
-                              io_lib:format(
-                                "-callback ~ts(~ts",
-                                [io_lib:write_atom(F),Args])),
-            io:format("Parsing: ~p~n",[CallbackProto]),
-            {ok, Toks, _} = erl_scan:string(CallbackProto ++ ".",{1, 1}),
+        try
             {ok,{attribute, _, callback, {{F,A}, _}}} = erl_parse:parse_form(Toks),
 
             {Types, DwithoutTypes} =
                 case maps:find(equiv, Meta) of
                     error ->
-                        #{ <<"en">> := [{ul,[{class,<<"types">>}],Ts} | Rest] } = D,
-                        {Ts, #{ <<"en">> => Rest }};
+                        case D of
+                            #{ <<"en">> := [{ul,[{class,<<"types">>}],Ts} | Rest] } ->
+                                {Ts, #{ <<"en">> => Rest }};
+                            #{ <<"en">> := _ } ->
+                                {[], D}
+                        end;
                     {ok, Equiv} when D =:= #{} ->
                         {Equiv, _, _, EquivD, _} = lists:keyfind(Equiv, 1, AllCBs),
-                        #{ <<"en">> := [{ul,[{class,<<"types">>}],Ts} | _] } = EquivD,
-                        {Ts, D}
+                        case EquivD of
+                            #{ <<"en">> := [{ul,[{class,<<"types">>}],Ts} | _] } ->
+                                {Ts, D};
+                            #{ <<"en">> := _ } ->
+                                {[], D}
+                        end
                 end,
-            {io_lib:format(
-               "~ts when ~ts.",
-               [CallbackProto,
-                lists:join(", ", munge_types(Types))
-               ]), DwithoutTypes}
-        else
-            _ ->
-                {io_lib:format(
-                   "-callback ~p(~ts) -> ~ts.",
-                   [F,
-                    lists:join(", ", ["term()" || _I <- lists:seq(1, A)]),
-                    "term()"]),
-                 D}
+            case Types of
+                [] ->
+                    {io_lib:format("~ts.",[CallbackProto]),
+                     DwithoutTypes};
+                Types ->
+                    {io_lib:format(
+                       "~ts when ~ts.",
+                       [CallbackProto,
+                        lists:join(", ", munge_types(Types))
+                       ]), DwithoutTypes}
+            end
+        catch E:R:ST ->
+                io:format("Failed to parse: ~p~n",[Toks]),
+                erlang:raise(E,R,ST)
         end,
     generate_doc_attributes(NewD, Meta, Files) ++
         [pp(Callback), ""]
