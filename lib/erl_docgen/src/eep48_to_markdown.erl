@@ -345,7 +345,7 @@ generate_doc_attributes(D, Meta, Files) ->
         end,
     DocString ++ meta(Meta).
 
-generate_skipped_callbacks([{{callback, F, A}, _, Slogan, #{ <<"en">> := D }, Meta} | T], Files) ->
+generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], Files) ->
     {Callback, NewD} =
         maybe
             [_, Call] ?= string:split(Slogan,":"),
@@ -357,14 +357,14 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, #{ <<"en">> := D }, Me
                    [{var, _, Result}]}]}} ?= erl_parse:parse_form(Toks),
             true ?= lists:any(fun(E) -> element(1,E) =:= var end, Args),
             maybe
-                [{ul,[{class,<<"types">>}],Types} | Rest] ?= D,
+                #{ <<"en">> := [{ul,[{class,<<"types">>}],Types} | Rest] } ?= D,
                 {io_lib:format(
                    "-callback ~p(~ts) -> ~ts when ~ts.",
                    [F,
                     lists:join(", ", [atom_to_list(Arg) || {var,_,Arg} <- Args]),
                     atom_to_list(Result),
                     lists:join(", ", [string:replace(strip_tags(C),"=","::",all) || {li,_,C} <- Types])
-                   ]), Rest}
+                   ]), #{ <<"en">> => Rest } }
             else
                 _ ->
                     {io_lib:format(
@@ -383,7 +383,7 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, #{ <<"en">> := D }, Me
                     "term()"]),
                  D}
         end,
-    generate_doc_attributes(#{ <<"en">> => NewD }, Meta, Files) ++
+    generate_doc_attributes(NewD, Meta, Files) ++
         [pp(Callback), ""]
         ++ generate_skipped_callbacks(T, Files);
 generate_skipped_callbacks([], _Files) ->
