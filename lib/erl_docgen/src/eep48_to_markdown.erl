@@ -35,7 +35,7 @@
 
 -export_type([chunk_elements/0, chunk_element_attr/0]).
 
--record(config, {docs :: docs_v1() | undefined}).
+-record(config, {docs :: docs_v1() | undefined, current = undefined }).
 
 -define(ALL_ELEMENTS, [
     a,
@@ -299,7 +299,7 @@ convert(Lines, Acc, [{Kind, Anno, Slogan, _D, _Meta} = E | T] = Docs, Files) ->
         true ->
             {Before, After} = lists:split(erl_anno:line(Anno)-1, Lines),
             {{Kind, Anno, Slogan, D, Meta}, NewT} = maybe_merge_entries(E, T),
-            DocString = generate_doc_attributes(D, Meta, Files),
+            DocString = generate_doc_attributes(D, Meta, Files#{ current => E }),
             convert(Before, DocString ++ After ++ Acc, NewT, Files);
         false ->
             Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
@@ -339,7 +339,7 @@ generate_doc_attributes(D, Meta, Files) ->
     DocString =
         case D of
             #{ <<"en">> := ErlangHtml } when not is_map_key(equiv, Meta) ->
-                [{doc,render_docs(normalize(ErlangHtml), init_config(maps:get(docs, Files), #{}))}];
+                [{doc,render_docs(normalize(ErlangHtml), init_config(maps:get(docs, Files), Files))}];
             D when D =:= #{}, is_map_key(equiv, Meta) ->
                 [];
             D when D =:= #{} ->
@@ -1003,7 +1003,7 @@ render_typecb_docs(Docs, D, Config) ->
 
 %%% General rendering functions
 render_docs(DocContents) ->
-    formatter(render_docs(DocContents, init_config(#docs_v1{ docs = [] }, []))).
+    formatter(render_docs(DocContents, init_config(#docs_v1{ docs = [] }, #{}))).
 -spec render_docs([chunk_element()], #config{}) -> unicode:chardata().
 render_docs(DocContents, #config{} = Config) ->
     render_docs(DocContents, 0, Config);
@@ -1023,8 +1023,8 @@ render_docs(DocContents, Ind, D = #config{}) when is_integer(Ind) ->
     end.
 
 -spec init_config(#docs_v1{} | undefined, _) -> #config{}.
-init_config(D, _Config) ->
-    #config{docs = D}.
+init_config(D, Config) ->
+    #config{docs = D, current = maps:get(current, Config, undefined) }.
 
 -spec render_docs(
     Elems :: [chunk_element()],
@@ -1382,9 +1382,14 @@ render_element({pre, [], [{code,Attr,Content}]}, State, Pos, Ind, D) ->
             <<"c">> -> "c"
         end,
     trimnlnl(["```",Type,"\n", pad(Ind), Docs, pad(Ind), "```"]);
-render_element({ul, [{class, <<"types">>}], Content}, State, _Pos, Ind, D) ->
-    {Docs, _} = render_docs(Content, [types | State], 0, Ind, D),
-    trimnlnl(Docs);
+render_element({ul, [{class, <<"types">>}], Content}, State, Pos, Ind, D) ->
+    case D#config.current of
+        {_, _, _, _, #{ specs := _}} ->
+            {"", Pos};
+        _ ->
+            {Docs, _} = render_docs(Content, [types | State], 0, Ind, D),
+            trimnlnl(Docs)
+    end;
 render_element({li, Attr, Content}, [types | _] = State, Pos, Ind, C) ->
     Doc =
         case {proplists:get_value(name, Attr), proplists:get_value(class, Attr)} of
