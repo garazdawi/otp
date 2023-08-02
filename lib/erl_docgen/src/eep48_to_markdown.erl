@@ -496,11 +496,16 @@ run_formatter(Module, String) ->
     FormattedText.
 
 doc(String) ->
-    ["-doc \"\n", to_erlang_string(String), "\n\"."].
-
+    doc("doc", String).
 moduledoc(String) ->
-    %% NewLines = re:replace(String, "\\\.( )?", ".\n", [global]),
-    ["-moduledoc \"", to_erlang_string(String), "\n\"."].
+    doc("moduledoc", String).
+doc(Tag,String) ->
+    case string:split(String,"\n",all) of
+        [_] ->
+            ["-",Tag," \"", to_erlang_string(String), "\"."];
+        _ ->
+            ["-",Tag," \"\n", to_erlang_string(String), "\n\"."]
+    end.
 
 meta(#{ edit_url := _} = Meta) ->
     meta(maps:remove(edit_url, Meta));
