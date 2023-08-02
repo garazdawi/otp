@@ -467,11 +467,16 @@ formatter(Module, String) ->
                       end, [], String),
 
                 FormattedText = run_formatter(Module, lists:reverse(FormatString)),
-                [<<>>|Split] = string:split(FormattedText, Header, all),
+                Split =
+                    case string:split(FormattedText, string:trim(Header), all) of
+                        [<<>>|S] -> S;
+                        [FormattedText] when FormatString =/= [] ->
+                            [[]]
+                    end,
                 {[], FormattedString} =
                     lists:foldl(fun({Type, _Doc}, {[FormattedDoc|T], Acc}) ->
                                         {T, [{Type, FormattedDoc} | Acc]};
-                                   (Else, {FormattedDoc, Acc}) ->
+                                   (Else, {FormattedDoc, Acc}) when not is_tuple(Else)->
                                         {FormattedDoc, [Else | Acc]}
                                 end, {Split,[]}, String),
                 lists:reverse(FormattedString);
