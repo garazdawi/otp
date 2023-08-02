@@ -1269,8 +1269,14 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
                             %% This is a type, add type prefix
                             ["t:",Docs];
                         false ->
-                            %% This is not a type, nor a function
-                            Docs
+                            case lists:keyfind({callback,Name,length(Args)}, 1, D#config.docs#docs_v1.docs) =/= false of
+                                true ->
+                                    %% This is a callback
+                                    ["c:",Docs];
+                                false ->
+                                    %% This is not a type, nor a function, nor a callback
+                                    Docs
+                            end
                     end
             end
         else
