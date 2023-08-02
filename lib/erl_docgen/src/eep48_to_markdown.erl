@@ -1140,7 +1140,7 @@ render_element(Elem, State, Pos, Ind, D) when Pos < Ind ->
     {Docs, NewPos} = render_element(Elem, State, Ind, Ind, D),
     {[pad(Ind - Pos), Docs], NewPos};
 render_element({a, Attr, Content}, State, Pos, Ind, D) ->
-    {Docs, NewPos} = render_docs(Content, State, Pos, Ind, D),
+    {Docs, NewPos} = render_docs(Content, [a|State], Pos, Ind, D),
     Href = proplists:get_value(href, Attr),
     undefined = proplists:get_value(id, Attr),
     IsOTPLink = Href =/= undefined andalso string:find(Href, ":") =/= nomatch,
@@ -1245,8 +1245,17 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
     %% to have the correct prefix. i.e. <c>byte()</c> should be `t:byte()`.
     TypedDocs =
         maybe
+            %% We do not do any transform if we are in an `a` already
+            true ?= a =/= hd(State),
             {ok, T, _} ?= erl_scan:string(unicode:characters_to_list([Docs,"."]), {1, 1}),
-            {ok, [{call,_,{atom,_,Name},Args}]} ?= erl_parse:parse_exprs(T),
+            {ok, [{call,_,{atom,_,Name},Args}]} ?=
+                case erl_parse:parse_exprs(T) of
+                    {ok, [{op,A,'/',F,{integer,_,NumArgs}}]} ->
+                        %% Translate any byte/0 to byte()
+                        {ok,[{call,A,F,lists:duplicate(NumArgs,a)}]};
+                    Else ->
+                        Else
+                end,
             case lists:keyfind({function, Name, length(Args)}, 1, (D#config.docs)#docs_v1.docs) =/= false orelse
                 erl_internal:bif(Name, length(Args))
             of
@@ -1265,21 +1274,22 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
                     end
             end
         else
-            {ok, [{call,_,{remote,_,{atom,_,M},{atom,_,F}},RArgs}]} ->
-                try lists:member({F,length(RArgs)},M:module_info(exports)) of
+            %% Could be a remote type erlang:message_queue_data()
+            {ok, [{call,_,{remote,_,{atom,_,RM},{atom,_,RF}},RArgs}]} ->
+                try lists:member({RF,length(RArgs)},RM:module_info(exports)) of
                     true ->
                         %% This is a remote function
                         Docs;
                     false ->
                         %% Read the AST and look for a remote type
-                        {ok, {M,
+                        {ok, {RM,
                               [{debug_info,
                                 {debug_info_v1, erl_abstract_code,
-                                 {AST, _Meta0}}}]}} = beam_lib:chunks(which(M),[debug_info]),
+                                 {AST, _Meta0}}}]}} = beam_lib:chunks(which(RM),[debug_info]),
                         case lists:filter(
                                fun({attribute, _, TO, {TF,_,TArgs}})
                                      when TO =:= type orelse TO =:= opaque,
-                                          F =:= TF, length(RArgs) =:= length(TArgs) ->
+                                          RF =:= TF, length(RArgs) =:= length(TArgs) ->
                                        true;
                                   (_) ->
                                        false
@@ -1294,15 +1304,28 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
                         %% Could not load module
                         Docs
                 end;
+            %% Could be a callback Module:init()
+            {ok, [{call,_,{remote,_,{var,_,_RM},{atom,_,RF}},RArgs}]} ->
+                case lists:keyfind({callback,RF,length(RArgs)}, 1, D#config.docs#docs_v1.docs) =/= false of
+                    true ->
+                        %% This is a callback
+                        {lists:concat(["[`",Docs,"`](`c:",RF,"/",length(RArgs),"`)"]), NewPos};
+                    false ->
+                        Docs
+                end;
             _ ->
                 %% Could not parse
                 Docs
         end,
-    case string:find(TypedDocs, "`") of
-        nomatch ->
-            {["`", TypedDocs, "`"], NewPos};
-        _ ->
-            {["`` ", TypedDocs, " ``"], NewPos}
+    if is_tuple(TypedDocs) ->
+            TypedDocs;
+       true ->
+            case string:find(TypedDocs, "`") of
+                nomatch ->
+                    {["`", TypedDocs, "`"], NewPos};
+                _ ->
+                    {["`` ", TypedDocs, " ``"], NewPos}
+            end
     end;
 render_element({em, Attr, Content}, State, Pos, Ind, D) ->
     render_element({i, Attr, Content}, State, Pos, Ind, D);
