@@ -500,7 +500,7 @@ doc(String) ->
 moduledoc(String) ->
     doc("moduledoc", String).
 doc(Tag,String) ->
-    case string:split(String,"\n",all) of
+    case string:split(string:trim(String),"\n",all) of
         [_] ->
             ["-",Tag," \"", to_erlang_string(String), "\"."];
         _ ->
