@@ -160,15 +160,17 @@ modules(App) ->
     [list_to_atom(filename:basename(filename:rootname(File)))
      || File <- filelib:wildcard(filename:join(filename:dirname(code:priv_dir(App)),"doc/chunks/*.chunk"))].
 
+which(Module) ->
+    case code:which(Module) of
+        preloaded ->
+            filename:join(["erts","preloaded","ebin",atom_to_list(Module) ++ ".beam"]);
+        Path -> Path
+    end.
+
 convert(Module) ->
     io:format("Converting: ~p~n",[Module]),
 
-    ModulePath =
-        case code:which(Module) of
-            preloaded ->
-                filename:join(["erts","preloaded","ebin",atom_to_list(Module) ++ ".beam"]);
-            Path -> Path
-        end,
+    ModulePath = which(Module),
 
     case code:get_doc(Module, #{ sources => [eep48] }) of
         {ok, #docs_v1{ format = <<"application/erlang+html">>,
@@ -1263,6 +1265,35 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
                     end
             end
         else
+            {ok, [{call,_,{remote,_,{atom,_,M},{atom,_,F}},RArgs}]} ->
+                try lists:member({F,length(RArgs)},M:module_info(exports)) of
+                    true ->
+                        %% This is a remote function
+                        Docs;
+                    false ->
+                        %% Read the AST and look for a remote type
+                        {ok, {M,
+                              [{debug_info,
+                                {debug_info_v1, erl_abstract_code,
+                                 {AST, _Meta0}}}]}} = beam_lib:chunks(which(M),[debug_info]),
+                        case lists:filter(
+                               fun({attribute, _, TO, {TF,_,TArgs}})
+                                     when TO =:= type orelse TO =:= opaque,
+                                          F =:= TF, length(RArgs) =:= length(TArgs) ->
+                                       true;
+                                  (_) ->
+                                       false
+                               end, AST) of
+                            [] ->
+                                Docs;
+                            [_] ->
+                                %% This is a valid remote type
+                                ["t:",Docs]
+                        end
+                catch error:undef ->
+                        %% Could not load module
+                        Docs
+                end;
             _ ->
                 %% Could not parse
                 Docs
