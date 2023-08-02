@@ -467,12 +467,7 @@ formatter(Module, String) ->
                       end, [], String),
 
                 FormattedText = run_formatter(Module, lists:reverse(FormatString)),
-                Split =
-                    case string:split(FormattedText, string:trim(Header), all) of
-                        [<<>>|S] -> S;
-                        [FormattedText] when FormatString =/= [] ->
-                            [[]]
-                    end,
+                [<<>>|Split] = string:split(FormattedText, string:trim(Header), all),
                 {[], FormattedString} =
                     lists:foldl(fun({Type, _Doc}, {[FormattedDoc|T], Acc}) ->
                                         {T, [{Type, FormattedDoc} | Acc]};
