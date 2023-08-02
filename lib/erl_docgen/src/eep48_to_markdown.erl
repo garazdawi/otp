@@ -1241,6 +1241,15 @@ render_element({code, _, Content}, [pre | _] = State, Pos, Ind, D) ->
 render_element({code, _, Content}, State, Pos, Ind, D) ->
     {Docs, NewPos} = render_docs(Content, [code | State], Pos, Ind, D),
 
+    IsDocumented = fun(What, #docs_v1{ docs = V1Docs }) ->
+                           case lists:keyfind(What, 1, V1Docs) of
+                               {What, _, _, #{}, _} ->
+                                   true;
+                               _ ->
+                                   false
+                           end
+                   end,
+
     %% Try to convert code segments that refer to types but don't have a link
     %% to have the correct prefix. i.e. <c>byte()</c> should be `t:byte()`.
     TypedDocs =
@@ -1256,20 +1265,20 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
                     Else ->
                         Else
                 end,
-            case lists:keyfind({function, Name, length(Args)}, 1, (D#config.docs)#docs_v1.docs) =/= false orelse
+            case IsDocumented({function, Name, length(Args)}, D#config.docs) orelse
                 erl_internal:bif(Name, length(Args))
             of
                 true ->
                     %% This is a function, so return code as is
                     Docs;
                 false ->
-                    case lists:keyfind({type,Name,length(Args)}, 1, D#config.docs#docs_v1.docs) =/= false orelse
+                    case IsDocumented({type,Name,length(Args)}, D#config.docs) orelse
                         erl_internal:is_type(Name,length(Args)) of
                         true ->
                             %% This is a type, add type prefix
                             ["t:",Docs];
                         false ->
-                            case lists:keyfind({callback,Name,length(Args)}, 1, D#config.docs#docs_v1.docs) =/= false of
+                            case IsDocumented({callback,Name,length(Args)}, D#config.docs) of
                                 true ->
                                     %% This is a callback
                                     ["c:",Docs];
@@ -1282,37 +1291,28 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
         else
             %% Could be a remote type erlang:message_queue_data()
             {ok, [{call,_,{remote,_,{atom,_,RM},{atom,_,RF}},RArgs}]} ->
-                try lists:member({RF,length(RArgs)},RM:module_info(exports)) of
-                    true ->
-                        %% This is a remote function
-                        Docs;
-                    false ->
-                        %% Read the AST and look for a remote type
-                        {ok, {RM,
-                              [{debug_info,
-                                {debug_info_v1, erl_abstract_code,
-                                 {AST, _Meta0}}}]}} = beam_lib:chunks(which(RM),[debug_info]),
-                        case lists:filter(
-                               fun({attribute, _, TO, {TF,_,TArgs}})
-                                     when TO =:= type orelse TO =:= opaque,
-                                          RF =:= TF, length(RArgs) =:= length(TArgs) ->
-                                       true;
-                                  (_) ->
-                                       false
-                               end, AST) of
-                            [] ->
+                case code:get_doc(RM) of
+                    {ok, RemoteDocs} ->
+                        case IsDocumented({function,RF,length(RArgs)}, RemoteDocs) of
+                            true ->
+                                %% This is a remote function
                                 Docs;
-                            [_] ->
-                                %% This is a valid remote type
-                                ["t:",Docs]
-                        end
-                catch error:undef ->
-                        %% Could not load module
+                            false ->
+                                case IsDocumented({type,RF,length(RArgs)}, RemoteDocs)  of
+                                    true ->
+                                        %% This is a valid remote type
+                                        ["t:",Docs];
+                                    false ->
+                                        Docs
+                                end
+                        end;
+                    _ ->
+                        %% Could not fetch docs
                         Docs
                 end;
             %% Could be a callback Module:init()
             {ok, [{call,_,{remote,_,{var,_,_RM},{atom,_,RF}},RArgs}]} ->
-                case lists:keyfind({callback,RF,length(RArgs)}, 1, D#config.docs#docs_v1.docs) =/= false of
+                case IsDocumented({callback,RF,length(RArgs)}, D#config.docs) of
                     true ->
                         %% This is a callback
                         {lists:concat(["[`",Docs,"`](`c:",RF,"/",length(RArgs),"`)"]), NewPos};
