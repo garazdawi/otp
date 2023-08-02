@@ -1272,19 +1272,25 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
                     %% This is a function, so return code as is
                     Docs;
                 false ->
-                    case IsDocumented({type,Name,length(Args)}, D#config.docs) orelse
-                        erl_internal:is_type(Name,length(Args)) of
-                        true ->
-                            %% This is a type, add type prefix
-                            ["t:",Docs];
-                        false ->
-                            case IsDocumented({callback,Name,length(Args)}, D#config.docs) of
+                    try
+                        %% This is an op type (such as <c>=:=/2</c>)
+                        erl_internal:op_type(Name, length(Args)),
+                        {lists:concat(["[`",Docs,"`](`erlang:",io_lib:write_atom(Name),"/",length(Args),"`)"]), NewPos}
+                    catch error:function_clause ->
+                            case IsDocumented({type,Name,length(Args)}, D#config.docs) orelse
+                                erl_internal:is_type(Name,length(Args)) of
                                 true ->
-                                    %% This is a callback
-                                    ["c:",Docs];
+                                    %% This is a type, add type prefix
+                                    ["t:",Docs];
                                 false ->
-                                    %% This is not a type, nor a function, nor a callback
-                                    Docs
+                                    case IsDocumented({callback,Name,length(Args)}, D#config.docs) of
+                                        true ->
+                                            %% This is a callback
+                                            ["c:",Docs];
+                                        false ->
+                                            %% This is not a type, nor a function, nor a callback
+                                            Docs
+                                    end
                             end
                     end
             end
@@ -1315,7 +1321,7 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
                 case IsDocumented({callback,RF,length(RArgs)}, D#config.docs) of
                     true ->
                         %% This is a callback
-                        {lists:concat(["[`",Docs,"`](`c:",RF,"/",length(RArgs),"`)"]), NewPos};
+                        {lists:concat(["[`",Docs,"`](`c:",io_lib:write_atom(RF),"/",length(RArgs),"`)"]), NewPos};
                     false ->
                         Docs
                 end;

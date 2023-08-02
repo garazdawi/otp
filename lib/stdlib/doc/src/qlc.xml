@@ -190,7 +190,7 @@
       after guard filters that use variables from no other generators
       but the two joined generators. The <c>qlc</c> module inspects
       the operands of
-      <c>=:=/2</c>, <c>==/2</c>, <c>is_record/2</c>, <c>element/2</c>,
+      <c>=:=/2</c>, <c>'=='/2</c>, <c>is_record/2</c>, <c>element/2</c>,
       and logical operators (<c>and/2</c>, <c>or/2</c>,
       <c>andalso/2</c>, <c>orelse/2</c>, <c>xor/2</c>) when
       determining which joins to consider.</p>
