@@ -131,6 +131,10 @@
     </datatype>
 
     <datatype>
+      <name name="continuation_state"/>
+    </datatype>
+
+    <datatype>
       <name name="event_fun"/>
       <desc>
         <p>
@@ -289,6 +293,12 @@
       </desc>
     </datatype>
 
+    <datatype>
+      <name name="event_location"/>
+    </datatype>
+    <datatype>
+      <name name="event_state"/>
+    </datatype>
 
     <datatype>
       <name name="unicode_char"/>
