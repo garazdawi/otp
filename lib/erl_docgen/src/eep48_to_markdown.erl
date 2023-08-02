@@ -166,7 +166,7 @@ convert(Module) ->
     ModulePath =
         case code:which(Module) of
             preloaded ->
-                filename:join(["erts","preloaded","ebin",Module]);
+                filename:join(["erts","preloaded","ebin",atom_to_list(Module) ++ ".beam"]);
             Path -> Path
         end,
 
@@ -219,7 +219,7 @@ convert(Module) ->
             {BeforeModule, AfterModule} = lists:split(ModuleDocLine, maps:get(Filename, NewFiles)),
 
             NewFilesWithModuleDoc =
-                NewFiles#{ Filename => BeforeModule ++ convert_moduledoc(ModuleDoc)
+                NewFiles#{ Filename => BeforeModule ++ convert_moduledoc(ModuleDoc, DocsV1)
                            ++ generate_skipped_callbacks(maps:get(skipped, NewFiles, []), NewFiles)
                            ++ AfterModule
                          },
@@ -242,7 +242,7 @@ convert(Module) ->
         {ok, #docs_v1{ format = <<"text/markdown">> }} ->
             {ok, Module, Chunks} = beam_lib:all_chunks(ModulePath),
             {ok, NewBeamFile} = beam_lib:build_module(proplists:delete("Docs", Chunks)),
-            file:write_file(ModulePath ++ ".beam", NewBeamFile),
+            file:write_file(ModulePath, NewBeamFile),
             convert(Module);
         Error ->
             io:format("Error: ~p~n",[Error]),
@@ -432,8 +432,8 @@ get_app(Module) ->
     end.
 
 %% Convert module documentation
-convert_moduledoc(ModuleHeader) ->
-    String = render_docs(normalize(ModuleHeader), init_config(undefined, #{})),
+convert_moduledoc(ModuleHeader, Docs) ->
+    String = render_docs(normalize(ModuleHeader), init_config(Docs, #{})),
     FixDiameterDepsBug = re:replace(String, "```text\n(-include_lib\\(\"diameter/include/diameter.hrl\"\\).)\n```", "\n    \\1\n"),
     [{moduledoc,FixDiameterDepsBug}].
 
@@ -996,7 +996,7 @@ render_typecb_docs(Docs, D, Config) ->
 
 %%% General rendering functions
 render_docs(DocContents) ->
-    formatter(render_docs(DocContents, init_config(undefined, []))).
+    formatter(render_docs(DocContents, init_config(#docs_v1{ docs = [] }, []))).
 -spec render_docs([chunk_element()], #config{}) -> unicode:chardata().
 render_docs(DocContents, #config{} = Config) ->
     render_docs(DocContents, 0, Config);
@@ -1238,11 +1238,40 @@ render_element({code, _, Content}, [pre | _] = State, Pos, Ind, D) ->
     render_docs(Content, [code | State], Pos, Ind, D);
 render_element({code, _, Content}, State, Pos, Ind, D) ->
     {Docs, NewPos} = render_docs(Content, [code | State], Pos, Ind, D),
-    case string:find(Docs, "`") of
+
+    %% Try to convert code segments that refer to types but don't have a link
+    %% to have the correct prefix. i.e. <c>byte()</c> should be `t:byte()`.
+    TypedDocs =
+        maybe
+            {ok, T, _} ?= erl_scan:string(unicode:characters_to_list([Docs,"."]), {1, 1}),
+            {ok, [{call,_,{atom,_,Name},Args}]} ?= erl_parse:parse_exprs(T),
+            case lists:keyfind({function, Name, length(Args)}, 1, (D#config.docs)#docs_v1.docs) =/= false orelse
+                erl_internal:bif(Name, length(Args))
+            of
+                true ->
+                    %% This is a function, so return code as is
+                    Docs;
+                false ->
+                    case lists:keyfind({type,Name,length(Args)}, 1, D#config.docs#docs_v1.docs) =/= false orelse
+                        erl_internal:is_type(Name,length(Args)) of
+                        true ->
+                            %% This is a type, add type prefix
+                            ["t:",Docs];
+                        false ->
+                            %% This is not a type, nor a function
+                            Docs
+                    end
+            end
+        else
+            _ ->
+                %% Could not parse
+                Docs
+        end,
+    case string:find(TypedDocs, "`") of
         nomatch ->
-            {["`", Docs, "`"], NewPos};
+            {["`", TypedDocs, "`"], NewPos};
         _ ->
-            {["`` ", Docs, " ``"], NewPos}
+            {["`` ", TypedDocs, " ``"], NewPos}
     end;
 render_element({em, Attr, Content}, State, Pos, Ind, D) ->
     render_element({i, Attr, Content}, State, Pos, Ind, D);
