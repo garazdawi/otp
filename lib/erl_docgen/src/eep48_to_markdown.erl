@@ -1573,7 +1573,15 @@ render_type_signature(Name, #config{docs = #docs_v1{metadata = #{types := AllTyp
 ial([]) ->
     "";
 ial(Attrs) ->
-    ["{: ",[[atom_to_list(Tag),"=",Value, " "] || {Tag,Value} <- Attrs],"}"].
+    MaybeQuote = fun(Str) ->
+                         case string:find(Str, " ") of
+                             nomatch ->
+                                 Str;
+                             _ ->
+                                 [$",Str,$"]
+                         end
+                 end,
+    ["{: ", [[atom_to_list(Tag), "=", MaybeQuote(Value), " "] || {Tag,Value} <- Attrs], "}"].
 
 %% Pad N spaces (and possibly pre-prend newline), disabling any ansi formatting while doing so.
 -spec pad(non_neg_integer()) -> unicode:chardata().
