@@ -76,6 +76,10 @@
 -define(BLOCK, [p, 'div', pre, br, ul, ol, li, dl, dt, dd, h1, h2, h3, h4, h5, h6, hr, table, tr, td]).
 -define(IS_BLOCK(ELEM), not ?IS_INLINE(ELEM)).
 -define(IS_PRE(ELEM), ((ELEM) =:= pre)).
+-define(IS_HDR(ELEM),
+        (((ELEM) =:= h1) orelse ((ELEM) =:= h2) orelse
+         ((ELEM) =:= h3) orelse ((ELEM) =:= h4) orelse
+         ((ELEM) =:= h5) orelse ((ELEM) =:= h6))).
 
 %% If you update the below types, make sure to update the documentation in
 %% erl_docgen/doc/src/doc_storage.xml as well!!!
@@ -1040,11 +1044,18 @@ render_docs(Elems, State, Pos, Ind, D) when is_list(Elems) ->
             render_docs(Elem, State, P, Ind, D)
         end,
         Pos,
-        Elems
+        merge_elems(Elems)
     );
 render_docs(Elem, State, Pos, Ind, D) ->
     %    io:format("Elem: ~p (~p) (~p,~p)~n",[Elem,State,Pos,Ind]),
     render_element(Elem, State, Pos, Ind, D).
+
+merge_elems([{a,[{id,_}] = Id,[]},{Hdr,Attr,C}|T]) when ?IS_HDR(Hdr) ->
+    merge_elems([{Hdr,Attr ++ Id, C} | T]);
+merge_elems([H|T]) ->
+    [H|merge_elems(T)];
+merge_elems([]) ->
+    [].
 
 %%% The function is the main element rendering function
 %%%
@@ -1075,24 +1086,24 @@ render_docs(Elem, State, Pos, Ind, D) ->
 %%     render_docs(Content, State, Pos, Ind,D);
 
 %% Catch h* before the padding is done as they reset padding
-render_element({Tag = h1, _, Content}, State, 0 = Pos, _Ind, D) ->
+render_element({Tag = h1, Attr, Content}, State, 0 = Pos, _Ind, D) ->
     {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
-    trimnlnl({["# ", Docs], NewPos});
-render_element({Tag = h2, _, Content}, State, 0 = Pos, _Ind, D) ->
+    trimnlnl({["# ", Docs, ial(Attr)], NewPos});
+render_element({Tag = h2, Attr, Content}, State, 0 = Pos, _Ind, D) ->
     {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
-    trimnlnl({["## ", Docs], NewPos});
-render_element({Tag = h3, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
+    trimnlnl({["## ", Docs, ial(Attr)], NewPos});
+render_element({Tag = h3, Attr, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
     {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
-    trimnlnl({["### ", Docs], NewPos});
-render_element({Tag = h4, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
+    trimnlnl({["### ", Docs, ial(Attr)], NewPos});
+render_element({Tag = h4, Attr, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
     {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
-    trimnlnl({["#### ", Docs], NewPos});
-render_element({Tag = h5, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
+    trimnlnl({["#### ", Docs, ial(Attr)], NewPos});
+render_element({Tag = h5, Attr, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
     {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
-    trimnlnl({["##### ", Docs], NewPos});
-render_element({Tag = h6, _, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
+    trimnlnl({["##### ", Docs, ial(Attr)], NewPos});
+render_element({Tag = h6, Attr, Content}, State, Pos, _Ind, D) when Pos =< 2 ->
     {Docs, NewPos} = render_docs(Content, [Tag|State], Pos, 0, D),
-    trimnlnl({["###### ", Docs], NewPos});
+    trimnlnl({["###### ", Docs, ial(Attr)], NewPos});
 render_element({pre, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
     %% We pad `pre` with two newlines if the previous section did not indent the region.
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
@@ -1541,6 +1552,11 @@ render_type_signature(Name, #config{docs = #docs_v1{metadata = #{types := AllTyp
         Types ->
             [erl_pp:attribute(maps:get(Type, AllTypes)) || Type <- Types]
     end.
+
+ial([]) ->
+    "";
+ial(Attrs) ->
+    ["{: ",[[atom_to_list(Tag),"=",Value, " "] || {Tag,Value} <- Attrs],"}"].
 
 %% Pad N spaces (and possibly pre-prend newline), disabling any ansi formatting while doing so.
 -spec pad(non_neg_integer()) -> unicode:chardata().
