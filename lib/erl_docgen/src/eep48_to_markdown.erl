@@ -457,10 +457,6 @@ formatter(Module, String) ->
     Text =
         case {os:getenv("FORMAT_MD"),os:find_executable("npx")} of
             {"true",Npx} when Npx =/= false ->
-                %% Text0 = string:trim(re:replace(String, "\\\\\\\.( )?", ".\n", [unicode, global])),
-                %% %% TODO: fix re so that the Text1 string:replace is not needed
-                %% Text1 = string:replace(Text0, "\\\\\\.", "."),
-
                 Header = "# FORMAT HEADER\n\n",
 
                 FormatString =
