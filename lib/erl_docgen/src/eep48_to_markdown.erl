@@ -216,7 +216,8 @@ convert(Module) ->
                                 end, undefined, AST),
             Filename = filename:join(proplists:get_value(cwd, Meta, ""), File),
 
-            %% These modules have a -feature macro at top that needs to be above the -moduledoc line.
+            %% These modules have a -feature macro at top that needs to
+            %% be above the -moduledoc line.
             %% So we adjust the docs down one step.
             ModuleDocLine = case lists:member(Module, [asn1ct, erl_features, erl_lint]) of
                                 true -> erl_anno:line(Anno) + 1;
@@ -1016,7 +1017,7 @@ render_docs(DocContents, #docs_v1{} = D) ->
 -spec render_docs([chunk_element()], 0, #config{}) -> unicode:chardata().
 render_docs(DocContents, Ind, D = #config{}) when is_integer(Ind) ->
     try
-        {Doc, _} = trimnl(render_docs(DocContents, [], 0, Ind, D)),
+        {Doc, _} = trimnl(render_docs(preprocess_docs(DocContents, D), [], 0, Ind, D)),
         unicode:characters_to_binary(Doc)
     catch throw:R:ST ->
             io:format("Failed to render: ~tp~n",[R]),
@@ -1025,6 +1026,30 @@ render_docs(DocContents, Ind, D = #config{}) when is_integer(Ind) ->
             io:format("Failed to render: ~tp~n",[DocContents]),
             erlang:raise(E,R,ST)
     end.
+
+%% Merge any anchor with its header
+preprocess_docs([{Hdr,Attr,C},{a,[{id,_}] = Id,[]}|T], D) when ?IS_HDR(Hdr) ->
+    preprocess_docs([{Hdr,Attr ++ Id, C} | T], D);
+preprocess_docs([{a,[{id,_}] = Id,[]},{Hdr,Attr,C}|T], D) when ?IS_HDR(Hdr) ->
+    preprocess_docs([{Hdr,Attr ++ Id, C} | T], D);
+preprocess_docs([{a,[{id,Id}],_} = A| T],
+                #config{ current = {{function,Function,Arity},_,_,_,_} } = D) ->
+    maybe
+        %% Remove any anchor that is just function-arity
+        [FunctionString, ArityString] ?= string:split(Id,"-",all),
+        Arity ?= catch binary_to_integer(ArityString),
+        true ?= is_integer(Arity),
+        Function ?= binary_to_atom(FunctionString),
+        preprocess_docs(T, D)
+    else
+        _ ->
+            [A | preprocess_docs(T, D)]
+    end;
+preprocess_docs([H|T], D) ->
+    [H|preprocess_docs(T, D)];
+preprocess_docs([], _) ->
+    [].
+
 
 -spec init_config(#docs_v1{} | undefined, _) -> #config{}.
 init_config(D, Config) ->
@@ -1044,18 +1069,11 @@ render_docs(Elems, State, Pos, Ind, D) when is_list(Elems) ->
             render_docs(Elem, State, P, Ind, D)
         end,
         Pos,
-        merge_elems(Elems)
+        Elems
     );
 render_docs(Elem, State, Pos, Ind, D) ->
     %    io:format("Elem: ~p (~p) (~p,~p)~n",[Elem,State,Pos,Ind]),
     render_element(Elem, State, Pos, Ind, D).
-
-merge_elems([{a,[{id,_}] = Id,[]},{Hdr,Attr,C}|T]) when ?IS_HDR(Hdr) ->
-    merge_elems([{Hdr,Attr ++ Id, C} | T]);
-merge_elems([H|T]) ->
-    [H|merge_elems(T)];
-merge_elems([]) ->
-    [].
 
 %%% The function is the main element rendering function
 %%%
