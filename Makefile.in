@@ -464,7 +464,8 @@ endif
 	$(DOCGEN)/priv/bin/validate_links.escript $(ERL_TOP) make/$(TARGET)/mod2app.xml \
 		lib/*/doc/xml/*.xml erts/doc/xml/*.xml system/doc/xml/*/*.xml
 
-ex-docs: docs
+ex-docs:
+	$(MAKE) docs DOC_TARGETS=chunks
 	./otp_build update_preloaded --no-commit
 	./generate-docs.sh
 	./otp_build update_preloaded --no-commit
