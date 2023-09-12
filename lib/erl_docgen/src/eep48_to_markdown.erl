@@ -504,11 +504,14 @@ doc(String) ->
 moduledoc(String) ->
     doc("moduledoc", String).
 doc(Tag,String) ->
-    case string:split(string:trim(String),"\n",all) of
-        [_] ->
-            ["-",Tag," \"", to_erlang_string(String), "\"."];
+    TrimmedString = string:trim(String),
+    case {string:find(TrimmedString,"\n"),
+          string:find(TrimmedString,"\\"),
+          string:find(TrimmedString,"\"")} of
+        {nomatch, nomatch, nomatch} ->
+            ["-",Tag," \"", TrimmedString, "\"."];
         _ ->
-            ["-",Tag," \"\n", to_erlang_string(String), "\n\"."]
+            ["-",Tag," \"\"\"\n", TrimmedString, "\n\"\"\"."]
     end.
 
 meta(#{ edit_url := _} = Meta) ->
@@ -522,11 +525,8 @@ meta(Meta) when Meta =:= #{} ->
 meta(Meta) ->
     [io_lib:format("-doc(~p).",[Meta])].
 
-
-to_erlang_string(Text) ->
-     string:trim(re:replace(Text, "(\"|\\\\)", "\\\\\\1", [global, unicode])).
-
-filter_and_fix_anno(AST, [{{What, F, A}, _Anno, S, D, M} | T]) when is_map(D); is_map_key(equiv, M) ->
+filter_and_fix_anno(AST, [{{What, F, A}, _Anno, S, D, M} | T])
+  when is_map(D); is_map_key(equiv, M) ->
     NewAnno =
         case What of
             function ->
