@@ -1514,24 +1514,29 @@ render_element({quote, [], Content}, State, _Pos, Ind, D) ->
     {Docs, 0} = render_element({'div', [], Content}, ['div' | State], 0, 0, D),
     trimnlnl([[pad(Ind), "> ",Line,"\n"] || Line <- string:split(trim(Docs),"\n",all)]);
 render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
-    Pre = string:replace(B, "\n", [nlpad(Ind)], all),
+    Pre = lists:foldl(
+            fun({Pat, Subst}, S) -> re:replace(S, Pat, Subst, [global,unicode]) end,
+            B,
+            [{"\n",                          nlpad(Ind)},     %% Indent the string correctly
+             %% [^S\r\n] -> All whitespace except \r\n
+             {"(\n\\s*[0-9]+)\\.([^S\r\n])", "\\1\\\\.\\2"},  %% \n1. -> 1\.
+             {"^(\\s*[0-9]+)\\.([^S\r\n])",  "\\1\\\\.\\2"},  %% ^1. -> 1\.
+             {"(\n\\s*)\\*([^S\r\n])",       "\\1\\\\*\\2"},  %% \n* -> \*
+             {"^(\\s*)\\*([^S\r\n])",        "\\1\\\\*\\2"},  %% ^* -> \*
+             {"(\n\\s*)\\-([^S\r\n])",       "\\1\\\\-\\2"},  %% \n- -> \-
+             {"^(\\s*)\\-([^S\r\n])",        "\\1\\\\-\\2"},  %% ^- -> \-
+             {"(\n\\s*)\\+([^S\r\n])",       "\\1\\\\+\\2"},  %% \n+ -> \+
+             {"^(\\s*)\\+([^S\r\n])",        "\\1\\\\+\\2"},  %% ^+ -> \+
+             {"\\[([^]]+\\])",               "\\\\[\\1"},     %% [..] -> \[..]
+             {"<([^>]+>)",                   "\\\\<\\1"}      %% <..> -> \<..>
+      ]),
     EscapeChars = [
         "\\",
         "`",
-        "*",
         "_",
         "{",
         "}",
-        "[",
-        "]",
-        "<",
-        ">",
-        "(",
-        ")",
         "#",
-        "+",
-        "-",
-        ".",
         "!",
         "|"
     ],
