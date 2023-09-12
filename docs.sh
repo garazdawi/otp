@@ -16,6 +16,10 @@ if ! is_bin_in_path iex; then
         (cd elixir && make)
     fi
     export PATH=`pwd`/elixir/bin:$PATH
+    if [ ! -d ~/.mix/archives/hex/hex ]; then
+        git clone -b main https://github.com/hexpm/hex
+        (cd hex && mix install)
+    fi
 fi
 
 if ! is_bin_in_path ex_doc; then
