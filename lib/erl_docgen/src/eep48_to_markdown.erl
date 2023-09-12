@@ -1240,15 +1240,23 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                  See =:= <<"https://erlang.org/doc/link/seecom">>;
                  See =:= <<"https://erlang.org/doc/link/seeapp">> ->
             CurrentApplication = unicode:characters_to_binary(get(application)),
+            Postfix = case See of
+                          <<"https://erlang.org/doc/link/seecom">> ->
+                              "_cmd";
+                          <<"https://erlang.org/doc/link/seeapp">> ->
+                              "_app";
+                          _ ->
+                              ""
+                      end,
             case string:lexemes(Href, ":#") of
                 [App, Guide] when App =:= CurrentApplication ->
-                    {["[", Docs, "](",Guide,".md)"], NewPos};
+                    {["[", Docs, "](",Guide,Postfix,".md)"], NewPos};
                 [App, Guide, Anchor] when App =:= CurrentApplication ->
-                    {["[", Docs, "](",Guide,".md#",Anchor,")"], NewPos};
+                    {["[", Docs, "](",Guide,Postfix,".md#",Anchor,")"], NewPos};
                 [App, Guide] ->
-                    {["[", Docs, "](`p:",App,":",Guide,"`)"], NewPos};
+                    {["[", Docs, "](`p:",App,":",Guide,Postfix,"`)"], NewPos};
                 [App, Guide, Anchor] ->
-                    {["[", Docs, "](`p:",App,":",Guide,"#",Anchor,"`)"], NewPos}
+                    {["[", Docs, "](`p:",App,":",Guide,Postfix,"#",Anchor,"`)"], NewPos}
             end;
         <<"https://erlang.org/doc/link/seefile">> ->
             CurrentApplication = unicode:characters_to_binary(get(application)),
