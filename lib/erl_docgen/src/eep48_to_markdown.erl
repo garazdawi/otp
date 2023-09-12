@@ -1510,32 +1510,9 @@ render_element({quote, [], Content}, State, _Pos, Ind, D) ->
     {Docs, 0} = render_element({'div', [], Content}, ['div' | State], 0, 0, D),
     trimnlnl([[pad(Ind), "> ",Line,"\n"] || Line <- string:split(trim(Docs),"\n",all)]);
 render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
-    Pre = lists:foldl(
-            fun({Pat, Subst}, S) -> re:replace(S, Pat, Subst, [global,unicode]) end,
-            B,
-            [{"\n",                          nlpad(Ind)},     %% Indent the string correctly
-             %% [^S\r\n] -> All whitespace except \r\n
-             {"(\n\\s*[0-9]+)\\.([^S\r\n])", "\\1\\\\.\\2"},  %% \n1. -> 1\.
-             {"^(\\s*[0-9]+)\\.([^S\r\n])",  "\\1\\\\.\\2"},  %% ^1. -> 1\.
-             {"(\n\\s*)\\*([^S\r\n])",       "\\1\\\\*\\2"},  %% \n* -> \*
-             {"^(\\s*)\\*([^S\r\n])",        "\\1\\\\*\\2"},  %% ^* -> \*
-             {"(\n\\s*)\\-([^S\r\n])",       "\\1\\\\-\\2"},  %% \n- -> \-
-             {"^(\\s*)\\-([^S\r\n])",        "\\1\\\\-\\2"},  %% ^- -> \-
-             {"(\n\\s*)\\+([^S\r\n])",       "\\1\\\\+\\2"},  %% \n+ -> \+
-             {"^(\\s*)\\+([^S\r\n])",        "\\1\\\\+\\2"},  %% ^+ -> \+
-             {"\\[([^]]+\\])",               "\\\\[\\1"},     %% [..] -> \[..]
-             {"<([^>]+>)",                   "\\\\<\\1"}      %% <..> -> \<..>
-      ]),
-    EscapeChars = [
-        "\\",
-        "`",
-        "_",
-        "{",
-        "}",
-        "#",
-        "!",
-        "|"
-    ],
+    %% Indent the string correctly
+    Pre = re:replace(B,"\n",nlpad(Ind),[global,unicode]),
+
     Str =
         case State of
             [pre | _] ->
@@ -1545,12 +1522,33 @@ render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
             [h4 | _] ->
                 Pre;
             _ ->
-                re:replace(
-                    Pre,
-                    ["(", lists:join($|, [["\\", C] || C <- EscapeChars]), ")"],
-                    "\\\\\\1",
-                    [global, unicode]
-                )
+                EscapeChars = [
+                               "\\",
+                               "`",
+                               "{",
+                               "}",
+                               "!",
+                               "|"
+                              ],
+                lists:foldl(
+                  fun({Pat, Subst}, S) -> re:replace(S, Pat, Subst, [global,unicode]) end,
+                  B,
+                  [{["(", lists:join($|, [["\\", C] || C <- EscapeChars]), ")"], "\\\\\\1"},
+                   %% [^S\r\n] == All whitespace except \r\n
+                   {"(\n\\s*[0-9]+)\\.([^S\r\n])", "\\1\\\\.\\2"},  %% \n1. -> 1\.
+                   {"^(\\s*[0-9]+)\\.([^S\r\n])",  "\\1\\\\.\\2"},  %% ^1. -> 1\.
+                   {"(\n\\s*)\\*([^S\r\n])",       "\\1\\\\*\\2"},  %% \n* -> \*
+                   {"^(\\s*)\\*([^S\r\n])",        "\\1\\\\*\\2"},  %% ^* -> \*
+                   {"(\n\\s*)\\-([^S\r\n])",       "\\1\\\\-\\2"},  %% \n- -> \-
+                   {"^(\\s*)\\-([^S\r\n])",        "\\1\\\\-\\2"},  %% ^- -> \-
+                   {"(\n\\s*)\\+([^S\r\n])",       "\\1\\\\+\\2"},  %% \n+ -> \+
+                   {"^(\\s*)\\+([^S\r\n])",        "\\1\\\\+\\2"},  %% ^+ -> \+
+                   {"(\n\\s*)\\#([^S\r\n])",       "\\1\\\\#\\2"},  %% \n# -> \#
+                   {"^(\\s*)\\#([^S\r\n])",        "\\1\\\\#\\2"},  %% ^# -> \#
+                   {"\\[([^]]+\\])",               "\\\\[\\1"},     %% [..] -> \[..]
+                   {"<([^>]+>)",                   "\\\\<\\1"},     %% <..> -> \<..>
+                   {"(\s)_([^_]+_\s)",             "\\1\\\\_\\2"}]  %% _.._ -> \_.._
+                 )
         end,
     {Str, Pos + lastline(Str)};
 render_element({Tag, Attr, Content}, State, Pos, Ind, D) ->
