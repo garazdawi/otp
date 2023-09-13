@@ -1037,7 +1037,7 @@ render_docs(DocContents) ->
 render_docs(DocContents, #config{} = Config) ->
     render_docs(DocContents, 0, Config);
 render_docs(DocContents, #docs_v1{} = D) ->
-    render_docs(DocContents, init_config(D, [])).
+    render_docs(DocContents, init_config(D, #{})).
 -spec render_docs([chunk_element()], 0, #config{}) -> unicode:chardata().
 render_docs(DocContents, Ind, D = #config{}) when is_integer(Ind) ->
     try
