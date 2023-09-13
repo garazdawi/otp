@@ -29,6 +29,8 @@
 	       is_data/1, is_c_var/1, let_body/1, letrec_body/1,
 	       seq_body/1, try_arg/1, type/1, values_es/1]).
 
+-type cerl() :: cerl:cerl().
+
 %% ---------------------------------------------------------------------
 
 %% @spec is_catchall(Clause::cerl()) -> boolean()
@@ -81,7 +83,7 @@ all_vars([]) ->
 %%
 %% @see is_catchall/1
 
--spec any_catchall([cerl:cerl()]) -> boolean().
+-spec any_catchall([cerl()]) -> boolean().
 
 any_catchall([C | Cs]) ->
     case is_catchall(C) of
@@ -112,7 +114,7 @@ any_catchall([]) ->
 %% This function could possibly be improved further, but constant
 %% folding should in general be performed elsewhere.
 
--spec eval_guard(cerl:cerl()) -> 'none' | {'value', term()}.
+-spec eval_guard(cerl()) -> 'none' | {'value', term()}.
 
 eval_guard(E) ->
     case type(E) of
@@ -140,7 +142,7 @@ eval_guard(E) ->
 
 %% ---------------------------------------------------------------------
 
--type bindings() :: [{cerl:cerl(), cerl:cerl()}].
+-type bindings() :: [{cerl(), cerl()}].
 
 %% @spec reduce(Clauses) -> {true, {Clause, Bindings}}
 %%                        | {false, Clauses}
@@ -196,7 +198,7 @@ reduce(Cs) ->
 %% @see match/2
 %% @see match_list/2
 
--type expr() :: 'any' | cerl:cerl().
+-type expr() :: 'any' | cerl().
 
 -spec reduce([cerl:c_clause()], [expr()]) ->
         {'true', {cerl:c_clause(), bindings()}} | {'false', [cerl:c_clause()]}.
@@ -313,7 +315,7 @@ reduce([], _, Cs) ->
 
 -type match_ret() :: 'none' | {'true', bindings()} | {'false', bindings()}.
 
--spec match(cerl:cerl(), expr()) -> match_ret().
+-spec match(cerl(), expr()) -> match_ret().
 
 match(P, E) ->
     match(P, E, []).
@@ -430,7 +432,7 @@ match_1(P, E, Bs) ->
 %%
 %% @see match/2
 
--spec match_list([cerl:cerl()], [expr()]) -> match_ret().
+-spec match_list([cerl()], [expr()]) -> match_ret().
 
 match_list([], []) ->
     {true, []};    % no patterns always match
