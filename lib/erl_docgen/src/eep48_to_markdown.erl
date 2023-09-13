@@ -176,6 +176,30 @@ convert(Module) ->
 
     ModulePath = which(Module),
 
+    {ok, SrcPath} = filelib:find_source(ModulePath),
+    case os:cmd("grep '@doc' " ++ SrcPath) of
+        [] ->
+            convert_chunk(Module, ModulePath);
+        _ ->
+            convert_edoc(Module, ModulePath, SrcPath)
+    end.
+
+convert_edoc(Module, ModulePath, SrcPath) ->
+    case code:get_doc(Module, #{ sources => [eep48] }) of
+        {ok, #docs_v1{ module_doc = hidden }} ->
+            ok;
+        _ ->
+            ok = edoc:files(
+                   [SrcPath],
+                   [{doclet, edoc_doclet_chunks},
+                    {layout, edoc_layout_chunks},
+                    {preprocess,true},
+                    {includes,[filename:join(code:lib_dir(get_app(Module)),"include")]},
+                    {dir,filename:join(code:lib_dir(get_app(Module)),"doc")}]),
+            convert_chunk(Module, ModulePath)
+    end.
+
+convert_chunk(Module, ModulePath) ->
     case code:get_doc(Module, #{ sources => [eep48] }) of
         {ok, #docs_v1{ format = <<"application/erlang+html">>,
                        module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
@@ -1293,7 +1317,7 @@ render_element({code, _, Content}, State, Pos, Ind, D) ->
     TypedDocs =
         maybe
             %% We do not do any transform if we are in an `a` already
-            true ?= a =/= hd(State),
+            true ?= State =:= [] orelse a =/= hd(State),
             {ok, T, _} ?= erl_scan:string(unicode:characters_to_list([Docs,"."]), {1, 1}),
             {ok, [{call,_,{atom,_,Name},Args}]} ?=
                 case erl_parse:parse_exprs(T) of
@@ -1402,6 +1426,8 @@ render_element({b, _, Content}, State, Pos, Ind, D) ->
             {["__", Docs, "__"], NewPos + 4}
     end;
 render_element({pre, [], [{code,Attr,Content}]}, State, Pos, Ind, D) ->
+    render_element({pre, Attr, Content}, State, Pos, Ind, D);
+render_element({pre, Attr, Content}, State, Pos, Ind, D) ->
     %% This is a pre without any links or emphasis, so we use markdown
 
     %% For pre we make sure to respect the newlines in pre
