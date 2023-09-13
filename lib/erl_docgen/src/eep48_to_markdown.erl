@@ -175,10 +175,11 @@ convert(Module) ->
     io:format("Converting: ~p~n",[Module]),
 
     ModulePath = which(Module),
+    App = get_app(Module),
 
     {ok, SrcPath} = filelib:find_source(ModulePath),
     case os:cmd("grep '@doc' " ++ SrcPath) of
-        [] ->
+        Res when Res =:= []; App =:= "wx" ->
             convert_chunk(Module, ModulePath);
         _ ->
             convert_edoc(Module, ModulePath, SrcPath)
