@@ -284,11 +284,13 @@ mapfoldl(F, S, [L | Ls]) ->
 mapfoldl(_, S, []) ->
     {[], S}.
 
+%% =====================================================================
+%% @type set(T) = //stdlib/sets:set(T)
+-type set(T) :: sets:set(T).
 
 %% =====================================================================
 %% @spec variables(syntaxTree()) -> set(atom())
 %%
-%% @type set(T) = //stdlib/sets:set(T)
 %%
 %% @doc Returns the names of variables occurring in a syntax tree, The
 %% result is a set of variable names represented by atoms. Macro names
@@ -296,7 +298,7 @@ mapfoldl(_, S, []) ->
 %%
 %% @see //stdlib/sets
 
--spec variables(syntaxTree()) -> sets:set(atom()).
+-spec variables(syntaxTree()) -> set(atom()).
 
 variables(Tree) ->
     variables(Tree, sets:new()).
@@ -351,7 +353,7 @@ default_variable_name(N) ->
 %%
 %% @see new_variable_name/2
 
--spec new_variable_name(sets:set(atom())) -> atom().
+-spec new_variable_name(set(atom())) -> atom().
 
 new_variable_name(S) ->
     new_variable_name(fun default_variable_name/1, S).
@@ -377,7 +379,7 @@ new_variable_name(S) ->
 %% @see //stdlib/sets
 %% @see //stdlib/random
 
--spec new_variable_name(fun((integer()) -> atom()), sets:set(atom())) -> atom().
+-spec new_variable_name(fun((integer()) -> atom()), set(atom())) -> atom().
 
 new_variable_name(F, S) ->
     R = start_range(S),
@@ -430,7 +432,7 @@ generate(_Key, Range) ->
 %% 
 %% @see new_variable_name/1
 
--spec new_variable_names(integer(), sets:set(atom())) -> [atom()].
+-spec new_variable_names(integer(), set(atom())) -> [atom()].
 
 new_variable_names(N, S) ->
     new_variable_names(N, fun default_variable_name/1, S).
@@ -446,7 +448,7 @@ new_variable_names(N, S) ->
 %% 
 %% @see new_variable_name/2
 
--spec new_variable_names(integer(), fun((integer()) -> atom()), sets:set(atom())) ->
+-spec new_variable_names(integer(), fun((integer()) -> atom()), set(atom())) ->
 	[atom()].
 
 new_variable_names(N, F, S) when is_integer(N) ->
