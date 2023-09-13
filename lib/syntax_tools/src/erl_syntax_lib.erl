@@ -462,12 +462,12 @@ new_variable_names(N, Names, R, F, S) when N > 0 ->
 new_variable_names(0, Names, _, _, _) ->
     Names.
 
+%% @type ordset(T) = //stdlib/ordsets:ordset(T)
+-type ordset(T) :: ordsets:ordset(T).
 
 %% =====================================================================
 %% @spec annotate_bindings(Tree::syntaxTree(),
 %%                         Bindings::ordset(atom())) -> syntaxTree()
-%%
-%% @type ordset(T) = //stdlib/ordsets:ordset(T)
 %%
 %% @doc Adds or updates annotations on nodes in a syntax tree.
 %% `Bindings' specifies the set of bound variables in the
@@ -490,7 +490,7 @@ new_variable_names(0, Names, _, _, _) ->
 %% @see annotate_bindings/1
 %% @see //stdlib/ordsets
 
--spec annotate_bindings(syntaxTree(), ordsets:ordset(atom())) ->
+-spec annotate_bindings(syntaxTree(), ordset(atom())) ->
         syntaxTree().
 
 annotate_bindings(Tree, Env) ->
