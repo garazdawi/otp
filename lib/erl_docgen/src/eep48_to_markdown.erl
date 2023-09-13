@@ -202,7 +202,7 @@ convert_edoc(Module, ModulePath, SrcPath) ->
 convert_chunk(Module, ModulePath) ->
     case code:get_doc(Module, #{ sources => [eep48] }) of
         {ok, #docs_v1{ format = <<"application/erlang+html">>,
-                       module_doc = #{ <<"en">> := ModuleDoc }, docs = Docs } = DocsV1 } ->
+                       module_doc = #{} = ModuleDoc, docs = Docs } = DocsV1 } ->
 
             put(application, get_app(Module)),
 
@@ -277,7 +277,7 @@ convert_chunk(Module, ModulePath) ->
             convert(Module);
         Error ->
             io:format("Error: ~p~n",[Error]),
-            ok
+            error(badarg)
     end.
 
 convert(Files, Docs) ->
@@ -463,10 +463,13 @@ get_app(Module) ->
     end.
 
 %% Convert module documentation
-convert_moduledoc(ModuleHeader, Docs) ->
+convert_moduledoc(#{ <<"en">> := ModuleHeader }, Docs) ->
     String = render_docs(normalize(ModuleHeader), init_config(Docs, #{})),
     FixDiameterDepsBug = re:replace(String, "```text\n(-include_lib\\(\"diameter/include/diameter.hrl\"\\).)\n```", "\n    \\1\n"),
-    [{moduledoc,FixDiameterDepsBug}].
+    [{moduledoc,FixDiameterDepsBug}];
+convert_moduledoc(#{}, _) ->
+    [{moduledoc,""}].
+
 
 formatter(String) ->
     unicode:characters_to_binary(
