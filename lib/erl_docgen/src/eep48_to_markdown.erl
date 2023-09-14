@@ -1262,10 +1262,17 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                     }
             end;
         <<"https://erlang.org/doc/link/seeerl">> ->
-            case string:lexemes(Href, ":#") of
-                [_App, Mod] ->
+            ModAnchor =
+                case string:split(Href, ":") of
+                    [M] ->
+                        M;
+                    [_App, M] ->
+                        M
+                end,
+            case string:split(ModAnchor, "#") of
+                [Mod] ->
                     {["[", Docs, "](`m:", Mod, "`)"], NewPos};
-                [_App, Mod, Anchor] ->
+                [Mod, Anchor] ->
                     {["[", Docs, "](`m:", Mod, "#", Anchor, "`)"], NewPos}
             end;
         <<"https://erlang.org/doc/link/seeguide">> ->
