@@ -574,7 +574,7 @@ is_edoc_tag(_) -> false.
 -spec is_html_tag(atom()) -> boolean().
 is_html_tag(Tag) ->
     Tags = shell_docs:supported_tags(),
-    lists:member(Tag, Tags).
+    lists:member(Tag, Tags ++ [table,tr,td]).
 
 rewrite_a_tag(#xmlElement{name = a} = E) ->
     SimpleE = xmerl_lib:simplify_element(E),
