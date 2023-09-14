@@ -1158,6 +1158,9 @@ render_element({br, _Attr, _Content}, [td|_State], Pos, _Ind, _D)  ->
 render_element({br, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
     {["  \n", Docs], NewPos};
+render_element({p, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind ->
+    {Docs, NewPos} = render_element(E, State, 0, Ind, D),
+    {["\n\n", Docs], NewPos};
 render_element({Elem, _Attr, _Content} = E, State, Pos, Ind, D) when Pos > Ind, ?IS_BLOCK(Elem) ->
     {Docs, NewPos} = render_element(E, State, 0, Ind, D),
     {["\n", Docs], NewPos};
@@ -1629,7 +1632,7 @@ render_element(B, State, Pos, Ind, _D) when is_binary(B) ->
                    {"(\n\\s*)\\#([^S\r\n])",       "\\1\\\\#\\2"},  %% \n# -> \#
                    {"^(\\s*)\\#([^S\r\n])",        "\\1\\\\#\\2"},  %% ^# -> \#
                    {"\\[([^]]+\\])",               "\\\\[\\1"},     %% [..] -> \[..]
-                   {"<([^>]+>)",                   "\\\\<\\1"},     %% <..> -> \<..>
+                   {"<(http[^>]+>)",               "\\\\<\\1"},     %% <..> -> \<..>
                    {"(\s)_([^_]+_\s)",             "\\1\\\\_\\2"}]  %% _.._ -> \_.._
                  )
         end,

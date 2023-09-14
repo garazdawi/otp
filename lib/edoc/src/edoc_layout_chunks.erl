@@ -547,7 +547,9 @@ format_element(#xmlElement{} = E, Opts) ->
 	    format_content(Content, Opts);
 	{_, false} ->
 	    edoc_report:warning(0, source_file(Opts), "'~s' is not allowed - skipping tag, extracting content", [Name]),
-	    format_content(Content, Opts);
+            [<<"<",(atom_to_binary(Name))/binary,">">>,
+             format_content(Content, Opts),
+             <<"</",(atom_to_binary(Name))/binary,">">>];
 	_ ->
 	    [{Name, format_attributes(Attributes), format_content(Content, Opts)}]
     end.
@@ -574,7 +576,7 @@ is_edoc_tag(_) -> false.
 -spec is_html_tag(atom()) -> boolean().
 is_html_tag(Tag) ->
     Tags = shell_docs:supported_tags(),
-    lists:member(Tag, Tags ++ [table,tr,td]).
+    lists:member(Tag, Tags).
 
 rewrite_a_tag(#xmlElement{name = a} = E) ->
     SimpleE = xmerl_lib:simplify_element(E),
