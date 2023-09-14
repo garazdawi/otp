@@ -1214,7 +1214,7 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
             case Href of
                 <<"overview-summary.html",Rest/binary>> ->
                     %% This is an edoc overview anchor
-                    [Anchor] = string:split(Rest,"#"),
+                    Anchor = lists:last(string:split(Rest,"#")),
                     {["[", Docs, "](chapter.md", Anchor, ")"], NewPos};
                 Href ->
                     {["[", Docs, "](", Href, ")"], NewPos}
