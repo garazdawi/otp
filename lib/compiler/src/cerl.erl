@@ -192,6 +192,11 @@
 %% the annotation field only).
 %% =====================================================================
 
+-type ctype() :: 'alias'   | 'apply'  | 'binary' | 'bitstr' | 'call' | 'case'
+               | 'catch'   | 'clause' | 'cons'   | 'fun'    | 'let'  | 'letrec'
+               | 'literal' | 'map'  | 'map_pair' | 'module' | 'primop'
+               | 'receive' | 'seq'    | 'try'    | 'tuple'  | 'values' | 'var'.
+
 %% @spec type(Node::cerl()) -> atom()
 %%
 %% @doc Returns the type tag of <code>Node</code>. Current node types
@@ -264,12 +269,6 @@
 %% @see data_type/1
 %% @see subtrees/1
 %% @see meta/1
-
--type ctype() :: 'alias'   | 'apply'  | 'binary' | 'bitstr' | 'call' | 'case'
-               | 'catch'   | 'clause' | 'cons'   | 'fun'    | 'let'  | 'letrec'
-               | 'literal' | 'map'  | 'map_pair' | 'module' | 'primop'
-               | 'receive' | 'seq'    | 'try'    | 'tuple'  | 'values' | 'var'.
-
 -spec type(cerl()) -> ctype().
 
 type(#c_alias{}) -> alias;
