@@ -206,6 +206,7 @@ convert_chunk(Module, ModulePath) ->
                        module_doc = #{} = ModuleDoc, docs = Docs } = DocsV1 } ->
 
             put(application, get_app(Module)),
+            put(module, Module),
 
             %% We first recompile the file in order to make sure we have the correct AST
             %% The AST may have changed due to partial .hrl files being converted already.
@@ -1205,11 +1206,17 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
     case proplists:get_value(rel, Attr) of
         undefined when Href =/= undefined ->
             {["[", Docs, "](", Href, ")"], NewPos};
-        _ when not IsOTPLink ->
+        _ when not IsOTPLink; false ->
             {Docs, NewPos};
         <<"https://erlang.org/doc/link/seemfa">> ->
-            [_App, MFA] = string:split(Href, ":"),
-            [Mod, FA] = string:split(MFA, "#"),
+            MFA = case string:split(Href, ":") of
+                      [_App, HrefMFA] -> HrefMFA;
+                      Href -> Href
+                  end,
+            [Mod, FA] = case string:split(MFA, "#") of
+                            [MFA] -> [atom_to_list(get(module)), MFA];
+                            ModFA -> ModFA
+                        end,
             {Prefix, Func, Arity} =
                 case string:split(FA, "/") of
                     [<<"Module:", F/binary>>, A] ->
