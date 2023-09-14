@@ -1245,18 +1245,35 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                     }
             end;
         <<"https://erlang.org/doc/link/seetype">> ->
-            case string:lexemes(Href, ":#/") of
-                [_App, Mod, Type, Arity] ->
+            MFA = case string:split(Href, ":") of
+                      [_App, HrefMFA] -> HrefMFA;
+                      [Href] -> Href
+                  end,
+            [Mod, FA] = case string:split(MFA, "#") of
+                            [<<>>, MFANoAnchor] -> ["", MFANoAnchor];
+                            [Module, FunArgs] ->
+                                case string:equal(atom_to_list(get(module)), Module) of
+                                    true ->
+                                        ["",FunArgs];
+                                    false ->
+                                        [[Module,":"],FunArgs]
+                                end
+                        end,
+            {Func, Arity} =
+                case string:split(FA, "/") of
+                    [FA] ->
+                        {FA, 0};
+                    [F, A] ->
+                        {F, A}
+                end,
+            Link = [Mod,Func,"/",Arity],
+            case string:equal(Docs, Link) of
+                true ->
+                    {["[`t:", Link, "`]"], NewPos};
+                false ->
                     {
                      [
-                      "[", Docs, "](`t:",Mod,":",Type,"/",Arity,"`)"
-                     ],
-                     NewPos
-                    };
-                [_App, Mod, Type] ->
-                    {
-                     [
-                      "[", Docs, "](`t:",Mod,":",Type,"/0`)"
+                      "[", Docs, "](`t:", Link,"`)"
                      ],
                      NewPos
                     }
