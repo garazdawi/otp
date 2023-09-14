@@ -1033,6 +1033,7 @@ render_typecb_docs(Docs, D, Config) ->
 
 %%% General rendering functions
 render_docs(DocContents) ->
+    erase(module),
     formatter(render_docs(DocContents, init_config(#docs_v1{ docs = [] }, #{}))).
 -spec render_docs([chunk_element()], #config{}) -> unicode:chardata().
 render_docs(DocContents, #config{} = Config) ->
@@ -1042,6 +1043,7 @@ render_docs(DocContents, #docs_v1{} = D) ->
 -spec render_docs([chunk_element()], 0, #config{}) -> unicode:chardata().
 render_docs(DocContents, Ind, D = #config{}) when is_integer(Ind) ->
     try
+        [put(module,'') || get(module) == undefined],
         {Doc, _} = trimnl(render_docs(preprocess_docs(DocContents, D), [], 0, Ind, D)),
         unicode:characters_to_binary(Doc)
     catch throw:R:ST ->
@@ -1206,16 +1208,22 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
     case proplists:get_value(rel, Attr) of
         undefined when Href =/= undefined ->
             {["[", Docs, "](", Href, ")"], NewPos};
-        _ when not IsOTPLink; false ->
+        _ when not IsOTPLink, false ->
             {Docs, NewPos};
         <<"https://erlang.org/doc/link/seemfa">> ->
             MFA = case string:split(Href, ":") of
                       [_App, HrefMFA] -> HrefMFA;
-                      Href -> Href
+                      [Href] -> Href
                   end,
             [Mod, FA] = case string:split(MFA, "#") of
-                            [MFA] -> [atom_to_list(get(module)), MFA];
-                            ModFA -> ModFA
+                            [<<>>, MFANoAnchor] -> ["", MFANoAnchor];
+                            [Module, FunArgs] ->
+                                case string:equal(atom_to_list(get(module)), Module) of
+                                    true ->
+                                        ["",FunArgs];
+                                    false ->
+                                        [[Module,":"],FunArgs]
+                                end
                         end,
             {Prefix, Func, Arity} =
                 case string:split(FA, "/") of
@@ -1224,12 +1232,18 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                     [F, A] ->
                         {"", F, A}
                 end,
-            {
-             [
-              "[", Docs, "](`",Prefix,Mod,":",Func,"/",Arity,"`)"
-             ],
-             NewPos
-            };
+            Link = [Mod,Func,"/",Arity],
+            case string:equal(Docs, Link) of
+                true ->
+                    {["[`",Prefix,Link,"`]"], NewPos};
+                false ->
+                    {
+                     [
+                      "[", Docs, "](`",Prefix,Link,"`)"
+                     ],
+                     NewPos
+                    }
+            end;
         <<"https://erlang.org/doc/link/seetype">> ->
             case string:lexemes(Href, ":#/") of
                 [_App, Mod, Type, Arity] ->
