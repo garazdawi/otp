@@ -1233,7 +1233,7 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                         {"", F, A}
                 end,
             Link = [Mod,Func,"/",Arity],
-            case string:equal(Docs, Link) of
+            case string:equal(Docs, Link) orelse string:equal(Docs, ["`",Link,"`"]) of
                 true ->
                     {["[`",Prefix,Link,"`]"], NewPos};
                 false ->
@@ -1262,12 +1262,12 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
             {Func, Arity} =
                 case string:split(FA, "/") of
                     [FA] ->
-                        {FA, 0};
+                        {FA, "0"};
                     [F, A] ->
                         {F, A}
                 end,
             Link = [Mod,Func,"/",Arity],
-            case string:equal(Docs, Link) of
+            case string:equal(Docs, Link) orelse string:equal(Docs, ["`",Link,"`"]) of
                 true ->
                     {["[`t:", Link, "`]"], NewPos};
                 false ->
