@@ -179,7 +179,7 @@ convert(Module) ->
 
     {ok, SrcPath} = filelib:find_source(ModulePath),
     case os:cmd("grep '@doc' " ++ SrcPath) of
-        Res when Res =:= []; App =:= "wx" ->
+        Res when Res =:= []; App =:= "wx"; Module =:= argparse ->
             convert_chunk(Module, ModulePath);
         _ ->
             convert_edoc(Module, ModulePath, SrcPath)
@@ -1207,12 +1207,18 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
     {Docs, NewPos} = render_docs(Content, [a|State], Pos, Ind, D),
     Href = proplists:get_value(href, Attr),
     undefined = proplists:get_value(id, Attr),
-    IsOTPLink = Href =/= undefined andalso string:find(Href, ":") =/= nomatch,
     case proplists:get_value(rel, Attr) of
         undefined when Href =/= undefined ->
-            {["[", Docs, "](", Href, ")"], NewPos};
-        _ when not IsOTPLink, false ->
-            {Docs, NewPos};
+            %% This types of links are usually from edoc, but could also be
+            %% <url> from erl_docgen
+            case Href of
+                <<"overview-summary.html",Rest/binary>> ->
+                    %% This is an edoc overview anchor
+                    [Anchor] = string:split(Rest,"#"),
+                    {["[", Docs, "](chapter.md", Anchor, ")"], NewPos};
+                Href ->
+                    {["[", Docs, "](", Href, ")"], NewPos}
+            end;
         <<"https://erlang.org/doc/link/seemfa">> ->
             MFA = case string:split(Href, ":") of
                       [_App, HrefMFA] -> HrefMFA;
