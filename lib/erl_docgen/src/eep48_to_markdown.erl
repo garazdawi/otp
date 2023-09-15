@@ -1295,11 +1295,13 @@ render_element({a, Attr, Content}, State, Pos, Ind, D) ->
                     [_App, M] ->
                         M
                 end,
-            case string:split(ModAnchor, "#") of
-                [Mod] ->
-                    {["[", Docs, "](`m:", Mod, "`)"], NewPos};
-                [Mod, Anchor] ->
-                    {["[", Docs, "](`m:", Mod, "#", Anchor, "`)"], NewPos}
+            DocsNoMan3 = re:replace(Docs,["(`?",ModAnchor,")\\(3\\)(`?)"],"\\1\\2"),
+            case string:equal(DocsNoMan3, ModAnchor) orelse
+                string:equal(DocsNoMan3, ["`",ModAnchor,"`"]) of
+                true ->
+                    {["[`m:", ModAnchor, "`]"], NewPos};
+                false ->
+                    {["[", Docs, "](`m:", ModAnchor, "`)"], NewPos}
             end;
         <<"https://erlang.org/doc/link/seeguide">> ->
             CurrentApplication = unicode:characters_to_binary(get(application)),
