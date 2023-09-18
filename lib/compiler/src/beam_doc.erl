@@ -2,37 +2,24 @@
 
 -feature(maybe_expr, enable).
 
--export([main/1]).
+-export([main/2]).
 
 -include_lib("kernel/include/eep48.hrl").
 
--spec main(term()) -> term().
-main(BeamFile) ->
+-spec main(term(), term()) -> term().
+main(Filename, AST) ->
     try
-        {ok, _Module, Chunks} = beam_lib:all_chunks(BeamFile),
-        {debug_info_v1, _, {AST, Meta}} = binary_to_term(proplists:get_value("Dbgi", Chunks)),
-        {_, File} = lists:foldl(
-                            fun({attribute, [{generated,true}|_], file, {File, _}}, {false, _}) ->
-                                    {true, File};
-                               (_, File) when is_tuple(File) ->
-                                    File;
-                               ({attribute, _, file, {File,_}}, _) ->
-                                    File;
-                               ({attribute, _Anno, module, _}, File) ->
-                                    {false, File}
-                            end, undefined, AST),
-        Filename = filename:join(proplists:get_value(cwd, Meta, ""), File),
         {value, {attribute, ModuleDocAnno, moduledoc, ModuleDoc}} = lists:keysearch(moduledoc, 3, AST),
-        NewDocs = #docs_v1{
-                     format = <<"text/markdown">>,
-                     anno = ModuleDocAnno,
-                     module_doc = #{ <<"en">> => unicode:characters_to_binary(ModuleDoc) },
-                     docs = extract_docs(AST, filename:dirname(Filename)) },
-        beam_lib:build_module([{"Docs",term_to_binary(NewDocs)} | proplists:delete("Docs", Chunks)])
+        #docs_v1{
+           format = <<"text/markdown">>,
+           anno = ModuleDocAnno,
+           module_doc = #{ <<"en">> => unicode:characters_to_binary(ModuleDoc) },
+           docs = extract_docs(AST, filename:dirname(Filename)) }
     catch E:R:ST ->
-            io:format("Failed to convert ~ts~n",[BeamFile]),
+            io:format("Failed to convert ~ts~n",[AST]),
             erlang:raise(E, R, ST)
     end.
+
 
 extract_docs(AST, Cwd) ->
     extract_docs(expand_anno(AST), {undefined, #{}}, Cwd).

@@ -281,7 +281,7 @@ expand_opt(no_module_opt=O, Os) ->
 expand_opt({check_ssa,Tag}, Os) ->
     [check_ssa, Tag | Os];
 expand_opt(beam_docs, Os) ->
-    [beam_docs, debug_info | Os];
+    [beam_docs, Os];
 expand_opt(O, Os) -> [O|Os].
 
 -spec format_error(error_description()) -> iolist().
@@ -337,19 +337,20 @@ format_error_reason(Class, Reason, Stack) ->
     erl_error:format_exception(Class, Reason, Stack, Opts).
 
 %% The compile state record.
--record(compile, {filename="" :: file:filename(),
-		  dir=""      :: file:filename(),
-		  base=""     :: file:filename(),
-		  ifile=""    :: file:filename(),
-		  ofile=""    :: file:filename(),
-		  module=[]   :: module() | [],
-		  abstract_code=[] :: abstract_code(), %Abstract code for debugger.
-		  options=[]  :: [option()],  %Options for compilation
-		  mod_options=[]  :: [option()], %Options for module_info
-                  encoding=none :: none | epp:source_encoding(),
-		  errors=[]     :: errors(),
-		  warnings=[]   :: warnings(),
-		  extra_chunks=[] :: [{binary(), binary()}]}).
+-record(compile, {filename=""      :: file:filename(),
+                  dir=""           :: file:filename(),
+                  base=""          :: file:filename(),
+                  ifile=""         :: file:filename(),
+                  ofile=""         :: file:filename(),
+                  module=[]        :: module() | [],
+                  abstract_code=[] :: abstract_code(), %Abstract code for debugger.
+                  options=[]       :: [option()],  %Options for compilation
+                  mod_options=[]   :: [option()], %Options for module_info
+                  encoding=none    :: none | epp:source_encoding(),
+                  errors=[]        :: errors(),
+                  warnings=[]      :: warnings(),
+                  docs=[]          :: abstract_code(),
+                  extra_chunks=[]  :: [{binary(), binary()}]}).
 
 internal({forms,Forms}, Opts0) ->
     {_,Ps} = passes(forms, Opts0),
@@ -1565,6 +1566,23 @@ core_inline_module(Code0, #compile{options=Opts}=St) ->
 save_abstract_code(Code, St) ->
     {ok,Code,St#compile{abstract_code=erl_parse:anno_to_term(Code)}}.
 
+-define(META_DOC_CHUNK, <<"Docs">>).
+
+beam_docs(Code, #compile{filename = Filename,
+                         dir = Dir,
+                         extra_chunks = ExtraChunks}=St) ->
+    %% F = fun ({attribute, _, Attr, _}) -> (Attr =:= doc) orelse (Attr =:= moduledoc) end,
+    %% Docs = lists:filter(F, Code),
+    Filename1  =filename:join(Dir, Filename),
+    Docs = beam_doc:main(Filename1, Code),
+    %% try
+    MetaDocs = [{?META_DOC_CHUNK, term_to_binary(Docs)} | ExtraChunks],
+    {ok, Code, St#compile{extra_chunks = MetaDocs}}.
+    %% catch E:R:ST ->
+    %%         io:format("Failed to convert ~ts~n",[Docs]),
+    %%         erlang:raise(E, R, ST)
+    %% end.
+
 debug_info(#compile{module=Module,ofile=OFile}=St) ->
     {DebugInfo,Opts2} = debug_info_chunk(St),
     case member(encrypt_debug_info, Opts2) of
@@ -1682,14 +1700,14 @@ beam_validator_1(Code, #compile{errors=Errors0}=St, Level) ->
     end.
 
 
-beam_docs(Code0, St) ->
-    try
-        {ok, Code1} = beam_doc:main(Code0),
-        {ok, Code1, St}
-    catch E:R:ST ->
-            io:format("Failed to add docs to ~ts~n",[St#compile.ifile]),
-            erlang:raise(E, R, ST)
-    end.
+%% beam_docs(Code0, St) ->
+%%     try
+%%         {ok, Code1} = beam_doc:main(Code0),
+%%         {ok, Code1, St}
+%%     catch E:R:ST ->
+%%             io:format("Failed to add docs to ~ts~n",[St#compile.ifile]),
+%%             erlang:raise(E, R, ST)
+%%     end.
 
 beam_asm(Code0, #compile{ifile=File,extra_chunks=ExtraChunks,options=CompilerOpts}=St) ->
     case debug_info(St) of
