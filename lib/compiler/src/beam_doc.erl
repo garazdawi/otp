@@ -7,14 +7,14 @@
 -include_lib("kernel/include/eep48.hrl").
 
 -spec main(term(), term()) -> term().
-main(Filename, AST) ->
+main(Dirname, AST) ->
     try
         {value, {attribute, ModuleDocAnno, moduledoc, ModuleDoc}} = lists:keysearch(moduledoc, 3, AST),
         #docs_v1{
            format = <<"text/markdown">>,
            anno = ModuleDocAnno,
            module_doc = #{ <<"en">> => unicode:characters_to_binary(ModuleDoc) },
-           docs = extract_docs(AST, filename:dirname(Filename)) }
+           docs = extract_docs(AST, Dirname) }
     catch E:R:ST ->
             io:format("Failed to convert ~ts~n",[AST]),
             erlang:raise(E, R, ST)

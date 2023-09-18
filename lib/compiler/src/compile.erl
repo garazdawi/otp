@@ -1568,13 +1568,11 @@ save_abstract_code(Code, St) ->
 
 -define(META_DOC_CHUNK, <<"Docs">>).
 
-beam_docs(Code, #compile{filename = Filename,
-                         dir = Dir,
+beam_docs(Code, #compile{dir = Dir,
                          extra_chunks = ExtraChunks}=St) ->
     %% F = fun ({attribute, _, Attr, _}) -> (Attr =:= doc) orelse (Attr =:= moduledoc) end,
     %% Docs = lists:filter(F, Code),
-    Filename1  =filename:join(Dir, Filename),
-    Docs = beam_doc:main(Filename1, Code),
+    Docs = beam_doc:main(Dir, Code),
     %% try
     MetaDocs = [{?META_DOC_CHUNK, term_to_binary(Docs)} | ExtraChunks],
     {ok, Code, St#compile{extra_chunks = MetaDocs}}.
