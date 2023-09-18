@@ -3935,49 +3935,50 @@ port_info(Port) ->
 	Result -> Result
     end.
 
--spec erlang:port_info(Port, connected) -> {connected, Pid} | 'undefined' when
+-spec erlang:port_info(Port, Item :: connected) -> {connected, Pid} | 'undefined' when
       Port :: port() | atom(),
       Pid :: pid();
-		      (Port, id) -> {id, Index} | 'undefined' when
+		      (Port, Item :: id) -> {id, Index} | 'undefined' when
       Port :: port() | atom(),
       Index :: non_neg_integer();
-		      (Port, input) -> {input, Bytes} | 'undefined' when
+		      (Port, Item :: input) -> {input, Bytes} | 'undefined' when
       Port :: port() | atom(),
       Bytes :: non_neg_integer();
-		      (Port, links) -> {links, Pids} | 'undefined' when
+		      (Port, Item :: links) -> {links, Pids} | 'undefined' when
       Port :: port() | atom(),
       Pids :: [pid()];
-		      (Port, locking) -> {locking, Locking} | 'undefined' when
+		      (Port, Item :: locking) -> {locking, Locking} | 'undefined' when
       Port :: port() | atom(),
       Locking :: 'false' | 'port_level' | 'driver_level';
-		      (Port, memory) -> {memory, Bytes} | 'undefined' when
+		      (Port, Item :: memory) -> {memory, Bytes} | 'undefined' when
       Port :: port() | atom(),
       Bytes :: non_neg_integer();
-		      (Port, monitors) -> {monitors, Monitors} | 'undefined' when
+		      (Port, Item :: monitors) -> {monitors, Monitors} | 'undefined' when
       Port :: port() | atom(),
       Monitors :: [{process, pid()}];
-		      (Port, monitored_by) -> {monitored_by, MonitoredBy} | 'undefined' when
+		      (Port, Item :: monitored_by) -> {monitored_by, MonitoredBy} | 'undefined' when
       Port :: port() | atom(),
       MonitoredBy :: [pid()];
-		      (Port, name) -> {name, Name} | 'undefined' when
+		      (Port, Item :: name) -> {name, Name} | 'undefined' when
       Port :: port() | atom(),
       Name :: string();
-		      (Port, os_pid) -> {os_pid, OsPid} | 'undefined' when
+		      (Port, Item :: os_pid) -> {os_pid, OsPid} | 'undefined' when
       Port :: port() | atom(),
       OsPid :: non_neg_integer() | 'undefined';
-		      (Port, output) -> {output, Bytes} | 'undefined' when
+		      (Port, Item :: output) -> {output, Bytes} | 'undefined' when
       Port :: port() | atom(),
       Bytes :: non_neg_integer();
-		      (Port, parallelism) -> {parallelism, Boolean} | 'undefined' when
+		      (Port, Item :: parallelism) -> {parallelism, Boolean} | 'undefined' when
       Port :: port() | atom(),
       Boolean :: boolean();
-		      (Port, queue_size) -> {queue_size, Bytes} | 'undefined' when
+		      (Port, Item :: queue_size) -> {queue_size, Bytes} | 'undefined' when
       Port :: port() | atom(),
       Bytes :: non_neg_integer();
-		      (Port, registered_name) -> {registered_name, RegisteredName} | [] | 'undefined' when
+		      (Port, Item :: registered_name) -> {registered_name, RegisteredName} | [] | 'undefined' when
       Port :: port() | atom(),
       RegisteredName :: atom().
 
+-doc {file, "../../doc/src/erlang_port_info.md"}.
 port_info(Port, Item) ->
     case case erts_internal:port_info(Port, Item) of
 	     Ref when erlang:is_reference(Ref) -> receive {Ref, Res} -> Res end;
