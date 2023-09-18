@@ -88,6 +88,24 @@
 compile(File) ->
     compile(File,[]).
 
+-spec compile(Asn1module, Options) -> ok | {error, Reason}
+                 when
+                     Asn1module :: atom() | string(),
+                     Options :: [Option | OldOption],
+                     Option ::
+                         ber | per | uper | jer | der |
+                         compact_bit_string | legacy_bit_string |
+                         legacy_erlang_types | noobj |
+                         {n2n, EnumTypeName :: term()} |
+                         {outdir, Dir :: term()} |
+                         {i, IncludeDir :: term()} |
+                         asn1config | undec_rest | no_ok_wrapper |
+                         {macro_name_prefix, Prefix} |
+                         {record_name_prefix, Prefix} |
+                         verbose | warnings_as_errors | deterministic,
+                     OldOption :: ber | per,
+                     Reason :: term(),
+                     Prefix :: string().
 compile(File, Options0) when is_list(Options0) ->
     try translate_options(Options0) of
 	Options1 ->
@@ -1301,6 +1319,13 @@ test(Module, [] = Options)               -> test_module(Module, Options);
 test(Module, [{i, _}|_] = Options)       -> test_module(Module, Options);
 test(Module, Type)                       -> test_type(Module, Type, []).
 
+-spec test(Module, Type, Value | Options) -> ok | {error, Reason}
+              when
+                  Module :: atom(),
+                  Type :: atom(),
+                  Value :: term(),
+                  Options :: [{i, IncludeDir :: term()}],
+                  Reason :: term().
 test(Module, Type, [] = Options)         -> test_type(Module, Type, Options);
 test(Module, Type, [{i, _}|_] = Options) -> test_type(Module, Type, Options);
 test(Module, Type, Value)                -> test_value(Module, Type, Value).
@@ -1374,6 +1399,10 @@ test_value_decode(Module, Type, Value, Bytes) ->
                        {Module, Type, Value}, Error}}}}
     end.
 
+-spec value(Module, Type) -> {ok, Value} | {error, Reason} when Module :: atom(),
+   Type :: atom(),
+   Value :: term(),
+   Reason :: term().
 value(Module, Type) -> value(Module, Type, []).
 
 value(Module, Type, Includes) ->
