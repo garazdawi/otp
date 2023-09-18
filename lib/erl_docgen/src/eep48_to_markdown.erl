@@ -121,6 +121,7 @@
     | h6.
 
 -export([convert/1, convert_application/1, modules/1]).
+-export([convert/2, convert_application/2]).
 
 -spec normalize(Docs) -> NormalizedDocs when
     Docs :: chunk_elements(),
@@ -129,13 +130,15 @@ normalize(Docs) ->
     shell_docs:normalize(Docs).
 
 convert_application(App) ->
+    convert_application(App, [docs]).
+convert_application(App, What) ->
     put(application, atom_to_list(App)),
     Modules = modules(App),
     case App of
         wx ->
             %% We cannot run wx in parallel as there are docs in wx.hrl and many different
             %% modules have types defined in it.
-            [try convert(M)
+            [try convert(M, What)
              catch E:R:ST ->
                      io:format("~p:~p:~p~n",[E,R,ST]),
                      erlang:raise(E,R,ST)
@@ -145,7 +148,7 @@ convert_application(App) ->
                 [spawn_monitor(
                    fun() ->
                            put(application, atom_to_list(App)),
-                           try convert(M)
+                           try convert(M, What)
                            catch E:R:ST ->
                                    io:format("~p:~p:~p~n",[E,R,ST]),
                                    exit({error,E,R,ST})
@@ -172,6 +175,8 @@ which(Module) ->
     end.
 
 convert(Module) ->
+    convert(Module,[docs]).
+convert(Module, What) ->
     io:format("Converting: ~p~n",[Module]),
 
     ModulePath = which(Module),
@@ -180,12 +185,12 @@ convert(Module) ->
     {ok, SrcPath} = filelib:find_source(ModulePath),
     case os:cmd("grep '@doc' " ++ SrcPath) of
         Res when Res =:= []; App =:= "wx"; Module =:= argparse ->
-            convert_chunk(Module, ModulePath);
+            convert_chunk(What, Module, ModulePath);
         _ ->
-            convert_edoc(Module, ModulePath, SrcPath)
+            convert_edoc(What, Module, ModulePath, SrcPath)
     end.
 
-convert_edoc(Module, ModulePath, SrcPath) ->
+convert_edoc(What, Module, ModulePath, SrcPath) ->
     case code:get_doc(Module, #{ sources => [eep48] }) of
         {ok, #docs_v1{ module_doc = hidden }} ->
             ok;
@@ -197,10 +202,10 @@ convert_edoc(Module, ModulePath, SrcPath) ->
                     {preprocess,true},
                     {includes,[filename:join(code:lib_dir(get_app(Module)),"include")]},
                     {dir,filename:join(code:lib_dir(get_app(Module)),"doc")}]),
-            convert_chunk(Module, ModulePath)
+            convert_chunk(What, Module, ModulePath)
     end.
 
-convert_chunk(Module, ModulePath) ->
+convert_chunk(What, Module, ModulePath) ->
     case code:get_doc(Module, #{ sources => [eep48] }) of
         {ok, #docs_v1{ format = <<"application/erlang+html">>,
                        module_doc = #{} = ModuleDoc, docs = Docs } = DocsV1 } ->
@@ -226,7 +231,8 @@ convert_chunk(Module, ModulePath) ->
                 end,
 
 
-            NewFiles = convert(#{ meta => Meta, ast => AST, docs => DocsV1 },
+            NewFiles = convert(What,
+                               #{ meta => Meta, ast => AST, docs => DocsV1 },
                                filter_and_fix_anno(expand_anno(AST), Docs)),
 
             %% io:format("~p~n", [AST]),
@@ -252,7 +258,13 @@ convert_chunk(Module, ModulePath) ->
             {BeforeModule, AfterModule} = lists:split(ModuleDocLine, maps:get(Filename, NewFiles)),
 
             NewFilesWithModuleDoc =
-                NewFiles#{ Filename => BeforeModule ++ convert_moduledoc(ModuleDoc, DocsV1)
+                NewFiles#{ Filename => BeforeModule ++
+                               case lists:member(docs,What) of
+                                   true ->
+                                       convert_moduledoc(ModuleDoc, DocsV1);
+                                   false ->
+                                       []
+                               end
                            ++ generate_skipped_callbacks(maps:get(skipped, NewFiles, []), NewFiles)
                            ++ AfterModule
                          },
@@ -276,13 +288,13 @@ convert_chunk(Module, ModulePath) ->
             {ok, Module, Chunks} = beam_lib:all_chunks(ModulePath),
             {ok, NewBeamFile} = beam_lib:build_module(proplists:delete("Docs", Chunks)),
             file:write_file(ModulePath, NewBeamFile),
-            convert(Module);
+            convert(Module, What);
         Error ->
             io:format("Error: ~p~n",[Error]),
             error(badarg)
     end.
 
-convert(Files, Docs) ->
+convert(What, Files, Docs) ->
     SortedDocs =
         lists:sort(
           fun(MFA1, MFA2) ->
@@ -313,7 +325,7 @@ convert(Files, Docs) ->
                   end, {[hd(SortedDocs)],[]}, tl(SortedDocs))
         end,
     %% io:format("~p",[SortedDocs]),
-    convert([], [], lists:reverse(Prev ++ Acc), Files).
+    convert([], [], lists:reverse(Prev ++ Acc), Files#{ what => What }).
 convert([], [], [], Files) ->
     %% When there are no documented functions in module, eg. gen_fsm
     Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
@@ -330,8 +342,33 @@ convert(Lines, Acc, [{Kind, Anno, Slogan, _D, _Meta} = E | T] = Docs, Files) ->
         true ->
             {Before, After} = lists:split(erl_anno:line(Anno)-1, Lines),
             {{Kind, Anno, Slogan, D, Meta}, NewT} = maybe_merge_entries(E, T),
-            DocString = generate_doc_attributes(D, Meta, Files#{ current => E }),
-            convert(Before, DocString ++ After ++ Acc, NewT, Files);
+            DocString = case lists:member(docs, maps:get(what, Files)) of
+                            true ->
+                                generate_doc_attributes(D, Meta, Files#{ current => E });
+                            false ->
+                                []
+                        end,
+            SpecString =
+                case lists:search(
+                       fun(Elem) ->
+                               element(1, Kind) =:= function andalso
+                                   tuple_size(Elem) =:= 4 andalso
+                                   element(3, Elem) =:= spec andalso
+                                   element(1, element(4, Elem)) =:= erlang:delete_element(1, Kind)
+                       end, maps:get(ast, Files)) of
+                    {value,_} -> %% Found a spec
+                        "";
+                    _ when D =:= #{} -> %% Undocumented function
+                        "";
+                    false ->
+                        case lists:member(specs, maps:get(what, Files)) of
+                            true ->
+                                generate_spec(E, Files);
+                            false ->
+                                []
+                        end
+                end,
+            convert(Before, SpecString ++ DocString ++ After ++ Acc, NewT, Files);
         false ->
             Cwd = proplists:get_value(cwd, maps:get(meta, Files), ""),
             Filename = filename:join(Cwd, erl_anno:file(Anno)),
@@ -442,17 +479,114 @@ munge_types([{li,_,C}|T]) ->
 munge_types([]) ->
     [].
 
+generate_spec({{function, F, A}, _, Slogan, D, Meta}, Files) ->
+    [_, Args] = string:split(Slogan, "("),
+    Return = case string:find(Slogan,"->") of
+                 nomatch -> " -> term()";
+                 _ -> ""
+             end,
+    SpecProto = lists:flatten(
+                      io_lib:format(
+                        "-spec ~ts(~ts",
+                        [io_lib:write_atom(F),[Args, Return]])),
+    try
+        {ok, Toks, _} = erl_scan:string(SpecProto ++ ".",{1, 1}),
+        {ok,{attribute, _, spec, {{F, A}, _}}} = erl_parse:parse_form(Toks),
+
+        Types =
+            case maps:find(equiv, Meta) of
+                error ->
+                    case D of
+                        #{ <<"en">> := [{ul,[{class,<<"types">>}],Ts} | _Rest] } ->
+                            Ts;
+                        #{ <<"en">> := _ } ->
+                            []
+                    end;
+                {ok, Equiv} when D =:= #{} ->
+                    #docs_v1{ docs = Ds } = maps:get(docs, Files),
+                    {Equiv, _, _, EquivD, _} = lists:keyfind(Equiv, 1, Ds),
+                    case EquivD of
+                        #{ <<"en">> := [{ul,[{class,<<"types">>}],Ts} | _] } ->
+                            Ts;
+                        #{ <<"en">> := _ } ->
+                            []
+                    end
+            end,
+        Spec =
+            case Types of
+                [] ->
+                    io_lib:format("~ts.",[SpecProto]);
+                Types ->
+                    io_lib:format(
+                      "~ts when ~ts.",
+                      [SpecProto,
+                       lists:join(",\n   ", munge_types(Types))
+                      ])
+            end,
+        validate_spec([lists:flatten(Spec)], F, A)
+    catch E:R:ST ->
+            io:format("Failed to parse: ~ts~n  ~p:~p\n  ~p~n",[SpecProto,E,R,ST]),
+            %% erlang:raise(E,R,ST),
+            [["%% -spec ",Slogan]]
+    end;
+generate_spec(_E, _Files) ->
+    "".
+
 pp(String) ->
     maybe
-        {ok, T, _} ?= erl_scan:string(lists:flatten(String), {1,1}),
+        {ok, T, _} ?= erl_scan:string(lists:flatten(String), {0,1}),
         {ok, {attribute, _, _, _} = Attr} ?= erl_parse:parse_form(T),
-        erl_pp:attribute(Attr)
+        [string:trim(lists:flatten(erl_pp:attribute(Attr)))]
     else
         {ok, {function, _, _, _, _} = Function} ->
-            erl_pp:function(Function);
+            [string:trim(lists:flatten(erl_pp:function(Function)))];
         Else ->
             io:format("Failed to parse: ~ts~n ~p",[String, Else]),
             error(Else)
+    end.
+
+validate_spec(Spec, Name, Arity) ->
+    maybe
+        {ok, Toks, _} ?= erl_scan:string(lists:flatten(Spec), {2,1}),
+        {ok, Form} ?= erl_parse:parse_form(Toks),
+        {ok, ValidSpec} ?=
+            case erl_lint:module(
+                   [{attribute,{0,2},module,a},
+                    {function,{1,1},
+                     Name, Arity,
+                     [{clause,{1,1},lists:duplicate(Arity,{var,{1,5},'_'}),
+                       [],[{atom,{1,11},ok}]}]},
+                    Form],"") of
+                {ok,_Warnings} ->
+                    {ok, Spec};
+                {error, [{_, Errors}], _Warnings} ->
+                    try
+                        io:format("Errors: ~p~n",[lists:reverse(lists:sort(Errors))]),
+                        NewSpec =
+                            lists:foldl(
+                              fun({{Line, Col},erl_lint,{singleton_typevar,Name}}, SpecLines) ->
+                                      {LinesBefore,[Curr | LinesAfter]} =
+                                          lists:split(Line - 2, SpecLines),
+                                      NameLen = string:length(atom_to_list(Name)),
+                                      Before = string:slice(Curr, 0, Col - 1 + NameLen),
+                                      After = string:slice(Curr, Col + NameLen -1),
+                                      LinesBefore ++ [[Before,"::term()",After] | LinesAfter];
+                                 ({_, erl_lint, {undefined_type,_}}, SpecLines) ->
+                                      SpecLines;
+                                 (Error, _) ->
+                                      throw(Error)
+                              end, string:split(Spec, "\n", all),
+                              lists:reverse(lists:sort(Errors))),
+                        {ok, pp(lists:join($\n,NewSpec))}
+                    catch _:Error ->
+                            io:format("~p~n",[Error]),
+                            [unicode:characters_to_binary(re:replace(Spec, "^", "%% ", [multiline,global,unicode]))]
+                    end
+            end,
+        ValidSpec
+    else
+        _ ->
+            [unicode:characters_to_binary(re:replace(Spec, "^", "%% ", [multiline,global,unicode]))]
     end.
 
 get_app(Module) ->
