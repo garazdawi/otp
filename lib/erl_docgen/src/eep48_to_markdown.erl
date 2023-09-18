@@ -567,10 +567,10 @@ validate_spec(Spec, Name, Arity) ->
                         io:format("Errors: ~p~n",[lists:reverse(lists:sort(Errors))]),
                         NewSpec =
                             lists:foldl(
-                              fun({{Line, Col},erl_lint,{singleton_typevar,Name}}, SpecLines) ->
+                              fun({{Line, Col},erl_lint,{singleton_typevar,SName}}, SpecLines) ->
                                       {LinesBefore,[Curr | LinesAfter]} =
                                           lists:split(Line - 2, SpecLines),
-                                      NameLen = string:length(atom_to_list(Name)),
+                                      NameLen = string:length(atom_to_list(SName)),
                                       Before = string:slice(Curr, 0, Col - 1 + NameLen),
                                       After = string:slice(Curr, Col + NameLen -1),
                                       LinesBefore ++ [[Before,"::term()",After] | LinesAfter];
