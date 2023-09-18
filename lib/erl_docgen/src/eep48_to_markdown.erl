@@ -351,14 +351,17 @@ convert(Lines, Acc, [{Kind, Anno, Slogan, _D, _Meta} = E | T] = Docs, Files) ->
             SpecString =
                 case lists:search(
                        fun(Elem) ->
+                               {_, F, A} = Kind,
                                element(1, Kind) =:= function andalso
                                    tuple_size(Elem) =:= 4 andalso
                                    element(3, Elem) =:= spec andalso
-                                   element(1, element(4, Elem)) =:= erlang:delete_element(1, Kind)
+                                   (element(1, element(4, Elem)) =:= {F,A} orelse
+                                    element(1, element(4, Elem)) =:= {erlang,F,A})
                        end, maps:get(ast, Files)) of
                     {value,_} -> %% Found a spec
                         "";
-                    _ when D =:= #{} -> %% Undocumented function
+                    _ when D =:= #{}, not is_map_key(equiv, Meta) ->
+                        %% Undocumented function
                         "";
                     false ->
                         case lists:member(specs, maps:get(what, Files)) of
@@ -468,10 +471,10 @@ generate_skipped_callbacks([{{callback, F, A}, _, Slogan, D, Meta} | T], AllCBs,
 generate_skipped_callbacks([], _AllCBs, _Files) ->
     [].
 
-munge_types([{li,Attr,C},{li,_,[<<" "/utf8,_/binary>>|_] = LIC}|T]) ->
-    %% If the next li starts with a nbsp we join it to the previous list item as
-    %% it is a continuation of it.
-    munge_types([{li,Attr,C ++ LIC}|T]);
+%% munge_types([{li,Attr,C},{li,_,[<<" "/utf8,_/binary>>|_] = LIC}|T]) ->
+%%     %% If the next li starts with a nbsp we join it to the previous list item as
+%%     %% it is a continuation of it.
+%%     munge_types([{li,Attr,C ++ LIC}|T]);
 munge_types([{li,_,C}|T]) ->
     NoNBSP = re:replace(strip_tags(C),"\\h"," ",[unicode,global]),
     [Body | Variables] = lists:reverse(string:split(NoNBSP, " = ", all)),
