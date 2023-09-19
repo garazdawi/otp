@@ -8,7 +8,7 @@
 
 
 -record(docs, {cwd                 :: unicode:chardata(),             % Cwd
-               module = undefined  :: unicode:chardata() | undefined,
+               module_name = undefined  :: unicode:chardata() | undefined,
                doc    = undefined  :: unicode:chardata(), % Function/type/callback local doc
                meta   = maps:new() :: maps:map()}).      % Function/type/callback local meta
 -type internal_docs() :: #docs{}.
@@ -17,24 +17,19 @@
 -spec main(term(), term()) -> term().
 main(Dirname, AST) ->
     try
-        io:format("~p", [AST]),
-        {value, {attribute, ModuleDocAnno, moduledoc, ModuleDoc}} = lists:keysearch(moduledoc, 3, AST),
+        {ModuleDocAnno, ModuleDoc} = extract_moduledoc(AST),
         DocFormat = extract_docformat(AST),
-        Docs = extract_documentation(AST, reset_state(#docs{cwd = Dirname})),
+        Docs = extract_documentation(AST, new_state(Dirname)),
         #docs_v1{
            format = DocFormat,
            anno = ModuleDocAnno,
-           module_doc = #{ <<"en">> => unicode:characters_to_binary(ModuleDoc) }, % TODO
+           module_doc = #{ <<"en">> => ModuleDoc },
            docs = Docs }
     catch E:R:ST ->
             erlang:raise(E, R, ST)
     end.
 
-%% State Module:
-%% moduledoc format
-%% moduledoc file
-%% CWD
-
+-spec extract_docformat(AST :: [tuple()]) -> DocFormat :: binary().
 extract_docformat(AST) ->
     case lists:keysearch(docformat, 3, AST) of
         false -> <<"text/markdown">>;
@@ -42,18 +37,30 @@ extract_docformat(AST) ->
             unicode:characters_to_binary(DocFormat)
     end.
 
+-spec extract_moduledoc(AST :: [tuple()]) -> ModuleDoc :: {erl_anno:anno(), binary()}.
+extract_moduledoc(AST) ->
+    {value, {attribute, ModuleDocAnno, moduledoc, ModuleDoc}} = lists:keysearch(moduledoc, 3, AST),
+    {ModuleDocAnno, unicode:characters_to_binary(string:trim(ModuleDoc))}.
+
+-spec new_state(Dirname :: unicode:chardata()) -> internal_docs().
+new_state(Dirname) ->
+    reset_state(#docs{cwd = Dirname}).
+
 -spec reset_state(State :: internal_docs()) -> internal_docs().
 reset_state(State) ->
     State#docs{doc = undefined, meta = maps:new()}.
 
+-spec update_meta(State :: internal_docs(), Meta :: maps:map()) -> internal_docs().
 update_meta(#docs{meta = Meta0}=State, Meta1) ->
     State#docs{meta = maps:merge(Meta0, Meta1)}.
 
+-spec update_doc(State :: internal_docs(), Doc :: unicode:chardata()) -> internal_docs().
 update_doc(#docs{}=State, Doc) ->
     State#docs{doc = string:trim(Doc)}.
 
+-spec update_module(State :: internal_docs(), ModuleName :: unicode:chardata()) -> internal_docs().
 update_module(#docs{}=State, ModuleName) ->
-    State#docs{module = ModuleName}.
+    State#docs{module_name = ModuleName}.
 
 extract_documentation([{attribute, _Anno, file, {ModuleName, _A}} | T], State) ->
     extract_documentation(T, update_module(State, ModuleName));
@@ -97,8 +104,6 @@ extract_documentation([{function, Anno, F, A, _Body} | T],
     AttrBody = {function, F, A},
     FunDoc = gen_doc(Anno, AttrBody, Slogan, DocsWithoutSlogan, State),
     [FunDoc | extract_documentation(T, reset_state(State))];
-
-
 extract_documentation([{attribute, Anno, TypeOrOpaque, {Type, _, TypeArgs}} | T], #docs{doc = Doc}=State)
   when Doc =/= undefined, TypeOrOpaque =:= type orelse TypeOrOpaque =:= opaque ->
     Args = fun_to_varargs(TypeArgs),
@@ -109,18 +114,26 @@ extract_documentation([{attribute, Anno, callback, {{CB, A}, [Fun]}} | T],#docs{
     Args = fun_to_varargs(Fun),
     FunDoc = template_gen_doc({callback, Anno, CB, A, Args}, State),
     [FunDoc | extract_documentation(T, reset_state(State))];
-
 extract_documentation([_H|T], State) ->
     extract_documentation(T, State);
 extract_documentation([], #docs{doc = undefined}) ->
     [].
 
-gen_doc(Anno0, AttrBody, Slogan, Docs, #docs{meta = Meta, module = Module}) ->
-    %% DONE: missing expand anno
-    %% TODO: <<"en">> should be read from meta info, and use as default
+-spec gen_doc(Anno, AttrBody, Slogan, Docs, State) -> Response when
+      Anno      :: erl_anno:anno(),
+      AttrBody  :: {function | type | callback, term(), integer()},
+      Slogan    :: unicode:chardata(),
+      Docs      :: unicode:chardata(),
+      State     :: internal_docs(),
+      Signature :: [binary()],
+      D         :: maps:map() | none | hidden,
+      Meta      :: maps:map(),
+      Response  :: {AttrBody, Anno, Signature, D, Meta}.
+gen_doc(Anno0, AttrBody, Slogan, Docs, #docs{meta = Meta, module_name = Module}) ->
     Anno1 = erl_anno:set_file(Module, Anno0),
     {AttrBody, Anno1, [unicode:characters_to_binary(Slogan)],
       #{ <<"en">> => unicode:characters_to_binary(string:trim(Docs)) }, Meta}.
+
 
 template_gen_doc({Attr, Anno, F, A, Args}, #docs{doc = Doc}=State) ->
     {Slogan, DocsWithoutSlogan} =
@@ -139,14 +152,16 @@ template_gen_doc({Attr, Anno, F, A, Args}, #docs{doc = Doc}=State) ->
     AttrBody = {Attr, F, A},
     gen_doc(Anno, AttrBody, Slogan, DocsWithoutSlogan, State).
 
+-spec prefix(function | type | callback) -> unicode:chardata().
 prefix(function) -> "";
 prefix(type) -> "t:";
 prefix(callback) -> "c:".
 
+-spec fun_to_varargs(tuple() | term()) -> list(term()).
 fun_to_varargs({type, _, bounded_fun, [T|_]}) ->
     fun_to_varargs(T);
 fun_to_varargs({type, _, 'fun', [{type,_,product,Args}|_] }) ->
-    [fun_to_varargs(Arg) || Arg <- Args];
+    lists:map(fun fun_to_varargs/1, Args);
 fun_to_varargs({ann_type, _, [Name|_]}) ->
     Name;
 fun_to_varargs({var,_,_} = Name) ->
