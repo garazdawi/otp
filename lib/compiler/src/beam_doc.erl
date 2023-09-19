@@ -7,16 +7,25 @@
 -include_lib("kernel/include/eep48.hrl").
 
 
+-record(docs, {cwd                 :: unicode:chardata(),             % Cwd
+               module = undefined  :: unicode:chardata() | undefined,
+               doc    = undefined  :: unicode:chardata(), % Function/type/callback local doc
+               meta   = maps:new() :: maps:map()}).      % Function/type/callback local meta
+-type internal_docs() :: #docs{}.
+
+
 -spec main(term(), term()) -> term().
 main(Dirname, AST) ->
     try
+        io:format("~p", [AST]),
         {value, {attribute, ModuleDocAnno, moduledoc, ModuleDoc}} = lists:keysearch(moduledoc, 3, AST),
-        _Docs = extract_documentation(AST, new_docs(Dirname)),
+        DocFormat = extract_docformat(AST),
+        Docs = extract_documentation(AST, reset_state(#docs{cwd = Dirname})),
         #docs_v1{
-           format = <<"text/markdown">>,
+           format = DocFormat,
            anno = ModuleDocAnno,
-           module_doc = #{ <<"en">> => unicode:characters_to_binary(ModuleDoc) },
-           docs = extract_docs(AST, Dirname) }
+           module_doc = #{ <<"en">> => unicode:characters_to_binary(ModuleDoc) }, % TODO
+           docs = Docs }
     catch E:R:ST ->
             erlang:raise(E, R, ST)
     end.
@@ -26,22 +35,16 @@ main(Dirname, AST) ->
 %% moduledoc file
 %% CWD
 
-%% State function
-%% Meta function docs are merged
+extract_docformat(AST) ->
+    case lists:keysearch(docformat, 3, AST) of
+        false -> <<"text/markdown">>;
+        {value, {attribute, _DocAnno, docformat, DocFormat}} ->
+            unicode:characters_to_binary(DocFormat)
+    end.
 
-
-%% Commons:
-%% - trim Doc for function and module
-%% AccDoc :: { Doc, map with meta info }
-
--record(docs, {cwd  :: unicode:chardata(),             % Module cwd
-               doc  = undefined :: unicode:chardata(), % Function/type/callback local doc
-               meta = maps:new() :: maps:map()}).      % Function/type/callback local meta
--type internal_docs() :: #docs{}.
-
--spec new_docs(Cwd :: unicode:chardata()) -> internal_docs().
-new_docs(Cwd) ->
-    #docs{cwd = Cwd}.
+-spec reset_state(State :: internal_docs()) -> internal_docs().
+reset_state(State) ->
+    State#docs{doc = undefined, meta = maps:new()}.
 
 update_meta(#docs{meta = Meta0}=State, Meta1) ->
     State#docs{meta = maps:merge(Meta0, Meta1)}.
@@ -49,6 +52,11 @@ update_meta(#docs{meta = Meta0}=State, Meta1) ->
 update_doc(#docs{}=State, Doc) ->
     State#docs{doc = string:trim(Doc)}.
 
+update_module(#docs{}=State, ModuleName) ->
+    State#docs{module = ModuleName}.
+
+extract_documentation([{attribute, _Anno, file, {ModuleName, _A}} | T], State) ->
+    extract_documentation(T, update_module(State, ModuleName));
 extract_documentation([{attribute, _Anno, doc, Meta0} | T], State) when is_map(Meta0) ->
     extract_documentation(T, update_meta(State, Meta0));
 extract_documentation([{attribute, _Anno, doc, {file, Path}}|T], #docs{cwd = Cwd}=State) ->
@@ -77,28 +85,7 @@ extract_documentation([{Kind, _Anno, _F, _A, _Body} | _T]=AST,
 extract_documentation([{function, Anno, F, A, [{clause, _, ClauseArgs, _, _}]} | T],
                       #docs{doc = Doc}=State) when Doc =/= undefined ->
     FunDoc = template_gen_doc({function, Anno, F, A, ClauseArgs}, State),
-
-    %% {Slogan, DocsWithoutSlogan} =
-    %%     %% First we check if there is a doc prototype
-    %%     case extract_slogan(Doc, F, A) of
-    %%         undefined ->
-    %%             %% Then we check if we can get good names from function arguments
-    %%             %% io:format("What: ~p~n",[_E]),
-    %%             maybe
-    %%                 true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, ClauseArgs),
-    %%                 {extract_slogan_from_args(F, ClauseArgs), Doc}
-    %%             else
-    %%                 _E2 ->
-    %%                     %% io:format("What: ~p~n",[_E2]),
-    %%                     %% Lastly we just print name/arity
-    %%                     {io_lib:format("~p/~p",[F,A]), Doc}
-    %%             end;
-    %%         SloganDocs ->
-    %%             SloganDocs
-    %%     end,
-    %% AttrBody = {function, F, A},
-    %% FunDoc = gen_doc(Anno, AttrBody, Slogan, DocsWithoutSlogan, State),
-    [FunDoc | extract_documentation(T, new_docs(State#docs.cwd))];
+    [FunDoc | extract_documentation(T, reset_state(State))];
 extract_documentation([{function, Anno, F, A, _Body} | T],
                       #docs{doc = Doc}=State) when Doc =/= undefined ->
     {Slogan, DocsWithoutSlogan} =
@@ -109,69 +96,30 @@ extract_documentation([{function, Anno, F, A, _Body} | T],
         end,
     AttrBody = {function, F, A},
     FunDoc = gen_doc(Anno, AttrBody, Slogan, DocsWithoutSlogan, State),
-    [FunDoc | extract_documentation(T, new_docs(State#docs.cwd))];
+    [FunDoc | extract_documentation(T, reset_state(State))];
 
 
 extract_documentation([{attribute, Anno, TypeOrOpaque, {Type, _, TypeArgs}} | T], #docs{doc = Doc}=State)
   when Doc =/= undefined, TypeOrOpaque =:= type orelse TypeOrOpaque =:= opaque ->
     Args = fun_to_varargs(TypeArgs),
     FunDoc = template_gen_doc({type, Anno, Type, length(Args), Args}, State),
-    [FunDoc | extract_documentation(T, new_docs(State#docs.cwd))];
-    %% %% io:format("Converting ~p/~p~n",[Type,length(Args)]),
-
-    %% {Slogan, DocsWithoutSlogan} =
-    %%     %% First we check if there is a doc prototype
-    %%     case extract_slogan(Doc, Type, length(Args)) of
-    %%         undefined ->
-    %%             maybe
-    %%                 true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, Args),
-    %%                 {extract_slogan_from_args(Type, Args), Doc}
-    %%             else
-    %%                 _ ->
-    %%                     {io_lib:format("~p/~p",[Type,length(Args)]), Doc}
-    %%             end;
-    %%         SloganDocs ->
-    %%             SloganDocs
-    %%     end,
-    %% AttrBody = {type, Type, length(Args)},
-    %% FunDoc = gen_doc(Anno, AttrBody, Slogan, DocsWithoutSlogan, State),
-    %% [FunDoc | extract_documentation(T, new_docs(State#docs.cwd))];
+    [FunDoc | extract_documentation(T, reset_state(State))];
 extract_documentation([{attribute, Anno, callback, {{CB, A}, [Fun]}} | T],#docs{doc = Doc}=State)
   when Doc =/= undefined ->
     Args = fun_to_varargs(Fun),
     FunDoc = template_gen_doc({callback, Anno, CB, A, Args}, State),
-    %% io:format("Converting ~p/~p~n",[CB,A]),
-
-    %% {Slogan, DocsWithoutSlogan} =
-    %%     %% First we check if there is a doc prototype
-    %%     case extract_slogan(Doc, CB, A) of
-    %%         undefined ->
-    %%             %% Args = fun_to_varargs(Fun),
-    %%             maybe
-    %%                 true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, Args),
-    %%                 {extract_slogan_from_args(CB, Args), Doc}
-    %%             else
-    %%                 _ -> {io_lib:format("~p/~p",[CB,A]), Doc}
-    %%             end;
-    %%         SloganDocs ->
-    %%             SloganDocs
-    %%     end,
-    %% AttrBody = {callback, CB, A},
-    %% FunDoc = gen_doc(Anno, AttrBody, Slogan, DocsWithoutSlogan, State),
-    [FunDoc | extract_documentation(T, new_docs(State#docs.cwd))];
+    [FunDoc | extract_documentation(T, reset_state(State))];
 
 extract_documentation([_H|T], State) ->
     extract_documentation(T, State);
 extract_documentation([], #docs{doc = undefined}) ->
-    [];
-extract_documentation(_, _) ->
     [].
 
-
-gen_doc(Anno, AttrBody, Slogan, Docs, #docs{meta = Meta}) ->
-    %% TODO: missing expand anno
+gen_doc(Anno0, AttrBody, Slogan, Docs, #docs{meta = Meta, module = Module}) ->
+    %% DONE: missing expand anno
     %% TODO: <<"en">> should be read from meta info, and use as default
-    {AttrBody, Anno, [unicode:characters_to_binary(Slogan)],
+    Anno1 = erl_anno:set_file(Module, Anno0),
+    {AttrBody, Anno1, [unicode:characters_to_binary(Slogan)],
       #{ <<"en">> => unicode:characters_to_binary(string:trim(Docs)) }, Meta}.
 
 template_gen_doc({Attr, Anno, F, A, Args}, #docs{doc = Doc}=State) ->
@@ -190,112 +138,6 @@ template_gen_doc({Attr, Anno, F, A, Args}, #docs{doc = Doc}=State) ->
         end,
     AttrBody = {Attr, F, A},
     gen_doc(Anno, AttrBody, Slogan, DocsWithoutSlogan, State).
-
-extract_docs(AST, Cwd) ->
-    extract_docs(expand_anno(AST), {undefined, #{}}, Cwd).
-
-%% Done
-extract_docs([{attribute, _Anno, doc, MoreMeta}|T], {Doc, Meta}, Cwd) when is_map(MoreMeta) ->
-        extract_docs(T, {Doc, maps:merge(Meta, MoreMeta)}, Cwd);
-
-%% Done
-extract_docs([{attribute, _Anno, doc, {file, Path}}|T], {_, Meta}, Cwd) ->
-    maybe
-        %% TODO: treat this as an include file, epp module?
-        {ok, Doc} ?= file:read_file(filename:join(Cwd, Path)),
-        extract_docs(T, {string:trim(Doc), Meta}, Cwd)
-    else
-        _ ->
-            io:format("Failed to open: ~p~n",[filename:join(Cwd, Path)]),
-            exit(1)
-    end;
-
-%% Done
-extract_docs([{attribute, _Anno, doc, Doc}|T], {_, Meta}, Cwd) ->
-    extract_docs(T, {string:trim(Doc), Meta}, Cwd);
-%% Done
-extract_docs([{Kind, Anno, F, A, Body}|T],{undefined, #{ equiv := {EquivF,EquivA} } = Meta}, Cwd) ->
-    extract_docs([{Kind, Anno, F, A, Body}|T],
-                 {io_lib:format("Equivalent to `~ts~p/~p`",[prefix(Kind), EquivF,EquivA]), Meta}, Cwd);
-%% Done
-extract_docs([{Kind, Anno, F, A, Body}|T],{undefined, #{ equiv := {call,_,{atom,_,EquivF},Args} = Call} = Meta}, Cwd) ->
-    extract_docs([{Kind, Anno, F, A, Body}|T],
-                 {io_lib:format("Equivalent to `~ts~ts`",[prefix(Kind),erl_pp:exprs([Call])]),
-                  Meta#{ equiv := {EquivF, length(Args)}}}, Cwd);
-
-%% Done
-extract_docs([{function, Anno, F, A, Body}|T],{Doc, Meta}, Cwd) when Doc =/= undefined ->
-
-    %% io:format("Converting ~p/~p~n",[F,A]),
-
-    {Slogan, DocsWithoutSlogan} =
-        %% First we check if there is a doc prototype
-        case extract_slogan(Doc, F, A) of
-            undefined ->
-                %% Then we check if we can get good names from function arguments
-                %% io:format("What: ~p~n",[_E]),
-                maybe
-                    [{clause, _, ClauseArgs, _, _}] ?= Body,
-                    true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, ClauseArgs),
-                    {extract_slogan_from_args(F, ClauseArgs), Doc}
-                else
-                    _E2 ->
-                        %% io:format("What: ~p~n",[_E2]),
-                        %% Lastly we just print name/arity
-                        {io_lib:format("~p/~p",[F,A]), Doc}
-                end;
-            SloganDocs ->
-                SloganDocs
-        end,
-    [{{function, F, A}, Anno, [unicode:characters_to_binary(Slogan)],
-      #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}}, Cwd)];
-extract_docs([{attribute, Anno, TypeOrOpaque, {Type, _, TypeArgs}}|T],{Doc, Meta}, Cwd)
-  when Doc =/= undefined, TypeOrOpaque =:= type orelse TypeOrOpaque =:= opaque ->
-
-    %% io:format("Converting ~p/~p~n",[Type,length(Args)]),
-    Args = fun_to_varargs(TypeArgs),
-
-    {Slogan, DocsWithoutSlogan} =
-        %% First we check if there is a doc prototype
-        case extract_slogan(Doc, Type, length(Args)) of
-            undefined ->
-                maybe
-                    true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, Args),
-                    {extract_slogan_from_args(Type, Args), Doc}
-                else
-                    _ -> {io_lib:format("~p/~p",[Type,length(Args)]), Doc}
-                end;
-            SloganDocs ->
-                SloganDocs
-        end,
-    [{{type, Type, length(Args)}, Anno, [unicode:characters_to_binary(Slogan)],
-      #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}}, Cwd)];
-extract_docs([{attribute, Anno, callback, {{CB, A}, [Fun]}}|T],{Doc, Meta}, Cwd) when Doc =/= undefined ->
-
-    %% io:format("Converting ~p/~p~n",[CB,A]),
-
-    {Slogan, DocsWithoutSlogan} =
-        %% First we check if there is a doc prototype
-        case extract_slogan(Doc, CB, A) of
-            undefined ->
-                Args = fun_to_varargs(Fun),
-                maybe
-                    true ?= lists:all(fun({var,_,N}) when N =/= '_' -> true; (_) -> false end, Args),
-                    {extract_slogan_from_args(CB, Args), Doc}
-                else
-                    _ -> {io_lib:format("~p/~p",[CB,A]), Doc}
-                end;
-            SloganDocs ->
-                SloganDocs
-        end,
-
-    [{{callback, CB, A}, Anno, [unicode:characters_to_binary(Slogan)],
-      #{ <<"en">> => unicode:characters_to_binary(string:trim(DocsWithoutSlogan)) }, Meta} | extract_docs(T, {undefined, #{}}, Cwd)];
-extract_docs([_H|T], Doc, Cwd) ->
-    %% [io:format("Skipping: ~p ~p~n",[{element(3,_H),element(4,_H)}, Doc]) || element(1,_H) =:= function],
-    extract_docs(T, Doc, Cwd);
-extract_docs([], {undefined, _}, _Cwd) ->
-    [].
 
 prefix(function) -> "";
 prefix(type) -> "t:";
@@ -326,13 +168,3 @@ extract_slogan(Doc, F, A) ->
 
 extract_slogan_from_args(F, Args) ->
     io_lib:format("~p(~ts)",[F, lists:join(", ",[string:trim(atom_to_list(Arg),leading,"_") || {var, _, Arg} <- Args])]).
-
-expand_anno(AST) ->
-    {NewAST, _} =
-        lists:mapfoldl(fun F({attribute, _, file, {NewFile, _}} = E, File) when NewFile =/= File ->
-                               F(E, NewFile);
-                           F(E, File) ->
-                               {setelement(2, E, erl_anno:set_file(File, element(2, E))), File}
-                       end, undefined, AST),
-    %% io:format("NewAST: ~p~n",[NewAST]),
-    NewAST.
