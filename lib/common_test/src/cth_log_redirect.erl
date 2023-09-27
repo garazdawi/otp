@@ -44,6 +44,7 @@
 -include("../../kernel/src/logger_internal.hrl").
 
 -behaviour(gen_server).
+-behaviour(ct_hooks).
 
 -record(eh_state, {log_func,
 		   curr_suite,
