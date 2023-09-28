@@ -26,8 +26,6 @@ runs:
             sudo rm -rf "/usr/local/share/boost"
             sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
-      - uses: actions/checkout@v3
-
       - name: Cache BASE image
         uses: actions/cache@v3
         with:
