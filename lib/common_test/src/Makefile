@@ -41,7 +41,7 @@ RELSYSDIR = $(RELEASE_PATH)/lib/common_test-$(VSN)
 # ----------------------------------------------------
 
 BEHAVIOUR_MODULES= \
-	ct_suite
+	ct_suite ct_hooks
 
 MODULES= \
 	ct \
@@ -70,7 +70,6 @@ MODULES= \
 	ct_config_plain \
 	ct_config_xml \
 	ct_slave \
-        ct_hooks\
         ct_hooks_lock\
 	cth_log_redirect\
 	cth_surefire \
