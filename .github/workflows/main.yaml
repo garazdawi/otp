@@ -33,7 +33,7 @@ jobs:
         changes: ${{ steps.changes.outputs.changes }}
         all: ${{ steps.apps.outputs.all }}
     steps:
-      - uses: ./.github/workflows/build-base-image.yaml
+      - uses: ./.github/actions/build-base-image
         with:
             BASE_BRANCH: env.BASE_BRANCH
       - name: Get applications
@@ -312,7 +312,7 @@ jobs:
     if: contains(needs.pack.outputs.changes, 'emulator')
 
     steps:
-      - uses: ./.github/workflows/build-base-image.yaml
+      - uses: ./.github/actions/build-base-image
         with:
             BASE_BRANCH: env.BASE_BRANCH
             BUILD_IMAGE: true
@@ -339,7 +339,7 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: ./.github/workflows/build-base-image.yaml
+      - uses: ./.github/actions/build-base-image
         with:
             BASE_BRANCH: env.BASE_BRANCH
             TYPE: matrix.type
@@ -359,7 +359,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: pack
     steps:
-      - uses: ./.github/workflows/build-base-image.yaml
+      - uses: ./.github/actions/build-base-image
         with:
             BASE_BRANCH: env.BASE_BRANCH
             BUILD_IMAGE: true
@@ -401,7 +401,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: pack
     steps:
-      - uses: ./.github/workflows/build-base-image.yaml
+      - uses: ./.github/actions/build-base-image
         with:
             BASE_BRANCH: env.BASE_BRANCH
             BUILD_IMAGE: true
@@ -430,7 +430,7 @@ jobs:
         # type: ["os_mon","sasl"]
       fail-fast: false
     steps:
-      - uses: ./.github/workflows/build-base-image.yaml
+      - uses: ./.github/actions/build-base-image
         with:
             BASE_BRANCH: env.BASE_BRANCH
             BUILD_IMAGE: true
@@ -479,7 +479,7 @@ jobs:
     if: always() # Run even if the need has failed
     needs: test
     steps:
-      - uses: ./.github/workflows/build-base-image.yaml
+      - uses: ./.github/actions/build-base-image
         with:
             BASE_BRANCH: env.BASE_BRANCH
             BUILD_IMAGE: true
