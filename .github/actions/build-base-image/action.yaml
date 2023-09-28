@@ -13,11 +13,15 @@ inputs:
   BUILD_IMAGE:
     type: boolean
     default: false
+  github_token:
+    description: 'GITHUB_TOKEN'
+    default: '${{ github.token }}'
 
 runs:
     using: composite
     steps:
       - name: Cleanup GH Runner
+        shell: bash -euxo pipefail {0}
         run: |
             ## Delete large files from runner to get more disk space
             ## See https://github.com/actions/runner-images/issues/2840
@@ -37,9 +41,10 @@ runs:
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ inputs.github_token }}
 
       - name: Build BASE image
+        shell: bash -euxo pipefail {0}
         run: .github/scripts/build-base-image.sh "${{ inputs.BASE_BRANCH }}" "${{ inputs.TYPE }}"
 
       - name: Cache pre-built tar archives
@@ -54,6 +59,7 @@ runs:
                 prebuilt-${{ github.ref_name }}-${{ github.sha }}
       - name: Build image
         if: inputs.BUILD_IMAGE
+        shell: bash -euxo pipefail {0}
         run: |
           .github/scripts/restore-from-prebuilt.sh `pwd` .github/otp.tar.gz
           rm -f otp_{src,cache}.tar.gz
