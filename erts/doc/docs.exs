@@ -1,4 +1,16 @@
 [
+  groups_for_docs: [{"Predefined datatypes",
+                     fn a ->
+                       a.kind == :type && a.module == :erlang && :erl_internal.is_type(a.name, a.arity)
+                     end},
+                    {"Types",
+                     fn a ->
+                       a.kind == :type
+                     end},
+                   {"Auto-imported BIFs",
+                     fn a ->
+                       a.kind == :function && a.module == :erlang && :erl_internal.bif(a.name, a.arity)
+                     end}],
   ## The order of these items determine
   ## how they are listed in the docs
   extras: [
@@ -27,19 +39,12 @@
     "references/run_erl_cmd.md",
     "references/start_cmd.md",
     "references/start_erl_cmd.md",
-    "references/werl_cmd.md",
-    "internal_docs/beamasm.md",
-    "internal_docs/carriermigration.md",
-    "internal_docs/countinginstructions.md",
-    "internal_docs/delayeddealloc.md",
-    "internal_docs/garbagecollection.md",
-    "internal_docs/codeloading.md",
-    "internal_docs/tracing.md",
-    "internal_docs/portsignals.md",
-    "internal_docs/ptables.md",
-    "internal_docs/processmanagementoptimizations.md",
-    "internal_docs/supercarrier.md",
-    "internal_docs/beam_makeops.md",
-    "internal_docs/threadprogress.md"
-  ]
+    "references/werl_cmd.md"] ++ Path.wildcard("../emulator/internal_doc/*.md"),
+  skip_code_autolink_to: ["dist_util:net_ticker_spawn_options/0",
+                          "dist_util:handshake_we_started/1",
+                          "dist_util:handshake_other_started/1",
+                          "dist_util:start_timer/1",
+                          "dist_util:strict_order_flags/0",
+                          "erl_types:t_is_equal/2",
+                          "erl_types:t_has_var/1"]
 ]

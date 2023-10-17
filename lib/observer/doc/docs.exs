@@ -9,5 +9,5 @@
     "guides/crashdump_ug.md",
     "references/observer_app.md",
     "references/cdv_cmd.md"
-  ]
+  ],
 ]
