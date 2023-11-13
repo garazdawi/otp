@@ -99,7 +99,7 @@
       functions or modules:
     </p>
 
-    <code type="none"><![CDATA[
+    <code type="erl"><![CDATA[
       1> hprof:profile(fun() -> lists:seq(1, 16) end).
 
       ****** Process <0.224.0>    -- 100.00 % of total allocations ***
@@ -155,7 +155,7 @@
 
     <p>This example prints the combined memory allocation of
         all processes, sorted by total allocated words in the descending order</p>
-    <code type="none"><![CDATA[
+    <code type="erl"><![CDATA[
         5> hprof:profile(test, test_spawn, [], #{report => {total, {words, descending}}}).
 
         MODULE FUN/ARITY        CALLS  WORDS  PER CALL  [    %]
@@ -168,7 +168,7 @@
     ]]></code>
 
     <p>You can also collect the profile for further inspection.</p>
-    <code type="none"><![CDATA[
+    <code type="erl"><![CDATA[
       6> {done, ProfileData} = hprof:profile(fun test:test_spawn/0, #{report => return}).
       <...>
       7> hprof:format(hprof:inspect(ProfileData, process, {percent, descending})).
@@ -258,7 +258,7 @@
       to ensure cleanup.
     </p>
 
-    <code type="none">
+    <code type="erl">
       9> hprof:profile(timer, sleep, [100000], #{timeout => 1000}).
     </code>
 
@@ -268,7 +268,7 @@
       trace patterns.
     </p>
 
-    <code type="none">
+    <code type="erl">
       1> hprof:profile(fun() -> lists:seq(1, 32) end,
           #{registered => false, pattern => [{lists, '_', '_'}]}).
     </code>
@@ -285,7 +285,7 @@
       activity of all processes supervised by kernel:
     </p>
 
-    <code type="none"><![CDATA[
+    <code type="erl"><![CDATA[
       1> hprof:start().
       {ok,<0.200.0>}
       2> hprof:enable_trace({all_children, kernel_sup}).
@@ -318,7 +318,7 @@
       It is possible to profile the entire running system, and then examine
       individual processes:
     </p>
-    <code type="none"><![CDATA[
+    <code type="erl"><![CDATA[
       1> hprof:start(), hprof:enable_trace(processes), hprof:set_pattern('_', '_' , '_').
       9041
       2> timer:sleep(10000), hprof:disable_trace(processes), Sample = hprof:collect().
@@ -458,7 +458,7 @@
           the same rules as <seemfa marker="erts:erlang#trace_pattern/3">
           <c>erlang:trace_pattern/3</c></seemfa>. Returns number of functions
           matching the supplied pattern.</p>
-        <code type="none"><![CDATA[
+        <code type="erl"><![CDATA[
 1> hprof:set_pattern(lists, seq, '_').
 2
 2> hprof:set_pattern(lists, keyfind, 3).
@@ -468,7 +468,7 @@
         ]]></code>
         <p>If there are no functions matching the pattern, error
         is returned</p>
-        <code><![CDATA[
+        <code type="erl"><![CDATA[
 > hprof:set_pattern(no_module, func, '_').
 {error,{trace_pattern,no_module,func,'_'}}
         ]]></code>
@@ -480,7 +480,7 @@
       <fsummary>Disables memory tracing for a specific trace pattern.</fsummary>
       <desc>
         <p>Turns tracing off for the supplied pattern.</p>
-        <code type="none"><![CDATA[
+        <code type="erl"><![CDATA[
 1> hprof:set_pattern(lists, seq, '_').
 2
 2> hprof:clear_pattern(lists, seq, 3).
