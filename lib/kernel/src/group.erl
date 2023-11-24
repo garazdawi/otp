@@ -611,6 +611,8 @@ putc_request(Req, From, ReplyAs, State) ->
 %%
 %% These put requests have to be synchronous to the driver as otherwise
 %% there is no guarantee that the data has actually been printed.
+putc_request({put_ansi, Opts, Ansi}, Drv, From) ->
+    send_drv(Drv, {put_ansi_sync, Opts, Ansi, From});
 putc_request({put_chars,unicode,Chars}, Drv, From) ->
     case catch unicode:characters_to_binary(Chars,utf8) of
         Binary when is_binary(Binary) ->

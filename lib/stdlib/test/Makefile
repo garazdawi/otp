@@ -73,6 +73,7 @@ MODULES= \
 	gen_statem_SUITE \
 	id_transform_SUITE \
 	io_SUITE \
+	io_ansi_SUITE \
 	io_proto_SUITE \
 	json_SUITE \
 	lists_SUITE \
