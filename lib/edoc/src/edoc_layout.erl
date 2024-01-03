@@ -31,16 +31,9 @@
 %% Note that this is written so that it is *not* depending on edoc.hrl!
 
 -module(edoc_layout).
--moduledoc """
-The standard HTML layout module for EDoc. See the `m:edoc` module for details on
-usage.
-
-_See also: _`m:edoc`.
-""".
 
 -export([module/2, overview/2, type/1]).
 
--doc "Layout entrypoint.".
 -callback module(edoc:edoc_module(), _) -> binary().
 %% Layout entrypoint.
 
@@ -102,36 +95,6 @@ _See also: _`m:edoc`.
 
 %% NEW-OPTIONS: xml_export, index_columns, stylesheet
 
--doc """
-module(Element,Options)
-
-The layout function.
-
-Options to the standard layout:
-
-- **`{index_columns, integer()}`** - Specifies the number of column pairs used
-  for the function index tables. The default value is 1.
-
-- **`{pretty_printer, atom()}`** - Specifies how types and specifications are
-  pretty printed. If the value `erl_pp` is specified the Erlang pretty printer
-  (the module `erl_pp`) will be used. The default is to do no pretty printing
-  which implies that lines can be very long.
-
-- **`{stylesheet, string()}`** - Specifies the URI used for referencing the
-  stylesheet. The default value is `"stylesheet.css"`. If an empty string is
-  specified, no stylesheet reference will be generated.
-
-- **`{sort_functions, boolean()}`** - If `true`, the detailed function
-  descriptions are listed by name, otherwise they are listed in the order of
-  occurrence in the source file. The default value is `true`.
-
-- **`{xml_export, Module::atom()}`** - Specifies an
-  [`xmerl`](`e:xmerl:index.html`) callback module to be used for exporting the
-  documentation. See [`//xmerl/xmerl:export_simple/3`](`xmerl:export_simple/3`)
-  for details.
-
-_See also: _`edoc:layout/2`.
-""".
 module(Element, Options) ->
     XML = layout_module(Element, init_opts(Element, Options)),
     Export = proplists:get_value(xml_export, Options,
