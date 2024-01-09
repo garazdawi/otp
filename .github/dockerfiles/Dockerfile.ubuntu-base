@@ -122,10 +122,8 @@ RUN export PATH="$(cat /home/${USER}/LATEST):${PATH}" && \
     jq '.tarball_url' | xargs curl -L > hex.tar.gz && \
     tar xzf hex.tar.gz --strip-components=1 && \
     mix install && \
-    mkdir /buildroot/ex_doc && cd /buildroot/ex_doc && \
-    curl -s https://api.github.com/repos/elixir-lang/ex_doc/releases/${EX_DOC_VSN} | \
-    jq '.tarball_url' | xargs curl -L > ex_doc.tar.gz && \
-    tar xzf ex_doc.tar.gz --strip-components=1 && \
+    git clone https://github.com/garazdawi/ex_doc /buildroot/ex_doc && \
+    cd /buildroot/ex_doc && \
     mix deps.get && MIX_ENV=prod mix escript.build && \
     sudo cp ex_doc /usr/local/bin/
 
