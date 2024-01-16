@@ -27,6 +27,7 @@
 %% %%----------------------------------------------------------------------
 
 -module(ssl_alert).
+-moduledoc false.
 
 -include("ssl_alert.hrl").
 -include("ssl_record.hrl").

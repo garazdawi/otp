@@ -18,6 +18,58 @@
 %% %CopyrightEnd%
 %%
 -module(disksup).
+-moduledoc """
+A Disk Supervisor Process
+
+`disksup` is a process which supervises the available disk space in the system.
+It is part of the OS_Mon application, see [os_mon(6)](os_mon_app.md). Available
+for Unix and Windows.
+
+Periodically checks the disks. For each disk or partition which uses more than a
+certain amount of the available space, the alarm
+`{{disk_almost_full, MountedOn}, []}` is set.
+
+- **On Unix** - All (locally) mounted disks are checked, including the swap disk
+  if it is present.
+
+- **On WIN32** - All logical drives of type "FIXED_DISK" are checked.
+
+Alarms are reported to the SASL alarm handler, see `m:alarm_handler`. To set an
+alarm, `alarm_handler:set_alarm(Alarm)` is called where `Alarm` is the alarm
+specified above.
+
+The alarms are cleared automatically when the alarm cause is no longer valid.
+
+[](){: #config }
+
+## Configuration
+
+The following configuration parameters can be used to change the default values
+for time interval and threshold:
+
+- **`disk_space_check_interval = ``t:time/0`** - The time interval for the
+  periodic disk space check. The default is 30 minutes.
+
+- **`disk_almost_full_threshold = float()`** - The threshold, as percentage of
+  total disk space, for how much disk can be utilized before the
+  `disk_almost_full` alarm is set. The default is 0.80 (80%).
+
+- **`disksup_posix_only = bool()`** - Specifies whether the `disksup` helper
+  process should only use POSIX conformant commands (`true`) or not. The default
+  is `false`. Setting this parameter to `true` can be necessary on embedded
+  systems with stripped-down versions of Unix tools like `df`. The returned disk
+  data and alarms can be different when using this option.
+
+  The parameter is ignored on platforms that are known to not be POSIX
+  compatible (Windows and SunOS).
+
+See [config(4)](`e:kernel:config.md`) for information about how to change the
+value of configuration parameters.
+
+## See Also
+
+`m:alarm_handler`, [os_mon(3)](os_mon_app.md)
+""".
 -behaviour(gen_server).
 
 %% API
@@ -34,6 +86,16 @@
 %% Other exports
 -export([format_status/2, parse_df/2]).
 
+-doc """
+Supported units:
+
+- **`integer() >= 1`** - The time interval in minutes.
+
+- **`{TimeUnit, Time}`** - The time interval `Time` in a time unit specified by
+  `TimeUnit` where `TimeUnit` is of the type `t:erlang:time_unit/0` and `Time`
+  is a positive integer. The time interval needs to be at least one millisecond
+  long.
+""".
 -type time() :: pos_integer() | {TimeUnit :: erlang:time_unit(), Time :: pos_integer()}.
 
 -record(state, {threshold, timeout, os, diskdata = [],port}).
@@ -42,21 +104,71 @@
 %% API
 %%----------------------------------------------------------------------
 
+-doc false.
 start_link() ->
     gen_server:start_link({local, disksup}, disksup, [], []).
 
+-doc """
+get_disk_data() -> [DiskData]
+
+Returns the result of the latest disk check. `Id` is a string that identifies
+the disk or partition. `TotalKiB` is the total size of the disk or partition in
+kibibytes. `Capacity` is the percentage of disk space used.
+
+The function is asynchronous in the sense that it does not invoke a disk check,
+but returns the latest available value.
+
+Returns `[{"none",0,0}]` if `disksup` is not available.
+""".
 get_disk_data() ->
     os_mon:call(disksup, get_disk_data, infinity).
 
+-doc """
+get_disk_info() -> [DiskData]
+
+Immediately fetches total space, available space and capacity for local disks.
+`Id` is a string that identifies the disk or partition. `TotalKiB` is the total
+size of the disk or partition in kibibytes. `AvailableKiB` is the disk space
+used in kibibytes. `Capacity` is the percentage of disk space used.
+
+Returns `[{"none",0,0,0}]` if `disksup` is not available.
+""".
+-doc(#{since => <<"OTP 26.0">>}).
 get_disk_info() ->
     os_mon:call(disksup, get_disk_info, infinity).
 
+-doc """
+get_disk_info(Path) -> DiskData
+
+Immediately fetches total space, available space and capacity for a path. `Id`
+is a string that identifies the disk or partition. `TotalKiB` is the total size
+of the disk or partition in kibibytes. `AvailableKiB` is the disk space used in
+kibibytes. `Capacity` is the percentage of disk space used.
+
+Returns `[{Path,0,0,0}]` if the `Path` is invalid or space can't be determined.
+Returns `[{"none",0,0,0}]` if `disksup` is not available.
+""".
+-doc(#{since => <<"OTP 26.0">>}).
 get_disk_info(Path) ->
     os_mon:call(disksup, {get_disk_info, Path}, infinity).
 
+-doc """
+get_check_interval() -> MS
+
+Returns the time interval, in milliseconds, for the periodic disk space check.
+""".
 get_check_interval() ->
     os_mon:call(disksup, get_check_interval, infinity).
 
+-doc """
+set_check_interval(Time) -> ok
+
+Changes the time interval for the periodic disk space check.
+
+The change will take effect after the next disk space check and is non-persist.
+That is, in case of a process restart, this value is forgotten and the default
+value will be used. See [Configuration](`m:disksup#config`) above.
+""".
 -spec set_check_interval(time()) -> ok.
 set_check_interval(Value) ->
     case param_type(disk_space_check_interval, Value) of
@@ -66,8 +178,22 @@ set_check_interval(Value) ->
             erlang:error(badarg)
     end.
 
+-doc """
+get_almost_full_threshold() -> Percent
+
+Returns the threshold, in percent, for disk space utilization.
+""".
 get_almost_full_threshold() ->
     os_mon:call(disksup, get_almost_full_threshold, infinity).
+-doc """
+set_almost_full_threshold(Float) -> ok
+
+Changes the threshold, given as a float, for disk space utilization.
+
+The change will take effect during the next disk space check and is non-persist.
+That is, in case of a process restart, this value is forgotten and the default
+value will be used. See [Configuration](`m:disksup#config`) above.
+""".
 set_almost_full_threshold(Float) ->
     case param_type(disk_almost_full_threshold, Float) of
 	true ->
@@ -76,6 +202,7 @@ set_almost_full_threshold(Float) ->
 	    erlang:error(badarg)
     end.
 
+-doc false.
 dummy_reply(get_disk_data) ->
     [{"none", 0, 0}];
 dummy_reply(get_disk_info) ->
@@ -96,6 +223,7 @@ dummy_reply(get_almost_full_threshold) ->
 dummy_reply({set_almost_full_threshold, _}) ->
     ok.
 
+-doc false.
 param_type(disk_space_check_interval, {TimeUnit, Time}) ->
     try erlang:convert_time_unit(Time, TimeUnit, millisecond) of
         MsTime when MsTime > 0 -> true;
@@ -111,6 +239,7 @@ param_type(disk_almost_full_threshold, Val) when is_number(Val),
 param_type(disksup_posix_only, Val) when Val==true; Val==false -> true;
 param_type(_Param, _Val) -> false.
 
+-doc false.
 param_default(disk_space_check_interval) -> 30;
 param_default(disk_almost_full_threshold) -> 0.80;
 param_default(disksup_posix_only) -> false.
@@ -119,6 +248,7 @@ param_default(disksup_posix_only) -> false.
 %% gen_server callbacks
 %%----------------------------------------------------------------------
 
+-doc false.
 init([]) ->  
     process_flag(trap_exit, true),
     process_flag(priority, low),
@@ -160,6 +290,7 @@ init([]) ->
 		threshold=round(Threshold*100),
 		timeout=Timeout}}.
 
+-doc false.
 handle_call(get_disk_data, _From, State) ->
     {reply, State#state.diskdata, State};
 
@@ -187,9 +318,11 @@ handle_call({set_almost_full_threshold, Float}, _From, State) ->
 handle_call({set_threshold, Threshold}, _From, State) -> % test only
     {reply, ok, State#state{threshold=Threshold}}.
 
+-doc false.
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+-doc false.
 handle_info(timeout, State) ->
     NewDiskData = check_disk_space(State#state.os, State#state.port,
 				   State#state.threshold),
@@ -200,6 +333,7 @@ handle_info({'EXIT', _Port, Reason}, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
+-doc false.
 terminate(_Reason, State) ->
     clear_alarms(),
     case State#state.port of
@@ -214,6 +348,7 @@ terminate(_Reason, State) ->
 %% Other exports
 %%----------------------------------------------------------------------
 
+-doc false.
 format_status(_Opt, [_PDict, #state{os = OS, threshold = Threshold,
 				    timeout = Timeout,
 				    diskdata = DiskData}]) ->
@@ -515,6 +650,7 @@ parse_df_take_word_percent(Input) ->
 %% a string (mounted device), 4 integers (kilobytes, used, available
 %% and capacity), skip % sign, (optionally for susv3 can also skip IUsed, IFree
 %% and ICap% fields) then take remaining characters as the mount path
+-doc false.
 -spec parse_df(string(), posix | susv3) ->
     {error, parse_df} | {ok, {integer(), integer(), integer(), list()}, string()}.
 parse_df(Input0, Flavor) ->

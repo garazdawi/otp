@@ -19,6 +19,7 @@
 %%
 
 -module(pubkey_ocsp).
+-moduledoc false.
 -include("public_key.hrl").
 
 -export([find_single_response/3,
