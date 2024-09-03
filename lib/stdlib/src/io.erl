@@ -71,7 +71,7 @@ Module:format_error(ErrorDescriptor)
 	 get_password/0, get_password/1,
 	 setopts/1, setopts/2, getopts/0, getopts/1]).
 -export([write/1,write/2,read/1,read/2,read/3,read/4]).
--export([flush/0,flush/1,columns/0,columns/1,rows/0,rows/1]).
+-export([columns/0,columns/1,rows/0,rows/1]).
 -export([fwrite/1,fwrite/2,fwrite/3,fread/2,fread/3,
 	 format/1,format/2,format/3]).
 -export([scan_erl_exprs/1,scan_erl_exprs/2,scan_erl_exprs/3,scan_erl_exprs/4,
@@ -182,13 +182,6 @@ o_request(Function, OrigArgs) ->
                         {default_output(), nl};
                     [D] ->
                         {D, nl}
-                end;
-            Function =:= flush ->
-                case OrigArgs of
-                    [] ->
-                        {default_output(), flush};
-                    [D] ->
-                        {D, flush}
                 end;
             Function =:= write ->
                 case OrigArgs of
@@ -329,23 +322,6 @@ rows(Io) ->
 	_ ->
 	    {error,enotsup}
     end.
-
--doc(#{ equiv => flush(standard_io)}).
--spec flush() -> 'ok' | {'error', 'enotsup'}.
-flush() ->
-    o_request(?FUNCTION_NAME, []).
-
--doc """
-Flushes all output buffers in an I/O device to the operating system.
-
-Any buffers within the operating system are not flushed, use `file:sync/1`
-or similar to flush operating system buffers.
-""".
--spec flush(IoDevice) -> 'ok' | {'error', 'enotsup'} when
-    IoDevice :: device().
-
-flush(Io) ->
-    o_request(?FUNCTION_NAME, [Io]).
 
 -doc(#{equiv => get_chars(standard_io, Prompt, Count)}).
 -spec get_chars(Prompt, Count) -> Data | server_no_data() when

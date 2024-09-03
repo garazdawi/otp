@@ -462,9 +462,6 @@ handle_info(_State, {io_request,From,ReplyAs, {get_geometry, What}} = IoReq, Dat
             io_reply(From, ReplyAs, {error, enotsup})
     end,
     keep_state_and_data;
-handle_info(_State, {io_request,From,ReplyAs,flush}, Data) ->
-    Data#state.driver ! {self(), {flush, {From, ReplyAs}}},
-    keep_state_and_data;
 handle_info(_State, {io_request,From,ReplyAs,Req}, Data) when ?IS_PUTC_REQ(Req) ->
     putc_request(Req, From, ReplyAs, Data);
 
