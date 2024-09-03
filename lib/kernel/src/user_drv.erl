@@ -86,7 +86,9 @@
         redraw_prompt |
         {redraw_prompt, string(), string(), tuple()} |
         %% Clears the state, not touching the characters
-        new_prompt.
+        new_prompt |
+        %% Flushes all buffers 
+        {flush, {From :: pid(), Reply :: term()}}.
 
 -export_type([message/0, request/0]).
 -export([start/0, start/1, start_shell/0, start_shell/1, whereis_group/0]).
@@ -853,7 +855,10 @@ io_request({delete_chars, N}, TTY) ->
 io_request(clear, TTY) ->
     write(prim_tty:handle_request(TTY, clear));
 io_request(beep, TTY) ->
-    write(prim_tty:handle_request(TTY, beep)).
+    write(prim_tty:handle_request(TTY, beep));
+io_request({flush, Reply}, TTY) ->
+    {ok, MonitorRef} = prim_tty:flush(TTY, self()),
+    {Reply, MonitorRef, TTY}.
 
 write({Output, TTY}) ->
     ok = prim_tty:write(TTY, Output),

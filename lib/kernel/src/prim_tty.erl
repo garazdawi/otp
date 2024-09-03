@@ -106,7 +106,7 @@
 %%        to previous line automatically.
 
 -export([init/1, reinit/2, isatty/1, handles/1, unicode/1, unicode/2,
-         handle_signal/2, window_size/1, handle_request/2, write/2, write/3,
+         handle_signal/2, window_size/1, handle_request/2, write/2, write/3, flush/2,
          npwcwidth/1, npwcwidth/2,
          ansi_regexp/0, ansi_color/2]).
 -export([reader_stop/1, disable_reader/1, enable_reader/1, is_reader/2, is_writer/2]).
@@ -595,6 +595,10 @@ write(#state{ writer = {WriterPid, _WriterRef}}, Chars, From) ->
     Ref = erlang:monitor(process, WriterPid),
     WriterPid ! {write, From, erlang:iolist_to_iovec(Chars)},
     {ok, Ref}.
+
+-spec flush(state(), From :: pid()) -> {ok, reference()}.
+flush(TTY, From) ->
+    write(TTY, [], From).
 
 writer_loop(TTY, WriterRef) ->
     receive
