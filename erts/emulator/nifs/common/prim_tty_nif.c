@@ -428,26 +428,19 @@ static ERL_NIF_TERM tty_read_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
      * We have three different read scenarios we need to deal with
      * using different approaches.
      *
-     * ### New Shell
+     * ### New Shell / Raw NoShell
      *
      * Here characters need to be delivered as they are typed and we
      * also need to handle terminal resize events. So we use ReadConsoleInputW
      * to read.
      *
-     * ### Input is a terminal, but there is no shell, or old shell
+     * ### Input is a terminal, but there is noshell, or old shell
      *
      * Here we should operate in "line mode", that is characters should only
-     * be delivered when the user hits enter. Therefore we cannot use
-     * ReadConsoleInputW, and we also cannot use ReadFile in synchronous mode
-     * as it will block until a complete line is done. So we use the
-     * OVERLAPPED support of ReadFile to read data.
-     *
-     * From this mode it is important to be able to upgrade to a "New Shell"
-     * terminal.
-     *
-     * Unfortunately it does not seem like unicode works at all when in this
-     * mode. At least when I try it, all unicode characters are translated to
-     * "?". Maybe it could be solved by using ReadConsoleW?
+     * be delivered when the user hits enter. Here we used to use OVERLAPPED ReadFile,
+     * but that caused unicode to not work, so instead we use ReadFile. 
+     * 
+     * This call will block a single dirty io schedulers until the user hits Enter.
      *
      * ### Input is an anonymous pipe
      *
@@ -456,148 +449,145 @@ static ERL_NIF_TERM tty_read_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
      * call will not block until a full line is complete, so this is safe to do.
      *
      **/
-    if (GetFileType(tty->ifd) == FILE_TYPE_CHAR) {
-        if (tty->tty == enabled) {
-            /* Input is a terminal and we are in "new shell" mode */
+    if (GetFileType(tty->ifd) == FILE_TYPE_CHAR && tty->tty == enabled) {
+        /* Input is a terminal and we are in "new shell"/"raw" mode */
 
-            ssize_t inputs_read, num_characters = 0;
-            wchar_t *characters = NULL;
-            INPUT_RECORD inputs[128];
+        ssize_t inputs_read, num_characters = 0;
+        wchar_t *characters = NULL;
+        INPUT_RECORD inputs[128];
 
-            n = n > 1024 ? 1024 : n;
+        n = n > 1024 ? 1024 : n;
 
-            ASSERT(tty->tty == enabled);
+        ASSERT(tty->tty == enabled);
 
-            if (!ReadConsoleInputW(tty->ifd, inputs, n, &inputs_read)) {
-                return make_errno_error(env, "ReadConsoleInput");
-            }
-
-            /**
-             * Reading keyevents using ReadConsoleInput is a bit fragile as
-             * different consoles and different input modes cause events to
-             * be triggered in different ways. I've so far identified four
-             * different input methods that work slightly differently and
-             * two classes of consoles that also work slightly differently.
-             *
-             * The input methods are:
-             *   - Normal key presses
-             *   - Microsoft IME
-             *   - Pasting into console
-             *   - Using Alt+ modifiers
-             *
-             * ### Normal key presses
-             *
-             * When typing normally both key down and up events are sent with
-             * the typed character. If typing a Unicode character (for instance if
-             * you are using a keyboard with Cyrillic layout), that character also
-             * is sent as both key up and key down. This behavior is the same on all
-             * consoles.
-             *
-             * ### Microsoft IME
-             *
-             * When typing Japanese, Chinese and many other languages it is common to
-             * use a "Input Method Editor". Basically what it does is that if you type
-             * "sushi" using the Japanese IME it convert that to "すし". All characters
-             * typed using IME end up as only keydown events on cmd.exe and powershell,
-             * while in Windows Terminal and Alacritty both keydown and keyup events
-             * are sent.
-             *
-             * ### Pasting into console
-             *
-             * When text pasting into the console, any ascii text pasted ends up as both
-             * keydown and keyup events. Any non-ascii text pasted seem to be sent using
-             * a keydown event with UnicodeChar set to 0 and then immediately followed by a
-             * keyup event with the non-ascii text.
-             *
-             * ### Using Alt+ modifiers
-             *
-             * A very old way of inputting Unicode characters on Windows is to press
-             * the left alt key and then some numbers on the number pad. For instance
-             * you can type Alt+1 to write a ☺. When doing this first a keydown
-             * with 0 is sent and then some events later a keyup with the character
-             * is sent. This behavior seems to only work on cmd.exe and powershell.
-             *
-             *
-             * So to summarize:
-             *  - Normal presses -- Always keydown and keyup events
-             *  - IME -- Always keydown, sometimes keyup
-             *  - Pasting -- Always keydown=0 directly followed by keyup=value
-             *  - Alt+ -- Sometimes keydown=0 followed eventually by keyup=value
-             *
-             * So in order to read characters we should always read the keydown event,
-             * except when it is 0, then we should read the adjacent keyup event.
-             * This covers all modes and consoles except Alt+. If we want Alt+ to work
-             * we probably have to use PeekConsoleInput to make sure the correct events
-             * are available and inspect the state of the key event somehow.
-             **/
-
-            for (int i = 0; i < inputs_read; i++) {
-                if (inputs[i].EventType == KEY_EVENT) {
-                    if (inputs[i].Event.KeyEvent.bKeyDown) {
-                        if (inputs[i].Event.KeyEvent.uChar.UnicodeChar != 0) {
-                            num_characters++;
-                        } else if (i + 1 < inputs_read && !inputs[i+1].Event.KeyEvent.bKeyDown) {
-                            num_characters++;
-                        }
-                    }
-                }
-            }
-            enif_alloc_binary(num_characters * sizeof(wchar_t), &bin);
-            characters = (wchar_t*)bin.data;
-            for (int i = 0; i < inputs_read; i++) {
-                switch (inputs[i].EventType)
-                {
-                case KEY_EVENT:
-                    if (inputs[i].Event.KeyEvent.bKeyDown) {
-                        if (inputs[i].Event.KeyEvent.uChar.UnicodeChar != 0) {
-			    debug("Read %u\r\n",inputs[i].Event.KeyEvent.uChar.UnicodeChar);
-                            characters[res++] = inputs[i].Event.KeyEvent.uChar.UnicodeChar;
-                        } else if (i + 1 < inputs_read && !inputs[i+1].Event.KeyEvent.bKeyDown) {
-                            debug("Read %u\r\n",inputs[i+1].Event.KeyEvent.uChar.UnicodeChar);
-                            characters[res++] = inputs[i+1].Event.KeyEvent.uChar.UnicodeChar;
-                        }
-                    }
-                    break;
-                case WINDOW_BUFFER_SIZE_EVENT:
-                    enif_send(env, &tty->self, NULL,
-                              enif_make_tuple2(
-                                  env, enif_make_atom(env, "resize"),
-                                  enif_make_tuple2(
-                                      env,
-                                      enif_make_int(env, inputs[i].Event.WindowBufferSizeEvent.dwSize.Y),
-                                      enif_make_int(env, inputs[i].Event.WindowBufferSizeEvent.dwSize.X))));
-                    break;
-                case MOUSE_EVENT:
-                    /* We don't do anything with the mouse event */
-                    break;
-                case MENU_EVENT:
-                case FOCUS_EVENT:
-                    /* Should be ignored according to
-                       https://docs.microsoft.com/en-us/windows/console/input-record-str */
-                    break;
-                default:
-                    fprintf(stderr,"Unknown event: %d\r\n", inputs[i].EventType);
-                    break;
-                }
-            }
-            res *= sizeof(wchar_t);
-        } else {
-            /* Input is a terminal, we are in "{noshell, cooked}" or "oldshell" mode,
-               but we don't have a overlapped ReadFile, so we create one.
-            */
-            ERL_NIF_TERM error;
-            select_event = tty_windows_select(env, tty, &error);
-            if (select_event == INVALID_HANDLE_VALUE) {
-                return error;
-            }
-            enif_select(env, select_event, ERL_NIF_SELECT_READ, tty, NULL, argv[1]);
-            /* Return {error,aborted} to signal that the encoding has changed . */
-            return make_error(env, enif_make_atom(env, "aborted"));
+        if (!ReadConsoleInputW(tty->ifd, inputs, n, &inputs_read)) {
+            return make_errno_error(env, "ReadConsoleInput");
         }
+
+        /**
+         * Reading keyevents using ReadConsoleInput is a bit fragile as
+         * different consoles and different input modes cause events to
+         * be triggered in different ways. I've so far identified four
+         * different input methods that work slightly differently and
+         * two classes of consoles that also work slightly differently.
+         *
+         * The input methods are:
+         *   - Normal key presses
+         *   - Microsoft IME
+         *   - Pasting into console
+         *   - Using Alt+ modifiers
+         *
+         * ### Normal key presses
+         *
+         * When typing normally both key down and up events are sent with
+         * the typed character. If typing a Unicode character (for instance if
+         * you are using a keyboard with Cyrillic layout), that character also
+         * is sent as both key up and key down. This behavior is the same on all
+         * consoles.
+         *
+         * ### Microsoft IME
+         *
+         * When typing Japanese, Chinese and many other languages it is common to
+         * use a "Input Method Editor". Basically what it does is that if you type
+         * "sushi" using the Japanese IME it convert that to "すし". All characters
+         * typed using IME end up as only keydown events on cmd.exe and powershell,
+         * while in Windows Terminal and Alacritty both keydown and keyup events
+         * are sent.
+         *
+         * ### Pasting into console
+         *
+         * When text pasting into the console, any ascii text pasted ends up as both
+         * keydown and keyup events. Any non-ascii text pasted seem to be sent using
+         * a keydown event with UnicodeChar set to 0 and then immediately followed by a
+         * keyup event with the non-ascii text.
+         *
+         * ### Using Alt+ modifiers
+         *
+         * A very old way of inputting Unicode characters on Windows is to press
+         * the left alt key and then some numbers on the number pad. For instance
+         * you can type Alt+1 to write a ☺. When doing this first a keydown
+         * with 0 is sent and then some events later a keyup with the character
+         * is sent. This behavior seems to only work on cmd.exe and powershell.
+         *
+         *
+         * So to summarize:
+         *  - Normal presses -- Always keydown and keyup events
+         *  - IME -- Always keydown, sometimes keyup
+         *  - Pasting -- Always keydown=0 directly followed by keyup=value
+         *  - Alt+ -- Sometimes keydown=0 followed eventually by keyup=value
+         *
+         * So in order to read characters we should always read the keydown event,
+         * except when it is 0, then we should read the adjacent keyup event.
+         * This covers all modes and consoles except Alt+. If we want Alt+ to work
+         * we probably have to use PeekConsoleInput to make sure the correct events
+         * are available and inspect the state of the key event somehow.
+         **/
+
+        for (int i = 0; i < inputs_read; i++) {
+            if (inputs[i].EventType == KEY_EVENT) {
+                if (inputs[i].Event.KeyEvent.bKeyDown) {
+                    if (inputs[i].Event.KeyEvent.uChar.UnicodeChar != 0) {
+                        num_characters++;
+                    } else if (i + 1 < inputs_read && !inputs[i+1].Event.KeyEvent.bKeyDown) {
+                        num_characters++;
+                    }
+                }
+            }
+        }
+        enif_alloc_binary(num_characters * sizeof(wchar_t), &bin);
+        characters = (wchar_t*)bin.data;
+        for (int i = 0; i < inputs_read; i++) {
+            switch (inputs[i].EventType)
+            {
+            case KEY_EVENT:
+                if (inputs[i].Event.KeyEvent.bKeyDown) {
+                    if (inputs[i].Event.KeyEvent.uChar.UnicodeChar != 0) {
+                        debug("Read %u\r\n",inputs[i].Event.KeyEvent.uChar.UnicodeChar);
+                        characters[res++] = inputs[i].Event.KeyEvent.uChar.UnicodeChar;
+                    } else if (i + 1 < inputs_read && !inputs[i+1].Event.KeyEvent.bKeyDown) {
+                        debug("Read %u\r\n",inputs[i+1].Event.KeyEvent.uChar.UnicodeChar);
+                        characters[res++] = inputs[i+1].Event.KeyEvent.uChar.UnicodeChar;
+                    }
+                }
+                break;
+            case WINDOW_BUFFER_SIZE_EVENT:
+                enif_send(env, &tty->self, NULL,
+                            enif_make_tuple2(
+                                env, enif_make_atom(env, "resize"),
+                                enif_make_tuple2(
+                                    env,
+                                    enif_make_int(env, inputs[i].Event.WindowBufferSizeEvent.dwSize.Y),
+                                    enif_make_int(env, inputs[i].Event.WindowBufferSizeEvent.dwSize.X))));
+                break;
+            case MOUSE_EVENT:
+                /* We don't do anything with the mouse event */
+                break;
+            case MENU_EVENT:
+            case FOCUS_EVENT:
+                /* Should be ignored according to
+                    https://docs.microsoft.com/en-us/windows/console/input-record-str */
+                break;
+            default:
+                fprintf(stderr,"Unknown event: %d\r\n", inputs[i].EventType);
+                break;
+            }
+        }
+        res *= sizeof(wchar_t);
     } else {
         /* Input is not a terminal or we are in "cooked" mode */
         DWORD bytesTransferred;
         enif_alloc_binary(n, &bin);
+        /* If tty->ifd is a terminal, this ReadFile call may hang until Enter is pressed.
+         * This will block one dirty io schedulers, but that should be ok as it will
+         * only happen if the application wants to read data, i.e. it is reasonable to
+         * expect and enter to be hit "soon".
+         * 
+         * NOTE: I've tried various things to try to figure out if ReadFile will block or
+         * not, but one of the crazy thing with ReadFile is that you need to call it
+         * before the characters on the terminal are echoed, so we need this call to be
+         * blocking. What we could do is move the read to another thread so that we don't
+         * consume a dirty io scheduler, but I've opted to keep it simple and not do that.
+         */
         if (ReadFile(tty->ifd, bin.data, bin.size, &bytesTransferred, NULL)) {
             res = bytesTransferred;
             if (res == 0) {
@@ -644,6 +634,7 @@ static ERL_NIF_TERM tty_read_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
     return enif_make_tuple2(env, atom_ok, res_term);
 }
 
+/* Poll if stdin/stdout/stderr are still open. */
 static ERL_NIF_TERM tty_is_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     TTYResource *tty;
     int fd;
@@ -663,14 +654,35 @@ static ERL_NIF_TERM tty_is_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
             case 2: handle = GetStdHandle(STD_ERROR_HANDLE); break;
         }
 
-        if (GetFileType(hStdinDup) == FILE_TYPE_UNKNOWN) {
-            DWORD err = GetLastError();
-            if (err == ERROR_INVALID_HANDLE) {
-                return atom_false;
+        switch (GetFileType(handle))  {
+            case FILE_TYPE_CHAR: {
+                DWORD eventsAvailable;
+                if (!GetNumberOfConsoleInputEvents(handle, &eventsAvailable)) {
+                    return atom_false;
+                }
+                return atom_true;
             }
-            return make_errno_error(env, __FUNCTION__);
+            case FILE_TYPE_DISK: {
+                return atom_true;
+            }
+            default: {
+                DWORD bytesAvailable = 0;
+                // Check the state of the pipe
+                if (!PeekNamedPipe(handle, NULL, 0, NULL, &bytesAvailable, NULL)) {
+                    DWORD err = GetLastError();
+
+                    // If the error is ERROR_BROKEN_PIPE, it means stdin has been closed
+                    if (err == ERROR_BROKEN_PIPE) {
+                        return atom_false;
+                    }
+                    else {
+                        return make_errno_error(env, "PeekNamedPipe");
+                    }
+                }
+                return atom_true;
+            }
         }
-        return atom_true;
+
 #else
 
         struct pollfd fds[1];
