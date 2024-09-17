@@ -520,7 +520,7 @@ reader_loop(State = #{ tty := TTY, parent := Parent, signal := SignalRef,
                        reader := ReaderRef, enc := FromEnc, read := Read,
                        ready_input := ReadyInput }, Acc) ->
     Timeout = if
-        Read =:= 0, ReadyInput -> 250;
+        Read =:= 0, ReadyInput -> infinity;
         true -> infinity
     end,
 
