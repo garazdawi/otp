@@ -260,7 +260,7 @@ static ERL_NIF_TERM tty_encoding_nif(ErlNifEnv* env, int argc, const ERL_NIF_TER
     TTYResource *tty;
     if (!enif_get_resource(env, argv[0], tty_rt, (void **)&tty))
         return enif_make_badarg(env);
-    if (tty->tty == enabled)
+    if (GetFileType(tty->ifd) == FILE_TYPE_CHAR)
         return enif_make_tuple2(env, enif_make_atom(env, "utf16"),
                                 enif_make_atom(env, "little"));
 #endif
@@ -456,7 +456,7 @@ static ERL_NIF_TERM tty_read_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
         wchar_t *characters = NULL;
         INPUT_RECORD inputs[128];
 
-        n = n > 1024 ? 1024 : n;
+        n = MIN(n, sizeof(inputs) / sizeof(inputs[0]));
 
         ASSERT(tty->tty == enabled);
 
@@ -576,19 +576,32 @@ static ERL_NIF_TERM tty_read_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
     } else {
         /* Input is not a terminal or we are in "cooked" mode */
         DWORD bytesTransferred;
-        enif_alloc_binary(n, &bin);
-        /* If tty->ifd is a terminal, this ReadFile call may hang until Enter is pressed.
-         * This will block one dirty io schedulers, but that should be ok as it will
-         * only happen if the application wants to read data, i.e. it is reasonable to
-         * expect and enter to be hit "soon".
-         * 
-         * NOTE: I've tried various things to try to figure out if ReadFile will block or
-         * not, but one of the crazy thing with ReadFile is that you need to call it
-         * before the characters on the terminal are echoed, so we need this call to be
-         * blocking. What we could do is move the read to another thread so that we don't
-         * consume a dirty io scheduler, but I've opted to keep it simple and not do that.
-         */
-        if (ReadFile(tty->ifd, bin.data, bin.size, &bytesTransferred, NULL)) {
+        BOOL readRes;
+        const char *errorFunction;
+        if (GetFileType(tty->ifd) == FILE_TYPE_CHAR) {
+            /* This ReadConsoleW call may hang until Enter is pressed.
+            * This will block one dirty io schedulers, but that should be ok as it will
+            * only happen if the application wants to read data, i.e. it is reasonable to
+            * expect and enter to be hit "soon".
+            *
+            * NOTE: I've tried various things to try to figure out if ReadFile/ReadConsole
+            * will block or not, but one of the crazy thing with ReadFile/ReadConsole is
+            * that you need to call it before the characters on the terminal are echoed,
+            * so we need this call to be blocking. What we could do is move the read to another
+            * thread so that we don't consume a dirty io scheduler, but I've opted to keep
+            * it simple and not do that.
+            */
+            enif_alloc_binary(n * sizeof(wchar_t), &bin);
+            readRes = ReadConsoleW(tty->ifd, bin.data, n, &bytesTransferred, NULL);
+            bytesTransferred *= sizeof(wchar_t);
+            errorFunction = "ReadConsoleW";
+        }
+        else {
+            enif_alloc_binary(n, &bin);
+            readRes = ReadFile(tty->ifd, bin.data, bin.size, &bytesTransferred, NULL);
+            errorFunction = "ReadFile";
+        }
+        if (readRes) {
             res = bytesTransferred;
             if (res == 0) {
                 enif_release_binary(&bin);
@@ -599,7 +612,7 @@ static ERL_NIF_TERM tty_read_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM ar
             enif_release_binary(&bin);
             if (error == ERROR_BROKEN_PIPE)
                 return make_error(env, enif_make_atom(env, "closed"));
-            return make_errno_error(env, "ReadFile");
+            return make_errno_error(env, errorFunction);
         }
     }
 #else
