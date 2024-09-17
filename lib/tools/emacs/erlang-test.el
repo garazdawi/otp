@@ -171,7 +171,7 @@ concatenated to form an erlang file to test on.")
   (should (string-equal (file-truename expected-file)
                         (file-truename (buffer-file-name))))
   (should (eq expected-line (line-number-at-pos)))
-  (should (= (point-at-bol) (point))))
+  (should (= (line-beginning-position) (point))))
 
 (defun erlang-test-complete-at-point (tags-file)
   (with-temp-buffer
