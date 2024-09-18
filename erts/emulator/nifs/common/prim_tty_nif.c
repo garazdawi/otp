@@ -691,7 +691,7 @@ static ERL_NIF_TERM tty_is_open(ErlNifEnv* env, int argc, const ERL_NIF_TERM arg
 
 #ifdef __WIN32__
 
-    handle = tt_get_handle(env, argv[1]);
+    handle = tty_get_handle(env, argv[1]);
 
     if (handle != INVALID_HANDLE_VALUE) {
         DWORD bytesAvailable = 0;
