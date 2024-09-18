@@ -91,7 +91,7 @@ static void expand_shared_global_literal_area(Uint heap_size)
                         (heap_size - 1) * sizeof(Eterm);
     struct global_literal_chunk *chunk;
                         
-#ifndef DEBUG 
+#if !defined(DEBUG) || !defined(__WIN32__)
     chunk = (struct global_literal_chunk *) erts_alloc(ERTS_ALC_T_LITERAL, size); 
 #else
     /* erts_mem_guard requires the memory area to be page aligned. Overallocate
@@ -126,7 +126,7 @@ Eterm *erts_global_literal_allocate(Uint heap_size, struct erl_off_heap_header *
     hp = global_literal_chunk->hp;
     global_literal_chunk->hp += heap_size;
 
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(__WIN32__)
     {
         struct global_literal_chunk *chunk = global_literal_chunk;
         erts_mem_guard(&chunk->area.start[0], 
@@ -142,7 +142,7 @@ Eterm *erts_global_literal_allocate(Uint heap_size, struct erl_off_heap_header *
 void erts_global_literal_register(Eterm *variable, Eterm *hp, Uint heap_size) {
     erts_set_literal_tag(variable, hp, heap_size);
     
-#ifdef DEBUG
+#if defined(DEBUG) && !defined(__WIN32__)
     {
         struct global_literal_chunk *chunk = global_literal_chunk;
         erts_mem_guard(&chunk->area.start[0], 
