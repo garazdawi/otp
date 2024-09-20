@@ -68,7 +68,7 @@ jobs:
         env:
             ALL_APPS: ${{ steps.apps.outputs.all }}
             CHANGED_APPS: ${{ steps.app-changes.outputs.changes }}
-            FULL_TEST_RUN: ${{ ( github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check') ) || github.event_name == 'schedule' }}
+            FULL_TEST_RUN: ${{ ( github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check') ) || github.event_name == 'schedule' || true }}
         run: |
           echo "FULL_TEST_RUN=$FULL_TEST_RUN" >> "$GITHUB_OUTPUT"
           if [ $FULL_TEST_RUN = "true" ]; then
