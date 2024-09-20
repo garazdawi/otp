@@ -529,9 +529,13 @@ jobs:
           export ERLC_USE_SERVER=true
           export ERTS_SKIP_DEPEND=true
 
-          ./otp_build env_win32 x64
+          set +x
+
+          /bin/sh otp_build env_win32 x64
 
           eval `./otp_build env_win32 x64`
+
+          set -x
 
           export PATH=`pwd`/release/win32/bin/:$PATH
 
