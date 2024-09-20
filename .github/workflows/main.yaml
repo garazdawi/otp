@@ -29,7 +29,6 @@ concurrency:
 env:
     ## Equivalent to github.event_name == 'pull_request' ? github.base_ref : github.ref_name
     BASE_BRANCH: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
-    FULL_TEST_RUN: ${{ ( github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check') ) || github.event_name == 'schedule' }}
 
 jobs:
 
@@ -38,6 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
         BASE_BUILD: ${{ steps.base-build.outputs.BASE_BUILD }}
+        FULL_TEST_RUN: ${{ steps.changes.outputs.FULL_TEST_RUN }}
         changes: ${{ steps.changes.outputs.changes }}
         c-code-changes: ${{ steps.c-code-changes.outputs.changes }}
         all: ${{ steps.apps.outputs.all }}
@@ -68,7 +68,9 @@ jobs:
         env:
             ALL_APPS: ${{ steps.apps.outputs.all }}
             CHANGED_APPS: ${{ steps.app-changes.outputs.changes }}
+            FULL_TEST_RUN: ${{ ( github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check') ) || github.event_name == 'schedule' }}
         run: |
+          echo "FULL_TEST_RUN=$FULL_TEST_RUN" >> "$GITHUB_OUTPUT"
           if [ $FULL_TEST_RUN = "true" ]; then
               echo "changes=${ALL_APPS}" >> "$GITHUB_OUTPUT"
           else
@@ -356,7 +358,7 @@ jobs:
           cp /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}/3rdparty/webview2/runtimes/win-x64/native/WebView2Loader.dll $ERL_TOP/release/win32/erts-*/bin/
           ./otp_build installer_win32
           echo "installer_name=$(ls release/win32/otp*.exe | xargs basename)" >> $GITHUB_OUTPUT
-          if [ $FULL_TEST_RUN = "true" ]; then
+          if [ ${{ needs.pack.outputs.FULL_TEST_RUN }} = "true" ]; then
             make release_tests
             zip -r tests.zip release/tests
           fi
@@ -369,7 +371,7 @@ jobs:
 
       - name: Upload tests
         uses: actions/upload-artifact@v4.4.0
-        if: env.FULL_TEST_RUN == 'true'
+        if: needs.pack.outputs.FULL_TEST_RUN == 'true'
         with:
           name: otp_tests
           path: otp/tests.zip
@@ -486,7 +488,7 @@ jobs:
       run:
         shell: wsl-bash {0}
     runs-on: windows-2022
-    if: needs.pack.outputs.changes != '[]' && ( github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check') ) || github.event_name == 'schedule'
+    if: needs.pack.outputs.changes != '[]' && needs.pack.outputs.FULL_TEST_RUN == 'true'
     strategy:
       matrix:
         # type: ${{ fromJson(needs.pack.outputs.all) }}
