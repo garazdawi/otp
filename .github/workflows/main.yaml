@@ -530,10 +530,8 @@ jobs:
 
           tar -xzf ./otp_src.tar.gz
 
-          export ERL_TOP=`pwd`
+          export ERL_TOP="$(pwd)/otp"
           export MAKEFLAGS=-j$(($(nproc) + 2))
-          export ERLC_USE_SERVER=true
-          export ERTS_SKIP_DEPEND=true
 
           eval `./otp/otp_build env_win32 x64`
 
