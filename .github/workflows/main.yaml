@@ -554,13 +554,13 @@ jobs:
 
       - name: Cleanup tests
         if: ${{ !cancelled() }}
-        run: tar czf ${{ matrix.type }}_win32_test_results.tar.gz release/tests/test_server
+        run: tar czf test_results_win32_${{ matrix.type }}.tar.gz release/tests/test_server
       - name: Upload test results
         uses: actions/upload-artifact@v4.4.0
         if: ${{ !cancelled() }}
         with:
-          name: ${{ matrix.type }}_win32_test_results
-          path: ${{ matrix.type }}_win32_test_results.tar.gz
+          name: test_results_win32_${{ matrix.type }}
+          path: test_results_win32_${{ matrix.type }}.tar.gz
 
   test:
     name: Test Erlang/OTP
@@ -614,8 +614,8 @@ jobs:
         uses: actions/upload-artifact@v4.4.0
         if: ${{ !cancelled() }}
         with:
-          name: ${{ matrix.type }}_test_results
-          path: ${{ matrix.type }}_test_results.tar.gz
+          name: test_results_${{ matrix.type }}
+          path: test_results_${{ matrix.type }}.tar.gz
 
   system-test:
     name: Test Erlang/OTP (system)
@@ -633,7 +633,7 @@ jobs:
         run: |
           shopt -s nullglob
           mkdir -p make_test_dir
-          for file in *_test_results/*.tar.gz; do
+          for file in test_results_*/*.tar.gz; do
             tar xzf $file
           done
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
