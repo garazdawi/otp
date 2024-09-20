@@ -531,6 +531,8 @@ jobs:
 
           set +x
 
+          cat otp_build
+
           /bin/sh otp_build env_win32 x64
 
           eval `./otp_build env_win32 x64`
