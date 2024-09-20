@@ -497,7 +497,6 @@ jobs:
       - uses: Vampire/setup-wsl@v3.1.1
         with:
           distribution: Ubuntu-18.04
-      - uses: actions/checkout@v4.1.7
       - name: Install WSL dependencies
         run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip zip
       - name: Download installer
@@ -517,6 +516,11 @@ jobs:
             dir %cd%
             dir %cd%\release\win32\
 
+      - name: Download source archive
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_prebuilt
+
       - name: Run tests
         id: run-tests
         if: ${{ !cancelled() }}
@@ -524,20 +528,14 @@ jobs:
           set -x
           unzip -q tests.zip
 
+          tar -xzf ./otp_src.tar.gz
+
           export ERL_TOP=`pwd`
           export MAKEFLAGS=-j$(($(nproc) + 2))
           export ERLC_USE_SERVER=true
           export ERTS_SKIP_DEPEND=true
 
-          set +x
-
-          cat otp_build
-
-          /bin/sh otp_build env_win32 x64
-
-          eval `./otp_build env_win32 x64`
-
-          set -x
+          eval `./otp/otp_build env_win32 x64`
 
           export PATH=`pwd`/release/win32/bin/:$PATH
 
