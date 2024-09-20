@@ -29,6 +29,7 @@ concurrency:
 env:
     ## Equivalent to github.event_name == 'pull_request' ? github.base_ref : github.ref_name
     BASE_BRANCH: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
+    FULL_TEST_RUN: ${{ ( github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check') ) || github.event_name == 'schedule' }}
 
 jobs:
 
@@ -68,7 +69,7 @@ jobs:
             ALL_APPS: ${{ steps.apps.outputs.all }}
             CHANGED_APPS: ${{ steps.app-changes.outputs.changes }}
         run: |
-          if ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check') }} || ${{ github.event_name == 'schedule' }}; then
+          if [ $FULL_TEST_RUN = "true" ]; then
               echo "changes=${ALL_APPS}" >> "$GITHUB_OUTPUT"
           else
               echo "changes=${CHANGED_APPS}" >> "$GITHUB_OUTPUT"
@@ -256,22 +257,25 @@ jobs:
           path: otp/liberlang.xcframework
 
   build-windows:
+    name: Build Erlang/OTP (Windows)
+    needs: pack
+    if: needs.pack.outputs.c-code-changes
+    runs-on: windows-2022
     defaults:
       run:
         shell: wsl-bash {0}
     env:
       WXWIDGETS_VERSION: 3.1.4
-    name: Build Erlang/OTP (Windows)
-    runs-on: windows-2022
-    needs: pack
-    if: needs.pack.outputs.c-code-changes
+    outputs:
+        installer_name: ${{ steps.compile-erlang.outputs.installer_name }}
+    
     steps:
       - uses: Vampire/setup-wsl@v3.1.1
         with:
           distribution: Ubuntu-18.04
 
       - name: Install WSL dependencies
-        run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip
+        run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip zip
 
       - name: Install openssl
         shell: cmd
@@ -327,6 +331,9 @@ jobs:
           name: otp_prebuilt
 
       - name: Compile Erlang
+        id: compile-erlang
+        env:
+          WSLENV: GITHUB_OUTPUT/p
         run: |
           mkdir -p /mnt/c/opt/local64/pgm/
           cp -R wxWidgets /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}
@@ -348,12 +355,24 @@ jobs:
           ./otp_build release -a
           cp /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}/3rdparty/webview2/runtimes/win-x64/native/WebView2Loader.dll $ERL_TOP/release/win32/erts-*/bin/
           ./otp_build installer_win32
+          echo "installer_name=$(ls release/win32/otp*.exe | xargs basename)" >> $GITHUB_OUTPUT
+          if [ $FULL_TEST_RUN = "true" ]; then
+            make release_tests
+            zip -r tests.zip release/tests
+          fi
 
       - name: Upload installer
         uses: actions/upload-artifact@v4.4.0
         with:
           name: otp_win32_installer
           path: otp/release/win32/otp*.exe
+
+      - name: Upload tests
+        uses: actions/upload-artifact@v4.4.0
+        if: env.FULL_TEST_RUN == 'true'
+        with:
+          name: otp_tests
+          path: otp/tests.zip
 
   build-flavors:
     name: Build Erlang/OTP (Types and Flavors)
@@ -459,6 +478,87 @@ jobs:
         ## Run dialyzer
       - name: Run dialyzer
         run: docker run -v $PWD/:/github otp '/github/scripts/run-dialyzer'
+
+  test-windows:
+    name: Test Win64 Erlang/OTP
+    needs: [pack, build-windows]
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    runs-on: windows-2022
+    if: needs.pack.outputs.changes != '[]' && ( github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check') ) || github.event_name == 'schedule'
+    strategy:
+      matrix:
+        # type: ${{ fromJson(needs.pack.outputs.all) }}
+        type: ${{ fromJson(needs.pack.outputs.changes) }}
+        # type: ["os_mon","sasl"]
+      fail-fast: false
+    steps:
+      - uses: Vampire/setup-wsl@v3.1.1
+        with:
+          distribution: Ubuntu-18.04
+      - name: Install WSL dependencies
+        run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip zip
+      - name: Download installer
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_win32_installer
+      - name: Download tests
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_tests
+
+      - name: Install OTP
+        shell: cmd
+        run: |
+            echo %cd%
+            start "" /WAIT ${{ needs.build-windows.outputs.installer_name }} /S /D=%CD%\release\win32\
+            dir %cd%
+            dir %cd%\release\win32\
+
+      - name: Download source archive
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_prebuilt
+
+      - name: Run tests
+        id: run-tests
+        run: |
+          set -x
+          unzip -q tests.zip
+
+          tar -xzf ./otp_src.tar.gz
+
+          export ERL_TOP="$(pwd)/otp"
+          export MAKEFLAGS=-j$(($(nproc) + 2))
+
+          eval `./otp/otp_build env_win32 x64`
+
+          export PATH=`pwd`/release/win32/bin/:$PATH
+
+          APP="${{ matrix.type }}"
+          TYPE=opt
+          ## Need to specialize for epmd, emulator and debug
+          case "${APP}" in
+            debug) echo "No debug tests on windows" ;;
+            *) cd release/tests/test_server
+               erl.exe -emu_type $TYPE -noshell -eval "ts:install()" -eval "ts:run($APP,[batch])" -s init stop
+               cd -
+               ;;
+          esac
+          ERROR_CNT=$(grep "^=result        failed:" release/tests/test_server/ct_run.*/tests.*.logs/run*/suite.log | wc -l)
+          echo "$ERROR_CNT testcases failed!"
+          exit "$ERROR_CNT"
+
+      - name: Cleanup tests
+        if: ${{ !cancelled() }}
+        run: tar czf ${{ matrix.type }}_win32_test_results.tar.gz release/tests/test_server
+      - name: Upload test results
+        uses: actions/upload-artifact@v4.4.0
+        if: ${{ !cancelled() }}
+        with:
+          name: ${{ matrix.type }}_win32_test_results
+          path: ${{ matrix.type }}_win32_test_results.tar.gz
 
   test:
     name: Test Erlang/OTP
