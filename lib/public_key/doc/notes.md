@@ -19,6 +19,20 @@ limitations under the License.
 -->
 # Public_Key Release Notes
 
+## Public_Key 1.16.3
+
+### Fixed Bugs and Malfunctions
+
+- Introduction of verify_fun/4 unfortunately introduced an argument switch for some specific path validation errors so that verify_fun/3 could under these circumstances be called with a DER cert instead of a decod cert, also in this situation the verify_fun/4 would have the certificates in reverse order.
+
+  Own Id: OTP-19245 Aux Id: Gh-8832
+
+### Improvements and New Features
+
+- Do not hide crypto badarg reason, this error handling enhancement facilitates debugging. These kind of runtime errors are not documented and should never be relied on for matching, they are intended for catching input errors early.
+
+  Own Id: OTP-19238
+
 ## Public_Key 1.16.2
 
 ### Fixed Bugs and Malfunctions
@@ -117,6 +131,14 @@ limitations under the License.
 [PR-8026]: https://github.com/erlang/otp/pull/8026
 [PR-8233]: https://github.com/erlang/otp/pull/8233
 
+## Public_Key 1.15.1.3
+
+### Improvements and New Features
+
+* Do not hide crypto badarg reason, this error handling enhancement facilitates debugging. These kind of runtime errors are not documented and should never be relied on for matching, they are intended for catching input errors early.
+
+  Own Id: OTP-19238 Aux Id: PR-8831
+
 ## Public_Key 1.15.1.2
 
 ### Fixed Bugs and Malfunctions
@@ -196,6 +218,14 @@ limitations under the License.
   future bugs and to simplify code maintenance.
 
   Own Id: OTP-18447
+
+## Public_Key 1.13.3.3
+
+### Fixed Bugs and Malfunctions
+
+* For completeness handle rsa_pss implicit default value, although this will probably not be commonly used as it provides very weak security.
+
+  Own Id: OTP-19179
 
 ## Public_Key 1.13.3.2
 

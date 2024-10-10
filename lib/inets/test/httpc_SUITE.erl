@@ -31,6 +31,7 @@
 -include("inets_test_lib.hrl").
 -include("http_internal.hrl").
 -include("httpc_internal.hrl").
+% -include("../../ssl/src/ssl_api.hrl").
 %% Note: This directive should only be used in test suites.
 -compile([export_all, nowarn_export_all]).
 
@@ -45,7 +46,6 @@
 %% (maximum length supported by erlang)
 -define(UNIX_SOCKET, "/tmp/inets_httpc_SUITE.sock").
 
--record(sslsocket, {fd = nil, pid = nil}).
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
 %%--------------------------------------------------------------------
@@ -367,7 +367,6 @@ end_per_testcase(Case, Config)
             ok
     end,
     inets:stop(httpc, ?config(profile, Config));
-
 end_per_testcase(_Case, Config) ->
     inets:stop(httpc, ?config(profile, Config)).
 
@@ -559,17 +558,29 @@ async() ->
     [{doc, "Test an asynchrony http request."}].
 async(Config) when is_list(Config) ->
     Request  = {url(group_name(Config), "/dummy.html", Config), []},
-
     {ok, RequestId} =
-	httpc:request(get, Request, [?SSL_NO_VERIFY], [{sync, false}], ?profile(Config)),
+        httpc:request(get, Request, [?SSL_NO_VERIFY], [{sync, false}], ?profile(Config)),
     Body =
-	receive
-	    {http, {RequestId, {{_, 200, _}, _, BinBody}}} ->
-		BinBody;
-	    {http, Msg} ->
-		ct:fail(Msg)
-	end,
+        receive
+            {http, {RequestId, {{_, 200, _}, _, BinBody}}} ->
+                BinBody;
+            {http, Msg} ->
+                ct:fail(Msg)
+        end,
     inets_test_lib:check_body(binary_to_list(Body)),
+
+    %% Check full result false option for async request
+    {ok, RequestId2} =
+        httpc:request(get, Request, [?SSL_NO_VERIFY], [{sync, false},
+                                         {full_result, false}]),
+    Body2 =
+        receive
+            {http, {RequestId2, {200, BinBody2}}} ->
+                BinBody2;
+            {http, Msg2} ->
+                ct:fail(Msg2)
+        end,
+    inets_test_lib:check_body(binary_to_list(Body2)),
 
     {ok, NewRequestId} =
 	httpc:request(get, Request, [?SSL_NO_VERIFY], [{sync, false}]),
@@ -1692,19 +1703,30 @@ timeout_memory_leak(Config) when is_list(Config) ->
     {ok, Host} = inet:gethostname(),
     Request = {?URL_START ++ Host ++ ":" ++ integer_to_list(Port) ++ "/dummy.html", []},
     Profile = ?config(profile, Config),
+    WaitForCancelRequestToFinish =
+        fun F(Handlers = [_ | _]) when is_list(Handlers) -> ct:fail({unexpected_handlers, Handlers});
+            F(Handlers) when is_list(Handlers) -> ok;
+            F(N) when is_integer(N) ->
+                Info = httpc:info(Profile),
+                ct:log("Info: ~p", [Info]),
+                {value, {handlers, Handlers}} =
+                    lists:keysearch(handlers, 1, Info),
+                case Handlers of
+                    [] ->
+                        ok;
+                    _ ->
+                        ct:sleep(1)
+                end,
+                case N of
+                    0 ->
+                        F(Handlers);
+                    _ ->
+                        F(N-1)
+                end
+        end,
     case httpc:request(get, Request, [{connect_timeout, 500}, {timeout, 1}], [{sync, true}], Profile) of
 	{error, timeout} ->
-	    %% And now we check the size of the handler db
-	    Info = httpc:info(Profile),
-	    ct:log("Info: ~p", [Info]),
-	    {value, {handlers, Handlers}} =
-		lists:keysearch(handlers, 1, Info),
-	    case Handlers of
-		[] ->
-		    ok;
-		_ ->
-		    ct:fail({unexpected_handlers, Handlers})
-	    end;
+       WaitForCancelRequestToFinish(5);
 	Unexpected ->
 	    ct:fail({unexpected, Unexpected})
     end.
@@ -2998,29 +3020,29 @@ get_stat(S, Opt) ->
             E
     end.
 
-getstat(#sslsocket{} = S, Opts) ->
+getstat(S, Opts) when element(1, S) =:= sslsocket ->
     ssl:getstat(S, Opts);
 getstat(S, Opts) ->
     inet:getstat(S, Opts).
 
-url_start(#sslsocket{}) ->
+url_start(S)  when element(1, S) =:= sslsocket ->
     {ok,Host} = inet:gethostname(),
     ?TLS_URL_START ++ Host ++ ":";
 url_start(_) ->
     {ok,Host} = inet:gethostname(),
     ?URL_START ++ Host ++ ":".
 
-send(#sslsocket{} = S, Msg) ->
+send(S, Msg) when element(1, S) =:= sslsocket ->
     ssl:send(S, Msg);
 send(S, Msg) ->
     gen_tcp:send(S, Msg).
 
-close(#sslsocket{} = S) ->
+close(S) when element(1, S) =:= sslsocket ->
     ssl:close(S);
 close(S) ->
     gen_tcp:close(S).
 
-sockname(#sslsocket{}= S) ->
+sockname(S) when element(1, S) == sslsocket ->
     ssl:sockname(S);
 sockname(S) ->
     inet:sockname(S).

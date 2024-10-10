@@ -405,11 +405,9 @@ xterm(data, Buf, Data = #state{ input = #input_state{
     end;
 
 xterm(info, {io_request,From,ReplyAs,Req},
-      Data = #state{ driver = Drv, input = #input_state{ cont = {EdlinCont, _} } })
+      #state{ driver = Drv})
   when ?IS_PUTC_REQ(Req) ->
-    send_drv_reqs(Drv, edlin:erase_line()),
-    putc_request(Req, From, ReplyAs, Data#state.driver),
-    send_drv_reqs(Drv, edlin:redraw_line(EdlinCont)),
+    putc_request(Req, From, ReplyAs, Drv),
     keep_state_and_data;
 
 xterm(info, {Drv, activate},
@@ -884,8 +882,13 @@ get_line_edlin({search,Cs,Cont,Rs}, Drv, State) ->
     get_line_edlin(edlin:edit_line1(Cs, Ncont), Drv,
                    State#get_line_edlin_state{ search = new_search,
                                                search_quit_prompt = Cont});
-get_line_edlin({help, Before, Cs0, Cont, Rs}, Drv, State) ->
+get_line_edlin({Help, Before, Cs0, Cont, Rs}, Drv, State)
+    when Help =:= help; Help =:= help_full ->
     send_drv_reqs(Drv, Rs),
+    NLines = case Help of
+        help -> 7;
+        help_full -> 0
+    end,
     {_,Word,_} = edlin:over_word(Before, [], 0),
     {R,Docs} = case edlin_context:get_context(Before) of
                    {function, Mod} when Word =/= [] -> try
@@ -913,11 +916,11 @@ get_line_edlin({help, Before, Cs0, Cont, Rs}, Drv, State) ->
         {module, _} ->
             Docs1 = "  "++string:trim(lists:nthtail(3, Docs),both),
             send_drv(Drv, {put_expand, unicode,
-                           [unicode:characters_to_binary(Docs1)], 7});
+                           [unicode:characters_to_binary(Docs1)], NLines});
         {function, _} ->
             Docs1 = "  "++string:trim(Docs,both),
             send_drv(Drv, {put_expand, unicode,
-                           [unicode:characters_to_binary(Docs1)], 7})
+                           [unicode:characters_to_binary(Docs1)], NLines})
     end,
     get_line_edlin(edlin:edit_line(Cs0, Cont), Drv, State);
 get_line_edlin({Expand, Before, Cs0, Cont,Rs}, Drv, State = #get_line_edlin_state{ expand_fun = ExpandFun })

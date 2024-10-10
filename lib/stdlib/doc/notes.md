@@ -21,6 +21,26 @@ limitations under the License.
 
 This document describes the changes made to the STDLIB application.
 
+## STDLIB 6.1.1
+
+### Fixed Bugs and Malfunctions
+
+- Remove whitespace stripping of returned binaries in `json:decode/3`.
+
+  Own Id: OTP-19227 Aux Id: ERIERL-1130, [PR-8809]
+
+- Fix `zip:unzip/2` to not crash when extracting zip files with garbage in the Zip64 extra header. This bug was introduced in Erlang 27.1 and has so far only been seen on some archives creates by MS Excel.
+
+  Own Id: OTP-19241 Aux Id: [PR-8836]
+
+- With this change, shutdown procedure handles a race condition between supervisor executing a shutdown and child process termination from other reason.
+
+  Own Id: OTP-19256 Aux Id: [PR-8780]
+
+[PR-8809]: https://github.com/erlang/otp/pull/8809
+[PR-8836]: https://github.com/erlang/otp/pull/8836
+[PR-8780]: https://github.com/erlang/otp/pull/8780
+
 ## STDLIB 6.1
 
 ### Fixed Bugs and Malfunctions
@@ -484,6 +504,17 @@ This document describes the changes made to the STDLIB application.
 [PR-8164]: https://github.com/erlang/otp/pull/8164
 [PR-8205]: https://github.com/erlang/otp/pull/8205
 [PR-8111]: https://github.com/erlang/otp/pull/8111
+
+## STDLIB 5.2.3.2
+
+### Fixed Bugs and Malfunctions
+
+* With this change, shutdown procedure handles a race condition between supervisor executing a shutdown and child process termination from other reason.
+
+  Own Id: OTP-19256 Aux Id: PR-8780
+* With this change, uri_string:normalize assumes empty path (do not crash) when no path is provided in the URI map.
+
+  Own Id: OTP-19266 Aux Id: ERIERL-1127, PR-8890
 
 ## STDLIB 5.2.3.1
 

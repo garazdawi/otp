@@ -41,7 +41,8 @@
          deterministic_docs/1,
          compile_attribute/1, message_printing/1, other_options/1,
          transforms/1, erl_compile_api/1, types_pp/1, bs_init_writable/1,
-         annotations_pp/1, option_order/1
+         annotations_pp/1, option_order/1,
+         sys_coverage/1
 	]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
@@ -64,7 +65,7 @@ all() ->
      deterministic_docs,
      compile_attribute, message_printing, other_options, transforms,
      erl_compile_api, types_pp, bs_init_writable, annotations_pp,
-     option_order].
+     option_order, sys_coverage].
 
 groups() -> 
     [].
@@ -943,19 +944,31 @@ test_sloppy() ->
     Turtle.
 
 utf8_atoms(Config) when is_list(Config) ->
+    do_utf8_atom(binary_to_atom(<<"こんにちは"/utf8>>, utf8)),
+
+    LongAtom = binary_to_atom(binary:copy(<<240,159,159,166>>, 255)),
+    do_utf8_atom(LongAtom),
+
+    ok.
+
+do_utf8_atom(Atom) ->
+    Mod = ?FUNCTION_NAME,
     Anno = erl_anno:new(1),
-    Atom = binary_to_atom(<<"こんにちは"/utf8>>, utf8),
-    Forms = [{attribute,Anno,compile,[export_all]},
+    Forms = [{attribute,Anno,module,Mod},
+             {attribute,Anno,compile,[export_all]},
 	     {function,Anno,atom,0,[{clause,Anno,[],[],[{atom,Anno,Atom}]}]}],
 
-    Utf8AtomForms = [{attribute,Anno,module,utf8_atom}|Forms],
-    {ok,utf8_atom,Utf8AtomBin} =
-	compile:forms(Utf8AtomForms, [binary]),
-    {ok,{utf8_atom,[{atoms,_}]}} =
-	beam_lib:chunks(Utf8AtomBin, [atoms]),
-    code:load_binary(utf8_atom, "compile_SUITE", Utf8AtomBin),
-    Atom = utf8_atom:atom(),
+    {ok,Mod,Utf8AtomBin} = compile:forms(Forms, [binary,report]),
+    {ok,{Mod,[{atoms,_}]}} = beam_lib:chunks(Utf8AtomBin, [atoms]),
+
+    code:load_binary(Mod, "compile_SUITE", Utf8AtomBin),
+
+    Atom = Mod:atom(),
     true = is_atom(Atom),
+
+    true = code:delete(Mod),
+    false = code:purge(Mod),
+
     ok.
 
 utf8_functions(Config) when is_list(Config) ->
@@ -2307,6 +2320,22 @@ option_order(Config) ->
 
          ],
     run(Config, Ts),
+    ok.
+
+%% Make sure that the `line_coverage` option will not change
+%% line numbers in exceptions.
+sys_coverage(Config) ->
+    Mod = exceptions,
+    DataDir = proplists:get_value(data_dir, Config),
+    Source = filename:join(DataDir, "exceptions"),
+    {ok,Mod,Code} = compile:file(Source, [line_coverage,binary,report]),
+    {module,Mod} = code:load_binary(Mod, "", Code),
+
+    Mod:Mod(Config),
+
+    true = code:delete(Mod),
+    false = code:purge(Mod),
+
     ok.
 
 %%%

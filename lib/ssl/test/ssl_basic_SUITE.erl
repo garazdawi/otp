@@ -414,8 +414,8 @@ eccs() ->
     [{doc, "Test API functions eccs/0 and eccs/1"}].
 
 eccs(Config) when is_list(Config) ->
-    [_|_] = All = ssl:eccs(),
-    [_|_] = Tls = ssl:eccs(tlsv1),
+    [_|_] = _All = ssl:eccs(),
+    [_|_] = _Tls = ssl:eccs(tlsv1),
     [_|_] = Tls1 = ssl:eccs('tlsv1.1'),
     [_|_] = Tls2 = ssl:eccs('tlsv1.2'),
     [_|_] = Tls1 = ssl:eccs('dtlsv1'),
@@ -891,7 +891,8 @@ version_info_result(Socket) ->
     {ok, [{version, Version}]} = ssl:connection_information(Socket, [version]),
     {ok, Version}.
 
-min_heap_size_info(#sslsocket{pid = [Receiver, Sender]}) ->
+min_heap_size_info(#sslsocket{connection_handler = Receiver,
+                              payload_sender = Sender}) ->
     {garbage_collection, ReceiverGc} = process_info(Receiver, garbage_collection),
     {garbage_collection, SenderGc} = process_info(Sender, garbage_collection),
     {ok, proplists:get_value(min_heap_size, ReceiverGc), proplists:get_value(min_heap_size, SenderGc)}.
