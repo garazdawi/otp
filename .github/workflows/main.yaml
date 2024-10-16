@@ -602,8 +602,8 @@ jobs:
       - name: Merge test results
         run: |
           shopt -s nullglob
-          for file in *_test_results/*.tar.gz; do
-            tar xzf $file
+          for file in *_win32_test_results/*.tar.gz; do
+            tar xvzf $file
           done
           export PATH=`pwd`/release/win32/bin/:$PATH
           cd release/tests/test_server && ct_run.exe -noshell -refresh_logs $(wslpath -w `pwd`)
@@ -691,8 +691,8 @@ jobs:
         uses: actions/upload-artifact@v4.4.0
         if: ${{ !cancelled() }}
         with:
-          name: ${{ matrix.type }}_test_results
-          path: ${{ matrix.type }}_test_results.tar.gz
+          name: ${{ matrix.type }}_ubuntu_test_results
+          path: ${{ matrix.type }}_ubuntu_test_results.tar.gz
 
   system-test:
     name: Test Erlang/OTP (system)
@@ -710,7 +710,7 @@ jobs:
         run: |
           shopt -s nullglob
           mkdir -p make_test_dir
-          for file in *_test_results/*.tar.gz; do
+          for file in *_ubuntu_test_results/*.tar.gz; do
             tar xzf $file
           done
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
