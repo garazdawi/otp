@@ -333,12 +333,12 @@ jobs:
         id: compile-erlang
         env:
           WSLENV: GITHUB_OUTPUT/p
+          JAVA_HOME: ${{ env.JAVA_HOME_11_X64 }}
         run: |
           mkdir -p /mnt/c/opt/local64/pgm/
           cp -R wxWidgets /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}
           tar -xzf ./otp_src.tar.gz
           cd otp
-          export JAVA_HOME=$JAVA_HOME_11_X64
           export ERL_TOP=`pwd`
           export MAKEFLAGS=-j$(($(nproc) + 2))
           export ERLC_USE_SERVER=true
@@ -523,6 +523,8 @@ jobs:
           name: otp_prebuilt
 
       - name: Run tests
+        env:
+            JAVA_HOME: ${{ env.JAVA_HOME_11_X64 }}
         id: run-tests
         run: |
           set -x
@@ -532,7 +534,6 @@ jobs:
 
           export ERL_TOP="$(pwd)/otp"
           export MAKEFLAGS=-j$(($(nproc) + 2))
-          export JAVA_HOME=$JAVA_HOME_11_X64
 
           eval `./otp/otp_build env_win32 x64`
 
