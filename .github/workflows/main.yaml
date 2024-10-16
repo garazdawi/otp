@@ -175,7 +175,7 @@ jobs:
 
   build-macos:
     name: Build Erlang/OTP (macOS)
-    runs-on: macos-12
+    runs-on: macos-15
     needs: pack
     if: needs.pack.outputs.c-code-changes
     env:
@@ -226,7 +226,7 @@ jobs:
       RELEASE_LIBBEAM: yes
       TARGET_ARCH: aarch64-apple-ios
     name: Build Erlang/OTP (iOS)
-    runs-on: macos-12
+    runs-on: macos-15
     needs: pack
     steps:
       - uses: actions/checkout@v4.1.7
