@@ -564,6 +564,84 @@ jobs:
           name: ${{ matrix.type }}_win32_test_results
           path: ${{ matrix.type }}_win32_test_results.tar.gz
 
+  system-test-windows:
+    name: Test Win64 Erlang/OTP (system)
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    runs-on: windows-2022
+    if: ${{ !cancelled() }} # Run even if the need has failed
+    needs: [test-windows, build-windows]
+    steps:
+      - uses: Vampire/setup-wsl@v3.1.1
+        with:
+          distribution: Ubuntu-18.04
+      - name: Install WSL dependencies
+        run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip zip
+      - name: Download installer
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_win32_installer
+      - name: Download tests
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_tests
+
+      - name: Install OTP
+        shell: cmd
+        run: |
+            echo %cd%
+            start "" /WAIT ${{ needs.build-windows.outputs.installer_name }} /S /D=%CD%\release\win32\
+            dir %cd%
+            dir %cd%\release\win32\
+
+      - name: Download source archive
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_prebuilt
+
+      - name: Download test results
+        uses: actions/download-artifact@v4.1.8
+      - name: Merge test results
+        run: |
+          shopt -s nullglob
+          for file in *_test_results/*.tar.gz; do
+            tar xzf $file
+          done
+          export PATH=`pwd`/release/win32/bin/:$PATH
+          cd release/tests/test_server && ct_run.exe -refresh_logs $(wslpath -w `pwd`)
+
+      - name: Run system tests
+        run: |
+          set -x
+          unzip -q tests.zip
+
+          tar -xzf ./otp_src.tar.gz
+
+          export ERL_TOP="$(pwd)/otp"
+          export MAKEFLAGS=-j$(($(nproc) + 2))
+
+          eval `./otp/otp_build env_win32 x64`
+
+          export PATH=`pwd`/release/win32/bin/:$PATH
+
+          (cd release/tests/test_server && erl.exe -emu_type $TYPE -noshell -eval "ts:install()" -eval "ts:run(system,[batch])" -s init stop)
+          if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.*.logs/run*/suite.log; then
+               exit 1
+          fi
+
+      - name: Cleanup tests
+        if: ${{ !cancelled() }}
+        run: |
+          tar czf test_results_win32.tar.gz release/tests/test_server
+          
+      - name: Upload test results
+        uses: actions/upload-artifact@v4.4.0
+        if: ${{ !cancelled() }}
+        with:
+          name: test_results_win32
+          path: test_results_win32.tar.gz
+
   test:
     name: Test Erlang/OTP
     runs-on: ubuntu-latest
