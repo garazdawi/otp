@@ -333,7 +333,6 @@ jobs:
         id: compile-erlang
         env:
           WSLENV: GITHUB_OUTPUT/p
-          JAVA_HOME: ${{ env.JAVA_HOME_11_X64 }}
         run: |
           mkdir -p /mnt/c/opt/local64/pgm/
           cp -R wxWidgets /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}
@@ -523,8 +522,6 @@ jobs:
           name: otp_prebuilt
 
       - name: Run tests
-        env:
-            JAVA_HOME: ${{ env.JAVA_HOME_11_X64 }}
         id: run-tests
         run: |
           set -x
