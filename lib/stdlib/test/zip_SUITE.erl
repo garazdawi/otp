@@ -1456,10 +1456,7 @@ basic_timestamp(Config) ->
        {ok, ["testfile.txt"]},
        unzip(Config, Archive, [{cwd,ExtractDir}])),
 
-    {ok, UnzipFI = #file_info{ atime = UnZAtime,
-                               mtime = UnZMtime,
-                               ctime = UnZCtime
-                             }} =
+    {ok, UnzipFI } =
         file:read_file_info(filename:join(ExtractDir, "testfile.txt"),[raw]),
 
 
@@ -1467,20 +1464,7 @@ basic_timestamp(Config) ->
 
     UnzipMode = un_z64(get_value(unzip, Config)),
 
-    if UnzipMode =/= unemzip ->
-            ?assertEqual(ZMtime, UnZMtime),
-
-            %% both atime and ctime behave very differently on different platforms, so it is rather hard to test.
-            %% atime is sometimes set to ctime for unknown reasons, and sometimes set to 1970...
-            ?assert(UnZAtime =:= UnZMtime orelse UnZAtime =:= UnZCtime orelse UnZAtime =:= {1970,1,1},{1,0,0}),
-
-            %% On windows the ctime and mtime are the same so
-            %% we cannot compare them.
-            [?assert(UnZMtime < UnZCtime) || os:type() =/= {win32,nt}];
-        UnzipMode =:= unemzip ->
-            %% emzip does not support timestamps
-            ok
-    end,
+    assert_timestamp(UnzipMode, UnzipFI, ZMtime),
 
     ok.
 
@@ -1524,30 +1508,31 @@ extended_timestamp(Config) ->
        {ok, ["testfile.txt"]},
        unzip(Config, Archive, [{cwd,ExtractDir}])),
 
-    {ok, UnzipFI = #file_info{ atime = UnZAtime,
-                               mtime = UnZMtime,
-                               ctime = UnZCtime
-                             }} =
+    {ok, UnzipFI } =
         file:read_file_info(filename:join(ExtractDir, "testfile.txt"),[raw]),
 
     ct:log("extract: ~p",[UnzipFI]),
 
     UnzipMode = un_z64(get_value(unzip, Config)),
 
-    if UnzipMode =/= unemzip ->
-            ?assertEqual(ZMtime, UnZMtime),
+    assert_timestamp(UnzipMode, UnzipFI, ZMtime ),
 
-            %% When using unzip, the atime is sometimes set to ctime for unknown reasons... so we cannot test it
-            %% ?assertEqual(UnZAtime, UnZMtime),
-            ?assert(UnZAtime =:= UnZMtime orelse UnZAtime =:= UnZCtime),
+    ok.
 
-            %% On windows the ctime and mtime are the same so
-            %% we cannot compare them.
-            [?assert(UnZMtime < UnZCtime) || os:type() =/= {win32,nt}];
-        UnzipMode =:= unemzip ->
-            %% emzip does not support timestamps
-            ok
-    end,
+assert_timestamp(unemzip, _FI, _ZMtime) ->
+    %% emzip does not support timestamps
+    ok;
+assert_timestamp(_, #file_info{ atime = UnZAtime, mtime = UnZMtime, ctime = UnZCtime }, ZMtime) ->
+
+    ?assertEqual(ZMtime, UnZMtime),
+
+    %% both atime and ctime behave very differently on different platforms, so it is rather hard to test.
+    %% atime is sometimes set to ctime for unknown reasons, and sometimes set to 1970...
+    ?assert(UnZAtime =:= UnZMtime orelse UnZAtime =:= UnZCtime orelse UnZAtime =:= {{1970,1,1},{1,0,0}}),
+
+    %% On windows the ctime and mtime are the same so
+    %% we cannot compare them.
+    [?assert(UnZMtime < UnZCtime) || os:type() =/= {win32,nt}],
 
     ok.
 
