@@ -530,8 +530,12 @@ jobs:
           set -x
           unzip -q tests.zip
 
-          export ERL_TOP="$(pwd)/otp"
+          export ERL_TOP="$(pwd)"
           export MAKEFLAGS=-j$(($(nproc) + 2))
+
+          cat otp_build
+
+          ./otp_build env_win32 x64
 
           eval `./otp_build env_win32 x64`
 
