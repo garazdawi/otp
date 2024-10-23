@@ -230,32 +230,10 @@ jobs:
         # type: ["os_mon","sasl"]
       fail-fast: false
     steps:
-      - uses: Vampire/setup-wsl@v3.1.1
+      - uses: actions/checkout@v4.2.1
+      - uses: ./.github/actions/setup-wsl-runner
         with:
-          distribution: Ubuntu-18.04
-      - name: Install WSL dependencies
-        run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip zip
-      - name: Download installer
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: otp_win32_installer
-      - name: Download tests
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: otp_tests
-
-      - name: Install OTP
-        shell: cmd
-        run: |
-            echo %cd%
-            start "" /WAIT ${{ needs.build-windows.outputs.installer_name }} /S /D=%CD%\release\win32\
-            dir %cd%
-            dir %cd%\release\win32\
-
-      - name: Download source archive
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: otp_prebuilt
+          installer_name: ${{ needs.build-windows.outputs.installer_name }}
 
       - name: Run tests
         id: run-tests
@@ -263,12 +241,10 @@ jobs:
           set -x
           unzip -q tests.zip
 
-          tar -xzf ./otp_src.tar.gz
-
           export ERL_TOP="$(pwd)/otp"
           export MAKEFLAGS=-j$(($(nproc) + 2))
 
-          eval `./otp/otp_build env_win32 x64`
+          eval `./otp_build env_win32 x64`
 
           export PATH=`pwd`/release/win32/bin/:$PATH
 
@@ -306,35 +282,11 @@ jobs:
     if: ${{ !cancelled() }} # Run even if the need has failed
     needs: [test-windows, build-windows]
     steps:
-      - uses: Vampire/setup-wsl@v3.1.1
+      - uses: actions/checkout@v4.2.1
+      - uses: ./.github/actions/setup-wsl-runner
         with:
-          distribution: Ubuntu-18.04
-      - name: Install WSL dependencies
-        run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip zip
-      - name: Download installer
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: otp_win32_installer
-      - name: Download tests
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: otp_tests
+          installer_name: ${ needs.build-windows.outputs.installer_name }
 
-      - name: Install OTP
-        shell: cmd
-        run: |
-            echo %cd%
-            start "" /WAIT ${{ needs.build-windows.outputs.installer_name }} /S /D=%CD%\release\win32\
-            dir %cd%
-            dir %cd%\release\win32\
-
-      - name: Download source archive
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: otp_prebuilt
-
-      - name: Download test results
-        uses: actions/download-artifact@v4.1.8
       - name: Merge test results
         run: |
           shopt -s nullglob
@@ -349,12 +301,10 @@ jobs:
           set -x
           unzip -q -o tests.zip
 
-          tar -xzf ./otp_src.tar.gz
-
           export ERL_TOP="$(pwd)/otp"
           export MAKEFLAGS=-j$(($(nproc) + 2))
 
-          eval `./otp/otp_build env_win32 x64`
+          eval `./otp_build env_win32 x64`
 
           export PATH=`pwd`/release/win32/bin/:$PATH
 
