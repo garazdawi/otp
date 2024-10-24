@@ -529,15 +529,16 @@ jobs:
         run: |
           set -x
           unzip -q tests.zip
-
           export ERL_TOP="$(pwd)"
           export MAKEFLAGS=-j$(($(nproc) + 2))
 
+          export
+
           cat otp_build
 
-          ./otp_build env_win32 x64
+          bash ./otp_build env_win32 x64
 
-          eval `./otp_build env_win32 x64`
+          eval `bash ./otp_build env_win32 x64`
 
           export PATH=`pwd`/release/win32/bin/:$PATH
 
