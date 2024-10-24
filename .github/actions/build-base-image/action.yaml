@@ -50,12 +50,14 @@ runs:
         with:
             path: otp_src.tar.gz
             key: prebuilt-src-${{ github.ref_name }}-${{ github.sha }}
+
       - name: Cache pre-built binaries
         if: inputs.BUILD_IMAGE == 'true'
         uses: actions/cache@v4.1.1
         with:
             path: otp_cache.tar.gz
-            key: prebuilt-cache-${{ inputs.TYPE }}-${{ github.ref_name }}-${{ github.sha }}
+            key: prebuilt-cache-${{ runner.os }}-${{ inputs.TYPE }}-${{ github.ref_name }}-${{ github.sha }}
+
       - name: Build image
         if: inputs.BUILD_IMAGE == 'true'
         shell: bash -eo pipefail {0}
