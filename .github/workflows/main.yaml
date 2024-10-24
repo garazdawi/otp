@@ -40,6 +40,11 @@ jobs:
         changes: ${{ steps.changes.outputs.changes }}
         c-code-changes: ${{ steps.c-code-changes.outputs.changes }}
         all: ${{ steps.apps.outputs.all }}
+        NO_CACHE: ${{ steps.restore-from-cache.outputs.NO_CACHE }}
+        BOOTSTRAP: ${{ steps.restore-from-cache.outputs.BOOTSTRAP }}
+        CONFIGURE: ${{ steps.restore-from-cache.outputs.CONFIGURE }}
+        EVENT: ${{ steps.restore-from-cache.outputs.EVENT }}
+        DELETED: ${{ steps.restore-from-cache.outputs.DELETED }}
     steps:
       - uses: actions/checkout@v4.2.1
       - uses: ./.github/actions/build-base-image
@@ -89,9 +94,9 @@ jobs:
         uses: actions/cache@v4.1.1
         with:
             path: otp_cache.tar.gz
-            key: prebuilt-cache-64-bit-${{ github.ref_name }}-${{ github.sha }}
+            key: prebuilt-cache-${{ runner.os }}-64-bit-${{ github.ref_name }}-${{ github.sha }}
             restore-keys: |
-                prebuilt-cache-64-bit-${{ github.base_ref }}-${{ github.event.pull_request.base.sha }}
+                prebuilt-cache-${{ runner.os }}-64-bit-${{ github.base_ref }}-${{ github.event.pull_request.base.sha }}
       - name: Create initial pre-release tar
         run: .github/scripts/init-pre-release.sh otp_archive.tar.gz otp_src.tar.gz
       - name: Upload source tar archive
@@ -128,6 +133,7 @@ jobs:
               echo "DISABLE_CACHE=false" >> $GITHUB_OUTPUT
             fi
       - name: Restore from cache
+        id: restore-from-cache
         env:
             NO_CACHE: ${{ fromJson(steps.cache.outputs.no-cache) || fromJson(steps.issue_comment.outputs.DISABLE_CACHE) || fromJson(steps.cache.outputs.deleted_count) > 20 }}
             BOOTSTRAP: ${{ steps.cache.outputs.bootstrap }}
@@ -138,6 +144,11 @@ jobs:
             .github/scripts/restore-from-prebuilt.sh "`pwd`" \
               "`pwd`/.github/otp.tar.gz" \
               "`pwd`/otp_archive.tar.gz"
+            echo "NO_CACHE=${NO_CACHE}" >> $GITHUB_OUTPUT
+            echo "BOOTSTRAP=${BOOTSTRAP}" >> $GITHUB_OUTPUT
+            echo "CONFIGURE=${CONFIGURE}" >> $GITHUB_OUTPUT
+            echo "EVENT=${EVENT}" >> $GITHUB_OUTPUT
+            echo "DELETED=${DELETED}" >> $GITHUB_OUTPUT
       - name: Upload restored cache
         uses: actions/upload-artifact@v4.4.3
         if: runner.debug == 1
@@ -271,6 +282,9 @@ jobs:
         installer_name: ${{ steps.compile-erlang.outputs.installer_name }}
     
     steps:
+      - name: Setup nl behaviour for wsl
+        shell: cmd
+        run: git config --global core.autocrlf input
       - uses: actions/checkout@v4.2.1
       - uses: ./.github/actions/setup-wsl-runner
 
@@ -322,10 +336,28 @@ jobs:
           call "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\Auxiliary\\Build\\vcvars64.bat"
           nmake TARGET_CPU=amd64 BUILD=release SHARED=0 DIR_SUFFIX_CPU= -f makefile.vc
 
-      - name: Download source archive
-        uses: actions/download-artifact@v4.1.8
+      - name: Cache pre-built src
+        uses: actions/cache@v4.1.1
         with:
-          name: otp_prebuilt
+            path: otp_src.tar.gz
+            key: prebuilt-src-${{ github.ref_name }}-${{ github.sha }}
+
+      - name: Cache pre-built binaries
+        uses: actions/cache@v4.1.1
+        with:
+            path: otp_cache.tar.gz
+            key: prebuilt-cache-${{ runner.os }}-64-bit-${{ github.ref_name }}-${{ github.sha }}
+    
+      - name: Restore from cache
+        env:
+            NO_CACHE: ${{ needs.pack.outputs.NO_CACHE }}
+            BOOTSTRAP: ${{ needs.pack.outputs.BOOTSTRAP }}
+            CONFIGURE: ${{ needs.pack.outputs.CONFIGURE }}
+            EVENT: ${{ needs.pack.outputs.EVENT }}
+            DELETED: ${{ needs.pack.outputs.DELETED }}
+        run: |
+          .github/scripts/restore-from-prebuilt.sh `pwd` .github/otp.tar.gz
+          rm -f otp_{src,cache}.tar.gz
 
       - name: Compile Erlang
         id: compile-erlang
@@ -334,19 +366,24 @@ jobs:
         run: |
           mkdir -p /mnt/c/opt/local64/pgm/
           cp -R wxWidgets /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}
-          tar -xzf ./otp_src.tar.gz
+          tar -xzf ./.github/otp.tar.gz
           cd otp
           export ERL_TOP=`pwd`
           export MAKEFLAGS=-j$(($(nproc) + 2))
           export ERLC_USE_SERVER=true
           export ERTS_SKIP_DEPEND=true
           eval `./otp_build env_win32 x64`
-          ./otp_build configure
-          if cat erts/CONF_INFO ||
-             grep -v "Static linking with OpenSSL 3.0" lib/*/CONF_INFO ||
-             cat lib/*/SKIP ||
-             cat lib/SKIP-APPLICATIONS; then
-             exit 1
+          if [ ! -f Makefile ]; then
+            touch README.md
+            ./otp_build configure
+            if cat lib/*/CONF_INFO || cat lib/*/SKIP || cat lib/SKIP-APPLICATIONS; then exit 1; fi
+            find . -type f -newer README.md | xargs tar --transform 's:^./:otp/:' -cf ../otp_cache.tar;
+            if cat erts/CONF_INFO ||
+              grep -v "Static linking with OpenSSL 3.0" lib/*/CONF_INFO ||
+              cat lib/*/SKIP ||
+              cat lib/SKIP-APPLICATIONS; then
+              exit 1
+            fi
           fi
           ./otp_build boot -a
           ./otp_build release -a
