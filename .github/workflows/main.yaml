@@ -519,6 +519,9 @@ jobs:
         # type: ["os_mon","sasl"]
       fail-fast: false
     steps:
+      - name: Setup nl behaviour for wsl
+        shell: cmd
+        run: git config --global core.autocrlf input
       - uses: actions/checkout@v4.2.1
       - uses: ./.github/actions/setup-wsl-runner
         with:
@@ -532,13 +535,7 @@ jobs:
           export ERL_TOP="$(pwd)"
           export MAKEFLAGS=-j$(($(nproc) + 2))
 
-          export
-
-          cat otp_build
-
-          bash ./otp_build env_win32 x64
-
-          eval `bash ./otp_build env_win32 x64`
+          eval `./otp_build env_win32 x64`
 
           export PATH=`pwd`/release/win32/bin/:$PATH
 
@@ -576,6 +573,9 @@ jobs:
     if: ${{ !cancelled() }} # Run even if the need has failed
     needs: [test-windows, build-windows]
     steps:
+      - name: Setup nl behaviour for wsl
+        shell: cmd
+        run: git config --global core.autocrlf input
       - uses: actions/checkout@v4.2.1
       - uses: ./.github/actions/setup-wsl-runner
         with:
