@@ -357,7 +357,7 @@ jobs:
             EVENT: ${{ needs.pack.outputs.EVENT }}
             DELETED: ${{ needs.pack.outputs.DELETED }}
         run: |
-          .github/scripts/restore-from-prebuilt.sh `pwd` .github/otp.tar.gz
+          .github/scripts/restore-from-prebuilt.sh `pwd` .github/otp.tar.gz otp_src.tar.gz
           rm -f otp_{src,cache}.tar.gz
 
       - name: Compile Erlang
