@@ -17,7 +17,7 @@ runs:
 
       - name: Install WSL dependencies
         shell: wsl-bash {0}
-        run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip zip
+        run: apt update && apt install -y make autoconf unzip zip
 
       - name: Download source archive
         uses: actions/download-artifact@v4.1.8
