@@ -291,6 +291,9 @@ jobs:
         installer_name: ${{ steps.compile-erlang.outputs.installer_name }}
     
     steps:
+      - name: Setup nl behaviour for wsl
+        shell: cmd
+        run: git config --global core.autocrlf input
       - uses: actions/checkout@v4.2.1
       - uses: ./.github/actions/setup-wsl-runner
 
