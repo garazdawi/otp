@@ -517,8 +517,8 @@ jobs:
     if: needs.pack.outputs.changes != '[]'
     strategy:
       matrix:
-        # type: ${{ fromJson(needs.pack.outputs.all) }}
-        type: ${{ fromJson(needs.pack.outputs.changes) }}
+        type: ${{ fromJson(needs.pack.outputs.all) }}
+        # type: ${{ fromJson(needs.pack.outputs.changes) }}
         # type: ["os_mon","sasl"]
       fail-fast: false
     steps:
