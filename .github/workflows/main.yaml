@@ -258,7 +258,7 @@ jobs:
                echo "No debug tests on windows"
                ;;
             *)
-               (cd release/tests/test_server && erl.exe -emu_type $TYPE -noshell -eval "ts:install()" -eval "ts:run($APP,[batch])" -s init stop)
+               (cd release/tests/test_server && erl.exe -env USER ${USER} -emu_type $TYPE -noinput -eval "ts:install()" -eval "ts:run($APP,[batch])" -s init stop)
                if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.${APP}_test.logs/run*/suite.log; then
                   exit 1
                fi
@@ -290,7 +290,7 @@ jobs:
       - uses: actions/checkout@v4.2.1
       - uses: ./.github/actions/setup-wsl-runner
         with:
-          installer_name: ${ needs.build-windows.outputs.installer_name }
+          installer_name: ${{ needs.build-windows.outputs.installer_name }}
 
       - name: Merge test results
         run: |

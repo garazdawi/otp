@@ -11,6 +11,10 @@ inputs:
 runs:
     using: composite
     steps:
+      - name: Set timezone to CET
+        shell: cmd
+        run: tzutil /s "Europe/Stockholm"
+
       - uses: Vampire/setup-wsl@v3.1.3
         with:
           distribution: Ubuntu-18.04
