@@ -13,7 +13,9 @@ runs:
     steps:
       - name: Set timezone to CET
         shell: cmd
-        run: tzutil /s "Europe/Stockholm"
+        run: |
+          tzutil /l
+          tzutil /s "W. Europe Standard Time"
 
       - uses: Vampire/setup-wsl@v3.1.3
         with:
