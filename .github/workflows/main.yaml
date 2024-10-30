@@ -584,6 +584,8 @@ jobs:
         with:
           installer_name: ${{ needs.build-windows.outputs.installer_name }}
 
+      - name: Download test results
+        uses: actions/download-artifact@v4.1.8
       - name: Merge test results
         run: |
           shopt -s nullglob
