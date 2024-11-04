@@ -1119,12 +1119,24 @@ erts_tar(Config) ->
                   "start","start_erl.src","start.src","to_erl"],
                  ["ct_run","dialyzer","erlc","typer","yielding_c_fun"]};
             {win32, _} ->
-                {["beam.smp.pdb","erl.exe",
-                  "erl.pdb","erl_log.exe","erlexec.dll","erlsrv.exe","heart.exe",
-                  "start_erl.exe","beam.smp.dll",
-                  "epmd.exe","erl.ini","erl_call.exe",
-                  "erlexec.pdb","escript.exe","inet_gethost.exe"],
-                 ["dialyzer.exe","erlc.exe","yielding_c_fun.exe","ct_run.exe","typer.exe"]}
+                Files = ["beam.smp.dll",
+                         "epmd.exe",
+                         "erl.exe",
+                         "erl_log.exe",
+                         "erlexec.dll",
+                         "erlsrc.exe",
+                         "escript.exe",
+                         "heart.exe",
+                         "inet_gethost.exe",
+                         "start_erl.exe"],
+                PdbFiles = [filename:rootname(F) ++ ".pdb" || F <- Files],
+                IgnoredFiles = ["ct_run.exe",
+                           "dialyzer.exe",
+                           "erlc.exe",
+                           "typer.exe",
+                           "yielding_c_fun.exe"],
+                PdbIgnored = [filename:rootname(F) ++ ".pdb" || F <- IgnoredFiles],
+                {Files ++ PdbFiles, IgnoredFiles ++ PdbIgnored}
         end,
 
     ErtsTarContent =
