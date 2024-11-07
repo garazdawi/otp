@@ -10,7 +10,7 @@ updates:
           patterns: ['*']
 
   - package-ecosystem: "docker"
-    directory: "/.github/dockerfile/"
+    directory: "/.github/dockerfiles/"
     schedule:
       interval: "daily"
     groups:
