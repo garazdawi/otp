@@ -625,7 +625,7 @@ jobs:
           sha256sum $FILES > SHA256.txt
 
       - name: Upload pre-built and doc tar archives
-        uses: softprops/action-gh-release@v2.0.8
+        uses: softprops/action-gh-release@v2.0.9
         with:
           name: OTP ${{ steps.tag.outputs.vsn }}
           files: |
