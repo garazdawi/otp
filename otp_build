@@ -73,6 +73,10 @@ usage ()
     echo "    download_ex_doc             - download the correct ExDoc version from github"
     echo "    update_ex_doc [--no-commit] - update and maybe commit new ex_doc version"
     echo ""
+    echo "Special targets for setting up gdb tooling:"
+    echo "    download_gdb_tools             - download the correct gdb tooling version from github"
+    echo "    update_gdb_tools [--no-commit] - update and maybe commit new gdb tooling version"
+    echo ""
     echo "Special targets for Windows(tm) build:"
     echo "    debuginfo_win32 <dir> - adds debug emulator and pdb files to <dir>"
     echo "    installer_win32 <dir> - creates a windows installer from <dir>" 
@@ -1015,27 +1019,94 @@ do_download_ex_doc ()
     ## Download ex_doc and place in $ERL_TOP/bin folder
     curl -s -L "$(cat "$ERL_TOP/make/ex_doc_link")" > "$ERL_TOP/bin/ex_doc"
     chmod +x "$ERL_TOP/bin/ex_doc"
+
+    shasum_format=
+    choose_available_shasum
+    check_shasum "ex_doc" "$ERL_TOP/bin" "$ERL_TOP/make"
+
+    echo "Downloaded ex_doc to $ERL_TOP/bin/ex_doc"
+}
+
+do_download_gdb_tools ()
+{
+    shaXsum=
+    gdb_tools_path="$ERL_TOP/erts/etc/unix/gdb-tools"
+
+    # shasum_format has values: sha256sum, sha1sum, shasum
+    shasum_format=
+
+    # clean up
+    rm -rf "$gdb_tools_path"
+
+    otp_version=$(cat $ERL_TOP/OTP_VERSION | cut -d. -f1)
+    echo "Downloading gdb-tools for Erlang/OTP: $otp_version"
+
+    (git clone -b maint-$otp_version \
+        git@github.com:erlang/otp-gdb-utils.git "$gdb_tools_path") || {
+            echo "Downloading gdb_tools failed. Please check your source tree."
+            exit 1
+        }
+
+    choose_available_shasum
+
+    create_shasum_file "jit-reader.h"
+    check_shasum "jit-reader.h" "$gdb_tools_path" "$gdb_tools_path"
+    rm "$shaXsum"
+
+    create_shasum_file "jit-reader.c"
+    check_shasum "jit-reader.c" "$gdb_tools_path" "$gdb_tools_path"
+    rm "$shaXsum"
+
+    echo "Downloaded gdb_tools to $gdb_tools_path"
+}
+
+create_shasum_file() {
+    shaXsum="$gdb_tools_path/$1.$shasum_format"
+    touch "$shaXsum"
+    grep "maint-$otp_version" "$ERL_TOP/make/$1.$shasum_format" | cut -d" " -f2-4 >> "$shaXsum"
+}
+
+choose_available_shasum ()
+{
     if command -v sha256sum > /dev/null; then
-        if ! (cd "$ERL_TOP/make" && sha256sum --status -c "ex_doc.sha256sum"); then
-            echo "The sha256sum check of $ERL_TOP/bin/ex_doc failed!" >&2
-            exit 1
-        fi
+        shasum_format="sha256sum"
     elif command -v sha1sum > /dev/null; then
-        if ! (cd "$ERL_TOP/make" && sha1sum --status -c "ex_doc.sha1sum"); then
-            echo "The sha1sum check of $ERL_TOP/bin/ex_doc failed!" >&2
-            exit 1
-        fi
+        shasum_format="sha1sum"
     elif command -v shasum > /dev/null; then
-        if ! (cd "$ERL_TOP/make" && shasum -a 1 --status -c "ex_doc.sha1sum"); then
-            echo "The shasum check of $ERL_TOP/bin/ex_doc failed!" >&2
-            exit 1
-        fi
+        # shasum produces the same sha as sha1sum.
+        shasum_format="sha1sum"
     else
-        echo "Neither sha1sum nor sha256sum nor shasum found to verify $ERL_TOP/bin/ex_doc" >&2
-        echo "Please check manually that the correct ex_doc was downloaded." >&2
+        echo "Neither sha1sum nor sha256sum nor shasum found" >&2
         exit 1
     fi
-    echo "Downloaded ex_doc to $ERL_TOP/bin/ex_doc"
+}
+
+# $1: expected file,
+#     e.g., `jit-reader.c`, `ex_doc`
+# $2: path to expeted file,
+#     e.g., `$ERL_TOP/bin`, which is where `ex_doc` is found.
+#     makes easy to find errors in the path.
+# $3: path where shasum lives
+#     e.g., `$ERL_TOP/make` in case of sha256sum and sha1sum files.
+check_shasum()
+{
+    case $shasum_format in
+        "sha256sum" )
+            if ! (cd "$3" && sha256sum --status -c "$1.$shasum_format"); then
+                echo "The sha256sum check of $2/$1 failed!" >&2
+                exit 1
+            fi;;
+        "sha1sum" )
+            if ! (cd "$3" && sha1sum --status -c "$1.$shasum_format"); then
+                echo "The sha1sum check of $2/$1 failed!" >&2
+                exit 1
+            fi;;
+        "shasum" )
+            if ! (cd "$3" && shasum -a 1 --status -c "$1.$shasum_format"); then
+                echo "The shasum check of $2/$1 failed!" >&2
+                exit 1
+            fi
+    esac
 }
 
 ## Update make/ex_doc_link, make/ex_doc.sha256sum and make/ex_doc.sha1sum
@@ -1334,6 +1405,8 @@ case "$1" in
 		do_save_bootstrap;;
         copy_primary_bootstrap)
 	        do_copy_primary_bootstrap $2 $3;;
+        download_gdb_tools)
+                do_download_gdb_tools;;
         download_ex_doc)
                 do_download_ex_doc;;
         update_ex_doc)
