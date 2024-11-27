@@ -438,6 +438,9 @@ if [ "x$GDB" = "x" ]; then
 	exec $EXEC $xargs ${1+"$@"}
     fi
 elif [ "x$GDB" = "xgdb" ]; then
+
+    install_gdb_utils
+
     case "x$core" in
 	x)
 	    # Get emu args to use from erlexec...
@@ -476,7 +479,9 @@ elif [ "x$GDB" = "xegdb" ]; then
     if [ "x$EMACS" = "x" ]; then
 	EMACS=emacs
     fi
-    
+
+    install_gdb_utils
+
     case "x$core" in
 	x)
 	    # Get emu args to use from erlexec...
@@ -550,3 +555,22 @@ set verbose off" > $cmdfile
 	    ;;
     esac
 fi
+
+
+install_gdb_utils () {
+    if [ -z "$(find $ERL_TOP -name jit-reader.c)" ]
+    then
+        echo "Do you want to install gdb-utils?"
+        select yn in "Yes" "No"
+        do
+            case $yn in
+                "Yes" )
+                    $ERL_TOP/otp_build download_gdb_utils
+                    (cd $ERL_TOP/erts/emulator && make debug)
+                    break;;
+                "No" )
+                    exit;;
+            esac
+        done
+    fi
+}

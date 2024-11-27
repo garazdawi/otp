@@ -1029,19 +1029,26 @@ do_download_ex_doc ()
 
 do_download_gdb_tools ()
 {
-    shaXsum=
+    OTP_VERSION=$(cat $ERL_TOP/OTP_VERSION | cut -d. -f1)
     gdb_tools_path="$ERL_TOP/erts/etc/unix/gdb-tools"
+    shaXsum=
+    GDB_TOOLS_VSN=
 
     # shasum_format has values: sha256sum, sha1sum, shasum
     shasum_format=
 
     # clean up
     rm -rf "$gdb_tools_path"
+    if find . -name "$ERL_TOP/make/gdb_tools_vsn" > /dev/null
+    then
+        GDB_TOOLS_VSN=$(cat "$ERL_TOP/make/gdb_tools_vsn")
+    else
+        GDB_TOOLS_VSN="maint-$OTP_VERSION"
+    fi
 
-    otp_version=$(cat $ERL_TOP/OTP_VERSION | cut -d. -f1)
-    echo "Downloading gdb-tools for Erlang/OTP: $otp_version"
+    echo "Downloading gdb-tools for Erlang/OTP: $OTP_VERSION"
 
-    (git clone -b maint-$otp_version \
+    (git clone -b maint-$GDB_TOOLS_VSN \
         git@github.com:erlang/otp-gdb-utils.git "$gdb_tools_path") || {
             echo "Downloading gdb_tools failed. Please check your source tree."
             exit 1
@@ -1049,21 +1056,95 @@ do_download_gdb_tools ()
 
     choose_available_shasum
 
-    create_shasum_file "jit-reader.h"
+    create_shasum_file "jit-reader.h" $GDB_TOOLS_VSN
     check_shasum "jit-reader.h" "$gdb_tools_path" "$gdb_tools_path"
     rm "$shaXsum"
 
-    create_shasum_file "jit-reader.c"
+    create_shasum_file "jit-reader.c" $GDB_TOOLS_VSN
     check_shasum "jit-reader.c" "$gdb_tools_path" "$gdb_tools_path"
     rm "$shaXsum"
 
     echo "Downloaded gdb_tools to $gdb_tools_path"
 }
 
+do_update_gdb_tools ()
+{
+    shaXsum=
+    gdb_tools_path="$ERL_TOP/erts/etc/unix/gdb-tools"
+    GDB_REPO="git@github.com:erlang/otp-gdb-utils.git"
+
+    # shasum_format has values: sha256sum, sha1sum, shasum
+    shasum_format=
+    GDB_TOOLS_VSN=
+
+    OTP_VERSION=$(cat $ERL_TOP/OTP_VERSION | cut -d. -f1)
+
+    # set GDB_TOOLs version
+
+
+    # download OTP_VERSION or latest
+    if find "$ERL_TOP" -name jit-reader.c > /dev/null
+    then
+        # check version
+        if (cd "$gdb_tools_path" && "git ls-remote --heads $GDB_REPO $OTP_VERSION" > /dev/null)
+        then
+            GDB_TOOLS_VSN=$OTP_VERSION
+        else
+            # chose the lastest version, since it is most likely compatible or has not changed
+            GDB_TOOLS_VSN=$("cd $gdb_tools_path && git branch | sort -r | head -n1")
+        fi
+        echo "git clone -b maint-$GDB_TOOLS_VSN $GDB_REPO $gdb_tools_path"
+        (cd "$gdb_tools_path" && git fetch origin && git checkout -b "maint-$GDB_TOOLS_VSN")
+    else
+        echo "git clone -b maint-$GDB_TOOLS_VSN $GDB_REPO $gdb_tools_path"
+        (git clone -b "maint-$GDB_TOOLS_VSN" "$GDB_REPO" "$gdb_tools_path")
+    fi
+
+    if command -v sha1sum > /dev/null && command -v sha256sum > /dev/null; then
+        if ! (grep "$GDB_TOOLS_VSN" "$ERL_TOP/make/jit-reader.c.sha256sum" > /dev/null)
+        then
+            # append the entry to the local jit-reader.c.sha256sum
+            SHASUM=cat $gdb_tools_path/jit-reader.c.sha256sum
+            SHASUM_ENTRY="$GDB_TOOLS_VSN $SHASUM"
+            # add new line at the top
+            echo "$SHASUM_ENTRY" > "$ERL_TOP/make/jit-reader.c.sha256sum"
+
+            # append the entry to the local jit-reader.h.sha256sum
+            SHASUM=cat $gdb_tools_path/jit-reader.h.sha256sum
+            SHASUM_ENTRY="$GDB_TOOLS_VSN $SHASUM"
+            # add new line at the top
+            echo "$SHASUM_ENTRY" > "$ERL_TOP/make/jit-reader.h.sha256sum"
+        fi
+
+        echo "$GDB_TOOLS_VSN" > "$ERL_TOP/make/gdb_tools_vsn"
+        # produce commit and call download file, which checks shasum.
+        # TODO: test everything
+        if do_download_gdb_tools; then
+
+            out_files=
+
+            echo "Successfully updated ex_doc"
+            # TODO: fix me
+            if [ $do_commit != true ]; then
+                echo "Updated: make/ex_doc_link make/ex_doc_vsn make/ex_doc_link.sha256sum make/ex_doc_link.sha1sum"
+            else
+                git add $ERL_TOP/make/ex_doc_link $ERL_TOP/make/ex_doc_vsn  $ERL_TOP/make/ex_doc.sha256sum $ERL_TOP/make/ex_doc.sha1sum
+                git commit -m  "Updated ex_doc version to ${EX_DOC_VSN}"
+            fi
+        fi
+    else
+        echo "You need to have both sha1sum and sha256sum installed to update ex_doc"
+        exit 1
+    fi
+}
+
+# $1: jit-reader.c, jit-reader.h, etc
+# $2: DGB_TOOLS_VSN, e.g., maint-28, foo, etc it is guaranteed to be an existing branch
+#     that lives in "$ERL_TOP/make/$1.$shasum_format"
 create_shasum_file() {
     shaXsum="$gdb_tools_path/$1.$shasum_format"
     touch "$shaXsum"
-    grep "maint-$otp_version" "$ERL_TOP/make/$1.$shasum_format" | cut -d" " -f2-4 >> "$shaXsum"
+    grep "$2" "$ERL_TOP/make/$1.$shasum_format" | cut -d" " -f2-4 >> "$shaXsum"
 }
 
 choose_available_shasum ()
