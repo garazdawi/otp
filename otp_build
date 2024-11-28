@@ -1041,7 +1041,6 @@ do_download_gdb_tools ()
 
     set_default_gdb_tools_version
 
-    echo "Downloading gdb-tools for Erlang/OTP: $OTP_VERSION"
     clone_gdb_tools
 
     choose_available_shasum
@@ -1053,8 +1052,6 @@ do_download_gdb_tools ()
     create_shasum_file "jit-reader.c" $GDB_TOOLS_VSN
     check_shasum "jit-reader.c" "$GDB_TOOLS_INSTALL_PATH" "$GDB_TOOLS_INSTALL_PATH"
     clean_file "$SHAXSUM_TMP_FILE"
-
-    echo "Downloaded gdb_tools to $GDB_TOOLS_INSTALL_PATH"
 }
 
 set_common_vars() {
@@ -1084,6 +1081,7 @@ set_default_gdb_tools_version ()
 
 clone_gdb_tools ()
 {
+    echo "Downloading gdb-tools (version $GDB_TOOLS_VSN) for Erlang/OTP ($OTP_VERSION)"
     # download OTP_VERSION or latest
     if find "$ERL_TOP" -name jit-reader.c | grep -q "." > /dev/null
     then
@@ -1095,18 +1093,20 @@ clone_gdb_tools ()
             # choose the lastest version available
             GDB_TOOLS_VSN=$("cd $GDB_TOOLS_INSTALL_PATH && git branch | sort -r | head -n1")
         fi
+        echo 1098
         echo "git clone -b $GDB_TOOLS_VSN $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
-        (cd "$GDB_TOOLS_INSTALL_PATH" && git fetch origin && git switch -C "$GDB_TOOLS_VSN" > /dev/null) || {
+        (cd "$GDB_TOOLS_INSTALL_PATH" && git fetch origin && git switch -C "$GDB_TOOLS_VSN" > /dev/null 2>&1) || {
             echo "Downloading gdb_tools failed. Please check your source tree."
             exit 1
         }
     else
         echo "git clone -b $GDB_TOOLS_VSN $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
-        (git clone -b "$GDB_TOOLS_VSN" "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH" > /dev/null)  || {
+        (git clone -b "$GDB_TOOLS_VSN" "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH" > /dev/null 2>&1 )  || {
             echo "Downloading gdb_tools failed. Please check your source tree."
             exit 1
         }
     fi
+    echo "Downloaded gdb-tools v$GDB_TOOLS_VSN for Erlang/OTP $OTP_VERSION"
 }
 
 clean_file ()
