@@ -1031,7 +1031,7 @@ do_download_ex_doc ()
 do_download_gdb_tools ()
 {
     GDB_TOOLS_INSTALL_PATH="$ERL_TOP/erts/etc/unix/gdb-tools"
-    GDB_TOOLS_VSN_PATH="$ERL_TOP/make/gdb_tools_vsn"
+    GDB_TOOLS_VSN_PATH="$ERL_TOP/make"
 
     OTP_VERSION=
     set_otp_version
@@ -1069,9 +1069,9 @@ do_download_gdb_tools ()
 
 set_default_gdb_tools_version ()
 {
-    if find . -name "$GDB_TOOLS_VSN_PATH" > /dev/null
+    if find "$GDB_TOOLS_VSN_PATH" -name gdb_tools_vsn | grep -q "."
     then
-        GDB_TOOLS_VSN=$(cat "$GDB_TOOLS_VSN_PATH")
+        GDB_TOOLS_VSN=$(cat "$GDB_TOOLS_VSN_PATH/gdb_tools_vsn")
     else
         GDB_TOOLS_VSN="maint-$OTP_VERSION"
     fi
