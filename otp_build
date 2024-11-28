@@ -1030,20 +1030,10 @@ do_download_ex_doc ()
 
 do_download_gdb_tools ()
 {
-    GDB_TOOLS_INSTALL_PATH="$ERL_TOP/erts/etc/unix/gdb-tools"
-    GDB_TOOLS_VSN_PATH="$ERL_TOP/make"
-
-    OTP_VERSION=
-    set_otp_version
+    set_common_vars
 
     # Temp file that keeps reference to sha256sum or sha1sum content
     SHAXSUM_TMP_FILE=
-
-    # Version of gdb-tools to download
-    GDB_TOOLS_VSN=
-
-    # SHASUM_FORMAT has values: sha256sum, sha1sum, shasum
-    SHASUM_FORMAT=
 
     # clean up
     echo "Cleaning up old versions of gdb-tools."
@@ -1067,6 +1057,21 @@ do_download_gdb_tools ()
     echo "Downloaded gdb_tools to $GDB_TOOLS_INSTALL_PATH"
 }
 
+set_common_vars() {
+    GDB_TOOLS_INSTALL_PATH="$ERL_TOP/erts/etc/unix/gdb-tools"
+    GDB_TOOLS_VSN_PATH="$ERL_TOP/make"
+    GDB_REPO="git@github.com:erlang/otp-gdb-utils.git"
+
+    # Version of gdb-tools to download
+    GDB_TOOLS_VSN=
+
+    # SHASUM_FORMAT has values: sha256sum, sha1sum, shasum
+    SHASUM_FORMAT=
+
+    OTP_VERSION=
+    set_otp_version
+}
+
 set_default_gdb_tools_version ()
 {
     if find "$GDB_TOOLS_VSN_PATH" -name gdb_tools_vsn | grep -q "."
@@ -1080,10 +1085,10 @@ set_default_gdb_tools_version ()
 clone_gdb_tools ()
 {
     # download OTP_VERSION or latest
-    if find "$ERL_TOP" -name jit-reader.c > /dev/null
+    if find "$ERL_TOP" -name jit-reader.c | grep -q "." > /dev/null
     then
         # Set the GDB_TOOL version to install
-        if (cd "$GDB_TOOLS_INSTALL_PATH" && "git ls-remote --heads $GDB_REPO maint-$OTP_VERSION" > /dev/null)
+        if (cd "$GDB_TOOLS_INSTALL_PATH" && git ls-remote --heads "$GDB_REPO" "maint-$OTP_VERSION" | grep -q "." > /dev/null)
         then
             GDB_TOOLS_VSN=maint-$OTP_VERSION
         else
@@ -1121,18 +1126,9 @@ set_otp_version ()
 
 do_update_gdb_tools ()
 {
-    GDB_TOOLS_INSTALL_PATH="$ERL_TOP/erts/etc/unix/gdb-tools"
-    GDB_REPO="git@github.com:erlang/otp-gdb-utils.git"
-
-    # SHASUM_FORMAT has values: sha256sum, sha1sum, shasum
-    SHASUM_FORMAT=
-    OTP_VERSION=
-
-    GDB_TOOLS_VSN=
-
+    set_common_vars
     set_default_gdb_tools_version
-    set_otp_version
-    clone_gdb_tools
+    clone_gdb_tools $GDB_REPO
 
     if command -v sha1sum > /dev/null && command -v sha256sum > /dev/null; then
         if ! (grep "$GDB_TOOLS_VSN" "$ERL_TOP/make/jit-reader.c.sha256sum" > /dev/null)
@@ -1520,7 +1516,9 @@ case "$1" in
         copy_primary_bootstrap)
 	        do_copy_primary_bootstrap $2 $3;;
         download_gdb_tools)
-                do_download_gdb_tools;;
+            do_download_gdb_tools;;
+        update_gdb_tools)
+            do_update_gdb_tools;;
         download_ex_doc)
                 do_download_ex_doc;;
         update_ex_doc)
