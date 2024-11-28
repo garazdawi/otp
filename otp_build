@@ -1016,12 +1016,13 @@ do_check ()
 
 do_download_ex_doc ()
 {
+    SHASUM_FORMAT=
+
     ## Download ex_doc and place in $ERL_TOP/bin folder
     curl -s -L "$(cat "$ERL_TOP/make/ex_doc_link")" > "$ERL_TOP/bin/ex_doc"
     chmod +x "$ERL_TOP/bin/ex_doc"
 
-    shasum_format=
-    choose_available_shasum
+    choose_available_shasum     # sets the SHASUM_FORMAT
     check_shasum "ex_doc" "$ERL_TOP/bin" "$ERL_TOP/make"
 
     echo "Downloaded ex_doc to $ERL_TOP/bin/ex_doc"
@@ -1029,88 +1030,121 @@ do_download_ex_doc ()
 
 do_download_gdb_tools ()
 {
-    OTP_VERSION=$(cat $ERL_TOP/OTP_VERSION | cut -d. -f1)
-    gdb_tools_path="$ERL_TOP/erts/etc/unix/gdb-tools"
-    shaXsum=
+    GDB_TOOLS_INSTALL_PATH="$ERL_TOP/erts/etc/unix/gdb-tools"
+    GDB_TOOLS_VSN_PATH="$ERL_TOP/make/gdb_tools_vsn"
+
+    OTP_VERSION=
+    set_otp_version
+
+    # Temp file that keeps reference to sha256sum or sha1sum content
+    SHAXSUM_TMP_FILE=
+
+    # Version of gdb-tools to download
     GDB_TOOLS_VSN=
 
-    # shasum_format has values: sha256sum, sha1sum, shasum
-    shasum_format=
+    # SHASUM_FORMAT has values: sha256sum, sha1sum, shasum
+    SHASUM_FORMAT=
 
     # clean up
-    rm -rf "$gdb_tools_path"
-    if find . -name "$ERL_TOP/make/gdb_tools_vsn" > /dev/null
-    then
-        GDB_TOOLS_VSN=$(cat "$ERL_TOP/make/gdb_tools_vsn")
-    else
-        GDB_TOOLS_VSN="maint-$OTP_VERSION"
-    fi
+    echo "Cleaning up old versions of gdb-tools."
+    clean_file "$GDB_TOOLS_INSTALL_PATH"
+
+    set_default_gdb_tools_version
 
     echo "Downloading gdb-tools for Erlang/OTP: $OTP_VERSION"
-
-    (git clone -b maint-$GDB_TOOLS_VSN \
-        git@github.com:erlang/otp-gdb-utils.git "$gdb_tools_path") || {
-            echo "Downloading gdb_tools failed. Please check your source tree."
-            exit 1
-        }
+    clone_gdb_tools
 
     choose_available_shasum
 
     create_shasum_file "jit-reader.h" $GDB_TOOLS_VSN
-    check_shasum "jit-reader.h" "$gdb_tools_path" "$gdb_tools_path"
-    rm "$shaXsum"
+    check_shasum "jit-reader.h" "$GDB_TOOLS_INSTALL_PATH" "$GDB_TOOLS_INSTALL_PATH"
+    clean_file "$SHAXSUM_TMP_FILE"
 
     create_shasum_file "jit-reader.c" $GDB_TOOLS_VSN
-    check_shasum "jit-reader.c" "$gdb_tools_path" "$gdb_tools_path"
-    rm "$shaXsum"
+    check_shasum "jit-reader.c" "$GDB_TOOLS_INSTALL_PATH" "$GDB_TOOLS_INSTALL_PATH"
+    clean_file "$SHAXSUM_TMP_FILE"
 
-    echo "Downloaded gdb_tools to $gdb_tools_path"
+    echo "Downloaded gdb_tools to $GDB_TOOLS_INSTALL_PATH"
+}
+
+set_default_gdb_tools_version ()
+{
+    if find . -name "$GDB_TOOLS_VSN_PATH" > /dev/null
+    then
+        GDB_TOOLS_VSN=$(cat "$GDB_TOOLS_VSN_PATH")
+    else
+        GDB_TOOLS_VSN="maint-$OTP_VERSION"
+    fi
+}
+
+clone_gdb_tools ()
+{
+    # download OTP_VERSION or latest
+    if find "$ERL_TOP" -name jit-reader.c > /dev/null
+    then
+        # Set the GDB_TOOL version to install
+        if (cd "$GDB_TOOLS_INSTALL_PATH" && "git ls-remote --heads $GDB_REPO maint-$OTP_VERSION" > /dev/null)
+        then
+            GDB_TOOLS_VSN=maint-$OTP_VERSION
+        else
+            # choose the lastest version available
+            GDB_TOOLS_VSN=$("cd $GDB_TOOLS_INSTALL_PATH && git branch | sort -r | head -n1")
+        fi
+        echo "git clone -b $GDB_TOOLS_VSN $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
+        (cd "$GDB_TOOLS_INSTALL_PATH" && git fetch origin && git checkout -b "$GDB_TOOLS_VSN") || {
+            echo "Downloading gdb_tools failed. Please check your source tree."
+            exit 1
+        }
+    else
+        echo "git clone -b $GDB_TOOLS_VSN $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
+        (git clone -b "$GDB_TOOLS_VSN" "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH")  || {
+            echo "Downloading gdb_tools failed. Please check your source tree."
+            exit 1
+        }
+    fi
+}
+
+clean_file ()
+{
+    rm -rf "$1"
+}
+
+set_otp_version ()
+{
+    OTP_VERSION=$(cat $ERL_TOP/OTP_VERSION | cut -d. -f1)
+    if [ $OTP_VERSION -le 24 ]
+    then
+        echo "OTP version $OTP_VERSION is too old. Please update to a newer OTP version"
+        exit 1
+    fi
 }
 
 do_update_gdb_tools ()
 {
-    shaXsum=
-    gdb_tools_path="$ERL_TOP/erts/etc/unix/gdb-tools"
+    GDB_TOOLS_INSTALL_PATH="$ERL_TOP/erts/etc/unix/gdb-tools"
     GDB_REPO="git@github.com:erlang/otp-gdb-utils.git"
 
-    # shasum_format has values: sha256sum, sha1sum, shasum
-    shasum_format=
+    # SHASUM_FORMAT has values: sha256sum, sha1sum, shasum
+    SHASUM_FORMAT=
+    OTP_VERSION=
+
     GDB_TOOLS_VSN=
 
-    OTP_VERSION=$(cat $ERL_TOP/OTP_VERSION | cut -d. -f1)
-
-    # set GDB_TOOLs version
-
-
-    # download OTP_VERSION or latest
-    if find "$ERL_TOP" -name jit-reader.c > /dev/null
-    then
-        # check version
-        if (cd "$gdb_tools_path" && "git ls-remote --heads $GDB_REPO $OTP_VERSION" > /dev/null)
-        then
-            GDB_TOOLS_VSN=$OTP_VERSION
-        else
-            # chose the lastest version, since it is most likely compatible or has not changed
-            GDB_TOOLS_VSN=$("cd $gdb_tools_path && git branch | sort -r | head -n1")
-        fi
-        echo "git clone -b maint-$GDB_TOOLS_VSN $GDB_REPO $gdb_tools_path"
-        (cd "$gdb_tools_path" && git fetch origin && git checkout -b "maint-$GDB_TOOLS_VSN")
-    else
-        echo "git clone -b maint-$GDB_TOOLS_VSN $GDB_REPO $gdb_tools_path"
-        (git clone -b "maint-$GDB_TOOLS_VSN" "$GDB_REPO" "$gdb_tools_path")
-    fi
+    set_default_gdb_tools_version
+    set_otp_version
+    clone_gdb_tools
 
     if command -v sha1sum > /dev/null && command -v sha256sum > /dev/null; then
         if ! (grep "$GDB_TOOLS_VSN" "$ERL_TOP/make/jit-reader.c.sha256sum" > /dev/null)
         then
             # append the entry to the local jit-reader.c.sha256sum
-            SHASUM=cat $gdb_tools_path/jit-reader.c.sha256sum
+            SHASUM=cat $GDB_TOOLS_INSTALL_PATH/jit-reader.c.sha256sum
             SHASUM_ENTRY="$GDB_TOOLS_VSN $SHASUM"
             # add new line at the top
             echo "$SHASUM_ENTRY" > "$ERL_TOP/make/jit-reader.c.sha256sum"
 
             # append the entry to the local jit-reader.h.sha256sum
-            SHASUM=cat $gdb_tools_path/jit-reader.h.sha256sum
+            SHASUM=cat $GDB_TOOLS_INSTALL_PATH/jit-reader.h.sha256sum
             SHASUM_ENTRY="$GDB_TOOLS_VSN $SHASUM"
             # add new line at the top
             echo "$SHASUM_ENTRY" > "$ERL_TOP/make/jit-reader.h.sha256sum"
@@ -1123,39 +1157,38 @@ do_update_gdb_tools ()
 
             out_files=
 
-            echo "Successfully updated ex_doc"
-            # TODO: fix me
+            echo "Successfully updated gdb_tools"
             if [ $do_commit != true ]; then
-                echo "Updated: make/ex_doc_link make/ex_doc_vsn make/ex_doc_link.sha256sum make/ex_doc_link.sha1sum"
+                echo "Updated: make/gdb_tools_vsn make/jit-reader.c.sha256sum"
             else
-                git add $ERL_TOP/make/ex_doc_link $ERL_TOP/make/ex_doc_vsn  $ERL_TOP/make/ex_doc.sha256sum $ERL_TOP/make/ex_doc.sha1sum
-                git commit -m  "Updated ex_doc version to ${EX_DOC_VSN}"
+                git add "$ERL_TOP/make/gdb_tools_vsn"  $ERL_TOP/make/jit-reader.c.sha256sum $ERL_TOP/make/jit-reader.h.sha256sum
+                git commit -m  "Updated gdb_tools version to ${GDB_TOOLS_VSN}"
             fi
         fi
     else
-        echo "You need to have both sha1sum and sha256sum installed to update ex_doc"
+        echo "You need to have both sha1sum and sha256sum installed to update gdb_tools_vsn"
         exit 1
     fi
 }
 
 # $1: jit-reader.c, jit-reader.h, etc
 # $2: DGB_TOOLS_VSN, e.g., maint-28, foo, etc it is guaranteed to be an existing branch
-#     that lives in "$ERL_TOP/make/$1.$shasum_format"
+#     that lives in "$ERL_TOP/make/$1.$SHASUM_FORMAT"
 create_shasum_file() {
-    shaXsum="$gdb_tools_path/$1.$shasum_format"
-    touch "$shaXsum"
-    grep "$2" "$ERL_TOP/make/$1.$shasum_format" | cut -d" " -f2-4 >> "$shaXsum"
+    SHAXSUM_TMP_FILE="$GDB_TOOLS_INSTALL_PATH/$1.$SHASUM_FORMAT"
+    touch "$SHAXSUM_TMP_FILE"
+    grep "$2" "$ERL_TOP/make/$1.$SHASUM_FORMAT" | cut -d" " -f2-4 >> "$SHAXSUM_TMP_FILE"
 }
 
 choose_available_shasum ()
 {
     if command -v sha256sum > /dev/null; then
-        shasum_format="sha256sum"
+        SHASUM_FORMAT="sha256sum"
     elif command -v sha1sum > /dev/null; then
-        shasum_format="sha1sum"
+        SHASUM_FORMAT="sha1sum"
     elif command -v shasum > /dev/null; then
         # shasum produces the same sha as sha1sum.
-        shasum_format="sha1sum"
+        SHASUM_FORMAT="sha1sum"
     else
         echo "Neither sha1sum nor sha256sum nor shasum found" >&2
         exit 1
@@ -1171,19 +1204,19 @@ choose_available_shasum ()
 #     e.g., `$ERL_TOP/make` in case of sha256sum and sha1sum files.
 check_shasum()
 {
-    case $shasum_format in
+    case $SHASUM_FORMAT in
         "sha256sum" )
-            if ! (cd "$3" && sha256sum --status -c "$1.$shasum_format"); then
+            if ! (cd "$3" && sha256sum --status -c "$1.$SHASUM_FORMAT"); then
                 echo "The sha256sum check of $2/$1 failed!" >&2
                 exit 1
             fi;;
         "sha1sum" )
-            if ! (cd "$3" && sha1sum --status -c "$1.$shasum_format"); then
+            if ! (cd "$3" && sha1sum --status -c "$1.$SHASUM_FORMAT"); then
                 echo "The sha1sum check of $2/$1 failed!" >&2
                 exit 1
             fi;;
         "shasum" )
-            if ! (cd "$3" && shasum -a 1 --status -c "$1.$shasum_format"); then
+            if ! (cd "$3" && shasum -a 1 --status -c "$1.$SHASUM_FORMAT"); then
                 echo "The shasum check of $2/$1 failed!" >&2
                 exit 1
             fi
