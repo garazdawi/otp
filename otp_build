@@ -1096,13 +1096,13 @@ clone_gdb_tools ()
             GDB_TOOLS_VSN=$("cd $GDB_TOOLS_INSTALL_PATH && git branch | sort -r | head -n1")
         fi
         echo "git clone -b $GDB_TOOLS_VSN $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
-        (cd "$GDB_TOOLS_INSTALL_PATH" && git fetch origin && git checkout -b "$GDB_TOOLS_VSN") || {
+        (cd "$GDB_TOOLS_INSTALL_PATH" && git fetch origin && git switch -C "$GDB_TOOLS_VSN" > /dev/null) || {
             echo "Downloading gdb_tools failed. Please check your source tree."
             exit 1
         }
     else
         echo "git clone -b $GDB_TOOLS_VSN $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
-        (git clone -b "$GDB_TOOLS_VSN" "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH")  || {
+        (git clone -b "$GDB_TOOLS_VSN" "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH" > /dev/null)  || {
             echo "Downloading gdb_tools failed. Please check your source tree."
             exit 1
         }
