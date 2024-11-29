@@ -1109,6 +1109,8 @@ set_otp_version ()
 
 do_update_gdb_tools ()
 {
+    get_do_commit $1
+
     (do_download_gdb_tools) || {
         echo "Downloading gdb_tools failed. Please check your source tree, and report this error."
         exit 1
