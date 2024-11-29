@@ -107,6 +107,8 @@ ERTS_LIB = $(ERL_TOP)/erts/lib_src/obj/$(TARGET)/$(TYPE)/MADE
 
 EI_LIB = -L$(ERL_TOP)/lib/erl_interface/obj/$(TARGET) -lei $(THR_LIBS)
 
+GDB_TOOLS =$(ETC)/gdb-tools
+
 # ----------------------------------------------------
 # Release directory specification
 # ----------------------------------------------------
@@ -222,7 +224,8 @@ _create_dirs := $(shell mkdir -p $(CREATE_DIRS))
 endif
 
 .PHONY: etc
-etc:	$(ENTRY_OBJ) $(INSTALL_PROGS) $(EXTRA_LIBS) $(INSTALL_LIBS) $(TEXTFILES) $(INSTALL_TOP_BIN)
+etc:	$(ENTRY_OBJ) $(INSTALL_PROGS) $(INSTALL_LIBS) $(TEXTFILES) $(INSTALL_TOP_BIN)
+jit-reader: $(EXTRA_LIBS)
 
 # erlexec needs the erts_internal library...
 $(ERTS_LIB):
@@ -500,7 +503,7 @@ $(BINDIR)/ct_run@EXEEXT@: $(OBJDIR)/ct_run.o $(ERTS_LIB)
 $(OBJDIR)/ct_run.o: ct_run.c $(RC_GENERATED)
 	$(V_CC) $(CFLAGS) -o $@ -c ct_run.c
 
-$(OBJDIR)/jit-reader.o: $(ETC)/jit-reader.c $(ETC)/jit-reader.h
+$(OBJDIR)/jit-reader.o: $(GDB_TOOLS)/jit-reader.c $(GDB_TOOLS)/jit-reader.h
 	$(V_CC) $(DED_CFLAGS) -I$(ETC) -o $@ -c $<
 
 $(BINDIR)/jit-reader.so: $(OBJDIR)/jit-reader.o

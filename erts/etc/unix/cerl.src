@@ -54,6 +54,28 @@
 # FIXME For GDB you can also set the break point using "-break FUNCTION".
 # FIXME For GDB you can also point out your own .gdbini......
 
+install_gdb_utils ()
+{
+    if [ -n "$(find $ERL_TOP -name jit-reader.c)" ]
+    then
+        printf "%s" "Do you want to install gdb-utils? (Y/N) "
+        read -r confirm
+        case "$confirm" in
+            "Y")
+                "$ERL_TOP"/otp_build download_gdb_tools
+                (cd "$ERL_TOP"/erts/etc/common && make jit-reader)
+                (cd "$ERL_TOP"/erts/emulator && make debug)
+                ;;
+            "y")
+                "$ERL_TOP"/otp_build download_gdb_tools
+                (cd "$ERL_TOP"/erts/etc/common && make jit-reader)
+                (cd "$ERL_TOP"/erts/emulator && make debug)
+                ;;
+        esac
+    fi
+}
+
+
 # These are marked for export
 export ROOTDIR
 export PROGNAME
@@ -555,22 +577,3 @@ set verbose off" > $cmdfile
 	    ;;
     esac
 fi
-
-
-install_gdb_utils () {
-    if [ -z "$(find $ERL_TOP -name jit-reader.c)" ]
-    then
-        echo "Do you want to install gdb-utils?"
-        select yn in "Yes" "No"
-        do
-            case $yn in
-                "Yes" )
-                    $ERL_TOP/otp_build download_gdb_utils
-                    (cd $ERL_TOP/erts/emulator && make debug)
-                    break;;
-                "No" )
-                    exit;;
-            esac
-        done
-    fi
-}
