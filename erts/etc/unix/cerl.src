@@ -56,7 +56,7 @@
 
 install_gdb_utils ()
 {
-    if [ -n "$(find $ERL_TOP -name jit-reader.c)" ]
+    if [ -z "$(find $ERL_TOP -name jit-reader.c)" ]
     then
         printf "%s" "Do you want to install gdb-utils? (Y/N) "
         read -r confirm
