@@ -1124,8 +1124,9 @@ do_update_gdb_tools ()
         if [ $do_commit != true ]; then
             echo "Updated: make/gdb_tools_vsn make/jit-reader.c.sha256sum"
         else
+            set_common_vars
             git add "$ERL_TOP/make/gdb_tools_vsn" $ERL_TOP/make/jit-reader.c.sha256sum $ERL_TOP/make/jit-reader.h.sha256sum > /dev/null
-            git commit -m  "Updated gdb_tools version to ${GDB_TOOLS_VSN}" > /dev/null
+            git commit -m  "Updated gdb_tools version to $GDB_TOOLS_VSN" > /dev/null
         fi
     else
         echo "Git's working directory is not clean. Please stash or commit the working directory before proceeding."
