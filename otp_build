@@ -1111,18 +1111,24 @@ do_update_gdb_tools ()
 {
     get_do_commit $1
 
-    (do_download_gdb_tools) || {
-        echo "Downloading gdb_tools failed. Please check your source tree, and report this error."
-        exit 1
-    }
-    out_files=
+    if [ -z "$(git status --porcelain --untracked-files=no)" ]
+    then
 
-    echo "Successfully updated gdb_tools"
-    if [ $do_commit != true ]; then
-        echo "Updated: make/gdb_tools_vsn make/jit-reader.c.sha256sum"
+        (do_download_gdb_tools) || {
+            echo "Downloading gdb_tools failed. Please check your source tree, and report this error."
+            exit 1
+        }
+        out_files=
+
+        echo "Successfully updated gdb_tools"
+        if [ $do_commit != true ]; then
+            echo "Updated: make/gdb_tools_vsn make/jit-reader.c.sha256sum"
+        else
+            git add "$ERL_TOP/make/gdb_tools_vsn" $ERL_TOP/make/jit-reader.c.sha256sum $ERL_TOP/make/jit-reader.h.sha256sum > /dev/null
+            git commit -m  "Updated gdb_tools version to ${GDB_TOOLS_VSN}" > /dev/null
+        fi
     else
-        git add "$ERL_TOP/make/gdb_tools_vsn" $ERL_TOP/make/jit-reader.c.sha256sum $ERL_TOP/make/jit-reader.h.sha256sum
-        git commit -m  "Updated gdb_tools version to ${GDB_TOOLS_VSN}"
+        echo "Git's working directory is not clean. Please stash or commit the working directory before proceeding."
     fi
 }
 
