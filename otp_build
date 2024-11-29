@@ -1490,7 +1490,7 @@ case "$1" in
         download_ex_doc)
                 do_download_ex_doc;;
         update_ex_doc)
-                do_update_ex_doc;;
+                do_update_ex_doc $2;;
 	installer_win32)
 		if [ $minus_x_flag = true ]; then
 		    shift
