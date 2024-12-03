@@ -64,7 +64,6 @@ install_gdb_utils ()
             "Y"|"y"|"")
                 "$ERL_TOP"/otp_build download_gdb_tools
                 (cd "$ERL_TOP"/erts/etc/common && make jit-reader)
-                (cd "$ERL_TOP"/erts/emulator && make debug)
                 ;;
             "y")
                 "$ERL_TOP"/otp_build download_gdb_tools
