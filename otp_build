@@ -1067,7 +1067,7 @@ set_default_gdb_tools_version ()
 {
     GDB_TOOLS_VSN=$(cat "$GDB_TOOLS_VSN_PATH/gdb_tools_vsn" | cut -d- -f2)
     echo "Current GDB_TOOLS_VSN: $GDB_TOOLS_VSN and OTP_VERSION: $OTP_VERSION"
-    if git ls-remote --heads "$GDB_REPO" "maint-$OTP_VERSION" | grep -q "." > /dev/null
+    if git ls-remote --heads "$GDB_REPO" "maint-$OTP_VERSION" | grep -q "." > /dev/null 2>&1
     then
         # Set the GDB_TOOL version to install, if OTP_VERSION exists as a branch
         GDB_TOOLS_VSN=maint-$OTP_VERSION
