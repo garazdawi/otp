@@ -61,7 +61,7 @@ install_gdb_utils ()
         printf "%s" "Do you want to install gdb-utils? (Y/N) "
         read -r confirm
         case "$confirm" in
-            "Y")
+            "Y"|"y"|"")
                 "$ERL_TOP"/otp_build download_gdb_tools
                 (cd "$ERL_TOP"/erts/etc/common && make jit-reader)
                 (cd "$ERL_TOP"/erts/emulator && make debug)
