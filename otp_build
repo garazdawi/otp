@@ -1060,8 +1060,8 @@ set_common_vars() {
 clone_gdb_tools ()
 {
     echo "Downloading gdb-tools for Erlang/OTP $OTP_VERSION"
-    echo "git clone --origin gdb_utils $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
-    (git clone --origin gdb_utils "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH" > /dev/null 2>&1  && \
+    echo "git clone --origin gdb_tools $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
+    (git clone --origin gdb_tools "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH" > /dev/null 2>&1  && \
         cd $GDB_TOOLS_INSTALL_PATH > /dev/null && git reset --hard "$GDB_TOOLS_VSN" > /dev/null 2>&1 )  || {
         echo "Downloading gdb_tools failed. Please check your source tree, and report this error."
         exit 1
@@ -1100,16 +1100,16 @@ do_update_gdb_tools ()
 
     # if grep "rc" "$ERL_TOP/OTP_VERSION" > /dev/null
     # then
-        if find $GDB_TOOLS_INSTALL_PATH -type d > /dev/null
+        if find $GDB_TOOLS_INSTALL_PATH -type d > /dev/null 2>&1
         then
             cd "$GDB_TOOLS_INSTALL_PATH" && \
                 git fetch $GDB_REPO && \
-                GDB_TOOLS_VSN=git log master --oneline -n1 | cut -d" " -f1 && \
+                GDB_TOOLS_VSN=$(git log gdb_tools/master --oneline --no-abbrev-commit -n1 | cut -d" " -f1) && \
                 echo "$GDB_TOOLS_VSN" > "$ERL_TOP/make/gdb_tools_vsn" && \
-                git show gdb_utils/master:jit-reader.c.sha256sum > "$GDB_TOOLS_VSN_PATH/jit-reader.c.sha256sum" && \
-                git show gdb_utils/master:jit-reader.h.sha256sum > "$GDB_TOOLS_VSN_PATH/jit-reader.h.sha256sum"
+                git show gdb_tools/master:jit-reader.c.sha256sum > "$GDB_TOOLS_VSN_PATH/jit-reader.c.sha256sum" && \
+                git show gdb_tools/master:jit-reader.h.sha256sum > "$GDB_TOOLS_VSN_PATH/jit-reader.h.sha256sum"
         else
-            echo "Download gdb_tools: \`otp_build download_gdb_tools\`"
+            echo "Please, download gdb_tools invoking the command: \`otp_build download_gdb_tools\`"
             exit 1
         fi
     # else
@@ -1130,7 +1130,7 @@ do_update_gdb_tools ()
                 "$GDB_TOOLS_VSN_PATH/jit-reader.h.sha256sum" > /dev/null
         git commit -m  "Updated gdb_tools version to $GDB_TOOLS_VSN" > /dev/null
     fi
-    echo "Run \`otp_build download_gdb_utils\` to complete the installation of the update"
+    echo "Run \`otp_build download_gdb_tools\` to complete the installation of the update"
 }
 
 # $1: jit-reader.c, jit-reader.h, etc
