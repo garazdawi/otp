@@ -206,7 +206,7 @@ INSTALL_MISC = $(UXETC)/format_man_pages
 INSTALL_SRC = $(UXETC)/setuid_socket_wrap.c #delivered as an example
 ERLEXECDIR = .
 INSTALL_LIBS =
-EXTRA_LIBS = $(BINDIR)/jit-reader.so
+EXTRA_LIBS =
 INSTALL_OBJS =
 INSTALL_INCLUDES =
 TEXTFILES = Install erl.src
@@ -217,6 +217,11 @@ INSTALL_PROGS =              \
 	$(INSTALL_EMBEDDED_PROGS)
 endif
 
+
+ifeq (../../etc/unix/gdb_tools/jit-reader.mk,)
+-include ../../etc/unix/gdb_tools/jit-reader.mk
+endif
+
 CREATE_DIRS=$(OBJDIR) $(BINDIR)
 
 ifneq ($(strip $(CREATE_DIRS)),)
@@ -225,7 +230,7 @@ endif
 
 .PHONY: etc
 etc:	$(ENTRY_OBJ) $(INSTALL_PROGS) $(INSTALL_LIBS) $(TEXTFILES) $(INSTALL_TOP_BIN)
-jit-reader: $(EXTRA_LIBS)
+
 
 # erlexec needs the erts_internal library...
 $(ERTS_LIB):
@@ -502,12 +507,6 @@ $(BINDIR)/ct_run@EXEEXT@: $(OBJDIR)/ct_run.o $(ERTS_LIB)
 
 $(OBJDIR)/ct_run.o: ct_run.c $(RC_GENERATED)
 	$(V_CC) $(CFLAGS) -o $@ -c ct_run.c
-
-$(OBJDIR)/jit-reader.o: $(GDB_TOOLS)/jit-reader.c $(GDB_TOOLS)/jit-reader.h
-	$(V_CC) $(DED_CFLAGS) -I$(ETC) -o $@ -c $<
-
-$(BINDIR)/jit-reader.so: $(OBJDIR)/jit-reader.o
-	$(V_LD) $(DED_LDFLAGS) -o $@ $^
 
 Install:	$(UXETC)/Install.src ../../vsn.mk $(TARGET)/Makefile
 	$(vsn_verbose)sed -e 's;%I_VSN%;$(VSN);' \
