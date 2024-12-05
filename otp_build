@@ -1103,8 +1103,8 @@ do_update_gdb_tools ()
     fi
 
 
-    # if grep "rc" "$ERL_TOP/OTP_VERSION" > /dev/null
-    # then
+    if grep "rc" "$ERL_TOP/OTP_VERSION" > /dev/null
+    then
         if [ -d "$GDB_TOOLS_INSTALL_PATH" ]
         then
             cd "$GDB_TOOLS_INSTALL_PATH" && \
@@ -1117,11 +1117,11 @@ do_update_gdb_tools ()
             echo "Please, download gdb_tools invoking the command: \`otp_build download_gdb_tools\`"
             exit 1
         fi
-    # else
-    #     echo "Please look in repo: $GDB_REPO the commit sha you are interested."
-    #     echo "Copy that commit into $ERL_TOP/make/gdb_tools_vsn and run `otp_build download_gdb_tools`"
-    #     exit 1
-    # fi
+    else
+        echo "Please look in repo: $GDB_REPO the commit sha you are interested."
+        echo "Copy that commit into $ERL_TOP/make/gdb_tools_vsn and run \`otp_build download_gdb_tools\`"
+        exit 1
+    fi
 
     out_files=  # why is this needed. it was needed for elixir
 
