@@ -1032,14 +1032,21 @@ do_download_gdb_tools ()
 {
     set_common_vars
 
-    if test -n "find $GDB_TOOLS_INSTALL_PATH"
+    echo "Checking if $GDB_TOOLS_INSTALL_PATH exists in path."
+    if [ ! -d "$GDB_TOOLS_INSTALL_PATH" ]
     then
         clone_gdb_tools
     fi
 
+    echo "Setting gdb_tools"
+    cd "$GDB_TOOLS_INSTALL_PATH" > /dev/null && \
+        git reset --hard "$GDB_TOOLS_VSN" > /dev/null 2>&1
+
     choose_available_shasum
+    echo "Checking $SHASUM_FORMAT..."
     check_shasum "jit-reader.h" "$GDB_TOOLS_INSTALL_PATH" "$GDB_TOOLS_INSTALL_PATH"
     check_shasum "jit-reader.c" "$GDB_TOOLS_INSTALL_PATH" "$GDB_TOOLS_INSTALL_PATH"
+    echo "Downloaded gdb-tools for Erlang/OTP $OTP_VERSION"
 }
 
 set_common_vars() {
@@ -1061,12 +1068,10 @@ clone_gdb_tools ()
 {
     echo "Downloading gdb-tools for Erlang/OTP $OTP_VERSION"
     echo "git clone --origin gdb_tools $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
-    (git clone --origin gdb_tools "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH" > /dev/null 2>&1  && \
-        cd $GDB_TOOLS_INSTALL_PATH > /dev/null && git reset --hard "$GDB_TOOLS_VSN" > /dev/null 2>&1 )  || {
+    (git clone --origin gdb_tools "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH" > /dev/null 2>&1)  || {
         echo "Downloading gdb_tools failed. Please check your source tree, and report this error."
         exit 1
         }
-    echo "Downloaded gdb-tools for Erlang/OTP $OTP_VERSION"
 }
 
 clean_file ()
@@ -1100,7 +1105,7 @@ do_update_gdb_tools ()
 
     # if grep "rc" "$ERL_TOP/OTP_VERSION" > /dev/null
     # then
-        if find $GDB_TOOLS_INSTALL_PATH -type d > /dev/null 2>&1
+        if [ -d "$GDB_TOOLS_INSTALL_PATH" ]
         then
             cd "$GDB_TOOLS_INSTALL_PATH" && \
                 git fetch $GDB_REPO && \
