@@ -376,7 +376,7 @@ jobs:
             for TYPE in ${TYPES}; do
               for FLAVOR in ${FLAVORS}; do
                 echo "::group::{TYPE=$TYPE FLAVOR=$FLAVOR}"
-                docker run otp "make TYPE=$TYPE FLAVOR=$FLAVOR"
+                docker run otp "./otp_build download_gdb_tools && ./otp_build configure && make TYPE=$TYPE FLAVOR=$FLAVOR"
                 echo "::endgroup::"
               done
             done
