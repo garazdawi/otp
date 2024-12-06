@@ -217,10 +217,7 @@ INSTALL_PROGS =              \
 	$(INSTALL_EMBEDDED_PROGS)
 endif
 
-
-ifeq (../../etc/unix/gdb_tools/jit-reader.mk,)
--include ../../etc/unix/gdb_tools/jit-reader.mk
-endif
+-include ../unix/gdb-tools/jit-reader.mk
 
 CREATE_DIRS=$(OBJDIR) $(BINDIR)
 
