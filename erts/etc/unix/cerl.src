@@ -54,19 +54,24 @@
 # FIXME For GDB you can also set the break point using "-break FUNCTION".
 # FIXME For GDB you can also point out your own .gdbini......
 
-install_gdb_utils ()
+install_gdb_tools ()
 {
     if [ -z "$(find $ERL_TOP -name jit-reader.c)" ]
     then
-        printf "%s" "Do you want to install gdb-utils? (Y/n) "
+        printf "%s" "Do you want to install gdb-tools? (Y/n) "
         read -r confirm
         case "$confirm" in
             "Y"|"y"|"")
-                "$ERL_TOP"/otp_build download_gdb_tools
-                (cd "$ERL_TOP"/erts/etc/common && make jit-reader)
+                execute_tools_install
                 ;;
         esac
     fi
+}
+
+gdb_tools_install ()
+{
+    "$ERL_TOP"/otp_build download_gdb_tools
+    (cd "$ERL_TOP"/erts/etc/common && make jit-reader)
 }
 
 
@@ -455,7 +460,7 @@ if [ "x$GDB" = "x" ]; then
     fi
 elif [ "x$GDB" = "xgdb" ]; then
 
-    install_gdb_utils
+    install_gdb_tools
 
     case "x$core" in
 	x)
@@ -536,6 +541,9 @@ elif [ "x$GDB" = "xegdb" ]; then
     EVAL="(progn (gdb \"gdb $GDBARGS -x $cmdfile\"))"
     exec $EMACS --eval "$EVAL"
 elif [ "x$GDB" = "xdump" ]; then
+
+    gdb_tools_install
+
     cmdfile="/tmp/.cerlgdb.$$"
     ## Examine the result of "file $core" in case it is not the emulator
     ## that created the dump
