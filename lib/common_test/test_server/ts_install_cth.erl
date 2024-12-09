@@ -180,7 +180,14 @@ post_end_per_group(_Group,_Config,Return,State) ->
 			    State :: #state{}) ->
 	{config() | skip_or_fail(), NewState :: #state{}}.
 pre_init_per_testcase(_TC,Config,State) ->
+    Restore =
+        case catch erts_debug:get_internal_state(available_internal_state) of
+            true -> false;
+            _ -> erts_debug:set_internal_state(available_internal_state, true),
+                false
+        end,
     driver_SUITE:check_io_debug(),
+    Restore andalso erts_debug:set_internal_state(available_internal_state, false),
     {add_node_name(Config, State), State}.
 
 -spec post_init_per_testcase(TC :: atom(),
