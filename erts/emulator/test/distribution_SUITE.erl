@@ -171,6 +171,7 @@ end_per_group(_, Config) ->
     Config.
 
 init_per_testcase(_TestCase, Config) ->
+    driver_SUITE:check_io_debug(),
     Config.
 end_per_testcase(_TestCase, Config) ->
     case wait_until(fun() -> nodes(connected) == [] end, 10_000) of

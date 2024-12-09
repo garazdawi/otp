@@ -180,6 +180,7 @@ post_end_per_group(_Group,_Config,Return,State) ->
 			    State :: #state{}) ->
 	{config() | skip_or_fail(), NewState :: #state{}}.
 pre_init_per_testcase(_TC,Config,State) ->
+    driver_SUITE:check_io_debug(),
     {add_node_name(Config, State), State}.
 
 -spec post_init_per_testcase(TC :: atom(),

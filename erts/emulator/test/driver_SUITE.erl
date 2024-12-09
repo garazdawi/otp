@@ -90,6 +90,8 @@
 
 -export([get_check_io_total/1]).   % for z_SUITE.erl
 
+-export([check_io_debug/0]).
+
 -include_lib("common_test/include/ct.hrl").
 
 
