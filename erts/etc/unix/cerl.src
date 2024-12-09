@@ -62,13 +62,13 @@ install_gdb_tools ()
         read -r confirm
         case "$confirm" in
             "Y"|"y"|"")
-                execute_tools_install
+                    build_gdb_tools
                 ;;
         esac
     fi
 }
 
-gdb_tools_install ()
+build_gdb_tools ()
 {
     "$ERL_TOP"/otp_build download_gdb_tools
     (cd "$ERL_TOP"/erts/etc/common && make jit-reader)
@@ -542,7 +542,7 @@ elif [ "x$GDB" = "xegdb" ]; then
     exec $EMACS --eval "$EVAL"
 elif [ "x$GDB" = "xdump" ]; then
 
-    gdb_tools_install
+    build_gdb_tools
 
     cmdfile="/tmp/.cerlgdb.$$"
     ## Examine the result of "file $core" in case it is not the emulator
