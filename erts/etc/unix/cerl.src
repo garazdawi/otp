@@ -70,10 +70,8 @@ install_gdb_tools ()
 
 build_gdb_tools ()
 {
-    "$ERL_TOP"/otp_build download_gdb_tools
-    (cd "$ERL_TOP"/erts/etc/common && make jit-reader)
+    (cd "$ERL_TOP"/erts/etc/common && make)
 }
-
 
 # These are marked for export
 export ROOTDIR
