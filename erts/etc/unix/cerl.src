@@ -68,7 +68,7 @@ install_gdb_tools ()
     fi
 }
 
-gdb_tools_install ()
+execute_tools_install ()
 {
     "$ERL_TOP"/otp_build download_gdb_tools
     (cd "$ERL_TOP"/erts/etc/common && make jit-reader)
