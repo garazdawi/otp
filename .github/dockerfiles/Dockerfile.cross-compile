@@ -41,6 +41,7 @@ WORKDIR /buildroot/otp
 # We cannot use config.guess for --build since its value clashes with the
 # canonical value of host...
 RUN ./configure --prefix=/otp/ --host=$HOST --build=x86-pc-linux-gnu && \
+    ./otp_build download_gdb_tools && \
     OTP_SMALL_BUILD=true V=1 make && \
     make install
 
