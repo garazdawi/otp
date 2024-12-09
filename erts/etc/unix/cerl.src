@@ -62,9 +62,16 @@ install_gdb_tools ()
         read -r confirm
         case "$confirm" in
             "Y"|"y"|"")
+                if "$ERL_TOP"/otp_build download_gdb_tools; then
                     build_gdb_tools
+                fi
                 ;;
         esac
+    else
+        ## Check that correct version is present
+        if "$ERL_TOP"/otp_build download_gdb_tools; then
+            build_gdb_tools
+        fi
     fi
 }
 
