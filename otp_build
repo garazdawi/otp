@@ -1048,7 +1048,7 @@ do_download_gdb_tools ()
 set_common_vars() {
     GDB_TOOLS_INSTALL_PATH="$ERL_TOP/erts/etc/unix/gdb-tools"
     GDB_TOOLS_VSN_PATH="$ERL_TOP/make"
-    GDB_REPO="git@github.com:erlang/otp-gdb-utils.git"
+    GDB_REPO=$(cat "$GDB_TOOLS_VSN_PATH/gdb_tools_link")
 
     # Version of gdb-tools to download
     GDB_TOOLS_VSN=$(cat "$GDB_TOOLS_VSN_PATH/gdb_tools_vsn")
