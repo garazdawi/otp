@@ -1042,10 +1042,6 @@ do_download_gdb_tools ()
     cd "$GDB_TOOLS_INSTALL_PATH" > /dev/null && \
         git reset --hard "$GDB_TOOLS_VSN" > /dev/null 2>&1
 
-    choose_available_shasum
-    echo "Checking $SHASUM_FORMAT..."
-    check_shasum "jit-reader.h" "$GDB_TOOLS_INSTALL_PATH" "$GDB_TOOLS_INSTALL_PATH"
-    check_shasum "jit-reader.c" "$GDB_TOOLS_INSTALL_PATH" "$GDB_TOOLS_INSTALL_PATH"
     echo "Downloaded gdb-tools for Erlang/OTP $OTP_VERSION"
 }
 
@@ -1110,9 +1106,7 @@ do_update_gdb_tools ()
             cd "$GDB_TOOLS_INSTALL_PATH" && \
                 git fetch $GDB_REPO && \
                 GDB_TOOLS_VSN=$(git log gdb_tools/master --oneline --no-abbrev-commit -n1 | cut -d" " -f1) && \
-                echo "$GDB_TOOLS_VSN" > "$ERL_TOP/make/gdb_tools_vsn" && \
-                git show gdb_tools/master:jit-reader.c.sha256sum > "$GDB_TOOLS_VSN_PATH/jit-reader.c.sha256sum" && \
-                git show gdb_tools/master:jit-reader.h.sha256sum > "$GDB_TOOLS_VSN_PATH/jit-reader.h.sha256sum"
+                echo "$GDB_TOOLS_VSN" > "$ERL_TOP/make/gdb_tools_vsn"
         else
             echo "Please, download gdb_tools invoking the command: \`otp_build download_gdb_tools\`"
             exit 1
