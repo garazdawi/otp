@@ -1077,7 +1077,7 @@ clone_gdb_tools ()
 {
     echo "Downloading gdb-tools for Erlang/OTP $OTP_VERSION"
     echo "git clone --origin gdb_tools $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
-    (git clone --origin gdb_tools "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH" > /dev/null 2>&1)  || {
+    (git clone --origin gdb_tools "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH")  || {
         echo "Downloading gdb_tools failed. Please check your source tree, and report this error."
         exit 1
         }
