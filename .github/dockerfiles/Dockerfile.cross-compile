@@ -53,7 +53,7 @@ RUN cd release/tests/test_server && \
         -eval "ts:install([{cross,\"yes\"},{crossflags,[{\"host\",\"$HOST\"}]},{crossroot,\"/$ERL_TOP\"}])." \
         -s ts compile_testcases -s init stop
 
-FROM debian as install
+FROM ghcr.io/erlang/otp/debian-base as install
 
 # Install the released application
 COPY --from=build /otp /otp
