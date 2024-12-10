@@ -1039,19 +1039,19 @@ do_download_gdb_tools ()
 
     cwd=$(pwd);
 
-    cd "$GDB_TOOLS_INSTALL_PATH" || exit 0
+    cd "$GDB_TOOLS_INSTALL_PATH" || exit 1
 
     CURRENT_GDB_VERSION=$(git log HEAD --oneline --no-abbrev-commit -n1 | cut -d" " -f1)
 
     if [ "$CURRENT_GDB_VERSION" != "$GDB_TOOLS_VSN" ]; then
         echo "Setting up gdb_tools"
-        git fetch gdb_tools > /dev/null || exit 0
-        git checkout "$GDB_TOOLS_VSN" > /dev/null || exit 0
+        git fetch gdb_tools > /dev/null || exit 1
+        git checkout "$GDB_TOOLS_VSN" > /dev/null || exit 1
     else
-        exit 1
+        exit 0
     fi
 
-    cd "$cwd" || exit 0
+    cd "$cwd" || exit 1
     
     echo "Downloaded gdb-tools for Erlang/OTP $OTP_VERSION"
 
@@ -1077,7 +1077,7 @@ clone_gdb_tools ()
 {
     echo "Downloading gdb-tools for Erlang/OTP $OTP_VERSION"
     echo "git clone --origin gdb_tools $GDB_REPO $GDB_TOOLS_INSTALL_PATH"
-    (git clone --verbose --origin gdb_tools "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH")  || {
+    (git clone --origin gdb_tools "$GDB_REPO" "$GDB_TOOLS_INSTALL_PATH" > /dev/null 2>&1)  || {
         echo "Downloading gdb_tools failed. Please check your source tree, and report this error."
         exit 1
         }
