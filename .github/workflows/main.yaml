@@ -489,7 +489,7 @@ jobs:
           case "${APP}" in
             emulator) DIR=erts/emulator/ ;;
             epmd) DIR=erts/epmd ;;
-            debug) DIR=lib/os_mon; APP=os_mon; TYPE=debug ;;
+            debug) DIR=erts/emulator; APP=emulator; TYPE=debug ;;
             *) DIR=lib/${{ matrix.type }} ;;
           esac
           sudo service apport stop
