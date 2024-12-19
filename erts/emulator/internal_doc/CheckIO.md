@@ -10,7 +10,7 @@ It is also used by various other parts, such as when doing os:cmd/1 or reading f
 
 This document gives an overview of how the check I/O subsystem works.
 
-The check I/O subsystem consists of a platform specific ([erl_poll](#polling)) and agnostic part ([check_io](#check-io)).
+The check I/O subsystem consists of a platform specific ([erl_poll](#polling)) and agnostic part ([check_io](#check-i-o)).
 
 [erl_poll] is the basic mechanisms for checking if any events have been signaled and allows
 waiting for a timeout if needed. The implementation of polling is very platform specific and
