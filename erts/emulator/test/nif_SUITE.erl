@@ -320,6 +320,7 @@ end_per_testcase(_Func, _Config) ->
     testcase_cleanup().
 
 testcase_cleanup() ->
+    driver_SUITE:check_io_debug(),
     P1 = code:purge(nif_mod),
     Del = code:delete(nif_mod),
     P2 = code:purge(nif_mod),
@@ -1063,11 +1064,17 @@ select_scheduler_do(Flag, Ref, MSG_ENV) ->
     receive_ready(R, Ref, ready_input),
     eof = read_nif(R,1),
 
+    check_stop_ret(select_nif(R, ?ERL_NIF_SELECT_STOP, R, null, Ref, null)),
+    [{fd_resource_stop, R_ptr, _}] = flush(),
+    {1, {R_ptr,_}} = last_fd_stop_call(),
+    true = is_closed_nif(R),
+    [] = flush(0),
+
     ?assertEqual(OriginalSchedPollFds, get_scheduler_pollset_size()),
 
     %% We setup 100 fds in parallel to make sure all end up in
     %% scheduler pollset
-    NumberOfFds = 100,
+    NumberOfFds = 10,
     Parent = self(),
     Pids = [spawn_monitor(fun() ->
                 link(Parent),
@@ -1075,13 +1082,15 @@ select_scheduler_do(Flag, Ref, MSG_ENV) ->
                 move_fd_to_scheduler_pollset(W1, R1, Flag, Ref, MSG_ENV),
                 Parent ! self(),
                 receive stop -> ok end,
-                check_stop_ret(select_nif(W1, ?ERL_NIF_SELECT_STOP, W1, null, Ref, null))
+                check_stop_ret(select_nif(W1, ?ERL_NIF_SELECT_STOP, W1, null, Ref, null)),
+                check_stop_ret(select_nif(R1, ?ERL_NIF_SELECT_STOP, R1, null, Ref, null))
             end) || _ <- lists:seq(1,NumberOfFds)],
     [receive P -> ok end || {P, _} <- Pids],
     ?assertEqual(OriginalSchedPollFds + NumberOfFds*SchedulerFDs, get_scheduler_pollset_size()),
     [begin P ! stop, receive {'DOWN', Ref1, _, _, _} -> ok end end || {P, Ref1} <- Pids],
 
-    {NumberOfFds, {_,_}} = last_fd_stop_call(),
+    NumberOfClosedFds = NumberOfFds * 2,
+    {NumberOfClosedFds, {_,_}} = last_fd_stop_call(),
 
     timer:sleep(1000),
 
