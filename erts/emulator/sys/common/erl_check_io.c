@@ -95,7 +95,7 @@ typedef enum {
 #endif
 #ifdef ERTS_POLL_USE_FALLBACK
     ERTS_EV_FLAG_FALLBACK      = 0x10,   /* Set when kernel poll rejected fd
-                                         and it was put in the nkp version */
+                                            and it was put in the nkp version */
 #else
     ERTS_EV_FLAG_FALLBACK      = ERTS_EV_FLAG_CLEAR,
 #endif
@@ -559,7 +559,9 @@ erts_io_notify_port_task_executed(ErtsPortTaskType type,
 
                 active_events |= ERTS_POLL_EV_IN;
 
-                if (erts_sched_poll_enabled() && state->count++ > 10) {
+                if (erts_sched_poll_enabled() &&
+                    !(state->flags & ERTS_EV_FLAG_FALLBACK) &&
+                    state->count++ > 10) {
                     int wake_poller = 0;
                     DEBUG_PRINT_FD("moving to scheduler ps", state);
                     new_events = erts_poll_control(get_scheduler_pollset(), fd, ERTS_POLL_OP_ADD,
