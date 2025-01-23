@@ -1146,9 +1146,9 @@ erts_tar(Config) ->
                    || File <- tar_contents(TarName),
                       string:equal(filename:dirname(File),ERTS_DIR),
                       %% Filter out beam.*.smp.*
-                      re:run(filename:basename(File), "beam\\.[^\\.]+\\.smp(\\.dll)?") == nomatch,
+                      re:run(filename:basename(File), "beam\\.[^\\.]+\\.smp(\\.dll|\\.pdb)?") == nomatch,
                       %% Filter out beam.*.emu.*
-                      re:run(filename:basename(File), "beam\\.([^\\.]+\\.)?emu(\\.dll)?") == nomatch,
+                      re:run(filename:basename(File), "beam\\.([^\\.]+\\.)?emu(\\.dll\\.pdb)?") == nomatch,
                       %% Filter out any erl_child_setup.*
                       re:run(filename:basename(File), "erl_child_setup\\..*") == nomatch
                   ])
