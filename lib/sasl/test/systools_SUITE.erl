@@ -1122,9 +1122,10 @@ erts_tar(Config) ->
                 Files = ["beam.smp.dll",
                          "epmd.exe",
                          "erl.exe",
+                         "erl_call.exe",
                          "erl_log.exe",
                          "erlexec.dll",
-                         "erlsrc.exe",
+                         "erlsrv.exe",
                          "escript.exe",
                          "heart.exe",
                          "inet_gethost.exe",
@@ -1136,7 +1137,7 @@ erts_tar(Config) ->
                            "typer.exe",
                            "yielding_c_fun.exe"],
                 PdbIgnored = [filename:rootname(F) ++ ".pdb" || F <- IgnoredFiles],
-                {Files ++ PdbFiles, IgnoredFiles ++ PdbIgnored}
+                {["erl.ini"] ++ Files ++ PdbFiles, IgnoredFiles ++ PdbIgnored}
         end,
 
     ErtsTarContent =
