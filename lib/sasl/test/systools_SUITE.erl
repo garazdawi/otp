@@ -1130,7 +1130,7 @@ erts_tar(Config) ->
                          "heart.exe",
                          "inet_gethost.exe",
                          "start_erl.exe"],
-                PdbFiles = [filename:rootname(F) ++ ".pdb" || F <- Files],
+                PdbFiles = ["beam.jit.pdb"] ++ [filename:rootname(F) ++ ".pdb" || F <- Files],
                 IgnoredFiles = ["ct_run.exe",
                            "dialyzer.exe",
                            "erlc.exe",
@@ -1150,6 +1150,8 @@ erts_tar(Config) ->
                       re:run(filename:basename(File), "beam\\.[^\\.]+\\.smp(\\.dll|\\.pdb)?") == nomatch,
                       %% Filter out beam.*.emu.*
                       re:run(filename:basename(File), "beam\\.([^\\.]+\\.)?emu(\\.dll\\.pdb)?") == nomatch,
+                      %% Filter out beam.*.jit.pdb
+                      re:run(filename:basename(File), "beam\\.([^\\.]+\\.)?jit\\.pdb") == nomatch,
                       %% Filter out any erl_child_setup.*
                       re:run(filename:basename(File), "erl_child_setup\\..*") == nomatch
                   ])
