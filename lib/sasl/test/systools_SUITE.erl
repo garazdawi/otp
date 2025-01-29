@@ -1151,7 +1151,7 @@ erts_tar(Config) ->
                       %% Filter out beam.*.emu.*
                       re:run(filename:basename(File), "beam\\.([^\\.]+\\.)?emu(\\.dll\\.pdb)?") == nomatch,
                       %% Filter out beam.*.jit.pdb
-                      re:run(filename:basename(File), "beam\\.([^\\.]+\\.)?jit\\.pdb") == nomatch,
+                      re:run(filename:basename(File), "beam\\.[^\\.]+\\.?jit\\.pdb") == nomatch,
                       %% Filter out any erl_child_setup.*
                       re:run(filename:basename(File), "erl_child_setup\\..*") == nomatch
                   ])
