@@ -102,16 +102,16 @@ native_atomics(Config) when is_list(Config) ->
     end.
 
 jump_table(Config) when is_list(Config) ->
-    case erlang:system_info(beam_jump_table) of
-        true ->
-            ok;
-        false ->
+    case {erlang:system_info(beam_jump_table),
+          erlang:system_info(emu_flavor)} of
+        {false, emu} ->
             case erlang:system_info(build_type) of
                 opt ->
                     ct:fail(optimized_without_beam_jump_table);
                 BT ->
                     {comment, "No beam jump table, but build type is " ++ atom_to_list(BT)}
-            end
+            end;
+        _ -> ok
     end.
 
 

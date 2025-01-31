@@ -1,0 +1,50 @@
+name: Setup Windows WSL Runner
+description: 'Setup a WSL Runner for building and testing Erlang/OTP'
+
+inputs:
+  installer_name:
+    default: false
+  github_token:
+    description: 'GITHUB_TOKEN'
+    default: '${{ github.token }}'
+
+runs:
+    using: composite
+    steps:
+      - name: Set timezone to CET
+        shell: cmd
+        run: tzutil /s "W. Europe Standard Time"
+
+      - uses: Vampire/setup-wsl@v3.1.3
+        with:
+          distribution: Ubuntu-18.04
+
+      - name: Install WSL dependencies
+        shell: wsl-bash {0}
+        run: apt update && apt install -y make autoconf unzip zip
+
+      - name: Download source archive
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_prebuilt
+
+      - name: Download installer
+        if: inputs.installer_name != 'false'
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_win32_installer
+
+      - name: Download tests
+        if: inputs.installer_name != 'false'
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: otp_tests
+
+      - name: Install OTP
+        if: inputs.installer_name != 'false'
+        shell: cmd
+        run: |
+            echo %cd%
+            start "" /WAIT ${{ inputs.installer_name }} /S /D=%CD%\release\win32\
+            dir %cd%
+            dir %cd%\release\win32\
