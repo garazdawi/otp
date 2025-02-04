@@ -685,7 +685,8 @@ jobs:
     needs:
         - documentation
         - sbom
-    if: startsWith(github.ref, 'refs/tags/OTP-') && github.repository == 'erlang/otp'
+    if: startsWith(github.ref, 'refs/tags/OTP-')
+    # && github.repository == 'erlang/otp'
     ## Needed to create releases
     permissions:
       contents: write
