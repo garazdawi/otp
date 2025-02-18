@@ -603,7 +603,6 @@ AS_IF([test "x$GCC" = xyes],
   # such dubious duplicates.
   LM_TRY_ENABLE_CFLAG([-fno-common], [CFLAGS])
   
-  LM_TRY_ENABLE_CFLAG([-fno-strict-aliasing], [CFLAGS])
  ],
  [
   WFLAGS=""
