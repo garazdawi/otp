@@ -1148,8 +1148,9 @@ void init_dist(void)
                           am_erts_internal, am_spawn_request_yield,
                           3, spawn_request_yield_3);
     {
-        Eterm *hp_start, *ERTS_UNDEF(hp, NULL), **hpp = NULL, tuple;
+        Eterm *hp_start, *hp, **hpp = NULL, tuple;
         Uint sz = 0, *szp = &sz;
+        ERTS_UNDEF(hp, NULL);
         while (1) {
             struct erl_off_heap_header **ohp;
             /*
