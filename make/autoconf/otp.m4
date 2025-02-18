@@ -3326,12 +3326,6 @@ if test "$CFLAG_RUNTIME_LIBRARY_PATH" = ""; then
 
 fi
 
-## OFFS CFLAGS
-ERL_OSSF
-ERL_OSSF_CFLAGS([DED_CFLAGS], [DED_LDFLAGS])
-ERL_OSSF_LDFLAGS([DED_LDFLAGS])
-
-
 # If DED_LD is set in environment, we expect all DED_LD* variables
 # to be specified (cross compiling)
 if test "x$DED_LD" = "x"; then
@@ -3432,6 +3426,10 @@ case $host_os in
 	;;
 esac
 
+
+## OFFS FLAGS
+ERL_OSSF
+ERL_OSSF_CFLAGS([DED_CFLAGS], [DED_LDFLAGS])
 ERL_OSSF_LDFLAGS([DED_LDFLAGS])
 
 if test "$DED_LD" = "" && test "$USER_LD" != ""; then
