@@ -31,6 +31,8 @@ LM_PRECIOUS_VARS
 
 ERL_PUSH_WERROR
 
+ERL_OSSF_FLAGS
+
 dnl How to set srcdir absolute is taken from the GNU Emacs distribution
 #### Make srcdir absolute, if it isn't already.  It's important to
 #### avoid running the path through pwd unnecessary, since pwd can
@@ -3669,8 +3671,6 @@ AS_HELP_STRING([--enable-deterministic-build], [enable build determinism, stripp
   esac ],
 ERL_DETERMINISTIC=no)
 AC_SUBST(ERL_DETERMINISTIC)
-
-ERL_OSSF_FLAGS
 
 AC_MSG_CHECKING([CFLAGS for -O switch])
 dnl                               Remove all "-O*" options
