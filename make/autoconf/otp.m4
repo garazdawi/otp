@@ -3127,11 +3127,19 @@ AC_DEFUN([ERL_OSSF_CFLAGS],
         AS_IF([test "X$can_enable_flag" = "Xfalse"],
           [
             LM_TRY_ENABLE_CFLAG([-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2], [$1], [#include <string.h>])
-          ], [AS_IF([test "X$can_enable_flag" != "Xtrue"], [exit 1])]
-        )
+          ])
         dnl Flags that enable stack protection mechanism
         LM_TRY_ENABLE_CFLAG([-fstack-clash-protection], [$1])
         LM_TRY_ENABLE_CFLAG([-fstack-protector-strong], [$1])
+        AS_IF([test "X$can_enable_flag" = "Xfalse"],
+          [
+            LM_TRY_ENABLE_CFLAG([-fstack-protector], [$1], [])
+          ],
+          [
+            # Some systems (solaris) also require this to be part of LDFLAGS
+            LM_TRY_ENABLE_LDFLAG([-fstack-protector-strong], [$2])
+          ]
+        )
         LM_TRY_ENABLE_CFLAG([-fcf-protection=full], [$1])
         LM_TRY_ENABLE_CFLAG([-mbranch-protection=standard], [$1])
         LM_TRY_ENABLE_CFLAG([-fexceptions],[$1])
@@ -3179,7 +3187,8 @@ AC_DEFUN([ERL_OSSF_LDFLAGS],
 
 AC_DEFUN([ERL_OSSF_FLAGS],
 [
-    ERL_OSSF_CFLAGS([CFLAGS])
+    ERL_OSSF
+    ERL_OSSF_CFLAGS([CFLAGS], [LDFLAGS])
     ERL_OSSF_CXXFLAGS([CXXFLAGS])
     ERL_OSSF_LDFLAGS([LDFLAGS])
 ])
@@ -3321,7 +3330,7 @@ fi
 
 ## OFFS CFLAGS
 ERL_OSSF
-ERL_OSSF_CFLAGS([DED_CFLAGS])
+ERL_OSSF_CFLAGS([DED_CFLAGS], [DED_LDFLAGS])
 ERL_OSSF_LDFLAGS([DED_LDFLAGS])
 
 

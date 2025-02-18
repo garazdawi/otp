@@ -283,7 +283,6 @@ AC_SUBST(ODBC_INCLUDE)
 
  ]) dnl "$with_odbc" != "no"
 
-ERL_OSSF
 ERL_OSSF_FLAGS
 
 dnl ----------------------------------------------------------------------
