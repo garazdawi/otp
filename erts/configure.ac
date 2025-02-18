@@ -31,6 +31,32 @@ LM_PRECIOUS_VARS
 
 ERL_PUSH_WERROR
 
+dnl ----------------------------------------------------------------------
+dnl Checks for programs.
+dnl ----------------------------------------------------------------------
+
+AC_LANG([C])
+
+AC_PROG_CC
+AC_PROG_CXX
+
+AC_SUBST(GCC)
+AC_SUBST(CXXFLAGS)
+
+AC_PROG_EGREP
+AC_PROG_CPP
+AC_PROG_RANLIB
+AC_PROG_YACC
+LM_PROG_PERL5
+if test "$ac_cv_path_PERL" = false; then
+  AC_MSG_ERROR([Perl version 5 is required to build the emulator!])
+fi
+AC_PROG_LN_S
+AC_CHECK_TOOL([AR], [ar], [false])
+if test "$ac_cv_prog_AR" = false; then
+  AC_MSG_ERROR([No 'ar' command found in PATH])
+fi
+
 ERL_OSSF_FLAGS
 
 dnl How to set srcdir absolute is taken from the GNU Emacs distribution
@@ -430,33 +456,6 @@ AC_DEFINE_UNQUOTED(ERTS_NO_RETPOLINE, $i_noretpoline_attr,
 # Remove old configuration information.
 # Next line should be before first output to CONF_INFO.
 rm -f "$ERL_TOP/erts/CONF_INFO"
-
-dnl ----------------------------------------------------------------------
-dnl Checks for programs.
-dnl ----------------------------------------------------------------------
-
-AC_LANG([C])
-
-AC_PROG_CC
-AC_SUBST(GCC)
-
-AC_PROG_CXX
-AC_SUBST(CXXFLAGS)
-
-AC_PROG_EGREP
-AC_PROG_CPP
-AC_PROG_RANLIB
-AC_PROG_YACC
-LM_PROG_PERL5
-if test "$ac_cv_path_PERL" = false; then
-  AC_MSG_ERROR([Perl version 5 is required to build the emulator!])
-fi
-AC_PROG_LN_S
-AC_CHECK_TOOL([AR], [ar], [false])
-if test "$ac_cv_prog_AR" = false; then
-  AC_MSG_ERROR([No 'ar' command found in PATH])
-fi
-
 
 #
 # Get programs needed for building the documentation 
@@ -3686,7 +3685,7 @@ DEBUG_CFLAGS="-g -Og $no_opt_CFLAGS"
 AC_SUBST(DEBUG_CFLAGS)
 
 no_opt_CXXFLAGS=$(echo " $CXXFLAGS" | sed 's/ -O[[^ ]]*/ /g')
-DEBUG_CXXFLAGS="-g -O0 $no_opt_CXXFLAGS"
+DEBUG_CXXFLAGS="-g -Og $no_opt_CXXFLAGS"
 AC_SUBST(DEBUG_CXXFLAGS)
 
 dnl
@@ -3698,7 +3697,8 @@ dnl
 
 AC_DEFINE_UNQUOTED(ERTS_EMU_CMDLINE_FLAGS,
 "$STATIC_CFLAGS $CFLAGS $CXXFLAGS $DEBUG_CFLAGS $DEBUG_CXXFLAGS $EMU_THR_DEFS $DEFS $WERRORFLAGS $WFLAGS",
-[The only reason ERTS_EMU_CMDLINE_FLAGS exists is to force modification of config.h when the emulator command line flags are modified by configure])
+[The only reason ERTS_EMU_CMDLINE_FLAGS exists is to force modification
+ of config.h when the emulator command line flags are modified by configure])
 
 dnl ----------------------------------------------------------------------
 dnl Output the result.
