@@ -3344,6 +3344,7 @@ case $host_os in
 		if test X${enable_m64_build} = Xyes; then
 			DED_LDFLAGS="-64 $DED_LDFLAGS"
 		fi
+                DED_LD="$CC"
 	;;
 	aix*|os400*)
 		DED_LDFLAGS="-G -bnoentry -bexpall"
