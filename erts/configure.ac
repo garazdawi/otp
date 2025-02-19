@@ -31,34 +31,6 @@ LM_PRECIOUS_VARS
 
 ERL_PUSH_WERROR
 
-dnl ----------------------------------------------------------------------
-dnl Checks for programs.
-dnl ----------------------------------------------------------------------
-
-AC_LANG([C])
-
-AC_PROG_CC
-AC_PROG_CXX
-
-AC_SUBST(GCC)
-AC_SUBST(CXXFLAGS)
-
-AC_PROG_EGREP
-AC_PROG_CPP
-AC_PROG_RANLIB
-AC_PROG_YACC
-LM_PROG_PERL5
-if test "$ac_cv_path_PERL" = false; then
-  AC_MSG_ERROR([Perl version 5 is required to build the emulator!])
-fi
-AC_PROG_LN_S
-AC_CHECK_TOOL([AR], [ar], [false])
-if test "$ac_cv_prog_AR" = false; then
-  AC_MSG_ERROR([No 'ar' command found in PATH])
-fi
-
-ERL_OSSF_FLAGS
-
 dnl How to set srcdir absolute is taken from the GNU Emacs distribution
 #### Make srcdir absolute, if it isn't already.  It's important to
 #### avoid running the path through pwd unnecessary, since pwd can
@@ -113,6 +85,34 @@ fi
 AC_SUBST(CROSS_COMPILING)
 
 ERL_XCOMP_SYSROOT_INIT
+
+dnl ----------------------------------------------------------------------
+dnl Checks for programs.
+dnl ----------------------------------------------------------------------
+
+AC_LANG([C])
+
+AC_PROG_CC
+AC_PROG_CXX
+
+AC_SUBST(GCC)
+AC_SUBST(CXXFLAGS)
+
+AC_PROG_EGREP
+AC_PROG_CPP
+AC_PROG_RANLIB
+AC_PROG_YACC
+LM_PROG_PERL5
+if test "$ac_cv_path_PERL" = false; then
+  AC_MSG_ERROR([Perl version 5 is required to build the emulator!])
+fi
+AC_PROG_LN_S
+AC_CHECK_TOOL([AR], [ar], [false])
+if test "$ac_cv_prog_AR" = false; then
+  AC_MSG_ERROR([No 'ar' command found in PATH])
+fi
+
+ERL_OSSF_FLAGS
 
 AC_SEARCH_LIBS([strerror],[cposix])
 
