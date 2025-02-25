@@ -22,6 +22,9 @@
 
 -define(tmp_folder, "tmp/").
 
+-include_lib("kernel/include/file.hrl").
+-export([read_file_info/1, read_link_info/1, list_dir/1]).
+
 main(Args) ->
     argparse:run(Args, cli(), #{progname => scancode}).
 
@@ -34,7 +37,8 @@ cli() ->
                       prefix_option(),
                       scan_results(),
                       file_or_dir(),
-                      sarif_option() ],
+                      sarif_option(),
+                      ort_option() ],
        handler => fun scancode/1}.
 
 approved() ->
@@ -71,6 +75,13 @@ prefix_option() ->
       default => "",
       long => "-prefix",
       help => "Prefix used for all paths (main use case is Github CI)."}.
+
+ort_option() ->
+    #{name => ort,
+      type => string,
+      default => undefined,
+      long => "-ort-yaml",
+      help => ".ort.yaml file to use to curate results." }.
 
 scan_results() ->
     #{name => scan_results,
@@ -140,7 +151,7 @@ execute(Command, Config) ->
     io:format("Result: ~ts~n",[R]),
     ScanResult = scan_result_path(Config),
     Json = decode(ScanResult),
-    Licenses = fetch_licenses(folder_path(Config), Json),
+    Licenses = fetch_licenses(folder_path(Config), Json, curations(Config)),
 
     Errors = compliance_check(Licenses),
 
@@ -159,7 +170,7 @@ execute(Command, Config) ->
     [io:format(standard_error, "~ts:\n  Msg: ~p\n  License: ~ts\n  SPDX: ~ts\n", [Path, Msg, License, Spdx]) ||
                   #{ msg := Msg, spdx := Spdx, license := License, path := Path } <- SortedErrors],
 
-     Errors =/= [] andalso erlang:raise(exit, SortedErrors, []),
+     SortedErrors =/= [] andalso erlang:raise(exit, SortedErrors, []),
      ok.
 
 -spec compliance_check([{Path, License, SPDX, Copyrights}]) -> Result when
@@ -217,18 +228,89 @@ license_check(License, Handler) ->
                         end
                 end, {error, license_not_recognised}, Handler).
 
+curations(#{ ort := undefined }) ->
+    fun(_Filename, SPDX) -> SPDX end;
+curations(#{ ort := OrtYaml }) ->
+
+    os:find_executable("yq") =:= undefined andalso throw({could_not_find_yq}),
+
+    #{ ~"excludes" := #{ ~"paths" := ExcludePaths },
+       ~"curations" := #{ ~"license_findings" := Curations } }
+      = json:decode(unicode:characters_to_binary(os:cmd("yq -o=json eval " ++ OrtYaml))),
+
+    fun(Filename, SPDX) ->
+            case lists:any(fun(#{ ~"pattern" := Pattern }) ->
+                                   glob_match(Filename, Pattern)
+                           end, ExcludePaths) of
+                true -> exclude;
+                false ->
+                    case lists:filter(fun(#{ ~"path" := Path }) ->
+                                              glob_match(Filename, Path)
+                                      end, Curations) of
+                        [] -> SPDX;
+                        [Curation] ->
+
+                            DetectedLicense = maps:get(~"detected_license", Curation, SPDX),
+
+                            case string:equal(DetectedLicense, SPDX) of
+                                false -> ~"invalid detected_license";
+                                true ->
+                                    maps:get(~"concluded_license", Curation)
+                            end;
+                        _Curations ->
+                            ~"multiple curations match file"
+                    end
+            end
+    end.
+
+glob_match(Path, Glob) ->
+    put(path, filename:split("./" ++ unicode:characters_to_list(Path))),
+    filelib:wildcard(unicode:characters_to_list(Glob), ?MODULE) =/= [].
+
+read_link_info(File) ->
+    read_link_info(filename:split(File), get(path)).
+
+read_link_info([A],[A]) ->
+    {ok, #file_info{ type = file }};
+read_link_info([A|TA],[A|TB]) ->
+    read_link_info(TA, TB);
+read_link_info([], [_|_]) ->
+    {ok, #file_info{ type = directory }};
+read_link_info(_,_) ->
+    {error, enoent}.
+
+read_file_info(File) ->
+    read_link_info(File).
+
+list_dir(Dir) ->
+    list_dir(filename:split(Dir), get(path)).
+
+list_dir([A],[A]) ->
+    {error, enotdir};
+list_dir([A|TA],[A|TB]) ->
+    list_dir(TA, TB);
+list_dir([],[A|_TB]) ->
+    {ok, [A]};
+list_dir(_,_) ->
+    {ok, []}.
 
 decode(Filename) ->
     {ok, Bin} = file:read_file(Filename),
     json:decode(Bin).
 
-fetch_licenses(FolderPath, #{<<"files">> := Files}) ->
+fetch_licenses(FolderPath, #{<<"files">> := Files}, Curate) ->
     lists:filtermap(fun(#{<<"type">> := <<"file">>,
                           <<"detected_license_expression">> := License,
                           <<"detected_license_expression_spdx">> := SPDX,
                           <<"copyrights">> := Copyrights,
-                          <<"path">> := Path}) ->
-                            {true, {string:prefix(string:trim(Path, leading), FolderPath), License, SPDX, Copyrights}};
+                          <<"path">> := TmpPath}) ->
+                            Path = string:prefix(string:trim(TmpPath, leading), FolderPath),
+                            case Curate(Path, SPDX) of
+                                exclude ->
+                                    false;
+                                CuratedSPDX ->
+                                    {true, {Path, License, CuratedSPDX, Copyrights}}
+                            end;
                        (_) ->
                             false
                     end, Files).

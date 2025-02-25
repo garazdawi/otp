@@ -103,13 +103,6 @@ curations:
 
       - path: "lib/stdlib/uc_spec/**/*"
         reason: "INCORRECT"
-        detected_license: "NONE"
-        comment: >-
-          License not included in data files
-        concluded_license: "Unicode-3.0"
-
-      - path: "lib/stdlib/uc_spec/**/*"
-        reason: "INCORRECT"
         detected_license: "LicenseRef-scancode-unicode"
         comment: >-
           Update license to its actual license

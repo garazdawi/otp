@@ -57,8 +57,9 @@ jobs:
       - name: License Compliance Check
         run: |
             pip install scancode-toolkit==32.3.0
+            brew install yq
             scancode-reindex-licenses --additional-directory scripts/licensedetection/
-            scripts/scan-code.escript --file-or-dir "${{ steps.new-files.outputs.new_files }}" \
+            scripts/scan-code.escript --ort .ort.yml --file-or-dir "${{ steps.new-files.outputs.new_files }}" \
                 --sarif results.sarif
 
       - name: "Upload artifact"
