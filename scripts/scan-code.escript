@@ -36,31 +36,38 @@ cli() ->
        arguments => [ scan_option(),
                       prefix_option(),
                       scan_results(),
+                      scan_input(),
                       file_or_dir(),
                       sarif_option(),
                       ort_option() ],
        handler => fun scancode/1}.
 
 approved() ->
-    [ <<"apache-2.0">> ].
+    [ <<"Apache-2.0">> ].
 
+%% Licenses that need manual review. See $ERL_TOP/.ort.yml to see which files
+%% have these licenses.
 reviewed() ->
-    [ <<"mit">>, <<"boost-1.0">>, <<"llvm-exception">>,
-      <<"cc0-1.0">>, <<"bsd-simplified">>, <<"bsd-new">>, <<"pcre">>,
-      <<"fsf-free">>, <<"autoconf-exception-3.0">>, <<"public-domain">>,
-      <<"autoconf-simple-exception">>, <<"unicode">>, <<"tcl">>, <<"gpl-2.0 WITH classpath-exception-2.0">>,
-      <<"zlib">>, <<"lgpl-2.0-plus WITH wxwindows-exception-3.1">>,
-      <<"openssl-ssleay">>, <<"cc-by-sa-3.0">>, <<"cc-by-4.0">>, <<"dco-1.1">>, <<"fsf-ap">>,
-      <<"classpath-exception-2.0">>, <<"ietf-trust">>, <<"apache-2.0-or-lgpl-2.1-or-later">>,
-      <<"bsd-new OR gpl-2.0">> ].
-
-not_approved() ->
-    [<<"gpl">>, <<"gpl-3.0-plus">>, <<"gpl-2.0">>, <<"gpl-1.0-plus">>, <<"unlicense">>,
-     <<"lgpl-2.0-plus">>, <<"lgpl-2.1-plus">>, <<"agpl-1.0-plus">>, <<"agpl-1.0">>,
-     <<"agpl-3.0-plus">>, <<"erlangpl-1.1">>, <<"gpl-2.0-plus">>, <<"agpl-3.0">>, <<"mpl-1.1">>].
+    [~"Apache-2.0 WITH LLVM-exception",
+     ~"BSD-2-Clause",
+     ~"BSD-3-Clause",
+     ~"BSD-3-Clause OR GPL-2.0-only",
+     ~"BSL-1.0",
+     ~"CC0-1.0",
+     ~"FSFUL",
+     ~"GPL-3.0-or-later WITH Autoconf-exception-generic-3.0",
+     ~"Apache-2.0 OR LGPL-2.0-or-later",
+     ~"Apache-2.0 OR LGPL-2.1-or-later",
+     ~"Apache-2.0 OR BSL-1.0",
+     ~"MIT",
+     ~"MPL-1.1",
+     ~"TCL",
+     ~"Unicode-3.0",
+     ~"Unlicense",
+     ~"Zlib"].
 
 no_license() ->
-    [<<"null">>, 'null'].
+    [<<"null">>, 'null', ~"no license/copyright"].
 
 scan_option() ->
     #{name => scan_option,
@@ -87,13 +94,19 @@ scan_results() ->
     #{name => scan_results,
       type => string,
       default => "scan-results.json",
-      long => "-scan_results",
+      long => "-scan-results",
       help => "Output file where to scan the results."}.
+
+scan_input() ->
+    #{name => scan_input,
+      type => string,
+      default => undefined,
+      long => "-scan-input",
+      help => "A scan-results.json file to use for testing."}.
 
 file_or_dir() ->
     #{name => file_or_dir,
       type => string,
-      required => true,
       long => "-file-or-dir",
       help => "Files and/or directories to analyse."}.
 
@@ -103,18 +116,22 @@ sarif_option() ->
       default => undefined,
       long => "-sarif"}.
 
-scancode(Config) ->
+scancode(#{ scan_input := undefined } = Config) ->
     io:format("Files to scan: ~ts~n", [maps:get(file_or_dir, Config, none)]),
     ok = cp_files(Config),
-    scan_folder(Config).
+    scan_folder(Config);
+scancode(#{ scan_input := ScanResultFile } = Config) ->
+    check_scancode_results(decode(ScanResultFile), Config).
 
 cp_files(#{file_or_dir := FilesOrDirs,
            prefix      := Prefix}) ->
     ok    = create_folder(Prefix, ?tmp_folder),
     Files = cleanup_files(FilesOrDirs),
     lists:foreach(fun (File) ->
+                         
                          Command = cp_with_path(Prefix, File, ?tmp_folder),
-                         os:cmd(Command)
+                         Res = os:cmd(Command),
+                         io:format("~ts -> ~ts~n", [Command, Res])
                  end, Files),
     ok.
 
@@ -127,7 +144,12 @@ cleanup_files(FilesOrDirs) ->
                  string:split(FilesOrDirs, " ", all)).
 
 cp_with_path(Prefix, File, Folder) ->
-    "cp -f --parents " ++ Prefix ++ File ++ " " ++ Folder.
+    case file:read_file_info(File) of
+        {ok,#file_info{ type = directory }} ->
+            "cp -r -f --parents " ++ Prefix ++ File ++ " " ++ Folder;
+        _ -> 
+            "cp -f --parents " ++ Prefix ++ File ++ " " ++ Folder
+    end.
 
 scan_folder(Config) ->
     Command = scancode_command(Config),
@@ -143,17 +165,23 @@ folder_path(#{prefix        := Prefix}) ->
 scancode_command(#{scan_option   := Options}=Config) ->
     ScanResultPath = scan_result_path(Config),
     FolderPath = folder_path(Config),
-    "scancode -" ++ Options ++ " --json-pp " ++ ScanResultPath ++ " " ++ FolderPath.
+    N = erlang:system_info(schedulers_online),
+    "scancode -n "++integer_to_list(N-1)++" -" ++ Options ++ " --json-pp " ++ ScanResultPath ++ " " ++ FolderPath.
 
 execute(Command, Config) ->
     io:format("Running: ~ts~n", [Command]),
     R = os:cmd(Command),
     io:format("Result: ~ts~n",[R]),
     ScanResult = scan_result_path(Config),
-    Json = decode(ScanResult),
+
+    check_scancode_results(decode(ScanResult), Config).
+
+check_scancode_results(Json, Config) ->
     Licenses = fetch_licenses(folder_path(Config), Json, curations(Config)),
 
     Errors = compliance_check(Licenses),
+
+    dbg:stop(),
 
     maps:get(sarif, Config) =/= undefined andalso
         sarif(maps:get(sarif, Config), Errors),
@@ -167,40 +195,46 @@ execute(Command, Config) ->
                              end
                      end, Errors),
 
-    [io:format(standard_error, "~ts:\n  Msg: ~p\n  License: ~ts\n  SPDX: ~ts\n", [Path, Msg, License, Spdx]) ||
+    [io:format(standard_error, "~ts:\n  Msg: ~p\n  License: ~ts\n  SPDX: ~ts\n\n", [Path, Msg, License, Spdx]) ||
                   #{ msg := Msg, spdx := Spdx, license := License, path := Path } <- SortedErrors],
 
-     SortedErrors =/= [] andalso erlang:raise(exit, SortedErrors, []),
+     SortedErrors =/= [] andalso erlang:halt(1),
      ok.
 
--spec compliance_check([{Path, License, SPDX, Copyrights}]) -> Result when
-      Result     :: #{ license => License, spdx => SPDX, path => Path, msg => Msg},
+-spec compliance_check([{Path, License, SPDX, Copyrights, Curated}]) -> Result when
+      Result     :: #{ license => License, spdx => SPDX, path => Path, msg => Msg },
       License    :: binary(),
       SPDX       :: binary(),
       Copyrights :: binary(),
       Path       :: binary(),
-      Msg        :: no_license | license_not_approved | license_to_be_reviewed | license_not_recognised | no_copyright.
+      Curated    :: atom(),
+      Msg        :: no_license | license_to_be_reviewed | license_not_recognised | no_copyright.
 compliance_check(Licenses) when is_list(Licenses) ->
-    lists:foldl(fun ({Path, License, SPDX0, Copyright}, Acc) ->
-                        SPDX = spdx_nonnull(SPDX0),
-                        CopyrightResult = check_copyright(Copyright),
-                        LicenseResult = license_compliance_check(License),
-                        R = lists:foldl(fun (ok, Acc0) -> Acc0;
-                                            ({error, Msg}, Acc0) ->
-                                                [#{ license => License,
-                                                    spdx => SPDX,
-                                                    path => Path,
-                                                    msg => Msg} | Acc0]
-                                        end, [], [CopyrightResult, LicenseResult]),
-                        R ++ Acc
-                    end, [], Licenses).
+    lists:foldl(
+      fun({Path, License, SPDX0, Copyright, Curated}, Acc) ->
+              SPDX = spdx_nonnull(SPDX0),
+              CopyrightResult = check_copyright(Copyright),
+              LicenseResult = license_compliance_check(SPDX),
+              R = lists:foldl(
+                    fun(ok, Acc0) -> Acc0;
+                       ({error, license_to_be_reviewed}, Acc0) when Curated ->
+                            %% A license that should be reviewed, but it has
+                            %% been curated in .ort.yml to it is ok.
+                            Acc0;
+                       ({error, Msg}, Acc0) ->
+                            [#{ license => License,
+                                spdx => SPDX,
+                                path => Path,
+                                msg => Msg} | Acc0]
+                    end, [], [CopyrightResult, LicenseResult]),
+              R ++ Acc
+      end, [], Licenses).
 
 -spec license_compliance_check(DetectedLicense) -> ok | {error, Err} when
       Err :: no_license | license_not_approved | license_to_be_reviewed | license_not_recognised,
       DetectedLicense :: binary().
 license_compliance_check(License) ->
     Handler = [ {no_license(), {error, no_license}},
-                {not_approved(), {error, license_not_approved}},
                 {reviewed(), {error, license_to_be_reviewed}},
                 {approved(), ok}],
     license_check(License, Handler).
@@ -217,16 +251,17 @@ check_copyright([#{<<"copyright">> := _} | _]) ->
     ok.
 
 license_check(License, Handler) ->
-    lists:foldl(fun(_, {error, X}=Error) when X =/= license_not_recognised ->
-                        Error;
-                   ({Licenses, Msg}, Acc) ->
-                        case lists:member(License, Licenses) of
-                            true ->
-                                Msg;
-                            false ->
-                                Acc
-                        end
-                end, {error, license_not_recognised}, Handler).
+    lists:foldl(
+      fun(_, {error, X}=Error) when X =/= license_not_approved ->
+              Error;
+         ({Licenses, Msg}, Acc) ->
+              case lists:member(License, Licenses) of
+                  true ->
+                      Msg;
+                  false ->
+                      Acc
+              end
+      end, {error, license_not_approved}, Handler).
 
 curations(#{ ort := undefined }) ->
     fun(_Filename, SPDX) -> SPDX end;
@@ -238,7 +273,8 @@ curations(#{ ort := OrtYaml }) ->
        ~"curations" := #{ ~"license_findings" := Curations } }
       = json:decode(unicode:characters_to_binary(os:cmd("yq -o=json eval " ++ OrtYaml))),
 
-    fun(Filename, SPDX) ->
+    fun F(Filename, null) -> F(Filename, ~"NONE");
+        F(Filename, SPDX) ->
             case lists:any(fun(#{ ~"pattern" := Pattern }) ->
                                    glob_match(Filename, Pattern)
                            end, ExcludePaths) of
@@ -247,18 +283,15 @@ curations(#{ ort := OrtYaml }) ->
                     case lists:filter(fun(#{ ~"path" := Path }) ->
                                               glob_match(Filename, Path)
                                       end, Curations) of
-                        [] -> SPDX;
-                        [Curation] ->
+                        [] -> keep;
+                        [Curation | _] ->
 
-                            DetectedLicense = maps:get(~"detected_license", Curation, SPDX),
-
+                            DetectedLicense = maps:get(~"detected_license", Curation, "NONE"),
                             case string:equal(DetectedLicense, SPDX) of
-                                false -> ~"invalid detected_license";
+                                false -> {curate, ["detected license '", SPDX, "', ort.yml has it as '", DetectedLicense, "'"]};
                                 true ->
-                                    maps:get(~"concluded_license", Curation)
-                            end;
-                        _Curations ->
-                            ~"multiple curations match file"
+                                    {curate, maps:get(~"concluded_license", Curation)}
+                            end
                     end
             end
     end.
@@ -299,21 +332,24 @@ decode(Filename) ->
     json:decode(Bin).
 
 fetch_licenses(FolderPath, #{<<"files">> := Files}, Curate) ->
-    lists:filtermap(fun(#{<<"type">> := <<"file">>,
-                          <<"detected_license_expression">> := License,
-                          <<"detected_license_expression_spdx">> := SPDX,
-                          <<"copyrights">> := Copyrights,
-                          <<"path">> := TmpPath}) ->
-                            Path = string:prefix(string:trim(TmpPath, leading), FolderPath),
-                            case Curate(Path, SPDX) of
-                                exclude ->
-                                    false;
-                                CuratedSPDX ->
-                                    {true, {Path, License, CuratedSPDX, Copyrights}}
-                            end;
-                       (_) ->
-                            false
-                    end, Files).
+    lists:filtermap(
+      fun(#{<<"type">> := <<"file">>,
+            <<"detected_license_expression">> := License,
+            <<"detected_license_expression_spdx">> := SPDX,
+            <<"copyrights">> := Copyrights,
+            <<"path">> := TmpPath}) ->
+              Path = string:prefix(string:trim(TmpPath, leading), FolderPath),
+              case Curate(Path, SPDX) of
+                  exclude ->
+                      false;
+                  {curate, CuratedSPDX} ->
+                      {true, {Path, License, CuratedSPDX, [#{ ~"copyright" => curated }], true}};
+                  keep ->
+                      {true, {Path, License, SPDX, Copyrights, false}}
+              end;
+         (_) ->
+              false
+      end, Files).
 
 -spec sarif(file:name_all(), Errors) -> dynamic() when
       Errors :: [#{ license => License, spdx => SPDX, path => Path, msg => Msg}],

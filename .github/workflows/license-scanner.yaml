@@ -42,10 +42,6 @@ jobs:
           filters: |
               new:
                   - added: '**'
-                  - '!**/*.beam'
-                  - '!LICENSES/**/*.txt'
-                  - '!**/*.exe'
-                  - '!**/*.config.cache.static'
           ## OTP-27.0 tag as base
           base: 601a012837ea0a5c8095bf24223132824177124d
           list-files: shell
