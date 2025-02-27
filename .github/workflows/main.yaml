@@ -635,7 +635,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
           repository: oss-review-toolkit/ort-config
-          ref: "main"
+          ref: "d2978deb230beae095bb6cfec074b94f1a74fd34"
           path: ".ort-config"
 
       - name: Setup ORT Config
@@ -651,13 +651,9 @@ jobs:
 
       - name: Run OSS Review Toolkit
         id: ort
-        # TODO: Use released version once the following issue has been released:
-        # * https://github.com/oss-review-toolkit/ort-ci-github-action/issues/37
-        # * https://github.com/oss-review-toolkit/ort-ci-github-action/pull/41
-        # * https://github.com/oss-review-toolkit/ort-ci-github-action/pull/43
-        uses: maennchen/ort-ci-github-action@37e64506008cb4418bf2b03eba951f26254dde0f # ratchet:maennchen/ort-ci-github-action@action-output
+        uses: oss-review-toolkit/ort-ci-github-action@v1.1.0 # ratchet:oss-review-toolkit/ort-ci-github-action@v1.1.0
         with:
-            image: ghcr.io/oss-review-toolkit/ort-minimal:sha-b71d16f
+            image: ghcr.io/oss-review-toolkit/ort-minimal:52.1.0
             run: >
               labels,
               cache-dependencies,
