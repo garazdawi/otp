@@ -657,7 +657,6 @@ jobs:
             run: >
               labels,
               cache-dependencies,
-              cache-scan-results,
               analyzer,
               scanner,
               advisor,
