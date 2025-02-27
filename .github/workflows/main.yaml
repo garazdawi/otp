@@ -657,13 +657,14 @@ jobs:
             run: >
               labels,
               cache-dependencies,
-              cache-scan-results,
               analyzer,
+              evaluator,
               scanner,
               advisor,
               reporter,
               'upload-results',
               'upload-scan-result'
+            log-level: debug
             fail-on: ${{ github.ref_type == 'tag' && '' || 'violations,issues' }}
             report-formats: "SpdxDocument"
             ort-cli-report-args: '-O SpdxDocument=outputFileFormats=JSON'
