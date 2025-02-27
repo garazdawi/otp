@@ -128,11 +128,11 @@ cp_files(#{file_or_dir := FilesOrDirs,
     ok    = create_folder(Prefix, ?tmp_folder),
     Files = cleanup_files(FilesOrDirs),
     lists:foreach(fun (File) ->
-                         
-                         Command = cp_with_path(Prefix, File, ?tmp_folder),
-                         Res = os:cmd(Command),
-                         io:format("~ts -> ~ts~n", [Command, Res])
-                 end, Files),
+
+                          Command = cp_with_path(Prefix, File, ?tmp_folder),
+                          Res = os:cmd(Command),
+                          io:format("~ts -> ~ts~n", [Command, Res])
+                  end, Files),
     ok.
 
 create_folder(Prefix, Folder) ->
@@ -147,7 +147,7 @@ cp_with_path(Prefix, File, Folder) ->
     case file:read_file_info(File) of
         {ok,#file_info{ type = directory }} ->
             "cp -r -f --parents " ++ Prefix ++ File ++ " " ++ Folder;
-        _ -> 
+        _ ->
             "cp -f --parents " ++ Prefix ++ File ++ " " ++ Folder
     end.
 
@@ -181,8 +181,6 @@ check_scancode_results(Json, Config) ->
 
     Errors = compliance_check(Licenses),
 
-    dbg:stop(),
-
     maps:get(sarif, Config) =/= undefined andalso
         sarif(maps:get(sarif, Config), Errors),
 
@@ -196,10 +194,10 @@ check_scancode_results(Json, Config) ->
                      end, Errors),
 
     [io:format(standard_error, "~ts:\n  Msg: ~p\n  License: ~ts\n  SPDX: ~ts\n\n", [Path, Msg, License, Spdx]) ||
-                  #{ msg := Msg, spdx := Spdx, license := License, path := Path } <- SortedErrors],
+        #{ msg := Msg, spdx := Spdx, license := License, path := Path } <- SortedErrors],
 
-     SortedErrors =/= [] andalso erlang:halt(1),
-     ok.
+    SortedErrors =/= [] andalso erlang:halt(1),
+    ok.
 
 -spec compliance_check([{Path, License, SPDX, Copyrights, Curated}]) -> Result when
       Result     :: #{ license => License, spdx => SPDX, path => Path, msg => Msg },
@@ -271,7 +269,7 @@ curations(#{ ort := OrtYaml }) ->
 
     #{ ~"excludes" := #{ ~"paths" := ExcludePaths },
        ~"curations" := #{ ~"license_findings" := Curations } }
-      = json:decode(unicode:characters_to_binary(os:cmd("yq -o=json eval " ++ OrtYaml))),
+        = json:decode(unicode:characters_to_binary(os:cmd("yq -o=json eval " ++ OrtYaml))),
 
     fun F(Filename, null) -> F(Filename, ~"NONE");
         F(Filename, SPDX) ->
