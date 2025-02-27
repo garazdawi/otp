@@ -206,7 +206,8 @@ check_scancode_results(Json, Config) ->
       Copyrights :: binary(),
       Path       :: binary(),
       Curated    :: atom(),
-      Msg        :: no_license | license_to_be_reviewed | license_not_recognised | no_copyright.
+      Msg        :: no_license | license_to_be_reviewed | license_not_approved |
+        license_detected_error | no_copyright.
 compliance_check(Licenses) when is_list(Licenses) ->
     lists:foldl(
       fun({Path, License, SPDX0, Copyright, Curated}, Acc) ->
@@ -229,7 +230,8 @@ compliance_check(Licenses) when is_list(Licenses) ->
       end, [], Licenses).
 
 -spec license_compliance_check(DetectedLicense) -> ok | {error, Err} when
-      Err :: no_license | license_not_approved | license_to_be_reviewed | license_not_recognised,
+      Err :: no_license | license_not_approved | license_to_be_reviewed |
+             license_detected_error,
       DetectedLicense :: binary().
 license_compliance_check(License) ->
     Handler = [ {no_license(), {error, no_license}},
@@ -249,17 +251,22 @@ check_copyright([#{<<"copyright">> := _} | _]) ->
     ok.
 
 license_check(License, Handler) ->
-    lists:foldl(
-      fun(_, {error, X}=Error) when X =/= license_not_approved ->
-              Error;
-         ({Licenses, Msg}, Acc) ->
-              case lists:member(License, Licenses) of
-                  true ->
-                      Msg;
-                  false ->
-                      Acc
-              end
-      end, {error, license_not_approved}, Handler).
+    case string:prefix(License, "detected license") of
+        nomatch ->
+            lists:foldl(
+            fun(_, {error, X}=Error) when X =/= license_not_approved ->
+                    Error;
+               ({Licenses, Msg}, Acc) ->
+                    case lists:member(License, Licenses) of
+                        true ->
+                            Msg;
+                        false ->
+                            Acc
+                    end
+            end, {error, license_not_approved}, Handler);
+        _ -> {error, license_detected_error}
+    end.
+
 
 curations(#{ ort := undefined }) ->
     fun(_Filename, SPDX) -> SPDX end;
