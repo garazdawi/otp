@@ -35,7 +35,7 @@ ort:
           commandLine: '--copyright --license --info --license-score 50 --strip-root --timeout 30'
 
           # Command line options that do not affect the ScanCode output.
-          commandLineNonConfig: '--processes 8'
+          # commandLineNonConfig: '--processes 8'
 
           # Use per-file license findings instead of per-line ones.
           # preferFileLicense: true
