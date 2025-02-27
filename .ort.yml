@@ -699,17 +699,17 @@ curations:
         concluded_license: "Apache-2.0"
 
       - path: "**/configure"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "FSFUL"
         concluded_license: "FSFUL"
 
       - path: "erts/emulator/beam/erl_bits_f16.*"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "MIT"
         concluded_license: "MIT"
 
       - path: "erts/emulator/beam/erl_posix_str.c"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "TCL"
         concluded_license: "TCL"
 
@@ -723,7 +723,7 @@ curations:
         concluded_license: "Apache-2.0"
 
       - path: "erts/emulator/ryu/ryu.mk"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "Apache-2.0"
         concluded_license: "Apache-2.0"
 
@@ -789,17 +789,17 @@ curations:
         concluded_license: "Apache-2.0"
     
       - path: "erts/emulator/zstd/zstd.version"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "Apache-2.0"
         concluded_license: "Apache-2.0"
 
       - path: "erts/emulator/zstd/zstd.mk"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "Apache-2.0"
         concluded_license: "Apache-2.0"
 
       - path: "erts/emulator/zstd/**/*"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "BSD-3-Clause OR GPL-2.0-only"
         concluded_license: "BSD-3-Clause OR GPL-2.0-only"
 
@@ -827,7 +827,7 @@ curations:
         concluded_license: "BSD-3-Clause"
 
       - path: "erts/emulator/pcre/**/*"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "BSD-3-Clause"
         concluded_license: "BSD-3-Clause"
 
@@ -844,7 +844,7 @@ curations:
         concluded_license: "Zlib"
 
       - path: "erts/emulator/zlib/**/*"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "Zlib"
         concluded_license: "Zlib"
 
@@ -856,6 +856,6 @@ curations:
         concluded_license: "Zlib"
 
       - path: "erts/emulator/asmjit/**/*"
-        reason: "REVIEW"
+        reason: "DOCUMENTATION_OF"
         detected_license: "Zlib"
         concluded_license: "Zlib"
