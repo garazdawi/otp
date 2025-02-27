@@ -641,10 +641,10 @@ jobs:
       - name: Setup ORT Config
         id: setup-ort-config
         run: |
-            mkdir -p "/$HOME/.ort/"
+            mkdir -p "$HOME/.ort/"
 
             # Move Fetched Default Config into Place
-            mv .ort-config "/$HOME/.ort/config"
+            mv .ort-config "$HOME/.ort/config"
 
             # Append Global ORT Config
             cat .ort/config/config.yml >> "$HOME/.ort/config/config.yml"
@@ -659,9 +659,9 @@ jobs:
               cache-dependencies,
               cache-scan-results,
               analyzer,
-              evaluator,
               scanner,
               advisor,
+              evaluator,
               reporter,
               'upload-results',
               'upload-scan-result'
