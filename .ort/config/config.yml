@@ -17,6 +17,7 @@
 
 ort:
   enableRepositoryPackageCurations: true
+  forceOverwrite: true
 
   scanner:
     skipConcluded: false
