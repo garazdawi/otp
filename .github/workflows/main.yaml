@@ -663,7 +663,7 @@ jobs:
             sw-version: ${{ env.OTP_SBOM_VERSION }}
 
       - name: Link results
-        run: ln -s analyzer-result.json .ort/ort-results/current-result.json
+        run: ln -s analyzer-result.json $HOME/.ort/ort-results/current-result.json
 
       - name: Restore ORT Scanner cache
         uses: actions/cache@v3
@@ -693,7 +693,7 @@ jobs:
             sw-version: ${{ env.OTP_SBOM_VERSION }}
 
       - name: Link results
-        run: ln -s scan-result.json .ort/ort-results/current-result.json
+        run: ln -s scan-result.json $HOME/.ort/ort-results/current-result.json
 
       - name: Run OSS Review Toolkit reporter
         uses: oss-review-toolkit/ort-ci-github-action@1805edcf1f4f55f35ae6e4d2d9795ccfb29b6021 # ratchet:oss-review-toolkit/ort-ci-github-action@v1.1.0
