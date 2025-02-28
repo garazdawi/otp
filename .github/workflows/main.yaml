@@ -661,14 +661,15 @@ jobs:
               cache-dependencies,
               analyzer
             sw-version: ${{ env.OTP_SBOM_VERSION }}
-      - name: Debug
-        run: tree $HOME/.ort
+
+      - name: Link results
+        run: ln -s analyzer-result.json .ort/ort-results/current-result.json
 
       - name: Restore ORT Scanner cache
         uses: actions/cache@v3
         id: ort-cache
         with:
-          path: .ort/scanner-result.json
+          path: .ort/ort-results/scanner-result.json
           key: ort-scan-result-${{ env.ORT_VERSION }}-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
                 ort-scan-result-${{ env.ORT_VERSION }}-${{ github.ref_name }}-${{ github.sha }}
@@ -676,11 +677,11 @@ jobs:
       - name: Restore from cache
         if: ${{ steps.ort-cache.outputs.cache-hit == true }}
         run: | 
-            cp .ort/scan-result.json .ort/scan-result.json.orig
-            ./scripts/scan-code.escript --scan-result-cache .ort/scan-result.json.orig \
-               --analyzer-result .ort/analyzer-result.json --file-or-dir . \
-               --scan-result .ort/scan-result.json
-            diff .ort/scan-result.json.old .ort/scan-result.json
+            cp .ort/ort-results/scan-result.json .ort/ort-results/scan-result.json.orig
+            ./scripts/scan-code.escript --scan-result-cache .ort/ort-results/scan-result.json.orig \
+               --analyzer-result .ort/ort-results/analyzer-result.json --file-or-dir . \
+               --scan-result .ort/ort-results/scan-result.json
+            diff .ort/ort-results/scan-result.json.old .ort/ort-results/scan-result.json
 
       - name: Run scanner
         if: ${{ steps.ort-cache.outputs.cache-hit == false }}
@@ -690,6 +691,9 @@ jobs:
             run: >
               scanner
             sw-version: ${{ env.OTP_SBOM_VERSION }}
+
+      - name: Link results
+        run: ln -s scan-result.json .ort/ort-results/current-result.json
 
       - name: Run OSS Review Toolkit reporter
         uses: oss-review-toolkit/ort-ci-github-action@1805edcf1f4f55f35ae6e4d2d9795ccfb29b6021 # ratchet:oss-review-toolkit/ort-ci-github-action@v1.1.0
