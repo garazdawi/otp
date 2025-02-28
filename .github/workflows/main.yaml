@@ -672,7 +672,9 @@ jobs:
           path: .ort/ort-results/scanner-result.json
           key: ort-scan-result-${{ env.ORT_VERSION }}-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
-                ort-scan-result-${{ env.ORT_VERSION }}-${{ github.ref_name }}-${{ github.sha }}
+                ort-scan-result-${{ env.ORT_VERSION }}-${{ github.ref_name }}-
+                ort-scan-result-${{ env.ORT_VERSION }}-${{ github.base_ref }}-${{ github.event.pull_request.base.sha }}
+                ort-scan-result-${{ env.ORT_VERSION }}-${{ github.base_ref }}-
 
       - name: Restore from cache
         if: ${{ steps.ort-cache.outputs.cache-hit == true }}
@@ -701,7 +703,6 @@ jobs:
             image: ghcr.io/oss-review-toolkit/ort-minimal:${{ env.ORT_VERSION }}
             run: >
               advisor,
-              evaluator,
               reporter,
               'upload-results',
               'upload-scan-result'
