@@ -661,6 +661,8 @@ jobs:
               cache-dependencies,
               analyzer
             sw-version: ${{ env.OTP_SBOM_VERSION }}
+      - name: Debug
+        run: tree $HOME/.ort
 
       - name: Restore ORT Scanner cache
         uses: actions/cache@v3
