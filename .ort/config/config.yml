@@ -23,17 +23,17 @@ ort:
     skipConcluded: false
     includeFilesWithoutFindings: true
 
-    storages:
-      postgresStorage:
-        connection:
-          url: "jdbc:postgresql://localhost:5432/mydb"
-          schema: "public"
-          username: "user"
-          password: "password"
-          sslmode: "disable"
+    # storages:
+    #   postgresStorage:
+    #     connection:
+    #       url: "jdbc:postgresql://localhost:5432/mydb"
+    #       schema: "public"
+    #       username: "user"
+    #       password: "password"
+    #       sslmode: "disable"
 
-    storageReaders: ["postgresStorage"]
-    storageWriters: ["postgresStorage"]
+    # storageReaders: ["postgresStorage"]
+    # storageWriters: ["postgresStorage"]
 
   analyzer:
     allowDynamicVersions: true

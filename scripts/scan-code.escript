@@ -37,6 +37,8 @@ cli() ->
                       prefix_option(),
                       scan_results(),
                       scan_input(),
+                      scan_cache(),
+                      analyzer_result(),
                       file_or_dir(),
                       sarif_option(),
                       ort_option() ],
@@ -86,23 +88,33 @@ prefix_option() ->
 ort_option() ->
     #{name => ort,
       type => string,
-      default => undefined,
       long => "-ort-yaml",
       help => ".ort.yaml file to use to curate results." }.
 
 scan_results() ->
     #{name => scan_results,
       type => string,
-      default => "scan-results.json",
+      default => "scan-result.json",
       long => "-scan-results",
       help => "Output file where to scan the results."}.
 
 scan_input() ->
     #{name => scan_input,
       type => string,
-      default => undefined,
       long => "-scan-input",
       help => "A scan-results.json file to use for testing."}.
+
+scan_cache() ->
+    #{name => scan_result_cache,
+      type => string,
+      long => "-scan-result-cache",
+      help => "A scan-results.json file to use as cache."}.
+
+analyzer_result() ->
+    #{name => analyzer_result,
+      type => string,
+      long => "-analyzer-result",
+      help => "A analyzer-results.json file to use."}.
 
 file_or_dir() ->
     #{name => file_or_dir,
@@ -115,29 +127,204 @@ sarif_option() ->
       type => string,
       default => undefined,
       long => "-sarif"}.
-
-scancode(#{ scan_input := undefined } = Config) ->
-    io:format("Files to scan: ~ts~n", [maps:get(file_or_dir, Config, none)]),
-    ok = cp_files(Config),
-    scan_folder(Config);
 scancode(#{ scan_input := ScanResultFile } = Config) ->
-    check_scancode_results(decode(ScanResultFile), Config).
+    check_scancode_results(decode(ScanResultFile), Config);
+scancode(#{ analyzer_result := Analyzer, scan_result_cache := ScanResultFile} = Config) ->
+    cache_scancode_results(
+        decode(Analyzer),
+        decode(ScanResultFile), Config);
+scancode(#{ file_or_dir := Files} = Config) ->
+    io:format("Files to scan: ~ts~n", [Files]),
+    scan_folder(Config).
 
-cp_files(#{file_or_dir := FilesOrDirs,
-           prefix      := Prefix}) ->
-    ok    = create_folder(Prefix, ?tmp_folder),
-    Files = cleanup_files(FilesOrDirs),
-    lists:foreach(fun (File) ->
+cache_scancode_results(Analyzer, OriginalScanResult, Config) ->
 
-                          Command = cp_with_path(Prefix, File, ?tmp_folder),
-                          Res = os:cmd(Command),
-                          io:format("~ts -> ~ts~n", [Command, Res])
-                  end, Files),
+    %% Merge all fields from `ort analyze` into the cached `ort scan`
+    %% and update the `id` and `revision` field in all `scanner` structures
+    ScanWithAnalyzer =
+        update_revision(
+          maps:merge_with(
+            fun(Key, Value, null) -> Value;
+               (Key, _Value, Value) -> Value
+            end,
+            OriginalScanResult, Analyzer)),
+
+    %% Get all sha1sum of files in directory
+    Sha1Sums = string:trim(
+                os:cmd("cd "++maps:get(file_or_dir, Config) ++ " && "
+                       "find . -type f | grep -v '^./.git/' | xargs sha1sum")),
+    Sha1SumFiles = [string:split(Line, "  ") || Line <- string:split(Sha1Sums,"\n",all)],
+    FilesSha1Sum = [#{ ~"path" => prefix(Filename, "./"),
+                       ~"sha1" => unicode:characters_to_binary(Sha1Sum)} || [Sha1Sum, Filename] <- Sha1SumFiles ],
+
+    %% Check which files on disk do not have the same sha1 as the files in the original scan
+    FilesToRescan = check_files_to_rescan(FilesSha1Sum, ScanWithAnalyzer),
+
+    io:format("Files to rescan: ~p~n", [FilesToRescan]),
+
+    %% Copy all files to tmp folder for scanning
+    file:del_dir_r(?tmp_folder),
+    ok = file:make_dir(?tmp_folder),
+
+    os:cmd(lists:flatten(
+        unicode:characters_to_list(
+        ["cd "++maps:get(file_or_dir, Config) ++ " && cp --parent -a " ++
+            lists:join(" ",[Path || #{ ~"path" := Path } <- FilesToRescan]),
+            " ", filename:absname(?tmp_folder)]))),
+
+    Command = scancode_command(Config),
+    io:format("Running: ~ts~n", [Command]),
+    R = os:cmd(Command),
+    io:format("Result: ~ts~n",[R]),
+    ScanResult = decode(scan_result_path(Config)),
+    %% Get the new license and copyright results from the scancode output.
+    NewResults = get_new_results(ScanResult, OriginalScanResult),
+
+    %% Update the scan results by removing references to stale files
+    %% and adding the new.
+    FinalResults = update_scan_results(FilesToRescan, NewResults, ScanWithAnalyzer),
+
+    file:write_file(maps:get(scan_results, Config) ++ ".old",
+        json:format(sort_arrays(OriginalScanResult))),
+
+    file:write_file(maps:get(scan_results, Config) ++ ".new",
+        json:format(sort_arrays(FinalResults))),
     ok.
+
+update_revision(
+  #{ ~"analyzer" :=
+         #{ ~"result" :=
+                #{ ~"projects" :=
+                       [#{ ~"id" := NewID,
+                           ~"vcs_processed" := #{ ~"revision" := NewRevision }}]}},
+     ~"scanner" :=
+         #{ ~"provenances" :=
+                [ #{ ~"id" := OldID,
+                     ~"package_provenance" := #{ ~"vcs_info" := #{ ~"revision" := OldRevision }}}]}}
+  = ScanResult) ->
+    deep_replace_value(OldRevision, NewRevision,
+                       deep_replace_value(OldID, NewID, ScanResult)).
+
+deep_replace_value(Old, New, Map) when is_map(Map) ->
+    maps:map(fun(Key, Value) -> deep_replace_value(Old, New, Value) end, Map);
+deep_replace_value(Old, New, List) when is_list(List) ->
+    lists:sort(lists:map(fun(Item) -> deep_replace_value(Old, New, Item) end, List));
+deep_replace_value(Old, New, Value) when is_binary(Value) ->
+    case string:equal(Old, Value) of
+        true -> New;
+        false -> Value
+    end;
+deep_replace_value(Old, New, Value) ->
+    case Old =:= Value of
+        true -> New;
+        false -> Value
+    end.
+
+sort_arrays(Map) when is_map(Map) ->
+    maps:map(fun(Key, Value) -> sort_arrays(Value) end, Map);
+sort_arrays(List) when is_list(List) ->
+    lists:sort(lists:map(fun sort_arrays/1, List));
+sort_arrays(Value) -> Value.
+
+%% This function updates the scan result with new values
+%% TODO: Remove any files that have been removed since last scan.
+update_scan_results(FilesToRescan, NewScanResults, OldScanResults) ->
+    #{ ~"scanner" :=
+           S = #{ ~"files" := [F = #{ ~"files" := Files }],
+                  ~"scan_results" :=
+                      [SR = #{ ~"summary" :=
+                                   Sum = #{ ~"licenses" := Licenses,
+                                            ~"copyrights" := Copyrights }}]}} = OldScanResults,
+
+    PathFilter = fun(P) ->
+        fun(#{ ~"path" := Path }) -> string:equal(Path, P) end
+    end,
+
+    StaleLicensesRemoved =
+        [License || #{ ~"location" := #{ ~"path" := P }} = License <- Licenses,
+                    not lists:any(PathFilter(P), FilesToRescan)
+        ],
+
+    StaleCopyrightsRemoved =
+        [Copyright || #{ ~"location" := #{ ~"path" := P }} = Copyright <- Copyrights,
+                    not lists:any(PathFilter(P), FilesToRescan)
+        ],
+
+    StaleFilesRemoved =
+        [File || #{ ~"path" := P } = File <- Files,
+                 not lists:any(PathFilter(P), FilesToRescan)
+        ],
+
+    NewLicenseScanResults = [R || R = #{ ~"license" := _ } <- NewScanResults],
+    NewCopyrightScanResults = [R || R = #{ ~"statement" := _ } <- NewScanResults],
+
+    OldScanResults#{ ~"scanner" :=
+                         S#{ ~"files" := [F#{ ~"files" := StaleFilesRemoved ++ FilesToRescan }],
+                             ~"scan_results" :=
+                                 [SR#{ ~"summary" :=
+                                           Sum#{ ~"licenses" := StaleLicensesRemoved ++ NewLicenseScanResults,
+                                                 ~"copyrights" := StaleCopyrightsRemoved ++ NewCopyrightScanResults }}]}}.
+
+
+%% Dig deep into the scancode result and fetch all license and copyright data from it.
+get_new_results(#{ ~"files" := Files }, #{ ~"scanner" := #{ ~"config" := #{ ~"detected_license_mapping" := Mappings }}}) ->
+    lists:flatmap(fun(File) -> get_new_results(File, Mappings) end, Files); 
+get_new_results(#{ ~"type" :=  ~"file", ~"path" := Path,
+                   ~"license_detections" := Licenses,
+                   ~"copyrights" := Copyrights
+                 } = File, Mappings) ->
+    lists:flatmap(fun(#{ ~"license_expression_spdx" := SPDX, ~"matches" := Matches }) ->
+                           [#{ ~"license" => replace_mappings(SPDX, Mappings),
+                               ~"location" => #{ ~"path" => prefix(Path,?tmp_folder),
+                                                 ~"start_line" => Start,
+                                                 ~"end_line" => End},
+                               ~"score" => Score }
+                            || #{ ~"score" := Score,
+                                  ~"start_line" := Start,
+                                  ~"end_line" := End } <- Matches]
+                   end, Licenses) ++
+     lists:map(fun(#{ ~"copyright" := Copyright, ~"start_line" := Start,
+                      ~"end_line" := End }) ->
+                       #{ ~"statement" => Copyright,
+                          ~"location" => #{ ~"path" => prefix(Path,?tmp_folder),
+                                            ~"start_line" => Start,
+                                            ~"end_line" => End} }
+               end, Copyrights);
+get_new_results(_, _) -> [].
+
+%% ort replaces certain predefined mappings to NOASSERTION, so we must do the same
+replace_mappings(SPDX, [{From,To} | T]) ->
+    %% We add the spaced around everything to make the matching logic
+    %% work for "abc", "abc-cde".
+    replace_mappings(string:replace([" ", SPDX, " "], [" ",From, " "], [" ", To, " "]), T);
+replace_mappings(SPDX, []) ->
+    unicode:characters_to_binary(string:trim(SPDX, both, " "));
+replace_mappings(SPDX, Map) ->
+    %% We remove any AND NOASSERTION as it really means that we have the license on the
+    %% other side of NOASSERTION.
+    replace_mappings(SPDX, maps:to_list(Map) ++ [{"AND NOASSERTION",""},{"NOASSERTION AND",""}]).
+
+prefix(Str, Prefix) ->
+    case string:prefix(Str, Prefix) of
+        nomatch -> unicode:characters_to_binary(Str);
+        NoPrefix -> unicode:characters_to_binary(NoPrefix)
+    end.
+
+%% This check which files have changed since the previous scan.
+%% TODO: Also include deleted files!
+check_files_to_rescan(CurrentSha1Sum, #{ ~"scanner" := #{ ~"files" := OriginalSha1SumFiles }}) ->
+    check_files_to_rescan(CurrentSha1Sum, OriginalSha1SumFiles);
+check_files_to_rescan(CurrentSha1Sum, [OriginalSha1SumFiles | T]) ->
+    check_files_to_rescan(check_files_to_rescan(CurrentSha1Sum, OriginalSha1SumFiles),T);
+check_files_to_rescan(CurrentSha1Sum, []) ->
+    CurrentSha1Sum;
+check_files_to_rescan(CurrentSha1Sum, #{ ~"files" := OriginalSha1SumFiles }) ->
+    CurrentSha1Sum -- OriginalSha1SumFiles.
 
 create_folder(Prefix, Folder) ->
-    [] = os:cmd("mkdir " ++ Prefix ++ Folder),
-    ok.
+    Filename = filename:absolute(filename:join(Prefix, Folder)),
+    [] = os:cmd("mkdir " ++ Filename),
+    Filename.
 
 cleanup_files(FilesOrDirs) ->
     lists:filter(fun ([]) -> false; (_) -> true end,
@@ -194,7 +381,8 @@ check_scancode_results(Json, Config) ->
                      end, Errors),
 
     [io:format(standard_error, "~ts:\n  Msg: ~p\n  License: ~ts\n  SPDX: ~ts\n\n", [Path, Msg, License, Spdx]) ||
-        #{ msg := Msg, spdx := Spdx, license := License, path := Path } <- SortedErrors],
+        #{ msg := Msg, spdx := Spdx, license := License, path := Path } <- SortedErrors,
+        Msg =:= license_detected_error],
 
     SortedErrors =/= [] andalso erlang:halt(1),
     ok.
@@ -336,14 +524,14 @@ decode(Filename) ->
     {ok, Bin} = file:read_file(Filename),
     json:decode(Bin).
 
-fetch_licenses(FolderPath, #{<<"files">> := Files}, Curate) ->
+fetch_licenses(_FolderPath, #{<<"files">> := Files}, Curate) ->
     lists:filtermap(
       fun(#{<<"type">> := <<"file">>,
             <<"detected_license_expression">> := License,
             <<"detected_license_expression_spdx">> := SPDX,
             <<"copyrights">> := Copyrights,
             <<"path">> := TmpPath}) ->
-              Path = string:prefix(string:trim(TmpPath, leading), FolderPath),
+              Path = string:prefix(string:trim(TmpPath, leading), "tmp/otp-lukas-otp-ossf-compiler-flags/"),
               case Curate(Path, SPDX) of
                   exclude ->
                       false;
