@@ -17,10 +17,23 @@
 
 ort:
   enableRepositoryPackageCurations: true
+  forceOverwrite: true
 
   scanner:
     skipConcluded: false
     includeFilesWithoutFindings: true
+
+    storages:
+      postgresStorage:
+        connection:
+          url: "jdbc:postgresql://localhost:5444/mydb"
+          schema: "public"
+          username: "user"
+          password: "password"
+          sslmode: "verify-full"
+
+    storageReaders: ["postgresStorage"]
+    storageWriters: ["postgresStorage"]
 
   analyzer:
     allowDynamicVersions: true

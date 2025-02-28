@@ -626,6 +626,33 @@ jobs:
     #     startsWith(github.ref, 'refs/tags/OTP-') || github.event_name == 'schedule' ||
     #       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check'))
     steps:
+
+      - name: Restore PostgreSQL cache
+        uses: actions/cache@v3
+        with:
+          path: /tmp/postgres-data
+          key: ort-postgres-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+                ort-postgres-${{ github.base_ref }}-${{ github.event.pull_request.base.sha }}
+
+      - name: Start PostgreSQL
+        run: |
+          docker run -d \
+            --name postgres \
+            -e POSTGRES_USER=user \
+            -e POSTGRES_PASSWORD=password \
+            -e POSTGRES_DB=mydb \
+            -v /tmp/postgres-data:/var/lib/postgresql/data \
+            -p 5432:5432 \
+            postgres:latest
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          until docker exec postgres pg_isready -U user; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+
       - name: Use HTTPS instead of SSH for Git cloning
         run: git config --global url.https://github.com/.insteadOf ssh://git@github.com/
       - name: Checkout project
@@ -651,9 +678,9 @@ jobs:
 
       - name: Run OSS Review Toolkit
         id: ort
-        uses: oss-review-toolkit/ort-ci-github-action@v1.1.0 # ratchet:oss-review-toolkit/ort-ci-github-action@v1.1.0
+        uses: oss-review-toolkit/ort-ci-github-action@1805edcf1f4f55f35ae6e4d2d9795ccfb29b6021 # ratchet:oss-review-toolkit/ort-ci-github-action@v1.1.0
         with:
-            image: ghcr.io/oss-review-toolkit/ort-minimal:52.1.0
+            image: ghcr.io/oss-review-toolkit/ort-minimal:51.1.0
             run: >
               labels,
               cache-dependencies,
@@ -669,6 +696,10 @@ jobs:
             report-formats: "SpdxDocument"
             ort-cli-report-args: '-O SpdxDocument=outputFileFormats=JSON'
             sw-version: ${{ env.OTP_SBOM_VERSION }}
+
+      - name: Flush PostgreSQL cache
+        run: docker stop postgres
+
 
   ## If this is an "OTP-*" tag that has been pushed we do some release work
   release:
