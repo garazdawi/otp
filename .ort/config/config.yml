@@ -26,11 +26,11 @@ ort:
     storages:
       postgresStorage:
         connection:
-          url: "jdbc:postgresql://localhost:5444/mydb"
+          url: "jdbc:postgresql://localhost:5432/mydb"
           schema: "public"
           username: "user"
           password: "password"
-          sslmode: "verify-full"
+          sslmode: "disable"
 
     storageReaders: ["postgresStorage"]
     storageWriters: ["postgresStorage"]
