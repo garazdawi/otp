@@ -1,0 +1,96 @@
+.TH diameterc 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+diameterc \- Compile a diameter dictionary to Erlang source
+.SH SYNOPSIS
+diameterc [<options>] <file>
+
+.SH DESCRIPTION
+.PP
+The diameterc utility is used to compile a diameter dictionary file into Erlang source. The resulting source implements the interface diameter required to encode and decode the dictionary's messages and AVPs.
+
+.PP
+The module \fIdiameter_make\fR provides an alternate compilation interface.
+
+.SH "USAGE"
+
+.PP
+Compile a single dictionary file to Erlang source. Valid options are as follows.
+
+-i <dir>
+.RS 2
+Prepend the specified directory to the code path. Use to point at beam files compiled from inherited dictionaries, 
+\fI@inherits\fR in a dictionary file creating a beam dependency, not an erl/hrl dependency.
+.PP
+Multiple \fI-i\fR options can be specified.
+
+
+.RE
+
+-o <dir>
+.RS 2
+Write generated source to the specified directory. Defaults to the current working directory.
+
+
+.RE
+
+-E
+.RS 2
+Suppress 
+\fI.erl\fR file generation.
+
+.RE
+
+-H
+.RS 2
+Suppress 
+\fI.hrl\fR file generation.
+
+.RE
+
+--name <name>
+.RS 2
+Name the output module.
+
+
+.RE
+
+--prefix <prefix>
+.RS 2
+Transform the input dictionary before compilation, setting 
+\fI@name\fR or \fI@prefix\fR to the specified string.
+
+.RE
+
+--inherits <arg>
+.RS 2
+Transform the input dictionary before compilation, appending 
+\fI@inherits\fR of the specified string.
+.PP
+Two forms of \fI--inherits\fR have special meaning:
+
+.IP
+.nf
+--inherits -
+--inherits Prev/Mod
+
+.fi
+
+.PP
+The first has the effect of clearing any previous inherits, the second of replacing a previous inherits of \fIPrev\fR to one of \fIMod\fR. This allows the semantics of the input dictionary to be changed without modifying the file itself.
+
+.PP
+Multiple \fI--inherits\fR options can be specified.
+
+
+.RE
+
+.SH "EXIT STATUS"
+
+.PP
+Returns 0 on success, non-zero on failure.
+
+.SH "SEE ALSO"
+
+.PP
+\fIdiameter_make\fR, diameter_dict(4)
+

@@ -1,0 +1,252 @@
+.TH escript 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+escript \- Run a script written in Erlang
+.SH SYNOPSIS
+script-name [arg1 arg2...]
+
+.SH DESCRIPTION
+.PP
+\fIescript\fR provides support for running short Erlang programs without having to compile them first, and an easy way to retrieve the command-line arguments. \fIescript\fRs are created by either writing them by hand or using \fIescript:create/2\fR.
+
+.PP
+escripts are run by directly invoking them (does not work on Windows):
+
+.IP
+.nf
+script-name [arg1 arg2...]
+
+.fi
+
+.PP
+or by calling the \fIescript\fR program (works on all platforms):
+
+.IP
+.nf
+escript [escript-flags] script-name.escript [arg1 arg2...]
+
+.fi
+
+.PP
+For example:
+
+.IP
+.nf
+$ chmod u+x factorial
+$ cat factorial
+
+.fi
+
+.IP
+.nf
+#!/usr/bin/env escript
+%% -*- erlang -*-
+%%! -sname factorial -mnesia debug verbose
+main([String]) ->
+    try
+        N = list_to_integer(String),
+        F = fac(N),
+        io:format("factorial ~w = ~w\\n", [N,F])
+    catch
+        _:_ ->
+            usage()
+    end;
+main(_) ->
+    usage().
+
+usage() ->
+    io:format("usage: factorial integer\\n"),
+    halt(1).
+
+fac(0) -> 1;
+fac(N) -> N * fac(N-1).
+
+.fi
+
+.IP
+.nf
+$ ./factorial 5
+factorial 5 = 120
+$ ./factorial
+usage: factorial integer
+$ ./factorial five
+usage: factorial integer
+
+.fi
+
+.PP
+The header of the Erlang script in the example differs from a normal Erlang module. The first line is intended to be the interpreter line, which invokes \fIescript\fR.
+
+.PP
+However, if you invoke the \fIescript\fR as follows, the contents of the first line do not matter, but it cannot contain Erlang code as it will be ignored:
+
+.IP
+.nf
+$ escript factorial 5
+
+.fi
+
+.PP
+The second line in the example contains an optional directive to the \fIEmacs\fR editor, which causes it to enter the major mode for editing Erlang source files. If the directive is present, it must be located on the second line.
+
+.PP
+If a comment selecting the encoding exists, it can be located on the second line.
+
+.PP
+\fBNOTE: \fRThe encoding specified by the above mentioned comment applies to the script itself. The encoding of the I/O-server, however, must be set explicitly as follows:
+
+.IP
+.nf
+io:setopts([{encoding, latin1}])
+
+.fi
+
+.PP
+The default encoding of the I/O-server for \fIstandard_io\fR is \fIunicode\fR if its supported. (see section Summary of Options) in the STDLIB User's Guide.
+
+
+.PP
+On the third line (or second line depending on the presence of the Emacs directive), arguments can be specified to the emulator, for example:
+
+.IP
+.nf
+%%! -sname factorial -mnesia debug verbose
+
+.fi
+
+.PP
+Such an argument line must start with \fI%%!\fR and the remaining line is interpreted as arguments to the emulator.
+
+.PP
+If you know the location of the \fIescript\fR executable, the first line can directly give the path to \fIescript\fR, for example:
+
+.IP
+.nf
+#!/usr/local/bin/escript
+
+.fi
+
+.PP
+As any other type of scripts, Erlang scripts do not work on Unix platforms if the execution bit for the script file is not set. (To turn on the execution bit, use \fIchmod +x script-name\fR.)
+
+.PP
+The remaining Erlang script file can either contain Erlang \fIsource code\fR, an \fIinlined beam file\fR, or an \fIinlined archive file\fR.
+
+.PP
+An Erlang script file must always contain the \fImain/1\fR function. When the script is run, the \fImain/1\fR function is called with a list of strings representing the arguments specified to the script (not changed or interpreted in any way).
+
+.PP
+If the \fImain/1\fR function in the script returns successfully, the exit status for the script is \fI0\fR. If an exception is generated during execution, a short message is printed and the script terminates with exit status \fI127\fR.
+
+.PP
+To return your own non-zero exit code, call \fIhalt(ExitCode)\fR, for example:
+
+.IP
+.nf
+halt(1).
+
+.fi
+
+.PP
+To retrieve the pathname of the script, call \fIescript:script_name/0\fR from your script (the pathname is usually, but not always, absolute).
+
+.PP
+If the file contains source code (as in the example above), it is processed by the \fIepp\fR preprocessor. This means that you, for example, can use predefined macros (such as \fI?MODULE\fR) and include directives like the \fI-include_lib\fR directive. For example, use
+
+.IP
+.nf
+-include_lib("kernel/include/file.hrl").
+
+.fi
+
+.PP
+to include the record definitions for the records used by function \fIfile:read_link_info/1\fR. You can also select encoding by including an encoding comment here, but if a valid encoding comment exists on the second line, it takes precedence.
+
+.PP
+The script is checked for syntactic and semantic correctness before it is run. If there are warnings (such as unused variables), they are printed and the script will still be run. If there are errors, they are printed and the script will not be run and its exit status is \fI127\fR.
+
+.PP
+Both the module declaration and the export declaration of the \fImain/1\fR function are optional.
+
+.PP
+By default, the script will be compiled by the Erlang compiler.
+
+.PP
+It is possible to force it to be interpreted by including the following line somewhere in the script file:
+
+.IP
+.nf
+-mode(interpret).
+
+.fi
+
+.PP
+Execution of interpreted code is slower than compiled code, and some language constructs will not work, but there is no requirement for the Erlang compiler application to be available.
+
+.PP
+\fBCHANGE: \fRBefore Erlang/OTP 27 the script would be interpreted by default.
+
+
+.SS "Precompiled escripts"
+
+.PP
+A script can also contains precompiled \fIbeam\fR code. To create a precompiled escript it is recommended that you use \fIescript:create/2\fR. In a precompiled script, the interpretation of the script header is the same as in a script containing source code. This means that you can make a \fIbeam\fR file executable by prepending the file with the lines starting with \fI#!\fR and \fI%%!\fR mentioned above. In a precompiled script, the \fImain/1\fR function must be exported.
+
+.PP
+Another option is to have an entire Erlang archive in the script. In an archive script, the interpretation of the script header is the same as in a script containing source code. This means that you can make an archive file executable by prepending the file with the lines starting with \fI#!\fR and \fI%%!\fR mentioned above. In an archive script, the \fImain/1\fR function must be exported. By default the \fImain/1\fR function in the module with the same name as the basename of the \fIescript\fR file is invoked. This behavior can be overridden by setting flag \fI-escript main Module\fR as one of the emulator flags. \fIModule\fR must be the name of a module that has an exported \fImain/1\fR function. For more information about archives and code loading, see \fIescript\fR and \fIcode\fR.
+
+.PP
+It is often very convenient to have a header in the escript, especially on Unix platforms. However, the header is optional, so you directly can "execute" an Erlang module, Beam file, or archive file without adding any header to them. But then you have to invoke the script as follows:
+
+.IP
+.nf
+$ escript factorial.erl 5
+factorial 5 = 120
+$ escript factorial.beam 5
+factorial 5 = 120
+$ escript factorial.zip 5
+factorial 5 = 120
+
+.fi
+
+.SS "Bundling escripts"
+
+.PP
+It is possible to bundle \fIescript\fR(s) with an Erlang runtime system to make it self-sufficient and relocatable. In such a standalone system, the \fIescript\fR(s) should be located in the top \fIbin\fR directory of the standalone system and given \fI.escript\fR as file extension. Further the (built-in) \fIescript\fR program should be copied to the same directory and given the script's original name (without the \fI.escript\fR extension). This will enable use of the bundled Erlang runtime system.
+
+.PP
+The (built-in) \fIescript\fR program first determines which Erlang runtime system to use and then starts it to execute your script. Usually the runtime system is located in the same Erlang installation as the \fIescript\fR program itself. But for standalone systems with one or more escripts it may be the case that the \fIescript\fR program in your path actually starts the runtime system bundled with the escript. This is intentional, and typically happens when the standalone system \fIbin\fR directory is not in the execution path (as it may cause its \fIerl\fR program to override the desired one) and the \fIescript\fR(s) are referred to via symbolic links from a \fIbin\fR directory in the path.
+
+.SS "Options Accepted By escript"
+
+-c
+.RS 2
+Compiles the escript regardless of the value of the mode attribute.
+
+
+.RE
+
+-d
+.RS 2
+Debugs the escript. Starts the debugger, loads the module containing the 
+\fImain/1\fR function into the debugger, sets a breakpoint in \fImain/1\fR, and invokes \fImain/1\fR. If the module is precompiled, it must be explicitly compiled with option \fIdebug_info\fR.
+
+.RE
+
+-i
+.RS 2
+Interprets the escript regardless of the value of the mode attribute.
+
+
+.RE
+
+-s
+.RS 2
+Performs a syntactic and semantic check of the script file. Warnings and errors (if any) are written to the standard output, but the script will not be run. The exit status is 
+\fI0\fR if any errors are found, otherwise \fI127\fR.
+
+.RE
+
+.PP
+\fBNOTE: \fRThe configuration of the Erlang emulator invoked by \fIescript\fR can also be controlled using the environment variables understood by \fIerl\fR.
+
+

@@ -1,0 +1,139 @@
+.TH typer 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+typer \- Type annotator for Erlang programs
+.SH DESCRIPTION
+.PP
+TypEr shows type information for Erlang modules. Additionally, it can annotate the code of files with such type information.
+
+.SS "Using TypEr"
+
+.PP
+TypEr is used from the command-line. This section provides a brief description of the options. The same information can be obtained by writing the following in a shell:
+
+.IP
+.nf
+typer --help
+
+.fi
+
+.PP
+\fIUsage:\fR
+
+.IP
+.nf
+typer [--help] [--version] [--plt PLT] [--edoc]
+      [--show | --show-exported | --annotate | --annotate-inc-files | --annotate-in-place]
+      [-Ddefine]* [-I include_dir]* [-pa dir]* [-pz dir]*
+      [-T application]* file* [-r directory*]
+
+.fi
+
+.PP
+\fBNOTE: \fR* denotes that multiple occurrences of the option are possible.
+
+
+.PP
+\fIOptions:\fR
+
+-r
+.RS 2
+Search directories recursively for .erl files below them. If a list of files is given, this option must given be after them.
+
+
+.RE
+
+--show
+.RS 2
+Print type specifications for all functions on stdout. (This is the default behaviour; this option is not really needed.)
+
+
+.RE
+
+--show-exported (or show_exported)
+.RS 2
+Same as 
+\fI--show\fR, but print specifications for exported functions only. Specs are displayed sorted alphabetically according to the function's name.
+
+.RE
+
+--annotate
+.RS 2
+Annotate the specified files with type specifications.
+
+
+.RE
+
+--annotate-inc-files
+.RS 2
+Same as 
+\fI--annotate\fR, but annotates all \fI-include()\fR files as well as all .erl files. (Use this option with caution — it is not well-tested.)
+
+.RE
+
+--annotate-in-place
+.RS 2
+Annotate directly in the source code files, instead of dumping the annotated files in a different directory. (Use this option with caution — it is not well-tested.)
+
+
+.RE
+
+--edoc
+.RS 2
+Print type information as Edoc 
+\fI@spec\fR comments, not as type specs.
+
+.RE
+
+--plt
+.RS 2
+Use the specified dialyzer PLT file rather than the default one.
+
+
+.RE
+
+-T file*
+.RS 2
+The specified file(s) already contain type specifications and these are to be trusted in order to print specs for the rest of the files. (Multiple files or directories, separated by spaces, can be specified.)
+
+
+.RE
+
+-Dname (or -Dname=value)
+.RS 2
+Pass the defined name(s) to TypEr. (**)
+
+
+.RE
+
+-I
+.RS 2
+Pass the include_dir to TypEr. (**)
+
+
+.RE
+
+-pa dir
+.RS 2
+Include 
+\fIdir\fR in the path for Erlang. This is useful when analyzing files that use \fI-include_lib()\fR directives or parse transforms.
+
+.RE
+
+-pz dir
+.RS 2
+Include 
+\fIdir\fR in the path for Erlang. This is useful when analyzing files that use \fI-include_lib()\fR directives or parse transforms.
+
+.RE
+
+--version (or -v)
+.RS 2
+Print the TypEr version and some more information and exit.
+
+
+.RE
+
+.PP
+\fBNOTE: \fR** options \fI-D\fR and \fI-I\fR work the same way as in erlc.
+
+

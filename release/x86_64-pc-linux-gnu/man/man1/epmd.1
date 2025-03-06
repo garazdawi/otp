@@ -1,0 +1,283 @@
+.TH epmd 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+epmd \- Erlang Port Mapper Daemon
+.SH DESCRIPTION
+.PP
+The \fIepmd\fR command be used to start the port mapper daemon:
+
+.IP
+.nf
+epmd [-d|-debug] [DbgExtra...] [-address Addresses]
+    [-port No] [-daemon] [-relaxed_command_check]
+
+.fi
+
+.PP
+It can also be used to communicate with a running port mapper daemon:
+
+.IP
+.nf
+epmd [-d|-debug] [-port No] [-names|-kill|-stop Name]
+
+.fi
+
+.PP
+This daemon acts as a name server on all hosts involved in distributed Erlang computations. When an Erlang node starts, the node has a name and it obtains an address from the host OS kernel. The name and address are sent to the \fIepmd\fR daemon running on the local host. In a TCP/IP environment, the address consists of the IP address and a port number. The node name is an atom of the form \fIName@Node\fR. The job of the \fIepmd\fR daemon is to keep track of which node name listens on which address. Hence, \fIepmd\fR maps symbolic node names to machine addresses.
+
+.PP
+The TCP/IP \fIepmd\fR daemon only keeps track of the \fIName\fR (first) part of an Erlang node name. The \fIHost\fR part (whatever is after the \fI@\fR) is implicit in the node name where the \fIepmd\fR daemon was contacted, as is the IP address where the Erlang node can be reached. Consistent and correct TCP naming services are therefore required for an Erlang network to function correctly.
+
+.PP
+\fBNOTE: \fROn Windows the maximum number of nodes allowed in one epmd instance is 60. This is because of limitations in the current implementation. If you need more nodes, you should look into using and erlang based epmd implementation such as Erlang EPMD.
+
+
+Starting the port mapper daemon
+.RS 2
+The daemon is started automatically by command 
+\fIerl(1)\fR if the node is to be distributed and no running instance is present. If automatically launched environment variables must be used to change the behavior of the daemon; see section Environment Variables.
+.PP
+If argument \fI-daemon\fR is not specified, \fIepmd\fR runs as a normal program with the controlling terminal of the shell in which it is started. Normally, it is to be run as a daemon.
+
+.PP
+Regular startup options are described in section Regular Options.
+
+.PP
+The \fIDbgExtra\fR options are described in section DbgExtra Options.
+
+
+.RE
+
+Communicating with a running port mapper daemon
+.RS 2
+Communicating with the running 
+\fIepmd\fR daemon by the \fIepmd\fR program is done primarily for debugging purposes.
+.PP
+The different queries are described in section Interactive options.
+
+
+.RE
+
+.SS "Regular Options"
+
+.PP
+These options are available when starting the name server. The name server is normally started automatically by command \fIerl(1)\fR (if not already available), but it can also be started at system startup.
+
+-address List
+.RS 2
+Lets this instance of 
+\fIepmd\fR listen only on the comma-separated list of IP addresses and on the loopback address (which is implicitly added to the list if it has not been specified). This can also be set using environment variable \fIERL_EPMD_ADDRESS\fR; see section Environment Variables.
+
+.RE
+
+-port No
+.RS 2
+Lets this instance of 
+\fIepmd\fR listen to another TCP port than default 4369. This can also be set using environment variable \fIERL_EPMD_PORT\fR; see section Environment Variables.
+
+.RE
+
+-d | -debug
+.RS 2
+Enables debug output. The more 
+\fI-d\fR flags specified, the more debug output you will get (to a certain limit). This option is most useful when the \fIepmd\fR daemon is not started as a daemon.
+
+.RE
+
+-daemon
+.RS 2
+Starts 
+\fIepmd\fR detached from the controlling terminal. Logging ends up in syslog when available and correctly configured. If the \fIepmd\fR daemon is started at boot, this option is definitely to be used. It is also used when command \fIerl\fR automatically starts \fIepmd\fR.
+
+.RE
+
+-relaxed_command_check
+.RS 2
+Starts the 
+\fIepmd\fR program with relaxed command checking (mostly for backward compatibility). This affects the following:
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+With relaxed command checking, the \fIepmd\fR daemon can be killed from the local host with, for example, command \fIepmd -kill\fR even if active nodes are registered. Normally only daemons with an empty node database can be killed with \fIepmd -kill\fR.
+
+.RE
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+Command \fIepmd -stop\fR (and the corresponding messages to \fIepmd\fR, as can be specified using \fIerl_interface:ei(3)\fR) is normally always ignored. This because it can cause a strange situation where two nodes of the same name can be alive at the same time. A node unregisters itself by only closing the connection to \fIepmd\fR, which is why command \fIstop\fR was only intended for use in debugging situations.
+
+.PP
+With relaxed command checking enabled, you can forcibly unregister live nodes.
+
+.RE
+
+.PP
+Relaxed command checking can also be enabled by setting environment variable \fIERL_EPMD_RELAXED_COMMAND_CHECK\fR before starting \fIepmd\fR.
+
+.PP
+Use relaxed command checking only on systems with very limited interactive usage.
+
+
+.RE
+
+.SS "DbgExtra Options"
+
+.PP
+\fBNOTE: \fRThese options are only for debugging and testing \fIepmd\fR clients. They are not to be used in normal operation.
+
+
+-packet_timeout Seconds
+.RS 2
+Sets the number of seconds a connection can be inactive before 
+\fIepmd\fR times out and closes the connection. Defaults to 60.
+
+.RE
+
+-delay_accept Seconds
+.RS 2
+To simulate a busy server, you can insert a delay between when 
+\fIepmd\fR gets notified that a new connection is requested and when the connection gets accepted.
+
+.RE
+
+-delay_write Seconds
+.RS 2
+Also a simulation of a busy server. Inserts a delay before a reply is sent.
+
+
+.RE
+
+.SS "Interactive Options"
+
+.PP
+These options make \fIepmd\fR run as an interactive command, displaying the results of sending queries to an already running instance of \fIepmd\fR. The \fIepmd\fR contacted is always on the local node, but option \fI-port\fR can be used to select between instances if several are running using different ports on the host.
+
+-port No
+.RS 2
+Contacts the 
+\fIepmd\fR listening on the specified TCP port number (default 4369). This can also be set using environment variable \fIERL_EPMD_PORT\fR; see section Environment Variables.
+
+.RE
+
+-names
+.RS 2
+Lists names registered with the currently running 
+\fIepmd\fR.
+
+.RE
+
+-kill
+.RS 2
+Kills the currently running 
+\fIepmd\fR.
+.PP
+Killing the running \fIepmd\fR is only allowed if \fIepmd -names\fR shows an empty database or if \fI-relaxed_command_check\fR was specified when the running instance of \fIepmd\fR was started.
+
+.PP
+Notice that \fI-relaxed_command_check\fR is specified when starting the daemon that is to accept killing when it has live nodes registered. When running \fIepmd\fR interactively, \fI-relaxed_command_check\fR has no effect. A daemon that is started without relaxed command checking must be killed using, for example, signals or some other OS-specific method if it has active clients registered.
+
+
+.RE
+
+-stop Name
+.RS 2
+Forcibly unregisters a live node from the 
+\fIepmd\fR database.
+.PP
+This command can only be used when contacting \fIepmd\fR instances started with flag \fI-relaxed_command_check\fR.
+
+.PP
+Notice that relaxed command checking must enabled for the \fIepmd\fR daemon contacted. When running \fIepmd\fR interactively, \fI-relaxed_command_check\fR has no effect.
+
+
+.RE
+
+.SS "Environment Variables"
+
+ERL_EPMD_ADDRESS
+.RS 2
+Can be set to a comma-separated list of IP addresses, in which case the 
+\fIepmd\fR daemon will listen only on the specified address(es) and on the loopback address (which is implicitly added to the list if it has not been specified). The default behavior is to listen on all available IP addresses.
+
+.RE
+
+ERL_EPMD_PORT
+.RS 2
+Can contain the port number 
+\fIepmd\fR will use. The default port will work fine in most cases. A different port can be specified to allow several instances of \fIepmd\fR, representing independent clusters of nodes, to co-exist on the same host. All nodes in a cluster must use the same \fIepmd\fR port number.
+
+.RE
+
+ERL_EPMD_RELAXED_COMMAND_CHECK
+.RS 2
+If set before start, the 
+\fIepmd\fR daemon behaves as if option \fI-relaxed_command_check\fR was specified at startup. Consequently, if this option is set before starting the Erlang virtual machine, the automatically started \fIepmd\fR accepts the \fI-kill\fR and \fI-stop\fR commands without restrictions.
+
+.RE
+
+.SS "Logging"
+
+.PP
+On some operating systems \fIsyslog\fR will be used for error reporting when \fIepmd\fR runs as a daemon. To enable the error logging, you must edit the /etc/syslog.conf file and add an entry:
+
+.IP
+.nf
+  !epmd
+  *.*<TABs>/var/log/epmd.log
+
+.fi
+
+.PP
+where \fI<TABs>\fR are at least one real tab character. Spaces are silently ignored.
+
+.SS "Access Restrictions"
+
+.PP
+The \fIepmd\fR daemon accepts messages from both the local host and remote hosts. However, only the query commands are answered (and acted upon) if the query comes from a remote host. It is always an error to try to register a node name if the client is not a process on the same host as the \fIepmd\fR instance is running on. Such requests are considered hostile and the connection is closed immediately.
+
+.PP
+The following queries are accepted from remote nodes:
+
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+Port queries, that is, on which port the node with a specified name listens
+
+.RE
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+Name listing, that is, gives a list of all names registered on the host
+
+.RE
+
+.PP
+To restrict access further, firewall software must be used.
+

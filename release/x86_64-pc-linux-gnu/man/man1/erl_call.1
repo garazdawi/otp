@@ -1,0 +1,288 @@
+.TH erl_call 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+erl_call \- Call/start a distributed Erlang node
+.SH DESCRIPTION
+.PP
+\fIerl_call\fR makes it possible to start and/or communicate with a distributed Erlang node. It is built on the \fIErl_Interface\fR library as an example application. Its purpose is to use a Unix shell script to interact with a distributed Erlang node. It performs all communication with the Erlang \fIrex server\fR, using the standard Erlang RPC facility. It does not require any special software to be run at the Erlang target node.
+
+.PP
+The main use is to either start a distributed Erlang node or to make an ordinary function call. However, it is also possible to pipe an Erlang module to \fIerl_call\fR and have it compiled, or to pipe a sequence of Erlang expressions to be evaluated (similar to the Erlang shell).
+
+.PP
+Options, which cause \fIstdin\fR to be read, can be used with advantage, as scripts from within (Unix) shell scripts. Another nice use of \fIerl_call\fR could be from (HTTP) CGI-bin scripts.
+
+.SS "erl_call <options>"
+
+.PP
+Starts/calls Erlang.
+
+.PP
+Each option flag is described below with its name, type, and meaning.
+
+-a [Mod [Fun [Args]]]]
+.RS 2
+(
+\fIOptional.\fR) Applies the specified function and returns the result. \fIMod\fR must be specified. However, \fIstart\fR and \fI[]\fR are assumed for unspecified \fIFun\fR and \fIArgs\fR, respectively. \fIArgs\fR is to be in the same format as for \fIerlang:apply/3\fR in \fIERTS\fR except only a subset of all terms are allowed. The allowed term types are: \fIlist\fR (and \fIstring\fR representation of list, that is "example"), \fItuple\fR, \fIatom\fR and \fInumber\fR.
+.PP
+Notice that this flag takes exactly one argument, so quoting can be necessary to group \fIMod\fR, \fIFun\fR, and \fIArgs\fR in a manner dependent on the behavior of your command shell.
+
+
+.RE
+
+-address [Hostname:]Port
+.RS 2
+(One of 
+\fI-n\fR, \fI-name\fR, \fI-sname\fR or \fI-address\fR is required.) \fIHostname\fR is the hostname of the machine that is running the peer node that \fIerl_call\fR will communicate with. The default hostname is the hostname of the local machine. \fIPort\fR is the port number of the node that \fIerl_call\fR will communicate with. The \fI-address\fR flag cannot be combined with any of the flags \fI-n\fR, \fI-name\fR, \fI-sname\fR or \fI-s\fR.
+.PP
+The \fI-address\fR flag is typically useful when one wants to call a node that is running on machine without an accessible epmd instance.
+
+
+.RE
+
+-c Cookie
+.RS 2
+(
+\fIOptional.\fR) Use this option to specify a certain cookie. If no cookie is specified, the \fI~/.erlang.cookie\fR file is read and its content is used as cookie. The Erlang node we want to communicate with must have the same cookie.
+
+.RE
+
+-d
+.RS 2
+(
+\fIOptional.\fR) Debug mode. This causes all I/O to be output to the \fI~/.erl_call.out.Nodename\fR file, where \fINodename\fR is the node name of the Erlang node in question.
+
+.RE
+
+-e
+.RS 2
+(
+\fIOptional.\fR) Reads a sequence of Erlang expressions, separated by comma (\fI,\fR) and ended with a full stop (\fI.\fR), from \fIstdin\fR until EOF (Control-D). Evaluates the expressions and returns the result from the last expression. Returns \fI{ok,Result}\fR on success.
+
+.RE
+
+-fetch_stdout
+.RS 2
+(
+\fIOptional.\fR) Executes the code, specified with the \fI-a\fR or \fI-e\fR option, in a new process that has a group leader that forwards all stdout (standard output) data so that it is printed to stdout of the \fIerl_call\fR process. This means that stdout data that are written during the execution of the called code, by the code and by descendant processes, will be forwarded (given that the group leader has not been changed by a call to \fIerlang:group_leader/2\fR).
+.PP
+The printed data is UTF-8 encoded.
+
+.PP
+This option is only relevant combined with the \fI-a\fR or \fI-e\fR option.
+
+.PP
+See the documentation of the I/O protocol for more information about the group leader concept.
+
+.PP
+\fBNOTE: \fRThis option only works when \fIerl_call\fR is interacting with a node with a version greater or equal to OTP-24.
+
+
+
+.RE
+
+-h HiddenName
+.RS 2
+(
+\fIOptional.\fR) Specifies the name of the hidden node that \fIerl_call\fR represents.
+
+.RE
+
+-m
+.RS 2
+(
+\fIOptional.\fR) Reads an Erlang module from \fIstdin\fR and compiles it.
+
+.RE
+
+-n Node
+.RS 2
+(One of 
+\fI-n\fR, \fI-name\fR, \fI-sname\fR or \fI-address\fR is required.) Has the same meaning as \fI-name\fR and can still be used for backward compatibility reasons.
+
+.RE
+
+-name Node
+.RS 2
+(One of 
+\fI-n\fR, \fI-name\fR, \fI-sname\fR or \fI-address\fR is required.) \fINode\fR is the name of the peer node to be started or communicated with. It is assumed that \fINode\fR is started with \fIerl -name\fR, which means that fully qualified long node names are used. If option \fI-s\fR is specified, an Erlang node will (if necessary) be started with \fIerl -name\fR.
+
+.RE
+
+-no_result_term
+.RS 2
+(
+\fIOptional.\fR) Do not print the result term. This option is only relevant together with the options \fI-a\fR and \fI-e\fR.
+
+.RE
+
+-q
+.RS 2
+(
+\fIOptional.\fR) Halts the Erlang node specified with switch \fI-n\fR. This switch overrides switch \fI-s\fR.
+
+.RE
+
+-r
+.RS 2
+(
+\fIOptional.\fR) Generates a random name of the hidden node that \fIerl_call\fR represents.
+
+.RE
+
+-R
+.RS 2
+(
+\fIOptional.\fR) Request a dynamic random name, of the hidden node that \fIerl_call\fR represents, from the peer node. Supported since OTP 23. Prefer \fI-R\fR over \fI-r\fR when doing repeated requests toward the same peer node.
+
+.RE
+
+-s
+.RS 2
+(
+\fIOptional.\fR) Starts a distributed Erlang node if necessary. This means that in a sequence of calls, where '\fI-s\fR' and '\fI-n Node\fR' are constant, only the first call starts the Erlang node. This makes the rest of the communication very fast. This flag is currently only available on Unix-like platforms (Linux, Mac OS X, Solaris, and so on).
+
+.RE
+
+-sname Node
+.RS 2
+(One of 
+\fI-n\fR, \fI-name\fR, \fI-sname\fR or \fI-address\fR is required.) \fINode\fR is the name of the peer node to be started or communicated with. It is assumed that \fINode\fR is started with \fIerl -sname\fR, which means that short node names are used. If option \fI-s\fR is specified, an Erlang node is started (if necessary) with \fIerl -sname\fR.
+
+.RE
+
+-timeout Seconds
+.RS 2
+(
+\fIOptional.\fR) Aborts the \fIerl_call\fR process after the timeout expires. Note that this does not abort commands that have already been started with \fI-a\fR, \fI-e\fR, or similar.
+
+.RE
+
+-v
+.RS 2
+(
+\fIOptional.\fR) Prints a lot of \fIverbose\fR information. This is only useful for the developer and maintainer of \fIerl_call\fR.
+
+.RE
+
+-x ErlScript
+.RS 2
+(
+\fIOptional.\fR) Specifies another name of the Erlang startup script to be used. If not specified, the standard \fIerl\fR startup script is used.
+
+.RE
+
+.SS "Examples"
+
+.PP
+To start an Erlang node and call \fIerlang:time/0\fR:
+
+.IP
+.nf
+erl_call -s -a 'erlang time' -n madonna
+{18,27,34}
+
+.fi
+
+.PP
+To terminate an Erlang node by calling \fIerlang:halt/0\fR:
+
+.IP
+.nf
+erl_call -s -a 'erlang halt' -n madonna
+
+.fi
+
+.PP
+To apply with many arguments:
+
+.IP
+.nf
+erl_call -s -a 'lists seq [1,10]' -n madonna
+
+.fi
+
+.PP
+To evaluate some expressions (\fIthe input ends with EOF (Control-D)\fR):
+
+.IP
+.nf
+erl_call -s -e -n madonna
+statistics(runtime),
+X=1,
+Y=2,
+{_,T}=statistics(runtime),
+{X+Y,T}.
+^D
+{ok,{3,0}}
+
+.fi
+
+.PP
+To compile a module and run it (\fIagain, the input ends with EOF (Control-D)\fR):
+
+.PP
+(In the example, the output has been formatted afterwards.)
+
+.IP
+.nf
+erl_call -s -m -a procnames -n madonna
+-module(procnames).
+-compile(export_all).
+start() ->
+        P = processes(),
+        F = fun(X) -> {X,process_info(X,registered_name)} end,
+        lists:map(F,[],P).
+^D
+[{<madonna@chivas.du.etx.ericsson.se,0,0>,
+                  {registered_name,init}},
+ {<madonna@chivas.du.etx.ericsson.se,2,0>,
+                  {registered_name,erl_prim_loader}},
+ {<madonna@chivas.du.etx.ericsson.se,4,0>,
+                  {registered_name,error_logger}},
+ {<madonna@chivas.du.etx.ericsson.se,5,0>,
+                  {registered_name,application_controller}},
+ {<madonna@chivas.du.etx.ericsson.se,6,0>,
+                  {registered_name,kernel}},
+ {<madonna@chivas.du.etx.ericsson.se,7,0>,
+                  []},
+ {<madonna@chivas.du.etx.ericsson.se,8,0>,
+                  {registered_name,kernel_sup}},
+ {<madonna@chivas.du.etx.ericsson.se,9,0>,
+                  {registered_name,net_sup}},
+ {<madonna@chivas.du.etx.ericsson.se,10,0>,
+                  {registered_name,net_kernel}},
+ {<madonna@chivas.du.etx.ericsson.se,11,0>,
+                  []},
+ {<madonna@chivas.du.etx.ericsson.se,12,0>,
+                  {registered_name,global_name_server}},
+ {<madonna@chivas.du.etx.ericsson.se,13,0>,
+                  {registered_name,auth}},
+ {<madonna@chivas.du.etx.ericsson.se,14,0>,
+                  {registered_name,rex}},
+ {<madonna@chivas.du.etx.ericsson.se,15,0>,
+                  []},
+ {<madonna@chivas.du.etx.ericsson.se,16,0>,
+                  {registered_name,file_server}},
+ {<madonna@chivas.du.etx.ericsson.se,17,0>,
+                  {registered_name,code_server}},
+ {<madonna@chivas.du.etx.ericsson.se,20,0>,
+                  {registered_name,user}},
+ {<madonna@chivas.du.etx.ericsson.se,38,0>,
+                  []}]
+
+.fi
+
+.PP
+To forward standard output without printing the result term (\fIagain, the input ends with EOF (Control-D)\fR):
+
+.IP
+.nf
+erl_call -s -e -sname madonna -fetch_stdout -no_result_term
+io:format("Number of schedulers: ~p~n", [erlang:system_info(schedulers)]),
+io:format("Number of logical cores: ~p~n", [erlang:system_info(logical_processors_available)]).
+^D
+Number of schedulers: 8
+Number of logical cores: 8
+
+.fi
+

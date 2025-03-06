@@ -1,0 +1,183 @@
+.TH snmpc 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+snmpc \- SNMP MIB compiler frontend
+.SH SYNOPSIS
+snmpc [options] file.mib | file.bin
+
+.SH DESCRIPTION
+.PP
+The \fIsnmpc\fR program provides a way to run the SNMP MIB compiler of the Erlang system.
+
+.PP
+\fIsnmpc\fR compiles an SNMP MIB file. See compile/1,2 for more information.
+
+.PP
+It can also be used to generate a header file (\fI.hrl\fR) with definitions of Erlang constants for the objects in the MIB. See mib_to_hrl/1.
+
+.SS "Compiler options"
+
+.PP
+The following options are supported (note that most of these relate to the compilation of the MIB file):
+
+--help
+.RS 2
+Prints help info.
+
+
+.RE
+
+--version
+.RS 2
+Prints application and mib format version.
+
+
+.RE
+
+--verbosity verbosity
+.RS 2
+Print debug info.
+
+.PP
+\fIverbosity\fR = \fItrace\fR | \fIdebug\fR | \fIlog\fR | \fIinfo\fR | \fIsilence\fR
+
+.PP
+Defaults to \fIsilence\fR.
+
+.PP
+
+
+
+.RE
+
+--warnings | --W
+.RS 2
+Print warning messages.
+
+.PP
+
+
+
+.RE
+
+--wae | --Werror
+.RS 2
+Warnings as errors. Indicates that warnings shall be treated as errors.
+
+
+.RE
+
+--o directory
+.RS 2
+The directory where the compiler should place the output files. If not specified, output files will be placed in the current working directory.
+
+
+.RE
+
+--i Directory
+.RS 2
+Specifies the path to search for imported (compiled) MIB files. By default, the current working directory is always included.
+
+.PP
+This option can be present several times, each time specifying \fIone\fR path.
+
+
+.RE
+
+--il Directory
+.RS 2
+This option (include_lib), specifies a list of directories to search for imported MIBs. It assumes that the first element in the directory name corresponds to an OTP application. The compiler will find the current installed version. For example, the value ["snmp/mibs/"] will be replaced by ["snmp-3.1.1/mibs/"] (or what the current version may be in the system). The current directory and the "snmp-home"/priv/mibs/ are always listed last in the include path.
+
+
+.RE
+
+--sgc
+.RS 2
+This option (skip group check), if present, disables the group check of the mib compiler. That is, should the OBJECT-GROUP and the NOTIFICATION-GROUP macro(s) be checked for correctness or not.
+
+
+.RE
+
+--dep
+.RS 2
+Keep deprecated definition(s). If not specified the compiler will ignore deprecated definitions.
+
+
+.RE
+
+--desc
+.RS 2
+The DESCRIPTION field will be included.
+
+
+.RE
+
+--ref
+.RS 2
+The REFERENCE field will be included.
+
+
+.RE
+
+--imp
+.RS 2
+The IMPORTS field will be included.
+
+
+.RE
+
+--mi
+.RS 2
+The MODULE-IDENTITY field will be included.
+
+
+.RE
+
+--mc
+.RS 2
+The MODULE-COMPLIANCE field will be included.
+
+
+.RE
+
+--ac
+.RS 2
+The AGENT-CAPABILITIES field will be included.
+
+
+.RE
+
+--mod module
+.RS 2
+The module which implements all the instrumentation functions.
+
+.PP
+The name of all instrumentation functions must be the same as the corresponding managed object it implements.
+
+
+.RE
+
+--nd
+.RS 2
+The default instrumentation functions will 
+\fInot\fR be used if a managed object have no instrumentation function. Instead this will be reported as an error, and the compilation aborts.
+
+.RE
+
+--rrnac
+.RS 2
+This option, if present, specifies that the row name assign check shall not be done strictly according to the SMI (which allows only the value 1).
+
+.PP
+With this option, all values greater than zero is allowed (>= 1). This means that the error will be converted to a warning.
+
+.PP
+By default it is not included, but if this option is present it will be.
+
+
+.RE
+
+.SS "SEE ALSO"
+
+.PP
+erlc(1), \fIcompile\fR, \fIsnmpc\fR
+

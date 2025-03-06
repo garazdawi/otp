@@ -1,0 +1,23 @@
+.TH edoc 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+edoc \- Generate documentation as HTML or EEP-48 doc chunks
+.SH DESCRIPTION
+.PP
+This program is a command line entry point to both \fIedoc:application/2\fR and \fIedoc:files/2\fR functions. It also allows to generate just the EEP-48 doc chunks (using the \fI-chunks\fR flag) instead of the complete HTML documentation.
+
+.SS "edoc -app <app> [-chunks]"
+
+.PP
+EDoc is invoked via \fIedoc:application/2\fR, with the default set of options. If \fI-chunks\fR is given, then only doc chunks will be generated, not the full HTML documentation.
+
+.PP
+Run the script with no arguments to get the full list of options.
+
+.SS "edoc -files <erl_file>... [-chunks]"
+
+.PP
+EDoc is invoked via \fIedoc:files/2\fR, with the default set of options. If \fI-chunks\fR is given, then only doc chunks will be generated, not the full HTML documentation.
+
+.PP
+Run the script with no arguments to get the full list of options.
+

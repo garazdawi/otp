@@ -1,0 +1,165 @@
+.TH run_erl 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+run_erl \- Redirect Erlang input and output streams on Unix systems
+.SH DESCRIPTION
+.PP
+The \fIrun_erl\fR program is specific to Unix systems. This program redirects the standard input and standard output streams so that all output can be logged. It also lets the program \fIto_erl\fR connect to the Erlang console, making it possible to monitor and debug an embedded system remotely.
+
+.PP
+For more information about the use, see the Embedded System User's Guide in System Documentation.
+
+.IP
+.nf
+run_erl [-daemon] pipe_dir/ log_dir "exec command arg1 arg2 ..."
+
+.fi
+
+.PP
+Arguments:
+
+-daemon
+.RS 2
+This option is highly recommended. It makes 
+\fIrun_erl\fR run in the background completely detached from any controlling terminal and the command returns to the caller immediately. Without this option, \fIrun_erl\fR must be started using several tricks in the shell to detach it completely from the terminal in use when starting it. The option must be the first argument to \fIrun_erl\fR on the command line.
+
+.RE
+
+pipe_dir
+.RS 2
+The named pipe, usually 
+\fI/tmp/\fR. It must be suffixed by a \fI/\fR (slash), that is, \fI/tmp/epipes/\fR, not \fI/tmp/epipes\fR.
+
+.RE
+
+log_dir
+.RS 2
+The log files, that is:
+
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+One log file, \fIrun_erl.log\fR, which logs progress and warnings from the \fIrun_erl\fR program itself.
+
+.RE
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+Up to five log files at maximum 100 KB each with the content of the standard streams from and to the command. (Both the number of logs and sizes can be changed by environment variables, see section Environment Variables below.)
+
+.PP
+When the logs are full, \fIrun_erl\fR deletes and reuses the oldest log file.
+
+.RE
+
+
+.RE
+
+"exec command arg1 arg2 ..."
+.RS 2
+A space-separated string specifying the program to be executed. The second field is typically a command name such as 
+\fIerl\fR.
+
+.RE
+
+.SS "Notes concerning the Log Files"
+
+.PP
+While running, \fIrun_erl\fR sends all output, uninterpreted, to a log file. The file is named \fIerlang.log.N\fR, where \fIN\fR is an integer. When the log is "full" (default log size is 100 KB), \fIrun_erl\fR starts to log in file \fIerlang.log.(N+1)\fR, until \fIN\fR reaches a certain number (default 5), whereupon \fIN\fR starts at 1 again and the oldest files start getting overwritten.
+
+.PP
+If no output comes from the Erlang shell, but the Erlang machine still seems to be alive, an "ALIVE" message is written to the log; it is a time stamp and is written, by default, after 15 minutes of inactivity. Also, if output from Erlang is logged, but more than 5 minutes (default) has passed since last time we got anything from Erlang, a time stamp is written in the log. The "ALIVE" messages look as follows:
+
+.IP
+.nf
+===== ALIVE <date-time-string>
+
+.fi
+
+.PP
+The other time stamps look as follows:
+
+.IP
+.nf
+===== <date-time-string>
+
+.fi
+
+.PP
+\fIdate-time-string\fR is the date and time the message is written, default in local time (can be changed to UTC if needed). It is formatted with the ANSI-C function \fIstrftime\fR using the format string \fI%a %b %e %T %Z %Y\fR, which produces messages like \fI===== ALIVE Thu May 15 10:13:36 MEST 2003\fR; this can be changed, see the next section.
+
+.SS "Environment Variables"
+
+.PP
+The following environment variables are recognized by \fIrun_erl\fR and change the logging behavior. For more information, see the previous section.
+
+RUN_ERL_LOG_ALIVE_MINUTES
+.RS 2
+How long to wait for output (in minutes) before writing an "ALIVE" message to the log. Defaults to 15, minimum is 1.
+
+
+.RE
+
+RUN_ERL_LOG_ACTIVITY_MINUTES
+.RS 2
+How long Erlang needs to be inactive before output is preceded with a time stamp. Defaults to 
+\fIRUN_ERL_LOG_ALIVE_MINUTES div 3\fR, minimum is 1.
+
+.RE
+
+RUN_ERL_LOG_ALIVE_FORMAT
+.RS 2
+Specifies another format string to be used in the 
+\fIstrftime\fR C library call. That is, specifying this to \fI"%e-%b-%Y, %T %Z"\fR gives log messages with time stamps like \fI15-May-2003, 10:23:04 MET\fR. For more information, see the documentation for the C library function \fIstrftime\fR. Defaults to \fI"%a %b %e %T %Z %Y"\fR.
+
+.RE
+
+RUN_ERL_LOG_ALIVE_IN_UTC
+.RS 2
+If set to anything else than 
+\fI0\fR, it makes all times displayed by \fIrun_erl\fR to be in UTC (GMT, CET, MET, without Daylight Saving Time), rather than in local time. This does not affect data coming from Erlang, only the logs output directly by \fIrun_erl\fR. Application SASL can be modified accordingly by setting the Erlang application variable \fIutc_log\fR to \fItrue\fR.
+
+.RE
+
+RUN_ERL_LOG_GENERATIONS
+.RS 2
+Controls the number of log files written before older files are reused. Defaults to 5, minimum is 2, maximum is 1000.
+
+.PP
+Note that, as a way to indicate the newest file, \fIrun_erl\fR will delete the oldest log file to maintain a "hole" in the file sequences. For example, if log files #1, #2, #4 and #5 exists, that means #2 is the latest and #4 is the oldest. You will therefore at most get one less log file than the value set by \fIRUN_ERL_LOG_GENERATIONS\fR.
+
+
+.RE
+
+RUN_ERL_LOG_MAXSIZE
+.RS 2
+The size, in bytes, of a log file before switching to a new log file. Defaults to 100000, minimum is 1000, maximum is about 2^30.
+
+
+.RE
+
+RUN_ERL_DISABLE_FLOWCNTRL
+.RS 2
+If defined, disables input and output flow control for the pty opend by 
+\fIrun_erl\fR. Useful if you want to remove any risk of accidentally blocking the flow control by using Ctrl-S (instead of Ctrl-D to detach), which can result in blocking of the entire Beam process, and in the case of running heart as supervisor even the heart process becomes blocked when writing log message to terminal, leaving the heart process unable to do its work.
+
+.RE
+
+.SS "See Also"
+
+.PP
+\fIstart(1)\fR, \fIstart_erl(1)\fR
+

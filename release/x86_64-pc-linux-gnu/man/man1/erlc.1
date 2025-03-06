@@ -1,0 +1,452 @@
+.TH erlc 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+erlc \- Compiler
+.SH DESCRIPTION
+.PP
+The \fIerlc\fR program provides a common way to run all compilers in the Erlang system. Depending on the extension of each input file, \fIerlc\fR invokes the appropriate compiler. Regardless of which compiler is used, the same flags are used to provide parameters, such as include paths and output directory.
+
+.PP
+The current working directory, \fI"."\fR, is not included in the code path when running the compiler. This is to avoid loading Beam files from the current working directory that could potentially be in conflict with the compiler or the Erlang/OTP system used by the compiler.
+
+.SS "erlc flags file1.ext file2.ext..."
+
+.PP
+Compiles one or more files. The files must include the extension, for example, \fI.erl\fR for Erlang source code, or \fI.yrl\fR for Yecc source code. \fIErlc\fR uses the extension to invoke the correct compiler.
+
+.SS "Generally Useful Flags"
+
+.PP
+The following flags are supported:
+
+-I <Directory>
+.RS 2
+Instructs the compiler to search for include files in the 
+\fIDirectory\fR. When encountering an \fI-include\fR or \fI-include_lib\fR directive, the compiler searches for header files in the following directories:
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+\fI"."\fR, the current working directory of the file server
+
+.RE
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+The base name of the compiled file
+
+.RE
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+The directories specified using option \fI-I\fR; the directory specified last is searched first
+
+.RE
+
+
+.RE
+
+-o <Directory>
+.RS 2
+The directory where the compiler is to place the output files. Defaults to the current working directory.
+
+
+.RE
+
+-D<Name>
+.RS 2
+Defines a macro.
+
+
+.RE
+
+-D<Name>=<Value>
+.RS 2
+Defines a macro with the specified value. The value can be any Erlang term. Depending on the platform, the value may need to be quoted if the shell itself interprets certain characters. On Unix, terms containing tuples and lists must be quoted. Terms containing spaces must be quoted on all platforms.
+
+
+.RE
+
+-Werror
+.RS 2
+Makes all warnings into errors.
+
+
+.RE
+
+-W<Number>
+.RS 2
+Sets warning level to 
+\fINumber\fR. Defaults to \fI1\fR. To turn off warnings, use \fI-W0\fR.
+
+.RE
+
+-W
+.RS 2
+Same as 
+\fI-W1\fR. Default.
+
+.RE
+
+-v
+.RS 2
+Enables verbose output.
+
+
+.RE
+
+-b <Output_type>
+.RS 2
+Specifies the type of output file. 
+\fIOutput_type\fR is the same as the file extension of the output file, but without the period. This option is ignored by compilers that have a single output format.
+
+.RE
+
+-no-server
+.RS 2
+Do not use the compile server.
+
+
+.RE
+
+-server
+.RS 2
+Use the compile server.
+
+
+.RE
+
+-enable-feature <Feature>
+.RS 2
+Enables the feature 
+\fIfeature\fR during compilation. The special feature \fIall\fR can be used to enable all features.
+
+.RE
+
+-disable-feature <feature>
+.RS 2
+Disables the feature 
+\fIfeature\fR during compilation. The special feature \fIall\fR can be used to disable all non permanent features.
+
+.RE
+
+-list-features
+.RS 2
+List short descriptions of the current configurable features. Non-configurable features (those with status 
+\fIrejected\fR or \fIpermanent\fR) will not be shown.
+
+.RE
+
+-describe-feature <feature>
+.RS 2
+Show long description and history of feature 
+\fIfeature\fR.
+
+.RE
+
+-M
+.RS 2
+Produces a Makefile rule to track header dependencies. The rule is sent to 
+\fIstdout\fR. No object file is produced.
+
+.RE
+
+-MMD
+.RS 2
+Generate dependencies as a side-effect. The object file will be produced as normal. This option overrides the option 
+\fI-M\fR.
+
+.RE
+
+-MF <Makefile>
+.RS 2
+As option 
+\fI-M\fR, except that the Makefile is written to \fIMakefile\fR. No object file is produced.
+
+.RE
+
+-MD
+.RS 2
+Same as 
+\fI-M -MF <File>.Pbeam\fR.
+
+.RE
+
+-MT <Target>
+.RS 2
+In conjunction with option 
+\fI-M\fR or \fI-MF\fR, changes the name of the rule emitted to \fITarget\fR.
+
+.RE
+
+-MQ <Target>
+.RS 2
+As option 
+\fI-MT\fR, except that characters special to \fImake/1\fR are quoted.
+
+.RE
+
+-MP
+.RS 2
+In conjunction with option 
+\fI-M\fR or \fI-MF\fR, adds a phony target for each dependency.
+
+.RE
+
+-MG
+.RS 2
+In conjunction with option 
+\fI-M\fR or \fI-MF\fR, considers missing headers as generated files and adds them to the dependencies.
+
+.RE
+
+--
+.RS 2
+Signals that no more options will follow. The rest of the arguments is treated as filenames, even if they start with hyphens.
+
+
+.RE
+
++<Term>
+.RS 2
+A flag starting with a plus (
+\fI+\fR) rather than a hyphen is converted to an Erlang term and passed unchanged to the compiler. For example, option \fIexport_all\fR for the Erlang compiler can be specified as follows:
+.IP
+.nf
+erlc +export_all file.erl
+
+.fi
+
+.PP
+Depending on the platform, the value may need to be quoted if the shell itself interprets certain characters. On Unix, terms containing tuples and lists must be quoted. Terms containing spaces must be quoted on all platforms.
+
+
+.RE
+
+.SS "Special Flags"
+
+.PP
+The following flags are useful in special situations, such as rebuilding the OTP system:
+
+-pa <Directory>
+.RS 2
+Appends 
+\fIDirectory\fR to the front of the code path in the invoked Erlang emulator. This can be used to invoke another compiler than the default one.
+
+.RE
+
+-pz <Directory>
+.RS 2
+Appends 
+\fIDirectory\fR to the code path in the invoked Erlang emulator.
+
+.RE
+
+.SS "Supported Compilers"
+
+.PP
+The following compilers are supported:
+
+\&.erl
+.RS 2
+Erlang source code. It generates a 
+\fI.beam\fR file.
+.PP
+Options \fI-P\fR, \fI-E\fR, and \fI-S\fR are equivalent to \fI+'P'\fR, \fI+'E'\fR, and \fI+'S'\fR, except that it is not necessary to include the single quotes to protect them from the shell.
+
+.PP
+Supported options: \fI-I\fR, \fI-o\fR, \fI-D\fR, \fI-v\fR, \fI-W\fR, \fI-b\fR.
+
+
+.RE
+
+\&.S
+.RS 2
+Erlang assembler source code. It generates a 
+\fI.beam\fR file.
+.PP
+Supported options: same as for \fI.erl\fR.
+
+
+.RE
+
+\&.core
+.RS 2
+Erlang core source code. It generates a 
+\fI.beam\fR file.
+.PP
+Supported options: same as for \fI.erl\fR.
+
+
+.RE
+
+\&.yrl
+.RS 2
+Yecc source code. It generates an 
+\fI.erl\fR file.
+.PP
+Use option \fI-I\fR with the name of a file to use that file as a customized prologue file (option \fIincludefile\fR).
+
+.PP
+Supported options: \fI-o\fR, \fI-v\fR, \fI-I\fR, \fI-W\fR.
+
+
+.RE
+
+\&.mib
+.RS 2
+MIB for SNMP. It generates a 
+\fI.bin\fR file.
+.PP
+Supported options: \fI-I\fR, \fI-o\fR, \fI-W\fR.
+
+
+.RE
+
+\&.bin
+.RS 2
+A compiled MIB for SNMP. It generates a 
+\fI.hrl\fR file.
+.PP
+Supported options: \fI-o\fR, \fI-v\fR.
+
+
+.RE
+
+\&.rel
+.RS 2
+Script file. It generates a boot file.
+
+.PP
+Use option \fI-I\fR to name directories to be searched for application files (equivalent to the \fIpath\fR in the option list for \fIsystools:make_script/2\fR).
+
+.PP
+Supported option: \fI-o\fR.
+
+
+.RE
+
+\&.asn1
+.RS 2
+ASN1 file. It creates an 
+\fI.erl\fR, \fI.hrl\fR, and \fI.asn1db\fR file from an \fI.asn1\fR file. Also compiles the \fI.erl\fR using the Erlang compiler unless option \fI+noobj\fR is specified.
+.PP
+Supported options: \fI-I\fR, \fI-o\fR, \fI-b\fR, \fI-W\fR.
+
+
+.RE
+
+\&.idl
+.RS 2
+IC file. It runs the IDL compiler.
+
+.PP
+Supported options: \fI-I\fR, \fI-o\fR.
+
+
+.RE
+
+.SS "Compile Server"
+
+.PP
+The compile server can be used to potentially speed up the build of multi-file projects by avoiding to start an Erlang system for each file to compile. Whether it will speed up the build depends on the nature of the project and the build machine.
+
+.PP
+By default, the compile server is not used. It can be enabled by giving \fIerlc\fR the option \fI-server\fR or by setting the environment variable \fIERLC_USE_SERVER\fR to \fIyes\fR or \fItrue\fR.
+
+.PP
+When the compile server is enabled, \fIerlc\fR will automatically use the server if it is started and start the server if has not already started. The server will terminate itself when it has been idle for some number of seconds.
+
+.PP
+\fIerlc\fR and the compile server communicate using the Erlang distribution. The compile server is started as a hidden node, with a name that includes the current user. Thus, each user on a computer has their own compile server.
+
+.PP
+Using the compile server does not always speed up the build, as the compile server sometimes must be restarted to ensure correctness. Here are some examples of situations that force a restart:
+
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+\fIerlc\fR wants to use a different version of Erlang than the compile server is using.
+
+.RE
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+\fIerlc\fR wants to use different options for \fIerl\fR than the compile server was started with. (A change to code path using the option \fI-pa\fR could cause different parse transforms to be loaded. To be safe, the compile server will be restarted when any \fIerl\fR option is changed.)
+
+.RE
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+If the current working directory for \fIerlc\fR is different from the working directory active when the compile server was started, \fBand\fR if the compile server has active jobs, it will be restarted as soon as those jobs have finished. (Build systems that build files randomly across multiple directories in parallel will probably not benefit from the compile server.)
+
+.RE
+
+.SS "Environment Variables"
+
+ERLC_EMULATOR
+.RS 2
+The command for starting the emulator. Defaults to 
+\fIerl\fR in the same directory as the \fIerlc\fR program itself, or, if it does not exist, \fIerl\fR in any of the directories specified in environment variable \fIPATH\fR.
+
+.RE
+
+ERLC_USE_SERVER
+.RS 2
+Allowed values are 
+\fIyes\fR or \fItrue\fR to use the compile server, and \fIno\fR or \fIfalse\fR to not use the compile server. If other values are given, \fIerlc\fR will print a warning message and continue.
+
+.RE
+
+ERLC_SERVER_ID
+.RS 2
+Tells 
+\fIerlc\fR to identify the compile server by the given name, allowing a single user to run multiple unrelated builds in parallel without them affecting each other, which can be useful for shared build machines and the like. The name must be alpha­numeric, and it defaults to being empty.
+
+.RE
+
+.SS "See Also"
+
+.PP
+\fIerl(1)\fR, \fIcompile\fR, \fIyecc\fR, \fIsnmp\fR
+

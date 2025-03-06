@@ -1,0 +1,175 @@
+.TH ct_run 1 "erts 15.2.3" "Ericsson AB" "User Commands"
+.SH NAME
+ct_run \- Program used for starting Common Test from the OS command line
+.SH DESCRIPTION
+.PP
+The \fIct_run\fR program is automatically installed with Erlang/OTP and the \fICommon Test\fR application (for more information, see section Installation in the User's Guide). The program accepts different start flags. Some flags trigger \fIct_run\fR to start \fICommon Test\fR and pass on data to it. Some flags start an Erlang node prepared for running \fICommon Test\fR in a particular mode.
+
+.PP
+The interface function \fIct:run_test/1\fR, corresponding to the \fIct_run\fR program, is used for starting \fICommon Test\fR from the Erlang shell (or an Erlang program). For details, see the \fIct\fR manual page.
+
+.PP
+\fIct_run\fR also accepts Erlang emulator flags. These are used when \fIct_run\fR calls \fIerl\fR to start the Erlang node (this makes it possible to add directories to the code server path, change the cookie on the node, start more applications, and so on).
+
+.PP
+With the optional flag \fI-erl_args\fR, options on the \fIct_run\fR command line can be divided into two groups:
+
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+One group that \fICommon Test\fR is to process (those preceding \fI-erl_args\fR).
+
+.RE
+
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}.PP
+One group that \fICommon Test\fR is to ignore and pass on directly to the emulator (those following \fI-erl_args\fR).
+
+.RE
+
+.PP
+Options preceding \fI-erl_args\fR that \fICommon Test\fR does not recognize are also passed on to the emulator untouched. By \fI-erl_args\fR the user can specify flags with the same name, but with different destinations, on the \fIct_run\fR command line.
+
+.PP
+If flags \fI-pa\fR or \fI-pz\fR are specified in the \fICommon Test\fR group of options (preceding \fI-erl_args\fR), relative directories are converted to absolute and reinserted into the code path by \fICommon Test\fR. This is to avoid problems loading user modules when \fICommon Test\fR changes working directory during test runs. However, \fICommon Test\fR ignores flags \fI-pa\fR and \fI-pz\fR following \fI-erl_args\fR on the command line. These directories are added to the code path normally (that is, on specified form).
+
+.PP
+Exit status is set before the program ends. Value \fI0\fR indicates a successful test result, \fI1\fR indicates one or more failed or auto-skipped test cases, and \fI2\fR indicates test execution failure.
+
+.PP
+If \fIct_run\fR is called with option \fI-help\fR, it prints all valid start flags to \fIstdout\fR.
+
+.SS "Run Tests from Command Line"
+
+.IP
+.nf
+ ct_run -dir TestDir1 TestDir2 .. TestDirN |
+  [-dir TestDir] -suite Suite1 Suite2 .. SuiteN
+  [-group Groups1 Groups2 .. GroupsN] [-case Case1 Case2 .. CaseN]
+  [-step [config | keep_inactive]]
+  [-config ConfigFile1 ConfigFile2 .. ConfigFileN]
+  [-userconfig CallbackModule1 ConfigString1 and CallbackModule2
+   ConfigString2 and .. CallbackModuleN ConfigStringN]
+  [-decrypt_key Key] | [-decrypt_file KeyFile]
+  [-label Label]
+  [-logdir LogDir]
+  [-logopts LogOpts]
+  [-verbosity GenVLevel | [Category1 VLevel1 and
+   Category2 VLevel2 and .. CategoryN VLevelN]]
+  [-silent_connections [ConnType1 ConnType2 .. ConnTypeN]]
+  [-stylesheet CSSFile]
+  [-cover CoverCfgFile]
+  [-cover_stop Bool]
+  [-event_handler EvHandler1 EvHandler2 .. EvHandlerN] |
+  [-event_handler_init EvHandler1 InitArg1 and
+   EvHandler2 InitArg2 and .. EvHandlerN InitArgN]
+  [-include InclDir1 InclDir2 .. InclDirN]
+  [-no_auto_compile]
+  [-abort_if_missing_suites]
+  [-multiply_timetraps Multiplier]
+  [-scale_timetraps]
+  [-create_priv_dir auto_per_run | auto_per_tc | manual_per_tc]
+  [-repeat N] |
+  [-duration HHMMSS [-force_stop [skip_rest]]] |
+  [-until [YYMoMoDD]HHMMSS [-force_stop [skip_rest]]]
+  [-basic_html]
+  [-no_esc_chars]
+  [-keep_logs all | NLogs]
+  [-ct_hooks CTHModule1 CTHOpts1 and CTHModule2 CTHOpts2 and ..
+   CTHModuleN CTHOptsN]
+  [-ct_hooks_order test | config]
+  [-exit_status ignore_config]
+  [-help]
+
+.fi
+
+.SS "Run Tests using Test Specification"
+
+.IP
+.nf
+ ct_run -spec TestSpec1 TestSpec2 .. TestSpecN
+  [-join_specs]
+  [-config ConfigFile1 ConfigFile2 .. ConfigFileN]
+  [-userconfig CallbackModule1 ConfigString1 and CallbackModule2
+   ConfigString2 and .. and CallbackModuleN ConfigStringN]
+  [-decrypt_key Key] | [-decrypt_file KeyFile]
+  [-label Label]
+  [-logdir LogDir]
+  [-logopts LogOpts]
+  [-verbosity GenVLevel | [Category1 VLevel1 and
+   Category2 VLevel2 and .. CategoryN VLevelN]]
+  [-allow_user_terms]
+  [-silent_connections [ConnType1 ConnType2 .. ConnTypeN]]
+  [-stylesheet CSSFile]
+  [-cover CoverCfgFile]
+  [-cover_stop Bool]
+  [-event_handler EvHandler1 EvHandler2 .. EvHandlerN] |
+  [-event_handler_init EvHandler1 InitArg1 and
+   EvHandler2 InitArg2 and .. EvHandlerN InitArgN]
+  [-include InclDir1 InclDir2 .. InclDirN]
+  [-no_auto_compile]
+  [-abort_if_missing_suites]
+  [-multiply_timetraps Multiplier]
+  [-scale_timetraps]
+  [-create_priv_dir auto_per_run | auto_per_tc | manual_per_tc]
+  [-repeat N] |
+  [-duration HHMMSS [-force_stop [skip_rest]]] |
+  [-until [YYMoMoDD]HHMMSS [-force_stop [skip_rest]]]
+  [-basic_html]
+  [-no_esc_chars]
+  [-keep_logs all | NLogs]
+  [-ct_hooks CTHModule1 CTHOpts1 and CTHModule2 CTHOpts2 and ..
+   CTHModuleN CTHOptsN]
+  [-ct_hooks_order test | config]
+  [-exit_status ignore_config]
+
+.fi
+
+.SS "Refresh HTML Index Files"
+
+.IP
+.nf
+ ct_run -refresh_logs [-logdir LogDir] [-basic_html]
+  [-keep_logs all | NLogs]
+
+.fi
+
+.SS "Run Common Test in Interactive Mode"
+
+.IP
+.nf
+ ct_run -shell
+  [-config ConfigFile1 ConfigFile2 ... ConfigFileN]
+  [-userconfig CallbackModule1 ConfigString1 and CallbackModule2
+   ConfigString2 and .. and CallbackModuleN ConfigStringN]
+  [-decrypt_key Key] | [-decrypt_file KeyFile]
+
+.fi
+
+.SS "Start a Common Test Master Node"
+
+.IP
+.nf
+ ct_run -ctmaster
+
+.fi
+
+.SS "See Also"
+
+.PP
+For information about the start flags, see section Running Tests and Analyzing Results in the User's Guide.
+
