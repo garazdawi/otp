@@ -1,5 +1,0 @@
-
-[;1m  format_error(Reason)[0m
-
-  Given the error reason returned by any function in this module,
-  returns a descriptive string of the error in English.

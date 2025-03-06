@@ -1,4 +1,0 @@
-
-opaque.erl:5:2: Type specification opaque:accidental_supertype() -> {term(),term()} | 'other' is a supertype of the success typing: opaque:accidental_supertype() -> 'other' | gb_sets:set(_)
-opaque.erl:8:9: Body yields the opaque type gb_sets:set(_) whose opacity is broken by the other clauses.
-opaque.erl:9:9: Body yields the type 'other' which violates the opacity of the other clauses.

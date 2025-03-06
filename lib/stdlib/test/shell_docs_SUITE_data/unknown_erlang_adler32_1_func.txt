@@ -1,4 +1,0 @@
-
-[;1m  adler32(Data)[0m
-
-  Computes and returns the adler32 checksum for [;;4mData[0m.

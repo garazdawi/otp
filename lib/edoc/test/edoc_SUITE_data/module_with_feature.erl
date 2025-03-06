@@ -1,2 +1,0 @@
--module(module_with_feature).
--feature(maybe_expr, enable).

@@ -1,4 +1,0 @@
-
-[;1m  float()[0m
-
-  An Erlang float.

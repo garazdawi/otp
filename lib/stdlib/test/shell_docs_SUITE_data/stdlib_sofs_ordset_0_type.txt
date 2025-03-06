@@ -1,4 +1,0 @@
-
-[;1m  ordset()[0m
-
-  An ordered set.

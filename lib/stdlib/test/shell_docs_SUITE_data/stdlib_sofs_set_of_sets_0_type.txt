@@ -1,4 +1,0 @@
-
-[;1m  set_of_sets()[0m
-
-  An unordered set of unordered sets.

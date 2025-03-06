@@ -1,3 +1,0 @@
-
-gen_server_not_exported.erl:14:1: Callback function init/1 exists but is not exported (behaviour gen_server)
-gen_server_not_exported.erl:23:1: Callback function handle_cast/2 exists but is not exported (behaviour gen_server)

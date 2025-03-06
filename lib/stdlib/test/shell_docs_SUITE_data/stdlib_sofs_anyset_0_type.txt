@@ -1,4 +1,0 @@
-
-[;1m  anyset()[0m
-
-  Any kind of set (also included are the atomic sets).

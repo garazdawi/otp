@@ -1,4 +1,0 @@
-
-[;1m  nonempty_string()[0m
-
-  A [;;4mstring/0[0m that contains some characters.

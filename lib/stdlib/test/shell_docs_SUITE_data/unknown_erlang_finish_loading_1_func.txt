@@ -1,6 +1,0 @@
-
-[;1m  finish_loading(PreparedCodeList)[0m
-
-  The documentation for finish_loading/1 is hidden. This probably
-  means that it is internal and not to be used by other
-  applications.

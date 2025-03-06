@@ -1,4 +1,0 @@
-
-[;1m  atom()[0m
-
-  An Erlang atom.

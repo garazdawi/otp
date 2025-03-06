@@ -1,3 +1,0 @@
-{"B",
- [{"A", [{load_module, hello_server}]}],
- [{"A", [{load_module, hello_server}]}]}.

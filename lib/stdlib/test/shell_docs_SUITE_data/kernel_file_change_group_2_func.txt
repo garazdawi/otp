@@ -1,4 +1,0 @@
-
-[;1m  change_group(Filename, Gid)[0m
-
-  Changes group of a file. See [;;4mwrite_file_info/2[0m.

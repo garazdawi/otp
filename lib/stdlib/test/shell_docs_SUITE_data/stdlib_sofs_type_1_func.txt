@@ -1,4 +1,0 @@
-
-[;1m  type(AnySet)[0m
-
-  Returns the type of an atomic, ordered, or unordered set.

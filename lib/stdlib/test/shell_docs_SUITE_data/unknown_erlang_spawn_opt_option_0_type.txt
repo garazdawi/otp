@@ -1,4 +1,0 @@
-
-[;1m  spawn_opt_option()[0m
-
-  Options for [;;4mspawn_opt()[0m.

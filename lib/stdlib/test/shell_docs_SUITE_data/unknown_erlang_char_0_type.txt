@@ -1,5 +1,0 @@
-
-[;1m  char()[0m
-
-  An ASCII character or a [;;4municode[0m codepoint presented by an
-  integer.

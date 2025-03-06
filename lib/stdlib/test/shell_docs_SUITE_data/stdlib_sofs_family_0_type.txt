@@ -1,4 +1,0 @@
-
-[;1m  family()[0m
-
-  A family (of subsets).

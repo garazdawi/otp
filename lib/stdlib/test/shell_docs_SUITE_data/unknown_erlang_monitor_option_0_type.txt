@@ -1,4 +1,0 @@
-
-[;1m  monitor_option()[0m
-
-  See [;;4mmonitor/3[0m.

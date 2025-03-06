@@ -1,4 +1,0 @@
-
-[;1m  module()[0m
-
-  An Erlang module represented by an atom.

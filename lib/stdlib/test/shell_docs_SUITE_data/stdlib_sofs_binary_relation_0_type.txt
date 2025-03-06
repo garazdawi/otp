@@ -1,4 +1,0 @@
-
-[;1m  binary_relation()[0m
-
-  A binary relation.

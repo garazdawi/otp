@@ -1,3 +1,0 @@
-all: slow_drv@dll@ trace_SUITE@dll@
-
-@SHLIB_RULES@

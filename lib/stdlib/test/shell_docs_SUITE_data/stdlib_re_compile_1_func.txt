@@ -1,4 +1,0 @@
-
-[;1m  compile(Regexp)[0m
-
-  The same as [;;4mcompile(Regexp,[])[0m

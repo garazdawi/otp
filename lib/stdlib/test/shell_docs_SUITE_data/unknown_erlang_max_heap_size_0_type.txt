@@ -1,5 +1,0 @@
-
-[;1m  max_heap_size()[0m
-
-  Process max heap size configuration. For more info see [;;4m[0m
-  [;;4mprocess_flag(max_heap_size, MaxHeapSize)[0m

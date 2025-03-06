@@ -1,4 +1,0 @@
-
-[;1m  timestamp()[0m
-
-  See [;;4merlang:timestamp/0[0m.

@@ -1,9 +1,0 @@
-
-[;1m  family(Tuples)[0m
-
-  There is no documentation for family(Tuples, [{atom, [atom]}])
-
-[;1m  family(Tuples, Type)[0m
-
-  Creates a family of subsets. [;;4mfamily(F, T)[0m is equivalent to [;;4m[0m
-  [;;4mfrom_term(F, T)[0m if the result is a family.

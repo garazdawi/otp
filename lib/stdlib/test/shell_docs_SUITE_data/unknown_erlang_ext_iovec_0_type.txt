@@ -1,5 +1,0 @@
-
-[;1m  ext_iovec()[0m
-
-  A term of type [;;4miovec/0[0m, structured according to the Erlang
-  external term format.

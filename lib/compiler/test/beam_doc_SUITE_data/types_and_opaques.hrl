@@ -1,2 +1,0 @@
--doc false.
--type hidden_included_type() :: integer().

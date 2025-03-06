@@ -1,4 +1,0 @@
-
-[;1m  tuple()[0m
-
-  An Erlang tuple.

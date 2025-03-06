@@ -1,4 +1,0 @@
-
-[;1m  bitstring()[0m
-
-  An Erlang bitstring.

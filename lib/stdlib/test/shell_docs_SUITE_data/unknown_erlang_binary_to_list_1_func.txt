@@ -1,4 +1,0 @@
-
-[;1m  binary_to_list(Binary)[0m
-
-  Returns a list of integers corresponding to the bytes of [;;4mBinary[0m.

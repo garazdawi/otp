@@ -1,4 +1,0 @@
-
-[;1m  difference(Set1, Set2)[0m
-
-  Returns the difference of the sets [;;4mSet1[0m and [;;4mSet2[0m.

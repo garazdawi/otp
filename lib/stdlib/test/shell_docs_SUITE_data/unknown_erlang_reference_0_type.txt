@@ -1,4 +1,0 @@
-
-[;1m  reference()[0m
-
-  An Erlang reference.

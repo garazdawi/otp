@@ -1,2 +1,0 @@
-{dialyzer_options, [{indent_opt, false}, {warnings, [no_unknown]}]}.
-{time_limit, 30}.

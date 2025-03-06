@@ -1,5 +1,0 @@
-
-[;1m  no_elements(ASet)[0m
-
-  Returns the number of elements of the ordered or unordered set [;;4m[0m
-  [;;4mASet[0m.

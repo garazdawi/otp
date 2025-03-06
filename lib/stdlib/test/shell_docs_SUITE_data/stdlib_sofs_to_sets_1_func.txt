@@ -1,6 +1,0 @@
-
-[;1m  to_sets(ASet)[0m
-
-  Returns the elements of the ordered set [;;4mASet[0m as a tuple of sets,
-  and the elements of the unordered set [;;4mASet[0m as a sorted list of
-  sets without duplicates.

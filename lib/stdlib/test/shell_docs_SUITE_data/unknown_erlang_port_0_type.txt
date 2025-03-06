@@ -1,4 +1,0 @@
-
-[;1m  port()[0m
-
-  An Erlang port identifier.

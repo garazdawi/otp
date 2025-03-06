@@ -1,3 +1,0 @@
-[;1m	shell_docs_SUITE[0m
-
-There are no callbacks in this module

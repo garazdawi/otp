@@ -1,4 +1,0 @@
-*.hrl
-!SNMPv2-TC.hrl
-!snmp_tables.hrl
-!snmp_types.hrl

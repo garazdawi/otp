@@ -1,7 +1,0 @@
-
-[;1m  relation(Tuples)[0m
-
-  Equivalent to [;;4mrelation(Tuples, Type)[0m where [;;4mType[0m is the size of
-  the first tuple of [;;4mTuples[0m is used if there is such a tuple.
-
-  If tuples is [;;4m[][0m, then [;;4mType[0m is [;;4m2[0m.

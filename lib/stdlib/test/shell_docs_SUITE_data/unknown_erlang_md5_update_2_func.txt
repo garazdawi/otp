@@ -1,4 +1,0 @@
-
-[;1m  md5_update(Context, Data)[0m
-
-  Update an MD5 [;;4mContext[0m with [;;4mData[0m and returns a [;;4mNewContext[0m.

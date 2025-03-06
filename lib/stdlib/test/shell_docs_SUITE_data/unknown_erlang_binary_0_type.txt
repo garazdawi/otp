@@ -1,4 +1,0 @@
-
-[;1m  binary()[0m
-
-  An Erlang binary, that is, a bitstring with a size divisible by 8.

@@ -1,1 +1,0 @@
-../httpd_SUITE_data/server_root/cgi-bin/printenv.sh

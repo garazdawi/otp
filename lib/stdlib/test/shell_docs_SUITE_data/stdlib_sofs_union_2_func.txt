@@ -1,4 +1,0 @@
-
-[;1m  union(Set1, Set2)[0m
-
-  Returns the union of [;;4mSet1[0m and [;;4mSet2[0m.

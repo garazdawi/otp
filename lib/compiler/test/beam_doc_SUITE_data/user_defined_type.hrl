@@ -1,2 +1,0 @@
--type foo() :: integer().
--type foo_dependent() :: foo().

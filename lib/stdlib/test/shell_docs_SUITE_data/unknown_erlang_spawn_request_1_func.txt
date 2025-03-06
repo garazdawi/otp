@@ -1,8 +1,0 @@
-
-[;1m  spawn_request(Fun)[0m
-
-[;;4mSince[0m:
-  OTP 23.0
-
-  Equivalent to the call [;;4mspawn_request(node(),Fun,[])[0m. That is, a
-  spawn request on the local node with no options.

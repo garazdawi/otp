@@ -1,9 +1,0 @@
-
-[;1m  halt()[0m
-
-  Equivalent to calling [;;4mhalt(0, [])[0m.
-
-  For example:
-
-    > halt().
-    os_prompt%

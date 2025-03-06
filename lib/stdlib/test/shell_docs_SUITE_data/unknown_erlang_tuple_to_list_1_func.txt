@@ -1,8 +1,0 @@
-
-[;1m  tuple_to_list(Tuple)[0m
-
-  Returns a list corresponding to [;;4mTuple[0m. [;;4mTuple[0m can contain any
-  Erlang terms. Example:
-
-    > tuple_to_list({share, {'Ericsson_B', 163}}).
-    [share,{'Ericsson_B',163}]

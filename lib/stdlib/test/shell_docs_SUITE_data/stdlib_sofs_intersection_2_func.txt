@@ -1,4 +1,0 @@
-
-[;1m  intersection(Set1, Set2)[0m
-
-  Returns the intersection of [;;4mSet1[0m and [;;4mSet2[0m.

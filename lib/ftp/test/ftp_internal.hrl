@@ -1,1 +1,0 @@
-../src/ftp_internal.hrl

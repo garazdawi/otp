@@ -1,4 +1,0 @@
-
-[;1m  date_time()[0m
-
-  Must denote a valid date and time.

@@ -1,1 +1,0 @@
-DIALYZER_VSN = 5.3.1

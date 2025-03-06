@@ -1,4 +1,0 @@
-
-[;1m  node()[0m
-
-  An Erlang node represented by an atom.

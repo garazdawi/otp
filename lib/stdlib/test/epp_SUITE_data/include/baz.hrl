@@ -1,1 +1,0 @@
--define(BAZ, true).

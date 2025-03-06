@@ -1,5 +1,0 @@
-
-[;1m  posix()[0m
-
-  An atom that is named from the POSIX error codes used in Unix, and
-  in the runtime libraries of most C compilers.

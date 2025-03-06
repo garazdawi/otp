@@ -1,2 +1,0 @@
--module(debug_info).
--compile([debug_info]).

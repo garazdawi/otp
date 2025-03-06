@@ -1,5 +1,0 @@
-
-[;1m  from_external(ExternalSet, Type)[0m
-
-  Creates a set from the external set [;;4mExternalSet[0m and the type [;;4m[0m
-  [;;4mType[0m. It is assumed that [;;4mType[0m is a valid type of [;;4mExternalSet[0m.

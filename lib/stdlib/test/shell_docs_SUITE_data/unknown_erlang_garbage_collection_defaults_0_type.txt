@@ -1,4 +1,0 @@
-
-[;1m  garbage_collection_defaults()[0m
-
-  A list with the system wide garbage collection defaults.

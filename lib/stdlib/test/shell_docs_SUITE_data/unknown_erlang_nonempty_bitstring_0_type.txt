@@ -1,4 +1,0 @@
-
-[;1m  nonempty_bitstring()[0m
-
-  A [;;4mbitstring/0[0m that contains some data.

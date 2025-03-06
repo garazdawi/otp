@@ -1,4 +1,0 @@
-
-[;1m  timeout()[0m
-
-  A timeout value that can be passed to a receive expression.

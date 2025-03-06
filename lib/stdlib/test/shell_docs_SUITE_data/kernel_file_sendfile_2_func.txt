@@ -1,8 +1,0 @@
-
-[;1m  sendfile(Filename, Socket)[0m
-
-[;;4mSince[0m:
-  OTP R15B
-
-  Sends the file [;;4mFilename[0m to [;;4mSocket[0m. Returns [;;4m{ok, BytesSent}[0m
-  if successful, otherwise [;;4m{error, Reason}[0m.

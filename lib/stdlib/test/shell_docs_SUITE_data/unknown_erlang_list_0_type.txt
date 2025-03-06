@@ -1,4 +1,0 @@
-
-[;1m  list()[0m
-
-  An Erlang list containing terms of any type.

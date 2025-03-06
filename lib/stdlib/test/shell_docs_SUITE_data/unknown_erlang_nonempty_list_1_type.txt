@@ -1,4 +1,0 @@
-
-[;1m  nonempty_list(ContentType)[0m
-
-  A list(ContentType) that contains some items.

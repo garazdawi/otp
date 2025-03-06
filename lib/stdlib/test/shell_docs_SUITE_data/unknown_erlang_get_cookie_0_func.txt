@@ -1,5 +1,0 @@
-
-[;1m  get_cookie()[0m
-
-  Returns the magic cookie of the local node if the node is alive,
-  otherwise the atom [;;4mnocookie[0m. This value is set by [;;4mset_cookie/1[0m.

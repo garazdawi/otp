@@ -1,4 +1,0 @@
-
-[;1m  neg_integer()[0m
-
-  A negative integer.

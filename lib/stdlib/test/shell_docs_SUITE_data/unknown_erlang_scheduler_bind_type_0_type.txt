@@ -1,4 +1,0 @@
-
-[;1m  scheduler_bind_type()[0m
-
-  The requested scheduler bind type.

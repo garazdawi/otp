@@ -1,4 +1,0 @@
-
-[;1m  change_owner(Filename, Uid, Gid)[0m
-
-  Changes owner and group of a file. See [;;4mwrite_file_info/2[0m.

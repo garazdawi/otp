@@ -1,4 +1,0 @@
-
-[;1m  dynamic()[0m
-
-  The dynamic type, which represents a statically unknown type

@@ -1,7 +1,0 @@
-
-[;1m  change_mode(Filename, Mode)[0m
-
-[;;4mSince[0m:
-  OTP R14B
-
-  Changes permissions of a file. See [;;4mwrite_file_info/2[0m.

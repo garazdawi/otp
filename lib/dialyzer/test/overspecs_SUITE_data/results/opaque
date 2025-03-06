@@ -1,3 +1,0 @@
-
-opaque.erl:8:9: Body yields the opaque type gb_sets:set(_) whose opacity is broken by the other clauses.
-opaque.erl:9:9: Body yields the type 'other' which violates the opacity of the other clauses.

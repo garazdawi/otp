@@ -1,7 +1,0 @@
-
-[;1m  intersection(SetOfSets)[0m
-
-  Returns the intersection of the set of sets [;;4mSetOfSets[0m.
-
-  Intersecting an empty set of sets exits the process with a [;;4mbadarg[0m
-  message.

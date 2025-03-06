@@ -1,4 +1,0 @@
-
-[;1m  pos_integer()[0m
-
-  An integer greater than zero.

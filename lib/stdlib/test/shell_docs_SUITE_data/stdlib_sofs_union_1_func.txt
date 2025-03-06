@@ -1,4 +1,0 @@
-
-[;1m  union(SetOfSets)[0m
-
-  Returns the union of the set of sets [;;4mSetOfSets[0m.

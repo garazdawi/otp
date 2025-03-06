@@ -1,4 +1,0 @@
-
-[;1m  external_set()[0m
-
-  An external set.

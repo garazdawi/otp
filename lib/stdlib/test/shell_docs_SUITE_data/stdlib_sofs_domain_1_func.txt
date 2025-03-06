@@ -1,9 +1,0 @@
-
-[;1m  domain(BinRel)[0m
-
-  Returns the domain of the binary relation [;;4mBinRel[0m.
-
-    1> R = sofs:relation([{1,a},{1,b},{2,b},{2,c}]),
-    S = sofs:domain(R),
-    sofs:to_external(S).
-    [1,2]

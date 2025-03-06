@@ -1,4 +1,0 @@
-
-[;1m  number()[0m
-
-  An Erlang number.

@@ -1,4 +1,0 @@
-
-[;1m  byte()[0m
-
-  A byte of data represented by an integer.

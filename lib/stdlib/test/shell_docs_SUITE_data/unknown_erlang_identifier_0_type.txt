@@ -1,5 +1,0 @@
-
-[;1m  identifier()[0m
-
-  An unique identifier for some entity, for example a process, port
-  or monitor.

@@ -1,4 +1,0 @@
-
-[;1m  set_fun()[0m
-
-  A SetFun.

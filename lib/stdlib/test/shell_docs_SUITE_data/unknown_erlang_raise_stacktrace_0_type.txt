@@ -1,4 +1,0 @@
-
-[;1m  raise_stacktrace()[0m
-
-  A extended [;;4mstacktrace/0[0m that can be passed to [;;4mraise/3[0m.

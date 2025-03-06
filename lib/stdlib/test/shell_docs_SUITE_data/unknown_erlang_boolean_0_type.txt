@@ -1,4 +1,0 @@
-
-[;1m  boolean()[0m
-
-  A boolean value.

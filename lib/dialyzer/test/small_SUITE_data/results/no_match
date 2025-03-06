@@ -1,4 +1,0 @@
-
-no_match.erl:5:1: Function t1/1 has no local return
-no_match.erl:7:1: Function t2/1 has no local return
-no_match.erl:9:1: Function t3/1 has no local return

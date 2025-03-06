@@ -1,7 +1,0 @@
-
-[;1m  message_queue_data()[0m
-
-  See [;;4mprocess_flag(message_queue_data, MQD)[0m.
-
-  Process message queue data configuration. For more information,
-  see [;;4mprocess_flag(message_queue_data, MQD)[0m

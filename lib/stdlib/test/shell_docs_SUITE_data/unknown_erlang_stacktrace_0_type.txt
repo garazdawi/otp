@@ -1,5 +1,0 @@
-
-[;1m  stacktrace()[0m
-
-  An Erlang stacktrace as described by Errors and Error Handling
-  section in the Erlang Reference Manual.

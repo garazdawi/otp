@@ -1,4 +1,0 @@
-
-[;1m  to_external(AnySet)[0m
-
-  Returns the external set of an atomic, ordered, or unordered set.
