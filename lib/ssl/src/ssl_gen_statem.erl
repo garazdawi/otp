@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -567,14 +567,22 @@ initial_hello({call, From}, {start, Timeout}, #state{static_env = #static_env{ro
 
 initial_hello({call, From}, {start, {Opts, EmOpts}, Timeout},
      #state{static_env = #static_env{role = Role},
+            handshake_env = #handshake_env{} = Env,
             ssl_options = OrigSSLOptions,
             socket_options = SockOpts} = State0) ->
     try
         SslOpts = ssl:update_options(Opts, Role, OrigSSLOptions),
 	State = ssl_config(SslOpts, Role, State0),
-	initial_hello({call, From}, {start, Timeout},
-	     State#state{ssl_options = SslOpts,
-                         socket_options = new_emulated(EmOpts, SockOpts)})
+        CountinueStatus = case maps:get(handshake, SslOpts) of
+                              hello ->
+                                  pause;
+                              Other ->
+                                  Other
+                          end,
+        initial_hello({call, From}, {start, Timeout},
+                      State#state{ssl_options = SslOpts,
+                                  handshake_env = Env#handshake_env{continue_status = CountinueStatus},
+                                  socket_options = new_emulated(EmOpts, SockOpts)})
     catch throw:Error ->
 	   {stop_and_reply, {shutdown, normal}, {reply, From, {error, Error}}, State0}
     end;
@@ -610,11 +618,10 @@ config_error(_Type, _Event, _State) ->
 			gen_statem:state_function_result().
 %%--------------------------------------------------------------------
 connection({call, RecvFrom}, {recv, N, Timeout},
-	   #state{static_env = #static_env{protocol_cb = Connection},
-                  socket_options =
+	   #state{socket_options =
                       #socket_options{active = false}} = State0) ->
     passive_receive(State0#state{bytes_to_read = N,
-                                 start_or_recv_from = RecvFrom}, ?FUNCTION_NAME, Connection,
+                                 start_or_recv_from = RecvFrom}, ?FUNCTION_NAME,
                     [{{timeout, recv}, Timeout, timeout}]);
 connection({call, From}, peer_certificate,
 	   #state{session = #session{peer_certificate = Cert}} = State) ->
@@ -639,6 +646,18 @@ connection({call, From}, negotiated_protocol,
                                                  negotiated_protocol = undefined}} = State) ->
     hibernate_after(?FUNCTION_NAME, State,
 		    [{reply, From, {ok, SelectedProtocol}}]);
+connection({call, From},
+           {close,{_NewController, _Timeout}},
+           #state{static_env = #static_env{role = Role,
+                                           socket = Socket,
+                                           trackers = Trackers,
+                                           transport_cb = Transport,
+                                           protocol_cb = Connection},
+                  connection_env = #connection_env{socket_tls_closed = #alert{} = Alert}
+                 } = State) ->
+    Pids = Connection:pids(State),
+    alert_user(Pids, Transport, Trackers, Socket, From, Alert, Role, connection, Connection),
+    {stop, {shutdown, normal}, State};
 connection({call, From}, 
            {close,{NewController, Timeout}},
            #state{connection_states = ConnectionStates,
@@ -728,9 +747,8 @@ connection(cast, {dist_handshake_complete, DHandle},
     Connection:next_event(connection, Record, State);
 connection(info, Msg, #state{static_env = #static_env{protocol_cb = Connection}} = State) ->
     Connection:handle_info(Msg, ?FUNCTION_NAME, State);
-connection(internal, {recv, RecvFrom}, #state{start_or_recv_from = RecvFrom,
-                                              static_env = #static_env{protocol_cb = Connection}} = State) ->
-    passive_receive(State, ?FUNCTION_NAME, Connection, []);
+connection(internal, {recv, RecvFrom}, #state{start_or_recv_from = RecvFrom} = State) ->
+    passive_receive(State, ?FUNCTION_NAME, []);
 connection(Type, Msg, State) ->
     handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
@@ -912,9 +930,9 @@ handle_info({ErrorTag, Socket, econnaborted}, StateName,
 
     maybe_invalidate_session(Version, Type, Role, Host, Port, Session),
     Pids = Connection:pids(State),
-    alert_user(Pids, Transport, Trackers,Socket,
+    alert_user(Pids, Transport, Trackers, Socket,
                StartFrom, ?ALERT_REC(?FATAL, ?CLOSE_NOTIFY), Role, StateName, Connection),
-    {stop, {shutdown, normal}, State};
+    {stop, {shutdown, transport_closed}, State};
 
 handle_info({ErrorTag, Socket, Reason}, StateName, #state{static_env = #static_env{
                                                                           role = Role,
@@ -924,28 +942,35 @@ handle_info({ErrorTag, Socket, Reason}, StateName, #state{static_env = #static_e
     ?SSL_LOG(info, "Socket error", [{error_tag, ErrorTag}, {description, Reason}]),
     Alert = ?ALERT_REC(?FATAL, ?CLOSE_NOTIFY, {transport_error, Reason}),
     handle_normal_shutdown(Alert#alert{role = Role}, StateName, State),
-    {stop, {shutdown,normal}, State};
-
+    {stop, {shutdown, transport_closed}, State};
 handle_info({'DOWN', MonitorRef, _, _, Reason}, _,
             #state{connection_env = #connection_env{user_application = {MonitorRef, _Pid}},
                    ssl_options = #{erl_dist := true}}) ->
     {stop, {shutdown, Reason}};
-handle_info({'DOWN', MonitorRef, _, _, _}, _,
+handle_info({'DOWN', MonitorRef, _, _, _}, connection,
             #state{connection_env = #connection_env{user_application = {MonitorRef, _Pid}}}) ->
     {stop, {shutdown, normal}};
+handle_info({'DOWN', MonitorRef, _, _, _}, _,
+            #state{connection_env = #connection_env{user_application = {MonitorRef, _Pid}}} = State) ->
+    %% Receiver has died
+    {stop, {shutdown, cancel_hs}, State#state{start_or_recv_from = undefined}};
 handle_info({'EXIT', Pid, _Reason}, StateName,
             #state{connection_env = #connection_env{user_application = {_MonitorRef, Pid}}} = State) ->
     %% It seems the user application has linked to us
     %% - ignore that and let the monitor handle this
     {next_state, StateName, State};
 %%% So that terminate will be run when supervisor issues shutdown
-handle_info({'EXIT', _Sup, shutdown}, _StateName, State) ->
+handle_info({'EXIT', _Sup, shutdown}, connection, State) ->
     {stop, shutdown, State};
+handle_info({'EXIT', _Sup, shutdown}, _, #state{start_or_recv_from = StartFrom} = State) ->
+    gen_statem:reply(StartFrom, {error, closed}),
+    {stop, {shutdown, cancel_hs},  State#state{start_or_recv_from = undefined}};
 handle_info({'EXIT', Socket, normal}, _StateName, #state{static_env = #static_env{socket = Socket}} = State) ->
     %% Handle as transport close"
     {stop,{shutdown, transport_closed}, State};
 handle_info({'EXIT', Socket, Reason}, _StateName, #state{static_env = #static_env{socket = Socket}} = State) ->
-    {stop,{shutdown, Reason}, State};
+    ?SSL_LOG(info, socket_error, [{error, Reason}]),
+    {stop,{shutdown, transport_closed}, State};
 handle_info(allow_renegotiate, StateName, #state{handshake_env = HsEnv} = State) -> %% PRE TLS-1.3
     {next_state, StateName, State#state{handshake_env = HsEnv#handshake_env{allow_renegotiate = true}}};
 handle_info(Msg, StateName, #state{static_env = #static_env{socket = Socket, error_tag = ErrorTag}} = State) ->
@@ -993,10 +1018,23 @@ read_application_data(Data,
                        user_data_buffer = {Front,BufferSize,Rear}}}
             end
     end.
+
+passive_receive(#state{static_env = #static_env{role = Role,
+                                                socket = Socket,
+                                                trackers = Trackers,
+                                                transport_cb = Transport,
+                                                protocol_cb = Connection},
+                       start_or_recv_from = RecvFrom,
+                       connection_env = #connection_env{socket_tls_closed = #alert{} = Alert}} = State,
+                StateName, _) ->
+    Pids = Connection:pids(State),
+    alert_user(Pids, Transport, Trackers, Socket, RecvFrom, Alert, Role, StateName, Connection),
+    {stop, {shutdown, normal}, State};
 passive_receive(#state{user_data_buffer = {Front,BufferSize,Rear},
                        %% Assert! Erl distribution uses active sockets
+                       static_env = #static_env{protocol_cb = Connection},
                        connection_env = #connection_env{erl_dist_handle = undefined}}
-                = State0, StateName, Connection, StartTimerAction) ->
+                = State0, StateName, StartTimerAction) ->
     case BufferSize of
 	0 ->
 	    Connection:next_event(StateName, no_record, State0, StartTimerAction);
@@ -1250,9 +1288,9 @@ terminate({shutdown, own_alert}, _StateName, #state{
     handle_trusted_certs_db(State),
     case application:get_env(ssl, alert_timeout) of
 	{ok, Timeout} when is_integer(Timeout) ->
-	    Connection:close({timeout, Timeout}, Socket, Transport, undefined);
+	    Connection:close({close, Timeout}, Socket, Transport, undefined);
 	_ ->
-	    Connection:close({timeout, ?DEFAULT_TIMEOUT}, Socket, Transport, undefined)
+	    Connection:close({close, ?DEFAULT_TIMEOUT}, Socket, Transport, undefined)
     end;
 terminate(Reason, connection, #state{static_env = #static_env{
                                                      protocol_cb = Connection,
@@ -1260,19 +1298,34 @@ terminate(Reason, connection, #state{static_env = #static_env{
                                                      socket = Socket},
                                      connection_states = ConnectionStates
                                     } = State) ->
-
+    
     handle_trusted_certs_db(State),
     Alert = terminate_alert(Reason),
     %% Send the termination ALERT if possible
     catch Connection:send_alert_in_connection(Alert, State),
-    Connection:close({timeout, ?DEFAULT_TIMEOUT}, Socket, Transport, ConnectionStates);
+    Connection:close({close, ?DEFAULT_TIMEOUT}, Socket, Transport, ConnectionStates);
+terminate({shutdown, cancel_hs} = Reason , _StateName,
+          #state{static_env = #static_env{transport_cb = Transport,
+                                          protocol_cb = Connection,
+                                          socket = Socket}
+                } = State0)  ->
+    handle_trusted_certs_db(State0),
+    CancelAlert = ?ALERT_REC(?WARNING, ?USER_CANCELED),
+    CloseAlert = ?ALERT_REC(?WARNING, ?CLOSE_NOTIFY),
+    try Connection:send_alert(CancelAlert, State0) of
+        State ->
+            catch Connection:send_alert(CloseAlert, State)
+    catch
+       _:_ ->
+            ok
+    end,
+    Connection:close(Reason, Socket, Transport, undefined);
 terminate(Reason, _StateName, #state{static_env = #static_env{transport_cb = Transport,
                                                               protocol_cb = Connection,
                                                               socket = Socket}
-				    } = State) ->
+                                    } = State) ->
     handle_trusted_certs_db(State),
     Connection:close(Reason, Socket, Transport, undefined).
-
 %%====================================================================
 %% Log handling
 %%====================================================================
@@ -1438,14 +1491,27 @@ no_records(Extensions) ->
 handle_active_option(false, connection = StateName, To, Reply, State) ->
     hibernate_after(StateName, State, [{reply, To, Reply}]);
 
-handle_active_option(_, connection = StateName, To, Reply, #state{static_env = #static_env{role = Role},
-                                                                  connection_env = #connection_env{socket_tls_closed = true},
-                                                                  user_data_buffer = {_,0,_}} = State) ->
+handle_active_option(_, connection = StateName, To, Reply,
+                     #state{static_env = #static_env{role = Role},
+                            connection_env = #connection_env{socket_tls_closed = true},
+                            user_data_buffer = {_,0,_}} = State) ->
     Alert = ?ALERT_REC(?FATAL, ?CLOSE_NOTIFY, all_data_delivered),
     handle_normal_shutdown(Alert#alert{role = Role}, StateName, State),
     {stop_and_reply,{shutdown, peer_close}, [{reply, To, Reply}]};
-handle_active_option(_, connection = StateName0, To, Reply, #state{static_env = #static_env{protocol_cb = Connection},
-                                                                   user_data_buffer = {_,0,_}} = State0) ->
+handle_active_option(_, connection = StateName, To, _Reply,
+                     #state{static_env = #static_env{role = Role,
+                                                     socket = Socket,
+                                                     trackers = Trackers,
+                                                     transport_cb = Transport,
+                                                     protocol_cb = Connection},
+                            connection_env = #connection_env{socket_tls_closed = Alert = #alert{}},
+                            user_data_buffer = {_,0,_}} = State) ->
+    Pids = Connection:pids(State),
+    alert_user(Pids, Transport, Trackers, Socket, To, Alert, Role, StateName, Connection),
+    {stop, {shutdown, normal}, State};
+handle_active_option(_, connection = StateName0, To, Reply,
+                     #state{static_env = #static_env{protocol_cb = Connection},
+                            user_data_buffer = {_,0,_}} = State0) ->
     case Connection:next_event(StateName0, no_record, State0) of
 	{next_state, StateName, State} ->
 	    hibernate_after(StateName, State, [{reply, To, Reply}]);
@@ -1888,11 +1954,12 @@ log_alert(Level, Role, ProtocolName, StateName,  Alert) ->
                                     statename => StateName,
                                     alert => Alert,
                                     alerter => peer}, Alert#alert.where).
-terminate_alert(normal) ->
+terminate_alert(Reason) when Reason == normal;
+                             Reason == shutdown;
+                             Reason == close ->
     ?ALERT_REC(?WARNING, ?CLOSE_NOTIFY);
-terminate_alert({Reason, _}) when Reason == close;
-                                  Reason == shutdown ->
-    ?ALERT_REC(?WARNING, ?CLOSE_NOTIFY);
+terminate_alert({Reason, _}) ->
+    terminate_alert(Reason);
 terminate_alert(_) ->
     ?ALERT_REC(?FATAL, ?INTERNAL_ERROR).
 

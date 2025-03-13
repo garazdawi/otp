@@ -1,7 +1,7 @@
 %
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -189,7 +189,7 @@ connect(Host0, Port, UserOptions, NegotiationTimeout)
             {error, Reason};
 
         Options ->
-            SocketOpts = [{active,false} | ?GET_OPT(socket_options,Options)],
+            SocketOpts = ?GET_OPT(socket_options,Options) ++ [{active,false}],
             Host = mangle_connect_address(Host0, Options),
             try
                 transport_connect(Host, Port, SocketOpts, Options)
@@ -248,7 +248,7 @@ continue_connect(Socket, Options0, NegTimeout) ->
                        port = SockPort,
                        profile = ?GET_OPT(profile,Options)
                       },
-    ssh_system_sup:start_subsystem(client, Address, Socket, Options).
+    ssh_system_sup:start_connection(client, Address, Socket, Options).
 
 %%--------------------------------------------------------------------
 -spec close(ConnectionRef) -> ok | {error,term()} when
@@ -287,16 +287,18 @@ close(ConnectionRef) ->
       | {options, client_options()}
       | {algorithms, conn_info_algs()}
       | {channels, conn_info_channels()}.
-        
--spec connection_info(ConnectionRef) -> InfoTupleList when
+
+-spec connection_info(ConnectionRef) ->
+          InfoTupleList | {error, term()} when
       ConnectionRef :: connection_ref(),
       InfoTupleList :: [InfoTuple],
       InfoTuple :: connection_info_tuple().
 
-connection_info(ConnectionRef) ->                                      
+connection_info(ConnectionRef) ->
     connection_info(ConnectionRef, []).
 
--spec connection_info(ConnectionRef, ItemList|Item) ->  InfoTupleList|InfoTuple when
+-spec connection_info(ConnectionRef, ItemList|Item) ->
+          InfoTupleList | InfoTuple | {error, term()} when
       ConnectionRef :: connection_ref(),
       ItemList :: [Item],
       Item :: client_version | server_version | user | peer | sockname | options | algorithms | sockname,
@@ -343,7 +345,7 @@ daemon(Socket, UserOptions) ->
                                            profile = ?GET_OPT(profile,Options0)
                                           },
                         Options = ?PUT_INTERNAL_OPT({connected_socket, Socket}, Options0),
-                        case ssh_system_sup:start_subsystem(server, Address, Socket, Options) of
+                        case ssh_system_sup:start_connection(server, Address, Socket, Options) of
                             {ok,Pid} ->
                                 {ok,Pid};
                             {error, {already_started, _}} ->
@@ -392,8 +394,7 @@ daemon(Host0, Port0, UserOptions0) when 0 =< Port0, Port0 =< 65535,
 
                 %% throws error:Error if no usable hostkey is found
                 ssh_connection_handler:available_hkey_algorithms(server, Options1),
-                ssh_system_sup:start_system(server,
-                                            #address{address = Host,
+                ssh_system_sup:start_system(#address{address = Host,
                                                      port = Port,
                                                      profile = ?GET_OPT(profile,Options1)},
                                             Options1)
@@ -540,8 +541,7 @@ stop_listener(Address, Port, Profile) ->
     lists:foreach(fun({Sup,_Addr}) ->
                           stop_listener(Sup)
                   end,
-                  ssh_system_sup:addresses(server,
-                                           #address{address=Address,
+                  ssh_system_sup:addresses(#address{address=Address,
                                                     port=Port,
                                                     profile=Profile})).
 
@@ -552,7 +552,7 @@ stop_listener(Address, Port, Profile) ->
 -spec stop_daemon(DaemonRef::daemon_ref()) -> ok.
 
 stop_daemon(SysSup) ->
-    ssh_system_sup:stop_system(server, SysSup).
+    ssh_system_sup:stop_system(SysSup).
 
 
 -spec stop_daemon(inet:ip_address(), inet:port_number()) -> ok.
@@ -567,8 +567,7 @@ stop_daemon(Address, Port, Profile) ->
     lists:foreach(fun({Sup,_Addr}) ->
                           stop_daemon(Sup)
                   end,
-                  ssh_system_sup:addresses(server,
-                                           #address{address=Address,
+                  ssh_system_sup:addresses(#address{address=Address,
                                                     port=Port,
                                                     profile=Profile})).
 

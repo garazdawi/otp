@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2023. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -918,6 +918,8 @@ aa_derive_from(Dst, [Parent|Parents], State0) ->
     aa_derive_from(Dst, Parents, aa_derive_from(Dst, Parent, State0));
 aa_derive_from(_Dst, [], State0) ->
     State0;
+aa_derive_from(#b_var{}=Dst, #b_literal{val=Val}, State) when is_map(Val) ->
+    aa_set_aliased(Dst, State);
 aa_derive_from(#b_var{}, #b_literal{}, State) ->
     State;
 aa_derive_from(#b_var{}=Dst, #b_var{}=Parent, State) ->

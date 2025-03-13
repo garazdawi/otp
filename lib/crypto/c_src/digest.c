@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2010-2023. All Rights Reserved.
+ * Copyright Ericsson AB 2010-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -116,7 +116,8 @@ static struct digest_type_t digest_types[] =
 
     {"shake128", "SHAKE-128", 0, 0,
 #ifdef HAVE_SHAKE128
-    {&EVP_shake128, NULL}
+    {&EVP_shake128, NULL},
+    16,   /* xof_default_length */
 #else
     {NULL,NULL}
 #endif
@@ -124,7 +125,8 @@ static struct digest_type_t digest_types[] =
 
     {"shake256", "SHAKE-256", 0, 0,
 #ifdef HAVE_SHAKE256
-    {&EVP_shake256, NULL}
+    {&EVP_shake256, NULL},
+    32,  /* xof_default_length */
 #else
     {NULL,NULL}
 #endif

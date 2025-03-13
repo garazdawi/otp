@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2009-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2009-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -383,12 +383,20 @@ set_options(Options) ->
       DomainDesc :: string(),
       HostName :: uri_string:uri_string().
 set_options(Options, Profile) when is_atom(Profile) orelse is_pid(Profile) ->
-    case validate_options(Options) of
-	{ok, Opts} ->
-	    httpc_manager:set_options(Opts, profile_name(Profile));
-	{error, Reason} ->
-	    {error, Reason}
-    end.
+    IsInetsRunning = [Application || {inets, _, _} = Application <- application:which_applications()] =/= [],
+    case IsInetsRunning of
+        true ->
+            {ok, IpFamily} = get_option(ipfamily, Profile),
+            {ok, UnixSock} = get_option(unix_socket, Profile),
+            case validate_options(Options, IpFamily, UnixSock) of
+                {ok, Opts} ->
+                    httpc_manager:set_options(Opts, profile_name(Profile));
+                Error ->
+                    Error
+                end;
+        _ ->
+            {error, inets_not_started}
+        end.
 
 -spec set_option(atom(), term()) -> ok | {error, term()}.
 set_option(Key, Value) ->
@@ -803,14 +811,16 @@ handle_request(Method, Url,
 			       socket_opts   = SocketOpts, 
 			       started       = Started,
 			       unix_socket   = UnixSocket,
-			       ipv6_host_with_brackets = BracketedHost},
-	    case httpc_manager:request(Request, profile_name(Profile)) of
-		{ok, RequestId} ->
-		    handle_answer(RequestId, Sync, Options);
-		{error, Reason} ->
-		    {error, Reason}
-	    end
-	end
+			       ipv6_host_with_brackets = BracketedHost,
+			       request_options         = Options},
+            case httpc_manager:request(Request, profile_name(Profile)) of
+                {ok, RequestId} ->
+                    handle_answer(RequestId, Receiver, Sync, Options,
+                                  element(#http_options.timeout, HTTPOptions));
+                {error, Reason} ->
+                    {error, Reason}
+            end
+        end
     catch
 	error:{noproc, _} ->
 	    {error, {not_started, Profile}};
@@ -862,26 +872,41 @@ mk_chunkify_fun(ProcessBody) ->
     end.
 
 
-handle_answer(RequestId, false, _) ->
+handle_answer(RequestId, _, false, _, _) ->
     {ok, RequestId};
-handle_answer(RequestId, true, Options) ->
+handle_answer(RequestId, ClientAlias, true, Options, Timeout) ->
     receive
-	{http, {RequestId, saved_to_file}} ->
-	    {ok, saved_to_file};
-	{http, {RequestId, {_,_,_} = Result}} ->
-	    return_answer(Options, Result);
-	{http, {RequestId, {error, Reason}}} ->
-	    {error, Reason}
-    end.
-
-return_answer(Options, {StatusLine, Headers, BinBody}) ->
-    Body = maybe_format_body(BinBody, Options),
-    case proplists:get_value(full_result, Options, true) of
-	true ->
-	    {ok, {StatusLine, Headers, Body}};
-	false ->
-	    {_, Status, _} = StatusLine,
-	    {ok, {Status, Body}}
+        {http, {RequestId, {ok, saved_to_file}}} ->
+            true = unalias(ClientAlias),
+            {ok, saved_to_file};
+        {http, {RequestId, {error, Reason}}} ->
+            true = unalias(ClientAlias),
+            {error, Reason};
+        {http, {RequestId, {ok, {StatusLine, Headers, BinBody}}}} ->
+            true = unalias(ClientAlias),
+            Body = maybe_format_body(BinBody, Options),
+            {ok, {StatusLine, Headers, Body}};
+        {http, {RequestId, {ok, {StatusCode, BinBody}}}} ->
+            true = unalias(ClientAlias),
+            Body = maybe_format_body(BinBody, Options),
+            {ok, {StatusCode, Body}}
+    after Timeout ->
+            cancel_request(RequestId),
+            true = unalias(ClientAlias),
+            receive
+                {http, {RequestId, {ok, saved_to_file}}} ->
+                    {ok, saved_to_file};
+                {http, {RequestId, {error, Reason}}} ->
+                    {error, Reason};
+                {http, {RequestId, {ok, {StatusLine, Headers, BinBody}}}} ->
+                    Body = maybe_format_body(BinBody, Options),
+                    {ok, {StatusLine, Headers, Body}};
+                {http, {RequestId, {ok, {StatusCode, BinBody}}}} ->
+                    Body = maybe_format_body(BinBody, Options),
+                    {ok, {StatusCode, Body}}
+            after 0 ->
+                    {error, timeout}
+            end
     end.
 
 maybe_format_body(BinBody, Options) ->
@@ -1078,6 +1103,8 @@ request_options_defaults() ->
 		ok;
 	   (Value) when is_function(Value, 1) ->
 		ok;
+           (Value) when is_reference(Value) ->
+                ok;
 	   (_) ->
 		error
 	end,
@@ -1099,7 +1126,7 @@ request_options_defaults() ->
      {body_format,             string,    VerifyBodyFormat},
      {full_result,             true,      VerifyFullResult},
      {headers_as_is,           false,     VerifyHeaderAsIs},
-     {receiver,                self(),    VerifyReceiver},
+     {receiver,                alias(),    VerifyReceiver},
      {socket_opts,             undefined, VerifySocketOpts},
      {ipv6_host_with_brackets, false,     VerifyBrackets}
     ]. 
@@ -1153,6 +1180,7 @@ request_options([{Key, DefaultVal, Verify} | Defaults], Options, Acc) ->
       BodyFormat  :: string | binary,
       SocketOpt :: term(),
       Receiver :: pid()
+                  | reference()
                   | fun((term()) -> term())
                   | { ReceiverModule::atom()
                     , ReceiverFunction::atom()
@@ -1163,6 +1191,8 @@ request_options_sanity_check(Opts) ->
 	    case proplists:get_value(receiver, Opts) of
 		Pid when is_pid(Pid) andalso (Pid =:= self()) ->
 		    ok;
+                Reference when is_reference(Reference) ->
+                    ok;
 		BadReceiver ->
 		    throw({error, {bad_options_combo, 
 				   [{sync, true}, {receiver, BadReceiver}]}})
@@ -1179,30 +1209,26 @@ request_options_sanity_check(Opts) ->
     end,
     ok.
 
-validate_ipfamily_unix_socket(Options0) ->
-    IpFamily = proplists:get_value(ipfamily, Options0, inet),
-    UnixSocket = proplists:get_value(unix_socket, Options0, undefined),
-    Options1 = proplists:delete(ipfamily, Options0),
-    Options2 = proplists:delete(ipfamily, Options1),
-    validate_ipfamily_unix_socket(IpFamily, UnixSocket, Options2,
-                                  [{ipfamily, IpFamily}, {unix_socket, UnixSocket}]).
-%%
-validate_ipfamily_unix_socket(local, undefined, _Options, _Acc) ->
-    bad_option(unix_socket, undefined);
-validate_ipfamily_unix_socket(IpFamily, UnixSocket, _Options, _Acc)
-  when IpFamily =/= local, UnixSocket =/= undefined ->
-    bad_option(ipfamily, IpFamily);
-validate_ipfamily_unix_socket(IpFamily, UnixSocket, Options, Acc) ->
-    validate_ipfamily(IpFamily),
-    validate_unix_socket(UnixSocket),
-    {Options, Acc}.
+validate_ipfamily_unix_socket(Options0, CurrIpFamily, CurrUnixSock) ->
+    IpFamily = proplists:get_value(ipfamily, Options0, CurrIpFamily),
+    UnixSocket = proplists:get_value(unix_socket, Options0, CurrUnixSock),
+    validate_ipfamily_unix_socket(IpFamily, UnixSocket).
 
-validate_options(Options0) ->
+validate_ipfamily_unix_socket(local, undefined) ->
+    throw({error, {bad_ipfamily_unix_socket_combination, local, undefined}});
+validate_ipfamily_unix_socket(IpFamily, UnixSocket)
+  when IpFamily =/= local, UnixSocket =/= undefined ->
+    throw({error, {bad_ipfamily_unix_socket_combination, IpFamily, UnixSocket}});
+validate_ipfamily_unix_socket(IpFamily, UnixSocket) ->
+    validate_ipfamily(IpFamily),
+    validate_unix_socket(UnixSocket).
+
+validate_options(Options0, CurrIpFamily, CurrUnixSock) ->
     try
-        {Options, Acc} = validate_ipfamily_unix_socket(Options0),
-        validate_options(Options, Acc)
+        validate_ipfamily_unix_socket(Options0, CurrIpFamily, CurrUnixSock),
+        validate_options(Options0, [])
     catch
-        error:Reason ->
+        throw:Reason ->
             {error, Reason}
     end.
 %%

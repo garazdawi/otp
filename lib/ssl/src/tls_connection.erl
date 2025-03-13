@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -115,7 +115,8 @@
 -export([init/1]).
 
 -export([renegotiate/2,
-        choose_tls_fsm/2]).
+        choose_tls_fsm/2,
+        gen_info/3]).
 
 %% gen_statem state functions
 -export([initial_hello/3,
@@ -278,7 +279,7 @@ hello(internal, #server_hello{} = Hello,
             ssl_gen_statem:handle_own_alert(Alert, hello, State)
     end;
 hello(info, Event, State) ->
-    tls_gen_connection:handle_info(Event, ?FUNCTION_NAME, State);
+    gen_info(Event, ?FUNCTION_NAME, State);
 hello(Type, Event, State) ->
     try tls_dtls_connection:gen_handshake(?FUNCTION_NAME, Type, Event, State)
     catch throw:#alert{} = Alert ->

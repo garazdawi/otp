@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2025. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -434,6 +434,8 @@ struct erts_system_monitor_flags_t erts_system_monitor_flags;
 Eterm erts_system_profile;
 struct erts_system_profile_flags_t erts_system_profile_flags;
 int erts_system_profile_ts_type = ERTS_TRACE_FLG_NOW_TIMESTAMP;
+
+erts_atomic_t erts_sched_local_random_nosched_state;
 
 #if ERTS_MAX_PROCESSES > 0x7fffffff
 #error "Need to store process_count in another type"
@@ -6312,7 +6314,8 @@ erts_init_scheduling(int no_schedulers, int no_schedulers_online, int no_poll_th
     erts_atomic32_init_relb(&erts_halt_progress, -1);
     erts_halt_code = INT_MIN;
 
-
+    erts_atomic_init_nob(&erts_sched_local_random_nosched_state,
+                         (erts_aint_t)&erts_sched_local_random_nosched_state >> 3);
 }
 
 ErtsRunQueue *
@@ -13598,7 +13601,9 @@ erts_proc_exit_handle_monitor(ErtsMonitor *mon, void *vctxt, Sint reds)
             break;
         }
         case ERTS_MON_TYPE_RESOURCE:
+            erts_proc_unlock(c_p, ERTS_PROC_LOCK_MAIN);
             erts_fire_nif_monitor(mon);
+            erts_proc_lock(c_p, ERTS_PROC_LOCK_MAIN);
             mon = NULL;
             break;
         case ERTS_MON_TYPE_DIST_PORT:

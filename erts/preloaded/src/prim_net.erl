@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2018-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -109,12 +109,7 @@
 -type if_type()       :: other | ethernet_csmacd | iso88025_tokenring |
                          fddi | ppp | software_loopback | atm | ieee80211 |
                          tunnel | ieee1394 | ieee80216_wman | wwanpp | wwanpp2.
--type if_admin_status() :: non_operational |
-                           unreachable |
-                           disconnected |
-                           connecting | connected |
-                           operational |
-                           non_neg_integer().
+-type if_admin_status() :: enabled | disabled.
 -type internal_if_oper_status() :: non_operational |
                                    unreachable |
                                    disconnected |

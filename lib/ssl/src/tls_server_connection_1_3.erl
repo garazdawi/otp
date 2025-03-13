@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2022-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2022-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -215,7 +215,7 @@ start(internal = Type, #change_cipher_spec{} = Msg, State) ->
 start(internal, #client_hello{extensions = #{client_hello_versions :=
                                                  #client_hello_versions{versions = ClientVersions}
                                             }} = Hello,
-      #state{ssl_options = #{handshake := full}} = State) ->
+      #state{handshake_env = #handshake_env{continue_status = full}} = State) ->
     case tls_record:is_acceptable_version(?TLS_1_3, ClientVersions) of
         true ->
             handle_client_hello(Hello, State);
@@ -239,7 +239,7 @@ start(internal, #client_hello{}, State0) -> %% Missing mandantory TLS-1.3 extens
     %% so it is a previous version hello.
     ssl_gen_statem:handle_own_alert(?ALERT_REC(?FATAL, ?PROTOCOL_VERSION), ?FUNCTION_NAME, State0);
 start(info, Msg, State) ->
-    tls_gen_connection:handle_info(Msg, ?FUNCTION_NAME, State);
+    tls_connection:gen_info(Msg, ?FUNCTION_NAME, State);
 start(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
@@ -261,7 +261,7 @@ negotiated(internal, {start_handshake, _} = Message, State0) ->
             {next_state, NextState, State, []}
     end;
 negotiated(info, Msg, State) ->
-    tls_gen_connection:handle_info(Msg, ?FUNCTION_NAME, State);
+    tls_connection:gen_info(Msg, negotiated, State);
 negotiated(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
@@ -328,7 +328,7 @@ wait_finished(internal,
             ssl_gen_statem:handle_own_alert(Alert, ?FUNCTION_NAME, State0)
     end;
 wait_finished(info, Msg, State) ->
-    tls_gen_connection:handle_info(Msg, ?FUNCTION_NAME, State);
+    tls_connection:gen_info(Msg, ?FUNCTION_NAME, State);
 wait_finished(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
@@ -354,7 +354,7 @@ wait_eoed(internal, #end_of_early_data{}, #state{handshake_env = HsEnv0} = State
                                             wait_eoed, State0)
     end;
 wait_eoed(info, Msg, State) ->
-    tls_gen_connection:handle_info(Msg, ?FUNCTION_NAME, State);
+    tls_connection:gen_info(Msg, ?FUNCTION_NAME, State);
 wait_eoed(Type, Msg, State) ->
     ssl_gen_statem:handle_common_event(Type, Msg, ?FUNCTION_NAME, State).
 
@@ -390,17 +390,22 @@ handle_client_hello(ClientHello, State0) ->
 do_handle_client_hello(#client_hello{cipher_suites = ClientCiphers,
                                      random = Random,
                                      session_id = SessionId,
-                                     extensions = Extensions} = Hello,
-                       #state{ssl_options = #{ciphers := ServerCiphers,
-                                              signature_algs := ServerSignAlgs,
-                                              supported_groups := ServerGroups0,
-                                              alpn_preferred_protocols := ALPNPreferredProtocols,
-                                              honor_cipher_order := HonorCipherOrder,
-                                              early_data := EarlyDataEnabled} = Opts} = State0) ->
+                                     extensions = Extensions} = Hello, State0) ->
     SNI = maps:get(sni, Extensions, undefined),
     EarlyDataIndication = maps:get(early_data, Extensions, undefined),
     {Ref,Maybe} = tls_gen_connection_1_3:do_maybe(),
     try
+        #state{connection_states = ConnectionStates0,
+               session = Session0,
+               ssl_options = #{ciphers := ServerCiphers,
+                               signature_algs := ServerSignAlgs,
+                               supported_groups := ServerGroups0,
+                               alpn_preferred_protocols := ALPNPreferredProtocols,
+                               honor_cipher_order := HonorCipherOrder},
+               connection_env = #connection_env{cert_key_alts = CertKeyAlts}
+              } = State1 =
+            Maybe(ssl_gen_statem:handle_sni_extension(SNI, State0)),
+
         ClientGroups0 = Maybe(tls_handshake_1_3:supported_groups_from_extensions(Extensions)),
         ClientGroups = Maybe(tls_handshake_1_3:get_supported_groups(ClientGroups0)),
         ServerGroups = Maybe(tls_handshake_1_3:get_supported_groups(ServerGroups0)),
@@ -415,14 +420,9 @@ do_handle_client_hello(#client_hello{cipher_suites = ClientCiphers,
                            maps:get(signature_algs, Extensions, undefined)),
         ClientSignAlgsCert = tls_handshake_1_3:get_signature_scheme_list(
                                maps:get(signature_algs_cert, Extensions, undefined)),
-        CertAuths = tls_handshake_1_3:get_certificate_authorities(maps:get(certificate_authorities,
-                                                                           Extensions, undefined)),
+               CertAuths = tls_handshake_1_3:get_certificate_authorities(maps:get(certificate_authorities,
+                                                                                  Extensions, undefined)),
         Cookie = maps:get(cookie, Extensions, undefined),
-
-        #state{connection_states = ConnectionStates0,
-               session = Session0,
-               connection_env = #connection_env{cert_key_alts = CertKeyAlts}} = State1 =
-            Maybe(ssl_gen_statem:handle_sni_extension(SNI, State0)),
 
         Maybe(validate_cookie(Cookie, State1)),
 
@@ -470,9 +470,12 @@ do_handle_client_hello(#client_hello{cipher_suites = ClientCiphers,
                          State1#state{session = Session}
                  end,
 
+        Opts = State2#state.ssl_options,
         State3 = case maps:get(keep_secrets, Opts, false) of
-                     true -> tls_handshake_1_3:set_client_random(State2, Hello#client_hello.random);
-                     false -> State2
+                     true ->
+                         tls_handshake_1_3:set_client_random(State2, Hello#client_hello.random);
+                     false ->
+                         State2
                  end,
 
         State4 = tls_handshake_1_3:update_start_state(State3,
@@ -494,7 +497,7 @@ do_handle_client_hello(#client_hello{cipher_suites = ClientCiphers,
         case Maybe(send_hello_retry_request(State4, ClientPubKey, KeyShare, SessionId)) of
             {_, start} = NextStateTuple ->
                 NextStateTuple;
-            {State5, negotiated} ->
+            {#state{ssl_options = #{early_data := EarlyDataEnabled}} = State5, negotiated} ->
                 %% Determine if early data is accepted
                 State = handle_early_data(State5, EarlyDataEnabled, EarlyDataIndication),
                 %% Exclude any incompatible PSKs.
@@ -503,7 +506,10 @@ do_handle_client_hello(#client_hello{cipher_suites = ClientCiphers,
         end
     catch
         {Ref, #alert{} = Alert} ->
-            Alert
+            Alert;
+        error:Reason:ST ->
+            ?SSL_LOG(debug, handshake_error, [{reason, Reason}, {stacktrace, ST}]),
+            ?ALERT_REC(?ILLEGAL_PARAMETER, illegal_parameter_in_client_hello)
     end.
 
 send_hello_flight({start_handshake, PSK0},
@@ -583,7 +589,8 @@ send_hello_flight({start_handshake, PSK0},
     catch
         {Ref, #alert{} = Alert} ->
             Alert;
-        error:badarg ->
+        error:Reason:ST ->
+            ?SSL_LOG(debug, crypto_error, [{reason, Reason}, {stacktrace, ST}]),
             ?ALERT_REC(?ILLEGAL_PARAMETER, illegal_parameter_to_compute_key)
     end.
 

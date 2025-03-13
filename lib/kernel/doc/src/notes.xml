@@ -31,6 +31,160 @@
   </header>
   <p>This document describes the changes made to the Kernel application.</p>
 
+<section><title>Kernel 9.2.4.6</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fixed a couple of bugs that could make <c>global</c>'s
+	    internal state inconsistent when a connection was
+	    reconnected.</p>
+          <p>
+	    Own Id: OTP-19381 Aux Id: PR-9377, GH-9112, GH-9117 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fix bug where log printouts would go missing when
+	    <c>application_controller</c> is stopping while log
+	    messages are being sent.</p> <p>This bug was introduced
+	    by OTP-19078 in Erlang/OTP 26.2.5. </p>
+          <p>
+	    Own Id: OTP-19418 Aux Id: GH-9163 PR-9274 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>gen_udp:send on domain local can leak inet_reply
+	    messages.</p>
+          <p>
+	    Own Id: OTP-19332 Aux Id: #8989 </p>
+        </item>
+        <item>
+	    <p>Failure to create an UDP IPv6 socket when inet_backend
+	    = socket with certain IPv6 socket options.</p>
+          <p>
+	    Own Id: OTP-19357 </p>
+        </item>
+        <item>
+	    <p>net:getifaddrs does not properly report the running
+	    flag on windows.</p>
+          <p>
+	    Own Id: OTP-19366 Aux Id: OTP-19061, ERIERL-1134 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A bug has been fixed where receiving an SCTP message with
+	    `gen_sctp` could waste the first fragments of a message
+	    and only deliver the last fragment.</p>
+          <p>
+	    This happened with low probability when the OS signaled
+	    that the socket was ready for reading in combination with
+	    an internal time-out retry.</p>
+          <p>
+	    A bug has been fixed with a lingering time-out from after
+	    an SCTP connect that could stop the flow of incoming
+	    messages on an active `gen_tcp` socket.</p>
+          <p>
+	    Own Id: OTP-19235 Aux Id: ERIERL-1133, PR-8837 </p>
+        </item>
+        <item>
+          <p>
+	    An boolean option `non_block_send` for SCTP, has ben
+	    added to be able to achieve the old behaviour to avoid
+	    blocking send operations by passing the OS network stack
+	    error message (`{error,eagain}` through.</p>
+          <p>
+	    Own Id: OTP-19258 Aux Id: OTP-19061, ERIERL-1134 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A race in the kTLS flavour of SSL distribution has been
+	    fixed so inet_drv.c doesn't read ahead too much data
+	    which could cause the kTLS encryption to be activated too
+	    late when some encrypted data had already been read into
+	    the inet_drv.c buffer as unencrypted.</p>
+          <p>
+	    Own Id: OTP-19175 Aux Id: GH-8561, PR-8690 </p>
+        </item>
+        <item>
+          <p>
+	    Fix a deadlock when an application crashes during startup
+	    and log messages were sent to standard out. Logger would
+	    fail to print the messages to standard out and instead
+	    print them to standard error.</p>
+          <p>
+	    Own Id: OTP-19205 </p>
+        </item>
+        <item>
+	    <p> Add the stdlib application parameters
+	    <c>shell_redraw_prompt_on_output</c> which when set to
+	    <c>false</c> disables redrawing of the shell prompt if
+	    any other output is done. </p>
+          <p>
+	    Own Id: OTP-19213 Aux Id: PR-8763 ERIERL-1108 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Kernel 9.2.4.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A call to socket:[recv|recvfrom|recvmsg]/* with Timeout =
+	    0 on Windows could cause a (case clause) crash if data is
+	    immediately available.</p>
+          <p>
+	    Own Id: OTP-19063 Aux Id: OTP-18835 </p>
+        </item>
+        <item>
+	    <p>Open a <c>disk_log</c> file and combining
+	    <c>head_func</c> with <c>rotate</c> options did not
+	    work.</p>
+          <p>
+	    Own Id: OTP-19104 Aux Id: ERIERL-870 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Kernel 9.2.4</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>

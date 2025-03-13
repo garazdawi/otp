@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2009-2023. All Rights Reserved.
+ * Copyright Ericsson AB 2009-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -2949,6 +2949,16 @@ static void monitor_resource_down(ErlNifEnv* env, void* obj, ErlNifPid* pid,
     enif_send(env, &rsrc->receiver, msg_env, msg);
     if (msg_env)
         enif_free_env(msg_env);
+
+    /* OTP-19330 GH-8983:
+     * Verify calling enif_whereis_pid/port in down callback
+     * without lock order violation. */
+    {
+        ErlNifPid pid;
+        ErlNifPid port;
+        enif_whereis_pid(env, atom_null, &pid);
+        enif_whereis_port(env, atom_null, &port);
+    }
 }
 
 static ERL_NIF_TERM alloc_monitor_resource_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])

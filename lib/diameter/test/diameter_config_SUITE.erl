@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2013-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -297,9 +297,15 @@ start(Key, Vs)
 
 start(SvcName, Opts) ->
     try
-        diameter:start_service(SvcName, Opts)
+        Res1 = diameter:start_service(SvcName, Opts),
+        %% io:format("[started] Is service ~p: ~p~n",
+        %%           [SvcName, diameter:is_service(SvcName)]),
+        Res1
     after
-        diameter:stop_service(SvcName)
+        Res2 = diameter:stop_service(SvcName),
+        %% io:format("[stopped] Is service ~p: ~p~n",
+        %%           [SvcName, diameter:is_service(SvcName)]),
+        Res2
     end.
 
 apps(application) ->

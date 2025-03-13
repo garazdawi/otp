@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -548,21 +548,23 @@ handle_msg(#ssh_msg_channel_extended_data{recipient_channel = ChannelId,
     channel_data_reply_msg(ChannelId, Connection, DataType, Data);
 
 handle_msg(#ssh_msg_channel_window_adjust{recipient_channel = ChannelId,
-					  bytes_to_add = Add}, 
+					  bytes_to_add = Add},
 	   #connection{channel_cache = Cache} = Connection, _, _SSH) ->
-    #channel{send_window_size = Size, remote_id = RemoteId} = 
-	Channel0 = ssh_client_channel:cache_lookup(Cache, ChannelId), 
-    
-    {SendList, Channel} =  %% TODO: Datatype 0 ?
-	update_send_window(Channel0#channel{send_window_size = Size + Add},
-			   0, undefined, Connection),
-    
-    Replies = lists:map(fun({Type, Data}) -> 
-				{connection_reply, channel_data_msg(RemoteId, Type, Data)}
-			end, SendList),
-    FlowCtrlMsgs = flow_control(Channel, Cache),
-    {Replies ++ FlowCtrlMsgs, Connection};
-
+    case ssh_client_channel:cache_lookup(Cache, ChannelId) of
+        Channel0 = #channel{send_window_size = Size,
+                            remote_id = RemoteId} ->
+            {SendList, Channel} =  %% TODO: Datatype 0 ?
+                update_send_window(Channel0#channel{send_window_size = Size + Add},
+                                   0, undefined, Connection),
+            Replies = lists:map(fun({Type, Data}) ->
+                                        {connection_reply,
+                                         channel_data_msg(RemoteId, Type, Data)}
+                                end, SendList),
+            FlowCtrlMsgs = flow_control(Channel, Cache),
+            {Replies ++ FlowCtrlMsgs, Connection};
+        undefined ->
+            {[], Connection}
+    end;
 handle_msg(#ssh_msg_channel_open{channel_type = "session" = Type,
 				 sender_channel = RemoteId,
 				 initial_window_size = WindowSz,
@@ -606,7 +608,7 @@ handle_msg(#ssh_msg_channel_open{channel_type = "forwarded-tcpip",
                        suggest_window_size = WinSz,
                        suggest_packet_size = PktSz,
                        options = Options,
-                       sub_system_supervisor = SubSysSup
+                       connection_supervisor = ConnectionSup
                       } = C,
 	   client, _SSH) ->
     {ReplyMsg, NextChId} =
@@ -614,7 +616,7 @@ handle_msg(#ssh_msg_channel_open{channel_type = "forwarded-tcpip",
             {ok, {ConnectToHost,ConnectToPort}} ->
                 case gen_tcp:connect(ConnectToHost, ConnectToPort, [{active,false}, binary]) of
                     {ok,Sock} ->
-                        {ok,Pid} = ssh_subsystem_sup:start_channel(client, SubSysSup, self(),
+                        {ok,Pid} = ssh_connection_sup:start_channel(client, ConnectionSup, self(),
                                                                    ssh_tcpip_forward_client, ChId,
                                                                    [Sock], undefined, Options),
                         ssh_client_channel:cache_update(Cache,
@@ -664,7 +666,7 @@ handle_msg(#ssh_msg_channel_open{channel_type = "direct-tcpip",
                        suggest_window_size = WinSz,
                        suggest_packet_size = PktSz,
                        options = Options,
-                       sub_system_supervisor = SubSysSup
+                       connection_supervisor = ConnectionSup
                       } = C,
 	   server, _SSH) ->
     {ReplyMsg, NextChId} =
@@ -680,7 +682,7 @@ handle_msg(#ssh_msg_channel_open{channel_type = "direct-tcpip",
                 case gen_tcp:connect(binary_to_list(HostToConnect), PortToConnect,
                                      [{active,false}, binary]) of
                     {ok,Sock} ->
-                        {ok,Pid} = ssh_subsystem_sup:start_channel(server, SubSysSup, self(),
+                        {ok,Pid} = ssh_connection_sup:start_channel(server, ConnectionSup, self(),
                                                                    ssh_tcpip_forward_srv, ChId,
                                                                    [Sock], undefined, Options),
                         ssh_client_channel:cache_update(Cache,
@@ -739,21 +741,25 @@ handle_msg(#ssh_msg_channel_request{recipient_channel = ChannelId,
 handle_msg(#ssh_msg_channel_request{recipient_channel = ChannelId,
 				    request_type = "exit-signal",
 				    want_reply = false,
-				    data = Data},  
+				    data = Data},
            #connection{channel_cache = Cache} = Connection0, _, _SSH) ->
     <<?DEC_BIN(SigName, _SigLen),
-      ?BOOLEAN(_Core), 
+      ?BOOLEAN(_Core),
       ?DEC_BIN(Err, _ErrLen),
       ?DEC_BIN(Lang, _LangLen)>> = Data,
-    Channel = ssh_client_channel:cache_lookup(Cache, ChannelId),
-    RemoteId =  Channel#channel.remote_id,
-    {Reply, Connection} =  reply_msg(Channel, Connection0, 
-				     {exit_signal, ChannelId,
-				      binary_to_list(SigName),
-				      binary_to_list(Err),
-				      binary_to_list(Lang)}),
-    CloseMsg = channel_close_msg(RemoteId),
-    {[{connection_reply, CloseMsg}|Reply], Connection};
+    case ssh_client_channel:cache_lookup(Cache, ChannelId) of
+        #channel{remote_id = RemoteId} = Channel ->
+            {Reply, Connection} =  reply_msg(Channel, Connection0,
+                                             {exit_signal, ChannelId,
+                                              binary_to_list(SigName),
+                                              binary_to_list(Err),
+                                              binary_to_list(Lang)}),
+            ChannelCloseMsg = channel_close_msg(RemoteId),
+            {[{connection_reply, ChannelCloseMsg}|Reply], Connection};
+        _ ->
+            %% Channel already closed by peer
+            {[], Connection0}
+    end;
 
 handle_msg(#ssh_msg_channel_request{recipient_channel = ChannelId,
 				    request_type = "xon-xoff",
@@ -912,8 +918,8 @@ handle_msg(#ssh_msg_global_request{name = <<"tcpip-forward">>,
             {[{connection_reply, request_failure_msg()}], Connection};
 
         true ->
-            SubSysSup = ?GET_INTERNAL_OPT(subsystem_sup, Opts),
-            FwdSup = ssh_subsystem_sup:tcpip_fwd_supervisor(SubSysSup),
+            ConnectionSup = ?GET_INTERNAL_OPT(connection_sup, Opts),
+            FwdSup = ssh_connection_sup:tcpip_fwd_supervisor(ConnectionSup),
             ConnPid = self(),
             case ssh_tcpip_forward_acceptor:supervised_start(FwdSup,
                                                              {ListenAddrStr, ListenPort},
@@ -1127,22 +1133,22 @@ setup_session(#connection{channel_cache = Cache,
 start_cli(#connection{options = Options, 
 		      cli_spec = CliSpec,
 		      exec = Exec,
-		      sub_system_supervisor = SubSysSup}, ChannelId) ->
+		      connection_supervisor = ConnectionSup}, ChannelId) ->
     case CliSpec of
         no_cli ->
             {error, cli_disabled};
         {CbModule, Args} ->
-            ssh_subsystem_sup:start_channel(server, SubSysSup, self(), CbModule, ChannelId, Args, Exec, Options)
+            ssh_connection_sup:start_channel(server, ConnectionSup, self(), CbModule, ChannelId, Args, Exec, Options)
     end.
 
 
 start_subsystem(BinName, #connection{options = Options,
-                                     sub_system_supervisor = SubSysSup},
+                                     connection_supervisor = ConnectionSup},
 	       #channel{local_id = ChannelId}, _ReplyMsg) ->
     Name = binary_to_list(BinName),
     case check_subsystem(Name, Options) of
 	{Callback, Opts} when is_atom(Callback), Callback =/= none ->
-            ssh_subsystem_sup:start_channel(server, SubSysSup, self(), Callback, ChannelId, Opts, undefined, Options);
+            ssh_connection_sup:start_channel(server, ConnectionSup, self(), Callback, ChannelId, Opts, undefined, Options);
         {none, _} ->
             {error, bad_subsystem};
 	{_, _} ->

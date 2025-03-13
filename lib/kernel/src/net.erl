@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2019-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -443,7 +443,7 @@ win_getifaddrs_iat3(Name,
                      bcast_addr           := _BCastAddr} = _IpAddr,
                    #{type                 := Type,
                      admin_status         := AStatus,
-                     internal_oper_status := _OStatus,
+                     internal_oper_status := OStatus,
                      phys_addr            := PhysAddr,
                      index                := Idx} = _IfEntry) ->
     Flags1 = case Type of
@@ -455,16 +455,19 @@ win_getifaddrs_iat3(Name,
                      []
              end,
     Flags2 = case AStatus of
-                  non_operational ->
-                     [];
-                connecting ->
-                     [up, pointtopoint];
-                 connected ->
-                     [up, runnning, pointtopoint];
-                 operational ->
-                     [up, running];
-                 _ ->
-                     [up]
+                 enabled ->
+                     case OStatus of
+                         connecting ->
+                             [up, pointtopoint];
+                         connected ->
+                             [up, runnning, pointtopoint];
+                         operational ->
+                             [up, running];
+                         _ ->
+                             [up]
+                     end;
+                 disabled ->
+                     []
              end,
     Flags  = lists:sort(Flags1 ++ Flags2),
     HaType = type2hatype(Type),
@@ -540,7 +543,7 @@ win_getifaddrs_aa3(Name,
                      prefixes             := Prefixes} = _AdAddrs,
                    #{type                 := Type,
                      admin_status         := AStatus,
-                     internal_oper_status := _OStatus,
+                     internal_oper_status := OStatus,
                      phys_addr            := PhysAddr,
                      index                := Idx} = _IfEntry) ->
     Flags1 =
@@ -558,16 +561,19 @@ win_getifaddrs_aa3(Name,
                      []
              end,
     Flags3 = case AStatus of
-                 non_operational ->
-                     [];
-                 connecting ->
-                     [up, pointtopoint];
-                 connected ->
-                     [up, runnning, pointtopoint];
-                 operational ->
-                     [up, running];
-                 _ ->
-                     [up]
+                 enabled ->
+                     case OStatus of
+                         connecting ->
+                             [up, pointtopoint];
+                         connected ->
+                             [up, runnning, pointtopoint];
+                         operational ->
+                             [up, running];
+                         _ ->
+                             [up]
+                     end;
+                 disabled ->
+                     []
              end,
     Flags  = lists:sort(Flags1 ++ Flags2 ++ Flags3),
     HaType = type2hatype(Type),

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1998-2023. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -77,14 +77,14 @@
          t_simple_link_local_sockaddr_in6_send_recv/1,
 
          otp_18323_opts_processing/1,
-         otp_18323_open/1
-
+         otp_18323_open/1,
+         otp_19332/1,
+         otp_19357_open_with_ipv6_option/1
 	]).
 
 -include_lib("kernel/src/inet_int.hrl").
+-include("kernel_test_lib.hrl").
 
--define(TRY_TC(F), try_tc(F)).
-               
 suite() ->
     [{ct_hooks,[ts_install_cth]},
      {timetrap,{minutes,1}}].
@@ -119,7 +119,9 @@ groups() ->
      {socket_monitor,         [], socket_monitor_cases()},
 
      {sockaddr,               [], sockaddr_cases()},
-     {otp18323,               [], otp18323_cases()}
+     {tickets,                [], tickets_cases()},
+     {otp18323,               [], otp18323_cases()},
+     {otp19332,               [], otp19332_cases()}
     ].
 
 inet_backend_default_cases() ->
@@ -152,7 +154,7 @@ all_cases() ->
      {group, socket_monitor},
      otp_17492,
      {group, sockaddr},
-     {group, otp18323}
+     {group, tickets}
     ].
 
 recv_and_send_opts_cases() ->
@@ -190,12 +192,23 @@ sockaddr_cases() ->
      t_simple_link_local_sockaddr_in6_send_recv
     ].
 
+tickets_cases() ->
+    [
+     {group, otp18323},
+     {group, otp19332},
+     otp_19357_open_with_ipv6_option
+    ].
+
 otp18323_cases() ->
     [
      otp_18323_opts_processing,
      otp_18323_open
     ].
 
+otp19332_cases() ->
+    [
+     otp_19332
+    ].
 
 init_per_suite(Config0) ->
 
@@ -209,14 +222,32 @@ init_per_suite(Config0) ->
 
         Config1 when is_list(Config1) ->
             
+            %% We need a monitor on this node also
+            ?P("init_per_suite -> start (local) system monitor"),
+            kernel_test_sys_monitor:start(),
+
+            maybe_display_dgram_qlen(),
+
             ?P("init_per_suite -> end when "
                "~n      Config: ~p", [Config1]),
-            
-            %% We need a monitor on this node also
-            kernel_test_sys_monitor:start(),
 
             Config1
     end.
+
+maybe_display_dgram_qlen() ->
+    maybe_display_dgram_qlen(os:type()).
+
+maybe_display_dgram_qlen({unix, linux}) ->
+    case max_dgram_qlen() of
+        QLen when is_integer(QLen) ->
+            ?P("Max DGram QLen: ~w~n", [QLen]),
+            ok;
+        _ ->
+            ok
+    end;
+maybe_display_dgram_qlen(_) ->
+    ok.
+
 
 end_per_suite(Config0) ->
 
@@ -3218,6 +3249,141 @@ do_otp_18323_open(#{local_addr := Addr}) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% On some linux platforms, mostly in "docker"-like environments,
+%% send *can* block. This, I think, mostly depends the value of
+%% system config *net.unix.max_dgram_qlen*. On Docker this can
+%% be small (10). With "normal" machines this is much larger (> 500),
+%% which makes this hard tp reproduce.
+otp_19332(Config) when is_list(Config) ->
+    ct:timetrap(?MINS(1)),
+    Cond = fun() ->
+                   is_linux(),
+                   is_docker(Config),
+                   %% We should really test for UDS support also,
+                   %% but how without using 'socket'?
+                   %% Maybe its enough to open the socket (with 'local').
+                   has_small_enough_dgram_qlen(20),
+                   ok
+           end,
+    Pre  = fun() ->
+                   Opts = [local,
+                           {active, false},
+                           {debug, true}],
+                   case gen_udp:open(0, Opts) of
+                       {ok, Sock} ->
+                           inet:setopts(Sock, [{debug, false}]),
+                           #{sock => Sock};
+                       {error, Reason} ->
+                           skip(?F("Failed open socket: ~p", [Reason]))
+                   end
+           end,
+    Case = fun(State) -> do_otp_19332(State) end,
+    Post = fun(#{sock := Sock}) ->
+                   (catch gen_udp:close(Sock))
+           end,
+    ?TC_TRY(?FUNCTION_NAME, Cond, Pre, Case, Post).
+
+do_otp_19332(#{sock := Sock}) ->
+    ?P("begin"),
+
+    0 = do_otp_19332_test(Sock),
+
+    ?P("done"),
+    ok.
+
+do_otp_19332_test(S) ->
+    do_otp_19332_test(S, 100000, #{}, 0).
+
+do_otp_19332_test(_S, 0, Errs, NumR) ->
+    ?P("send attempts done: "
+       "~n   Errors:                   ~p"
+       "~n   Number of (inet) replies: ~p", [Errs, NumR]),
+    NumR;
+do_otp_19332_test(S, N, Errs, NumR) ->
+    Packet = lists:duplicate(100, "hello\n"),
+    Errs2  =
+        case gen_udp:send(S, {local, "/tmp/test.sock"}, Packet) of
+            ok ->
+                ?P("UNEXPECTED SUCCESS (at ~w)", [N]),
+                exit(unexpected_success);
+            {error, Reason} ->
+                case Errs of
+                    #{Reason := EN} ->
+                        Errs#{Reason => EN + 1};
+                    _ ->
+                        Errs#{Reason => 1}
+                end
+        end,
+    receive
+        {inet_reply, S, _Ref} ->
+            ?P("Got a reply"),
+            do_otp_19332_test(S, N-1, Errs2, NumR+1)
+    after 0 ->
+            do_otp_19332_test(S, N-1, Errs2, NumR)
+    end.
+    
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+otp_19357_open_with_ipv6_option(Config) when is_list(Config) ->
+    ct:timetrap(?MINS(1)),
+    Cond = fun() ->
+                   ?P("cond check: do we support socket"),
+                   case ?LIB:is_socket_supported() of
+                       true ->
+                           ?P("cond check: do we support ipv6"),
+                           ?LIB:has_support_ipv6();
+                       false ->
+                           ?SKIPT("SOCKET not supported")
+                   end
+           end,
+    Pre  = fun() ->
+                   {ok, Addr} = ?LIB:which_local_addr(inet6),
+                   #{local_addr => Addr}
+           end,
+    Case = fun(State) -> do_otp_19357_open_with_ipv6_option(State) end,
+    Post = fun(_) -> ok end,
+    ?TC_TRY(?FUNCTION_NAME, Cond, Pre, Case, Post).
+    
+do_otp_19357_open_with_ipv6_option(#{local_addr := Addr}) ->
+    %% First without specifying the (bind) address:
+    TryOpen = fun(No, Opts) ->
+                      try gen_udp:open(0, Opts) of
+                          {ok, Sock} ->
+                              ?P("success ~w", [No]),
+                              (catch gen_udp:close(Sock));
+                          {error, Reason} ->
+                              ?P("FAILED open socket ~w: "
+                                 "~n   ~p", [No, Reason]),
+                              exit({Reason, No})
+                      catch
+                          C:E ->
+                              ?P("CATCHED open socket ~w: "
+                                 "~n   Error Class: ~p"
+                                 "~n   Error:       ~p"
+                                 "~n   ~p", [No, C, E]),
+                              exit({C, E, No, Opts})
+                      end
+              end,
+    ?P("try wo address (1)"),
+    TryOpen(1, [{inet_backend, socket},
+                binary,
+                inet6, {ipv6_v6only, true},
+                {reuseaddr, true}]),
+
+    ?P("try w address (2)"),
+    TryOpen(2, [{inet_backend, socket},
+                binary,
+                inet6, {ipv6_v6only, true},
+                {ip, Addr},
+                {reuseaddr, true}]),
+
+    ?P("done"),
+    ok.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 ok({ok,V}) -> V;
 ok(NotOk) ->
     try throw(not_ok)
@@ -3260,6 +3426,50 @@ get_localaddr([Localhost|Ls]) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+is_docker(Config) ->
+    case which_label(Config) of
+        {ok, docker} ->
+            ok;
+        _ ->
+            skip("Is not running in a Docker")
+    end.
+
+has_small_enough_dgram_qlen(Max) when is_integer(Max) ->
+    case max_dgram_qlen() of
+        QLen when is_integer(QLen) andalso (QLen < Max) ->
+            ok;
+        QLen when is_integer(QLen) ->
+            skip("QLen too large: " ++
+                     integer_to_list(QLen) ++ " > " ++ integer_to_list(Max));
+        _ ->
+            skip("Could not get qlen")
+    end.
+
+-define(QLEN, "net.unix.max_dgram_qlen").
+max_dgram_qlen() ->
+    case string:strip(sysctl(?QLEN), right, $\n) of
+        "sysctl: " ++ _ ->
+            %% Key does not exist...skip
+            skip;
+        QLenAttrStr ->
+            case [string:strip(S) || S <- string:tokens(QLenAttrStr, [$=])] of
+                [?QLEN, Value] ->
+                    ?P("Max DGram QLen: ~p~n", [Value]),
+                    try list_to_integer(Value) of
+                        QLen ->
+                            QLen
+                    catch
+                        _:_:_ ->
+                            skip
+                    end;
+                _ ->
+                    skip
+            end
+    end.
+    
+sysctl(Key) when is_list(Key) ->
+    os:cmd(?F("~w ~s", [?FUNCTION_NAME, Key])).
+
 is_net_supported() ->
     try net:info() of
         #{} ->
@@ -3269,6 +3479,18 @@ is_net_supported() ->
             not_supported(net)
     end.
 
+-define(UNIX(Flavor), {unix, Flavor}).
+
+is_linux() ->
+    is_platform(?UNIX(linux), "Linux").
+
+is_platform(Platform, PlatformStr) ->
+    case os:type() of
+        Platform ->
+            ok;
+        _ ->
+            skip("Is not " ++ PlatformStr)
+    end.
 
 is_not_darwin() ->
     is_not_platform(darwin, "Darwin").
@@ -3285,6 +3507,20 @@ is_not_platform(Platform, PlatformStr)
             skip("This does not work on " ++ PlatformStr);
         _ ->
             ok
+    end.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+which_label(Config) ->
+    config_lookup(label, Config).
+
+config_lookup(Key, Config) ->
+    case lists:keysearch(Key, 1, Config) of
+        {value, {Key, Value}} ->
+            {ok, Value};
+        _ ->
+            {error, not_found}
     end.
 
 

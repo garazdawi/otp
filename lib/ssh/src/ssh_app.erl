@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2021. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,11 +23,11 @@
 %%%=========================================================================
 %%% Purpose : Application master and top supervisors for SSH.
 %%%
-%%%  -----> ssh_sup -----+-----> sshc_sup --+--> "system sup" (etc)
+%%%  -----> ssh_sup -----+-----> sshc_sup --+--> "connection sup" (etc)
 %%%                      |                  |
-%%%                      |                  +--> "system sup" (etc)
+%%%                      |                  +--> "connection sup" (etc)
 %%%                      |                  :
-%%%                      |                  +--> "system sup" (etc)
+%%%                      |                  +--> "connection sup" (etc)
 %%%                      |
 %%%                      +-----> sshc_sup --+--> "system sup" (etc)
 %%%                                         |

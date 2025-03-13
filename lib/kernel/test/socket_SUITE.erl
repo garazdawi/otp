@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2018-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2024. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -749,7 +749,9 @@
          otp16359_maccept_tcpL/1,
          otp18240_accept_mon_leak_tcp4/1,
          otp18240_accept_mon_leak_tcp6/1,
-         otp18635/1
+         otp18635/1,
+         otp19063/1,
+         otp19251/1
         ]).
 
 
@@ -2353,7 +2355,9 @@ tickets_cases() ->
     [
      {group, otp16359},
      {group, otp18240},
-     otp18635
+     otp18635,
+     otp19063,
+     otp19251
     ].
 
 otp16359_cases() ->
@@ -51695,9 +51699,7 @@ do_otp18635(_) ->
     ?P("get sockname for listen socket"),
     {ok, SA} = socket:sockname(LSock),
 
-    %% ok = socket:setopt(LSock, otp, debug, true),
-
-    % show handle returned from nowait accept
+    %% show handle returned from nowait accept
     ?P("try accept with timeout = nowait - expect select when"
        "~n   (gen socket) info: ~p"
        "~n   Sockets:           ~p",
@@ -51738,7 +51740,7 @@ do_otp18635(_) ->
                   ?P("[connector] try create socket"),
                   {ok, CSock} = socket:open(inet, stream),
                   ?P("[connector] try connect: "
-                       "~n   (server) ~p", [SA]),
+                     "~n   (server) ~p", [SA]),
                   ok = socket:connect(CSock, SA),
                   ?P("[connector] connected - inform parent"),
                   Parent ! {self(), connected},
@@ -51749,7 +51751,7 @@ do_otp18635(_) ->
                           (catch socket:close(CSock)),
                           exit(normal)
                   end
-              end),
+          end),
 
     ?P("await (connection-) confirmation from connector (~p)", [Connector]),
     receive
@@ -51815,6 +51817,254 @@ do_otp18635(_) ->
        "~n   Sockets:           ~p", [socket:info(), socket:which_sockets()]),
 
     Result.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% This test case is to verify recv on UDP with timeout zero (0) on Windows.
+otp19063(Config) when is_list(Config) ->
+    ?TT(?SECS(10)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   %% is_windows(),
+                   has_support_ipv4()
+           end,
+           fun() ->
+                   InitState = #{},
+                   ok = do_otp19063(InitState)
+           end).
+
+
+do_otp19063(_) ->
+    Parent = self(),
+
+    ?P("Get \"proper\" local socket address"),
+    LSA0 = which_local_socket_addr(inet),
+    LSA  = LSA0#{port => 0},
+    
+
+
+    %% --- recv ---
+
+    ?P("[recv] - create (listen) socket"),
+    {ok, LSock1} = socket:open(inet, stream),
+
+    ?P("[recv] bind (listen) socket to: "
+       "~n   ~p", [LSA]),
+    ok = socket:bind(LSock1, LSA),
+
+    ?P("[recv] make listen socket"),
+    ok = socket:listen(LSock1),
+
+    ?P("[recv] get sockname for listen socket"),
+    {ok, SA1} = socket:sockname(LSock1),
+
+    ?P("[recv] attempt a nowait-accept"),
+    {Tag, Handle} =
+        case socket:accept(LSock1, nowait) of
+            {select, {select_info, _, SH}} ->
+                {select, SH};
+            {completion, {completion_info, _, CH}} ->
+                {completion, CH}
+        end,
+
+    ?P("[recv] spawn the connector process"),
+    {Connector, MRef} =
+        spawn_monitor(
+          fun() ->
+                  ?P("[connector] try create socket"),
+                  {ok, CSock1} = socket:open(inet, stream),
+                  ?P("[connector] bind socket to: "
+                     "~n   ~p", [LSA]),
+                  ok = socket:bind(CSock1, LSA),
+                  ?P("[connector] try connect: "
+                     "~n   (server) ~p", [SA1]),
+                  ok = socket:connect(CSock1, SA1),
+                  ?P("[connector] connected - inform parent"),
+                  Parent ! {self(), connected},
+                  ?P("[connector] await termination command"),
+                  receive
+                      {Parent, terminate} ->
+                          ?P("[connector] terminate - close socket"),
+                          (catch socket:close(CSock1)),
+                          exit(normal)
+                  end
+          end),
+
+    ?P("[recv] await (connection-) confirmation from connector (~p)",
+       [Connector]),
+    receive
+        {Connector, connected} ->
+            ?P("[recv] connector connected"),
+            ok
+    end,
+
+    ?P("[recv] receive the accepted socket"),
+    ASock1 =
+        receive
+            {'$socket', LSock1, completion, {Handle, {ok, AS}}}
+              when (Tag =:= completion) ->
+                AS;
+            {'$socket', LSock1, completion, {Handle, {error, Reason1C}}}
+              when (Tag =:= completion) ->
+                exit({accept_failed, Reason1C});
+           {'$socket', LSock1, select, Handle}  ->
+                case socket:accept(LSock1, nowait) of
+                    {ok, AS} ->
+                        AS;
+                    {error, Reason1S} ->
+                        exit({accept_failed, Reason1S})
+                end
+        end,
+
+    ?SLEEP(?SECS(1)),
+
+    ?P("[recv] try read"),
+    case socket:recv(ASock1, 0, 0) of
+        {error, timeout} -> ok;
+        Any1             -> ?P("Unexpected result: ~p", [Any1]), exit({unexpected_recv_result, Any1})
+    end,
+
+
+    %% --- recvfrom ---
+
+    ?P("[recvfrom} create socket"),
+    {ok, Sock2} = socket:open(inet, dgram),
+
+    ?P("[recvfrom} bind socket to: "
+       "~n   ~p", [LSA]),
+    ok = socket:bind(Sock2, LSA),
+
+    ?SLEEP(?SECS(1)),
+
+    ?P("[recvfrom] try read"),
+    {error, timeout} = socket:recvfrom(Sock2, 1024, 0),
+
+
+    %% --- recvmsg ---
+
+    ?P("[recvmsg] create socket"),
+    {ok, Sock3} = socket:open(inet, dgram),
+
+    ?P("[recvmsg] bind socket to: "
+       "~n   ~p", [LSA]),
+    ok = socket:bind(Sock3, LSA),
+
+    ?SLEEP(?SECS(1)),
+
+    ?P("[recvmsg] try read"),
+    {error, timeout} = socket:recvmsg(Sock3, 0),
+
+
+    ?P("cleanup"),
+
+    Connector ! {self(), terminate},
+    receive
+        {'DOWN', MRef, process, Connector, _} ->
+            ?P("connector terminated"),
+            ok
+    end,
+    _ = socket:close(ASock1),
+    _ = socket:close(LSock1),
+    _ = socket:close(Sock2),
+    _ = socket:close(Sock3),
+
+    ?P("done"),
+
+    ok.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+otp19251(Config) when is_list(Config) ->
+    ?TT(?SECS(10)),
+    tc_try(?FUNCTION_NAME,
+           fun() ->
+                   is_windows(),
+                   has_support_unix_domain_socket()
+           end,
+           fun() ->
+                   InitState = #{},
+                   ok = do_otp19251(InitState)
+           end).
+
+
+do_otp19251(_) ->
+
+    %% Just be on the safe side
+    ?P("pre cleanup"),
+    file:delete("sock1"),
+    file:delete("sock2"),
+
+    %% Create first socket
+    ?P("create (and bind) first socket"),
+    {ok, Sock1} = socket:open(local, stream),
+    ok          = socket:bind(Sock1,
+                              #{family => local,
+                                path   => <<"sock1">>}),
+
+    %% Attempt first invalid connect
+    ?P("try first invalid connect - expect failure"),
+    case socket:connect(Sock1, #{family => local, path => <<"none">>}) of
+        {error, econnrefused} ->
+            ?P("expected failure"),
+            ok;
+        %% {error, enoent} ->
+        %%     ?P("expected failure"),
+        %%     ok;
+        {error, #{info := econnrefused}} ->
+            ?P("expected failure"),
+            ok;
+        {error, #{info := Reason1} = EEI1} ->
+            ?P("unexpected failure reason: "
+               "~n   ~p", [EEI1]),
+            ?FAIL({unexpected_failure_reason, Reason1});
+        ok ->
+            ?FAIL(unexpected_success)
+    end,
+
+
+    %% Create second socket
+    ?P("create (and bind) second socket"),
+    {ok, Sock2} = socket:open(local, stream),
+    ok          = socket:bind(Sock2,
+                              #{family => local,
+                                path   => <<"sock2">>}),
+
+    %% Attempt second invalid connect
+    ?P("try first invalid connect - expect failure"),
+    case socket:connect(Sock2, #{family => local, path => <<"none">>}) of
+        {error, econnrefused} ->
+            ?P("expected failure"),
+            ok;
+        %% {error, enoent} ->
+        %%     ?P("expected failure"),
+        %%     ok;
+        {error, #{info := econnrefused}} ->
+            ?P("expected failure"),
+            ok;
+        {error, #{info := Reason2} = EEI2} ->
+            ?P("unexpected failure reason: "
+               "~n   ~p", [EEI2]),
+            ?FAIL({unexpected_failure_reason, Reason2});
+        ok ->
+            ?FAIL(unexpected_success)
+    end,
+
+    %% And verify that we can still create more sockets:
+    ?P("create more sockets - expect success"),
+    {ok, Sock3} = socket:open(local, stream),
+    {ok, Sock4} = socket:open(local, stream),
+
+    %% Cleanup
+    ?P("cleanup"),
+    _ = socket:close(Sock4),
+    _ = socket:close(Sock3),
+    _ = socket:close(Sock2),
+    _ = socket:close(Sock1),
+
+    ?P("done"),
+    ok.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -52275,6 +52525,14 @@ is_not_windows() ->
             ok
     end.
 
+is_windows() ->
+    case os:type() of
+        {win32, nt} ->
+            ok;
+        _ ->
+            skip("Only test on Windows")
+end.
+
 is_not_platform(Platform, PlatformStr)
   when is_atom(Platform) andalso is_list(PlatformStr) ->
       case os:type() of
@@ -52318,8 +52576,9 @@ has_support_sctp() ->
     end.
 
 
-%% The idea is that this function shall test if the test host has 
-%% support for IPv4 or IPv6. If not, there is no point in running corresponding tests.
+%% The idea is that this function shall test if the host has 
+%% support for IPv4 or IPv6.
+%% If not, there is no point in running corresponding tests.
 %% Currently we just skip.
 has_support_ipv4() ->
     ?KLIB:has_support_ipv4().

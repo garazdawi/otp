@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2019-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -58,6 +58,8 @@
          select_best_cert/1,
          select_sha1_cert/0,
          select_sha1_cert/1,
+         root_any_sign/0,
+         root_any_sign/1,
          connection_information/0,
          connection_information/1,
          secret_connection_info/0,
@@ -68,6 +70,8 @@
          versions/1,
          versions_option_based_on_sni/0,
          versions_option_based_on_sni/1,
+         ciphers_option_based_on_sni/0,
+         ciphers_option_based_on_sni/1,
          active_n/0,
          active_n/1,
          dh_params/0,
@@ -149,6 +153,8 @@
          handshake_continue_timeout/1,
          handshake_continue_change_verify/0,
          handshake_continue_change_verify/1,
+         handshake_hello_postpone_opts_verify/0,
+         handshake_hello_postpone_opts_verify/1,
          hello_client_cancel/0,
          hello_client_cancel/1,
          hello_server_cancel/0,
@@ -221,6 +227,7 @@
 	 log/2,
          get_connection_information/3,
          protocol_version_check/2,
+         suite_check/2,
          check_peercert/2,
          %%TODO Keep?
          run_error_server/1,
@@ -268,7 +275,9 @@ since_1_2() ->
     [
      conf_signature_algs,
      no_common_signature_algs,
-     versions_option_based_on_sni
+     versions_option_based_on_sni,
+     ciphers_option_based_on_sni,
+     root_any_sign
     ].
 
 pre_1_3() ->
@@ -341,6 +350,7 @@ handshake_paus_tests() ->
      handshake_continue, 
      handshake_continue_timeout,
      handshake_continue_change_verify,
+     handshake_hello_postpone_opts_verify,
      hello_client_cancel,
      hello_server_cancel,
      handshake_continue_tls13_client
@@ -591,6 +601,53 @@ select_sha1_cert(Config) when is_list(Config) ->
                                           peer => [{digest, sha},
                                                    {key, {namedCurve, secp256r1}}]}}),
     test_sha1_cert_conf(Version, TestConfRSA, TestConfECDSA, Config).
+
+%%--------------------------------------------------------------------
+root_any_sign() ->
+    [{doc,"Use cert signed with unsupported signature for the root will succeed, "
+      "as it is not verified"}].
+
+root_any_sign(Config) when is_list(Config) ->
+    Version = ssl_test_lib:protocol_version(Config),
+    #{client_config := CSucess, server_config := SSucess} =
+        public_key:pkix_test_data(#{server_chain =>
+                                         #{root => [{digest, sha},
+                                                    {key, ssl_test_lib:hardcode_rsa_key(1)}],
+                                           intermediates => [[{digest, sha256},
+                                                              {key, ssl_test_lib:hardcode_rsa_key(2)}]],
+                                           peer =>  [{digest, sha256}, {key, ssl_test_lib:hardcode_rsa_key(3)}]
+                                          },
+                                     client_chain =>
+                                         #{root => [{digest, sha},
+                                                   {key, ssl_test_lib:hardcode_rsa_key(3)}],
+                                           intermediates => [[{digest, sha256},
+                                                              {key, ssl_test_lib:hardcode_rsa_key(2)}]],
+                                           peer => [{digest, sha256},
+                                                    {key, ssl_test_lib:hardcode_rsa_key(1)}]}}),
+
+    #{client_config := CFail, server_config := SFail} =
+        public_key:pkix_test_data(#{server_chain =>
+                                        #{root => [{digest, sha256},
+                                                   {key, ssl_test_lib:hardcode_rsa_key(1)}],
+                                          intermediates => [[{digest, sha},
+                                                             {key, ssl_test_lib:hardcode_rsa_key(2)}]],
+                                          peer =>  [{digest, sha256}, {key, ssl_test_lib:hardcode_rsa_key(3)}]
+                                         },
+                                    client_chain =>
+                                        #{root => [{digest, sha256},
+                                                   {key, ssl_test_lib:hardcode_rsa_key(3)}],
+                                          intermediates => [[{digest, sha},
+                                                             {key, ssl_test_lib:hardcode_rsa_key(2)}]],
+                                          peer => [{digest, sha256},
+                                                   {key, ssl_test_lib:hardcode_rsa_key(1)}]}}),
+    %% Makes sha1 disallowed for certificate signatures when set explicitly 
+    %% (default for signature_algs_cert was changed to allow them if signatures_algs is not set explicitly)
+    SigAlgs = ssl:signature_algs(default, Version), 
+    %% Root signatures are not validated, so its signature will not fail the connection                             
+    ssl_test_lib:basic_test(CSucess, [{verify, verify_peer}, {signature_algs, SigAlgs} | SSucess], Config),
+    %% Intermediate cert signatures are validated, so sha1 signatures will fail connection                             
+    ssl_test_lib:basic_alert(CFail, [{verify, verify_peer}, {signature_algs, SigAlgs} | SFail],
+                             Config, unsupported_certificate).
 
 %%--------------------------------------------------------------------
 connection_information() ->
@@ -1012,7 +1069,7 @@ handshake_continue_timeout(Config) when is_list(Config) ->
     
     ssl_test_lib:check_result(Server, {error,timeout}),
     ssl_test_lib:close(Server).
-
+%%------------------------------------------------------------------
 handshake_continue_change_verify() ->
     [{doc, "Test API function ssl:handshake_continue with updated verify option. "
       "Use a verification that will fail to make sure verification is run"}].
@@ -1042,6 +1099,35 @@ handshake_continue_change_verify(Config) when is_list(Config) ->
                             | ClientOpts], Config)},
                 {continue_options, [{verify, verify_peer} | ClientOpts]}]),
     ssl_test_lib:check_client_alert(Client,  handshake_failure).
+
+%%------------------------------------------------------------------
+handshake_hello_postpone_opts_verify() ->
+   [{doc, "Test that cert key option validation is postponed until full handshake is performed"}].
+handshake_hello_postpone_opts_verify(Config) ->
+    ClientOpts = ssl_test_lib:ssl_options(client_rsa_verify_opts, Config),
+    ServerOpts = ssl_test_lib:ssl_options(server_rsa_verify_opts, Config),
+    TcpPort = ssl_test_lib:inet_port(node()),
+    Host = net_adm:localhost(),
+    Version = ssl_test_lib:protocol_version(Config),
+
+    {ok,TcpListenSocket} = gen_tcp:listen(TcpPort, [binary, {active, false}, inet, {reuseaddr, true}]),
+    spawn(fun() ->
+                  {ok, TcpSocket} = gen_tcp:accept(TcpListenSocket),
+                  {ok, ASocket, _Ext} = ssl:handshake(TcpSocket, [{handshake, hello}, {versions, [Version]}]),
+                  ssl:handshake_continue(ASocket, ServerOpts, 5000)
+          end),
+    {ok, UpgradeClient} = ssl:connect(Host, TcpPort, ClientOpts),
+    ssl:close(UpgradeClient),
+
+    Port = ssl_test_lib:inet_port(node()),
+    {ok,TlsListenSocket} = ssl:listen(Port, [binary, {active, false}, inet, {reuseaddr, true}]),
+    spawn(fun() ->
+                  {ok, ASocket} = ssl:transport_accept(TlsListenSocket),
+                  {ok, _Ext} = ssl:handshake(ASocket, [{handshake, hello}, {versions, [Version]}]),
+                  ssl:handshake_continue(ASocket, ServerOpts, 5000)
+          end),
+    {ok, Client} = ssl:connect(Host, Port, [{versions, [Version]} | ClientOpts]),
+    ssl:close(Client).
 
 %%--------------------------------------------------------------------
 hello_client_cancel() ->
@@ -1139,6 +1225,42 @@ versions_option_based_on_sni(Config) when is_list(Config) ->
 					{from, self()},
 					{mfa, {ssl_test_lib, no_result, []}},
 					{options, [{server_name_indication, SNI}, {versions, Versions} | ClientOpts]}]),
+
+    ssl_test_lib:check_result(Server, ok),
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+%%--------------------------------------------------------------------
+
+ciphers_option_based_on_sni() ->
+    [{doc,"Test that SNI versions option is selected over default ciphers option"}].
+
+ciphers_option_based_on_sni(Config) when is_list(Config) ->
+    ClientOpts = ssl_test_lib:ssl_options(client_rsa_verify_opts, Config),
+    ServerOpts = ssl_test_lib:ssl_options(server_rsa_opts, Config),
+    TestVersion = ssl_test_lib:protocol_version(Config),
+    Suites = rsa_cipher_suites_not_default(TestVersion),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+
+    SNI = net_adm:localhost(),
+    Fun = fun(ServerName) ->
+              case ServerName of
+                  SNI ->
+                      [{ciphers, Suites} | ServerOpts];
+                  _ ->
+                      ServerOpts
+              end
+          end,
+
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+					{from, self()},
+					{mfa, {?MODULE, suite_check, [TestVersion]}},
+					{options, [{sni_fun, Fun} | ServerOpts]}]),
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ClientNode}, {port, Port},
+					{host, Hostname},
+					{from, self()},
+					{mfa, {ssl_test_lib, no_result, []}},
+					{options, [{server_name_indication, SNI} | ClientOpts]}]),
 
     ssl_test_lib:check_result(Server, ok),
     ssl_test_lib:close(Server),
@@ -2555,6 +2677,7 @@ options_certificate_authorities(_Config) ->
     ?OK(#{certificate_authorities := true}, [{certificate_authorities, true}], client),
     ?OK(#{}, [{certificate_authorities, false}], client, [certificate_authorities]),
     ?OK(#{certificate_authorities := false}, [{certificate_authorities, false}], server),
+    ?OK(#{certificate_authorities := false}, [{certificate_authorities, false}, {versions, ['tlsv1.2']}], server),
     ?OK(#{}, [{certificate_authorities, true}], server, [certificate_authorities]),
 
     %% Errors
@@ -2746,6 +2869,13 @@ options_verify(Config) ->  %% fail_if_no_peer_cert, verify, verify_fun, partial_
                                                         {verify_fun, {NewF3, bar}}],
                                                        client, DefOpts),
 
+    ?OK(#{allow_any_ca_purpose := true},
+        [{allow_any_ca_purpose, true}, {verify, verify_peer}, {cacerts, [Cert]}],
+        server),
+    ?OK(#{allow_any_ca_purpose := false},
+        [{verify, verify_peer}, {cacerts, [Cert]}],
+        client),
+
     %% Errors
     ?ERR({partial_chain, undefined}, [{partial_chain, undefined}], client),
     ?ERR({options, incompatible, [{verify, verify_none}, {fail_if_no_peer_cert, true}]},
@@ -2758,6 +2888,7 @@ options_verify(Config) ->  %% fail_if_no_peer_cert, verify, verify_fun, partial_
     ?ERR({options, incompatible, [{verify, _}, {cacerts, undefined}]}, [{verify, verify_peer}], server),
     ?ERR({partial_chain, not_a_fun}, [{partial_chain, not_a_fun}], client),
     ?ERR({verify_fun, not_a_fun}, [{verify_fun, not_a_fun}], client),
+    ?ERR({allow_any_ca_purpose, foo},[{allow_any_ca_purpose, foo}, {verify, verify_peer}, {cacerts, [Cert]}], server),
     ok.
 
 options_fallback(_Config) ->
@@ -2993,7 +3124,7 @@ options_sni(_Config) -> %% server_name_indication
     ok.
 
 options_sign_alg(_Config) ->  %% signature_algs[_cert]
-    ?OK(#{signature_algs := [_|_], signature_algs_cert := undefined},
+    ?OK(#{signature_algs := [_|_], signature_algs_cert := [_|_]},
         [], client),
     ?OK(#{signature_algs := [rsa_pss_rsae_sha512,{sha512,rsa}], signature_algs_cert := undefined},
         [{signature_algs, [rsa_pss_rsae_sha512,{sha512,rsa}]}], client),
@@ -4448,4 +4579,27 @@ run_sha1_cert_conf(_, #{client_config := ClientOpts, server_config := ServerOpts
     SigOpts = ssl_test_lib:sig_algs(LegacyAlg, NVersion),
     ssl_test_lib:basic_test([{verify, verify_peer} | ClientOpts] ++ SigOpts, ServerOpts, Config).
 
+
+rsa_cipher_suites_not_default('tlsv1.3'= Version) ->
+    [_ | Suites] = ssl:cipher_suites(default, Version),
+    Suites;
+rsa_cipher_suites_not_default(Version) ->
+    ssl_test_lib:test_ciphers(ecdhe_rsa, aes_128_gcm, Version).
+
+suite_check(Socket, 'tlsv1.3'= Version) ->
+    [_, Suite| _] = ssl:cipher_suites(default, Version),
+    case ssl:connection_information(Socket, [selected_cipher_suite]) of
+        {ok, [{selected_cipher_suite, Suite}]} ->
+            ok;
+        Other ->
+            ct:fail({expected, Suite, got, Other})
+    end;
+suite_check(Socket, Version) ->
+    [Suite |_] = rsa_cipher_suites_not_default(Version),
+    case ssl:connection_information(Socket, [selected_cipher_suite]) of
+        {ok, [{selected_cipher_suite, Suite}]} ->
+            ok;
+        Other ->
+            ct:fail({expected, Suite, got, Other})
+    end.
 

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -54,31 +54,33 @@ send(SendAddr, #session{socket = Socket, socket_type = SocketType},
 send(SendAddr, #session{socket = Socket, socket_type = SocketType}, Request) ->
     send(SendAddr, Socket, SocketType, Request).
     
-send(SendAddr, Socket, SocketType, 
-     #request{method        = Method, 
-	      path          = Path, 
-	      pquery        = Query, 
-	      headers       = Headers,
-	      content       = Content, 
-	      address       = Address, 
-	      abs_uri       = AbsUri, 
-	      headers_as_is = HeadersAsIs,
-	      settings      = HttpOptions, 
-	      userinfo      = UserInfo}) -> 
+send(SendAddr, Socket, SocketType,
+     #request{method          = Method,
+              path            = Path,
+              pquery          = Query,
+              headers         = Headers,
+              content         = Content,
+              address         = Address,
+              abs_uri         = AbsUri,
+              headers_as_is   = HeadersAsIs,
+              settings        = HttpOptions,
+              userinfo        = UserInfo,
+              request_options = Options}) ->
     
-    ?hcrt("send", 
-	  [{send_addr,     SendAddr}, 
-	   {socket,        Socket}, 
-	   {method,        Method}, 
-	   {path,          Path}, 
-	   {pquery,        Query}, 
-	   {headers,       Headers},
-	   {content,       Content}, 
-	   {address,       Address}, 
-	   {abs_uri,       AbsUri}, 
-	   {headers_as_is, HeadersAsIs},
-	   {settings,      HttpOptions}, 
-	   {userinfo,      UserInfo}]),
+    ?hcrt("send",
+          [{send_addr,       SendAddr},
+           {socket,          Socket},
+           {method,          Method},
+           {path,            Path},
+           {pquery,          Query},
+           {headers,         Headers},
+           {content,         Content},
+           {address,         Address},
+           {abs_uri,         AbsUri},
+           {headers_as_is,   HeadersAsIs},
+           {settings,        HttpOptions},
+           {userinfo,        UserInfo},
+           {request_options, Options}]),
 
     TmpHdrs = handle_user_info(UserInfo, Headers),
 

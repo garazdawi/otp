@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1073,7 +1073,13 @@ normalize_map(_Config) ->
                                host => <<"localhost">>}),
     <<"yeti://localhost">> =
         uri_string:normalize(#{scheme => <<"yeti">>,port => undefined,path => <<>>,
-                               host => <<"localhost">>}).
+                               host => <<"localhost">>}),
+    <<"yeti://localhost">> =
+        uri_string:normalize(#{scheme => <<"yeti">>,port => undefined,
+                               host => <<"localhost">>}),
+    "yeti://localhost" =
+        uri_string:normalize(#{scheme => "yeti",port => undefined,
+                               host => "localhost"}).
 
 normalize_return_map(_Config) ->
     #{scheme := "http",path := "/a/g",host := "localhost-örebro"} =

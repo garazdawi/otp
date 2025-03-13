@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2017-2022. All Rights Reserved.
+%% Copyright Ericsson AB 2017-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -499,7 +499,7 @@ allowed_characters() ->
       URI :: uri_string() | uri_map(),
       Result :: uri_string() |
                 uri_map() |
-                {error, {invalid, {atom(), {term(), term()}}}}.
+                {error, {invalid, {atom(), {term(), term()}}}} | error().
 percent_decode(URIMap) when is_map(URIMap)->
     Fun = fun (K,V) when K =:= userinfo; K =:= host; K =:= path;
                          K =:= query; K =:= fragment ->
@@ -2288,7 +2288,7 @@ to_lower(<<>>, Acc) ->
 %% 6.2.2.3. Path Segment Normalization
 %% 5.2.4.   Remove Dot Segments
 normalize_path_segment(Map) ->
-    Path = maps:get(path, Map, undefined),
+    Path = maps:get(path, Map, <<>>),
     Map#{path => remove_dot_segments(Path)}.
 
 

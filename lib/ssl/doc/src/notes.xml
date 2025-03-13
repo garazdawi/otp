@@ -27,6 +27,257 @@
   </header>
   <p>This document describes the changes made to the SSL application.</p>
 
+<section><title>SSL 11.1.4.7</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>An initiated handshake should always be closed with an
+	    alert, some corner cases have been fixed so that this
+	    should always be the case.</p>
+          <p>
+	    Own Id: OTP-19411 Aux Id: PR-9273, ERIERL-1174 </p>
+        </item>
+        <item>
+	    <p>Correct option handling to work properly for paused
+	    handshaking. Could result in unwanted alerts or or error
+	    messages. </p>
+          <p>
+	    Own Id: OTP-19445 Aux Id: GH-9177, PR-9322 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SSL 11.1.4.6</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>If present, extended key-usage TLS (SSL) role check
+	    (<c>pk-clientAuth</c>, <c>pk-serverAuth</c>) should
+	    always be performed for peer-cert. An intermediate CA
+	    cert may relax the requirement if
+	    <c>AnyExtendedKeyUsage</c> purpose is present.</p>
+	    <p>In OTP-25.3.2.8, OTP-26.2 and OTP-27.0 these
+	    requirements became too relaxed. There where two
+	    problems, firstly the peer cert extension was only
+	    checked if it was marked critical, and secondly the CA
+	    cert check did not assert the relaxed
+	    <c>AnyExtendedKeyUsage</c> purpose.</p>
+	    <p>This could result in that certificates might be
+	    misused for purposes not intended by the certificate
+	    authority.</p>
+	    <p>Thanks to Bryan Paxton for reporting the issue.</p>
+          <p>
+	    Own Id: OTP-19352 Aux Id: PR-9130, CVE-2024-53846,
+	    OTP-19240 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SSL 11.1.4.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Avoid generating an internal alert for case that
+	    should have been an orderly shutdown by the supervisor.
+	    </p>
+          <p>
+	    Own Id: OTP-19311 Aux Id: PR-8980 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>Back port certificate_authorities option for TLS-1.3
+	    servers to pre TLS-1.3 servers to enable them to disable
+	    the sending of certificate authorities in their
+	    certificate request. This will have same affect as the
+	    the TLS-1.3 server option although it is handled by a
+	    different mechanism in these versions, where the
+	    functionality is described to be more of a guidance,
+	    although some pre TLS clients have proven to make it
+	    mandatory as in TLS-1.3 extension handling.</p>
+          <p>
+	    Own Id: OTP-19325 Aux Id: PR-9001, ERIERL-1147 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SSL 11.1.4.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Starting from TLS-1.3 some server handshake alerts might
+	    arrive after ssl:connection/2,3,4 has returned. If the
+	    socket is in active mode the controlling process will get
+	    the alert message, but passive sockets would only get
+	    {error, closed} on next call to ssl:recv/2,3 or
+	    ssl/setopts/2. Passive sockets calls will now return
+	    {error, error_alert()} instead.</p>
+          <p>
+	    Own Id: OTP-19236 Aux Id: PR-8261 </p>
+        </item>
+        <item>
+          <p>
+	    Refactor trying to also make some optimizations
+	    introduced a bug in signature algorithms checks in
+	    OTP-26.2.1. This could manifest itself in not being able
+	    to negotiate connections using certificates needing to
+	    use some TLS-1.2 compatibility legacy signature schemes.</p>
+          <p>
+	    Own Id: OTP-19249 Aux Id: ERIERL-1137, PR-8866 </p>
+        </item>
+        <item>
+          <p>
+	    Servers configured to support only version (pre TLS-1.2)
+	    should ignore hello version extension, as it is an
+	    unknown extension to them, this will result in that new
+	    clients that do not support the old server version will
+	    get an insufficient security alert from the server and
+	    not a protocol version alert, this is consistent with how
+	    old servers not able to support higher protocol versions
+	    work.</p>
+          <p>
+	    Own Id: OTP-19257 Aux Id: ERIERL-1131 </p>
+        </item>
+        <item>
+          <p>
+	    Correct timeout handling for termination code run for own
+	    alerts, so that intended timeout is used instead of
+	    falling back to OS TCP-stack timeout that is unreasonably
+	    long on some platforms.</p>
+          <p>
+	    Own Id: OTP-19274 Aux Id: PR-8901 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SSL 11.1.4.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A race in the kTLS flavour of SSL distribution has been
+	    fixed so inet_drv.c doesn't read ahead too much data
+	    which could cause the kTLS encryption to be activated too
+	    late when some encrypted data had already been read into
+	    the inet_drv.c buffer as unencrypted.</p>
+          <p>
+	    Own Id: OTP-19175 Aux Id: GH-8561, PR-8690 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Make sure all TLS-1.3 terminations are graceful (previous
+	    TLS version terminations already are).</p>
+          <p>
+	    Own Id: OTP-17848 </p>
+        </item>
+        <item>
+          <p>
+	    Include more information in logging of SNI (Server Name
+	    Indication) mismatch error.</p>
+          <p>
+	    Own Id: OTP-19187 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SSL 11.1.4.2</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    When the default value for signature_algs is used,
+	    default the signature_algs_cert to the default value +
+	    rsa_pkcs1_sha1 to allow this algorithms for certificates
+	    but not for the TLS protocol. This is for better
+	    interoperability. If signature_algs is set explicitly
+	    signature_algs_cert must also be set explicitly if they
+	    should be different.</p>
+          <p>
+	    Own Id: OTP-19152 Aux Id: GH-8588 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>SSL 11.1.4.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Check for TLS-1.3 support should check minimum
+	    requirements.</p>
+          <p>
+	    Own Id: OTP-19094 Aux Id: GH-8489 </p>
+        </item>
+        <item>
+          <p>
+	    If both TLS-1.3 and TLS-1.2 is supported and TLS-1.2
+	    negotiated convert TLS-1.3 ECDSA schemes to TLS-1.2 hash
+	    and signature pairs for increased interoperability.</p>
+          <p>
+	    Own Id: OTP-19107 Aux Id: GH-8376 </p>
+        </item>
+        <item>
+          <p>
+	    TLS-1.3 negotiation now uses SNI based options correctly
+	    instead of ignoring them.</p>
+          <p>
+	    Own Id: OTP-19140 </p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Make it easier to distinguish between a invalid signature
+	    and unsupported signature.</p>
+          <p>
+	    Own Id: OTP-19091 </p>
+        </item>
+        <item>
+          <p>
+	    Enhance ALERT logs to help understand what causes the
+	    alert.</p>
+          <p>
+	    Own Id: OTP-19092 Aux Id: GH-8482 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>SSL 11.1.4</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>

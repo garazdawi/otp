@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2025. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -2942,9 +2942,16 @@ Uint32 erts_sched_local_random_hash_64_to_32_shift(Uint64 key)
 ERTS_GLB_INLINE
 Uint32 erts_sched_local_random(Uint additional_seed)
 {
+    extern erts_atomic_t erts_sched_local_random_nosched_state;
     ErtsSchedulerData *esdp = erts_get_scheduler_data();
-    esdp->rand_state++;
-    return erts_sched_local_random_hash_64_to_32_shift(esdp->rand_state
+    Uint64 rand_state;
+
+    if(ERTS_UNLIKELY(esdp == NULL)) {
+        rand_state = erts_atomic_inc_read_nob(&erts_sched_local_random_nosched_state);
+    } else {
+        rand_state = esdp->rand_state++;
+    }
+    return erts_sched_local_random_hash_64_to_32_shift(rand_state
                                                        + additional_seed);
 }
 

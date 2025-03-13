@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -117,7 +117,8 @@
 	  timer         :: undefined | reference(),
 	  socket_opts,   % undefined | [socket_option()]
 	  unix_socket,   % undefined | string()
-	  ipv6_host_with_brackets % boolean()
+	  ipv6_host_with_brackets, % boolean()
+	  request_options :: undefined | proplists:proplist()
 	}
        ).
 -type request() :: #request{}.

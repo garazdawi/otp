@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -245,7 +245,9 @@ add_signature_algorithms_cert(Extensions, SignAlgsCert) ->
 
 filter_tls13_algs(undefined) -> undefined;
 filter_tls13_algs(Algo) ->
-    lists:foldl(fun(Atom, Acc) when is_atom(Atom) ->
+    lists:foldl(fun(default, Acc) ->
+                        Acc;
+                   (Atom, Acc) when is_atom(Atom) ->
                         [Atom | Acc];
                    ({sha512, rsa}, Acc) ->
                         [rsa_pkcs1_sha512 | Acc];
@@ -1883,6 +1885,7 @@ path_validation(TrustedCert, Path, ServerName, Role, CertDbHandle, CertDbRef, CR
                   customize_hostname_check := CustomizeHostnameCheck,
                   crl_check := CrlCheck,
                   log_level := LogLevel,
+                  allow_any_ca_purpose := AllowAnyPurpose,
                   signature_algs := SignAlgos,
                   signature_algs_cert := SignAlgosCert} = Opts,
                 #{cert_ext := CertExt,
@@ -1906,6 +1909,7 @@ path_validation(TrustedCert, Path, ServerName, Role, CertDbHandle, CertDbRef, CR
                                                  cert_ext => CertExt,
                                                  ocsp_responder_certs => OcspResponderCerts,
                                                  ocsp_state => OcspState,
+                                                 allow_any_ca_purpose => AllowAnyPurpose,
                                                  path_len => length(Path)
                                                 },
                                                Path, LogLevel),

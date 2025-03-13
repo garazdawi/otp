@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2023-2023. All Rights Reserved.
+ * Copyright Ericsson AB 2023-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -236,8 +236,12 @@ typedef struct {
     WSADATA         wsaData;
     HANDLE          cport;
 
-    SOCKET          dummy; // Used for extracting AcceptEx and ConnectEx
+    /* Used during initiation
+     * for extracting AcceptEx and ConnectEx
+     */
+    SOCKET          srvInit;
 
+    /* Extension functions */
     LPFN_ACCEPTEX   accept;
     LPFN_CONNECTEX  connect;
     LPFN_WSASENDMSG sendmsg;
@@ -411,14 +415,14 @@ typedef struct __ESAIOOperation {
 
     unsigned int          tag;    /* The 'tag' of the operation */
 
-    ErlNifPid             caller; /* Almost every request (not connect)
+    ErlNifPid             caller; /* *Almost* every request (not connect)
                                    * operations require a caller */
-    ErlNifEnv*            env;    /* Almost every request
+    ErlNifEnv*            env;    /* *Almost* every request
                                    * needs an environment */
 
     /* Generic "data" field.
      * This is different for each 'operation'!
-     * Also, not all opererations have this!
+     * Also; not all opererations have this!
      */
 
     union {
@@ -457,6 +461,9 @@ typedef struct __ESAIOOperation {
  *                        Function Forwards                            *
  *                                                                     *
  * =================================================================== */
+
+static
+BOOLEAN_T init_srv_init_socket(int* savedErrno);
 
 static ERL_NIF_TERM esaio_connect_stream(ErlNifEnv*       env,
                                          ESockDescriptor* descP,
@@ -1182,15 +1189,13 @@ int esaio_init(unsigned int     numThreads,
     }
 
 
-    /* Create the "dummy" socket and then
+    /* Create the "service init" socket and then
      * extract the AcceptEx and ConnectEx functions.
      */
-    SGDBG( ("WIN-ESAIO", "esaio_init -> try create 'dummy' socket\r\n") );
-    ctrl.dummy = sock_open(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (ctrl.dummy == INVALID_SOCKET) {
-        save_errno = sock_errno();
+    SGDBG( ("WIN-ESAIO", "esaio_init -> try create 'service init' socket\r\n") );
+    if ( !init_srv_init_socket(&save_errno) ) {
 
-        esock_error_msg("Failed create 'dummy' socket: "
+        esock_error_msg("Failed create 'service init' socket: "
                         "\r\n   %s (%d)"
                         "\r\n",
                         erl_errno_id(save_errno), save_errno);
@@ -1210,7 +1215,7 @@ int esaio_init(unsigned int     numThreads,
      * rather than refer to the Mswsock.lib library.
      */
     SGDBG( ("WIN-ESAIO", "esaio_init -> try extract 'accept' function\r\n") );
-    ires = WSAIoctl(ctrl.dummy, SIO_GET_EXTENSION_FUNCTION_POINTER,
+    ires = WSAIoctl(ctrl.srvInit, SIO_GET_EXTENSION_FUNCTION_POINTER,
                     &guidAcceptEx, sizeof (guidAcceptEx), 
                     &ctrl.accept, sizeof (ctrl.accept), 
                     &dummy, NULL, NULL);
@@ -1222,8 +1227,8 @@ int esaio_init(unsigned int     numThreads,
                         "\r\n",
                         ires, erl_errno_id(save_errno), save_errno);
 
-        (void) sock_close(ctrl.dummy);
-        ctrl.dummy  = INVALID_SOCKET;
+        (void) sock_close(ctrl.srvInit);
+        ctrl.srvInit  = INVALID_SOCKET;
         ctrl.accept = NULL;
 
         WSACleanup();
@@ -1234,7 +1239,7 @@ int esaio_init(unsigned int     numThreads,
 
     /* Basically the same as for AcceptEx above */
     SGDBG( ("WIN-ESAIO", "esaio_init -> try extract 'connect' function\r\n") );
-    ires = WSAIoctl(ctrl.dummy, SIO_GET_EXTENSION_FUNCTION_POINTER,
+    ires = WSAIoctl(ctrl.srvInit, SIO_GET_EXTENSION_FUNCTION_POINTER,
                     &guidConnectEx, sizeof (guidConnectEx), 
                     &ctrl.connect, sizeof (ctrl.connect), 
                     &dummy, NULL, NULL);
@@ -1246,18 +1251,19 @@ int esaio_init(unsigned int     numThreads,
                         "\r\n",
                         ires, erl_errno_id(save_errno), save_errno);
 
-        (void) sock_close(ctrl.dummy);
-        ctrl.dummy  = INVALID_SOCKET;
+        (void) sock_close(ctrl.srvInit);
+        ctrl.srvInit  = INVALID_SOCKET;
         ctrl.accept = NULL;
 
         WSACleanup();
+
         return ESAIO_ERR_IOCTL_CONNECT_GET;
     }
     
 
     /* Basically the same as for AcceptEx above */
     SGDBG( ("WIN-ESAIO", "esaio_init -> try extract 'sendmsg' function\r\n") );
-    ires = WSAIoctl(ctrl.dummy, SIO_GET_EXTENSION_FUNCTION_POINTER,
+    ires = WSAIoctl(ctrl.srvInit, SIO_GET_EXTENSION_FUNCTION_POINTER,
                     &guidSendMsg, sizeof (guidSendMsg), 
                     &ctrl.sendmsg, sizeof (ctrl.sendmsg), 
                     &dummy, NULL, NULL);
@@ -1269,19 +1275,20 @@ int esaio_init(unsigned int     numThreads,
                         "\r\n",
                         ires, erl_errno_id(save_errno), save_errno);
 
-        (void) sock_close(ctrl.dummy);
-        ctrl.dummy   = INVALID_SOCKET;
+        (void) sock_close(ctrl.srvInit);
+        ctrl.srvInit   = INVALID_SOCKET;
         ctrl.accept  = NULL;
         ctrl.connect = NULL;
 
         WSACleanup();
+
         return ESAIO_ERR_IOCTL_SENDMSG_GET;
     }
     
 
     /* Basically the same as for AcceptEx above */
     SGDBG( ("WIN-ESAIO", "esaio_init -> try extract 'recvmsg' function\r\n") );
-    ires = WSAIoctl(ctrl.dummy, SIO_GET_EXTENSION_FUNCTION_POINTER,
+    ires = WSAIoctl(ctrl.srvInit, SIO_GET_EXTENSION_FUNCTION_POINTER,
                     &guidRecvMsg, sizeof (guidRecvMsg), 
                     &ctrl.recvmsg, sizeof (ctrl.recvmsg), 
                     &dummy, NULL, NULL);
@@ -1293,13 +1300,14 @@ int esaio_init(unsigned int     numThreads,
                         "\r\n",
                         ires, erl_errno_id(save_errno), save_errno);
 
-        (void) sock_close(ctrl.dummy);
-        ctrl.dummy   = INVALID_SOCKET;
+        (void) sock_close(ctrl.srvInit);
+        ctrl.srvInit   = INVALID_SOCKET;
         ctrl.accept  = NULL;
         ctrl.connect = NULL;
         ctrl.sendmsg = NULL;
 
         WSACleanup();
+
         return ESAIO_ERR_IOCTL_RECVMSG_GET;
     }
     
@@ -1336,7 +1344,8 @@ int esaio_init(unsigned int     numThreads,
         sprintf(buf, "esaio-opts[%d]", i);
         ctrl.threads[i].optsP      = TOCREATE(buf);
         if (ctrl.threads[i].optsP == NULL) {
-            esock_error_msg("Failed create thread opts %d\r\n");
+
+            esock_error_msg("Failed create thread opts %d\r\n", i);
 
             ctrl.threads[i].data.error = ESAIO_THREAD_ERROR_TOCREATE;
 
@@ -1345,6 +1354,9 @@ int esaio_init(unsigned int     numThreads,
                         "esaio_init -> destroy thread opts %d\r\n", j) );
                 TODESTROY(ctrl.threads[j].optsP);
             }
+
+            WSACleanup();
+
             return ESAIO_ERR_THREAD_OPTS_CREATE;
         }
 
@@ -1357,6 +1369,8 @@ int esaio_init(unsigned int     numThreads,
                          (void*) &ctrl.threads[i].data, 
                          ctrl.threads[i].optsP)) {
 
+            esock_error_msg("Failed create thread %d\r\n", i);
+
             ctrl.threads[i].data.error = ESAIO_THREAD_ERROR_TCREATE;
 
             for (j = 0; j <= i; j++) {
@@ -1364,6 +1378,9 @@ int esaio_init(unsigned int     numThreads,
                         "esaio_init -> destroy thread opts %d\r\n", j) );
                 TODESTROY(ctrl.threads[j].optsP);
             }
+
+            WSACleanup();
+
             return ESAIO_ERR_THREAD_CREATE;
         }
 
@@ -1376,12 +1393,50 @@ int esaio_init(unsigned int     numThreads,
 }
 
 
+static
+BOOLEAN_T init_srv_init_socket(int* savedErrno)
+{
+    SOCKET sock;
+    int    save_errno = 0;
+
+    sock = sock_open(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
+        save_errno = sock_errno();
+
+        /* This *could* be because we are on a 'IPv6 only' machine
+         * => So try with that (AF_INET6) domain also.
+         */
+
+        if (save_errno == WSAEAFNOSUPPORT) { 
+            sock = sock_open(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+            if (sock == INVALID_SOCKET) {
+                /* Ouch, still failing, so we will keep the original error */
+                ctrl.srvInit = INVALID_SOCKET;
+                *savedErrno  = save_errno;
+                return FALSE;
+            } else {
+                ctrl.srvInit  = sock;
+                *savedErrno = 0;
+                return TRUE;
+            }
+        } else {
+            ctrl.srvInit = INVALID_SOCKET;
+            *savedErrno  = save_errno;
+            return FALSE;            
+        }
+    } else {
+        ctrl.srvInit = sock;
+        *savedErrno  = 0;
+        return TRUE;
+    }
+}
+
 
 /* *******************************************************************
  * Finish, terminate, the ESock Async I/O backend.
- * This means principally to terminate (threads of) the thread pool.
+ * This means principally to terminate the threads of the thread pool.
  * Issue a "message" via PostQueuedCompletionStatus
- * instructing all (completion) threads to terminate.
+ * instructing every thread (of the pool) to terminate.
  */
 extern
 void esaio_finish()
@@ -1390,10 +1445,10 @@ void esaio_finish()
 
     SGDBG( ("WIN-ESAIO", "esaio_finish -> entry\r\n") );
 
-    if (ctrl.dummy != INVALID_SOCKET) {
+    if (ctrl.srvInit != INVALID_SOCKET) {
         SGDBG( ("WIN-ESAIO", "esaio_finish -> close 'dummy' socket\r\n") );
-        (void) sock_close(ctrl.dummy);
-        ctrl.dummy = INVALID_SOCKET;
+        (void) sock_close(ctrl.srvInit);
+        ctrl.srvInit = INVALID_SOCKET;
     }
 
     SGDBG( ("WIN-ESAIO",
@@ -1416,7 +1471,7 @@ void esaio_finish()
         /* We should actually check that the alloc was successful
          * and if not ... 
          * Note that this function is only called when we are terminating
-         * the VM. So, is there actuall any pointy in "doing" something?
+         * the VM. So, is there actually any point in "doing" something?
          * Or should we solve this another way? Instead of allocating
          * a memory block; Send in a constant, ESAIO_OP_TERMINATE,
          * *instead of* the overlapped pointer!
@@ -1430,6 +1485,10 @@ void esaio_finish()
             sys_memzero((char *) opP, sizeof(ESAIOOperation));
 
             opP->tag = ESAIO_OP_TERMINATE;
+            /* This should never be accessed for this command, *
+             * but just to be on the safe side...              */
+            enif_set_pid_undefined(&opP->caller);
+            opP->env = NULL;
 
             SGDBG( ("WIN-ESAIO",
                     "esaio_finish -> "
@@ -1472,16 +1531,22 @@ void esaio_finish()
         }
     }
 
+    SGDBG( ("WIN-ESAIO", "esaio_finish -> cleanup\r\n") );
+    WSACleanup();
+
     /* This is overkill,
      * since this function, esaio_finish, is called when the VM is halt'ing...
-     * ...but just to be a nice citizen...
+     * ...but just to be a good citizen...
      */
     SGDBG( ("WIN-ESAIO", "esaio_finish -> free the thread pool data\r\n") );
     FREE( ctrl.threads );
 
-    SGDBG( ("WIN-ESAIO", "esaio_finish -> invalidate functions\r\n") );
+    SGDBG( ("WIN-ESAIO",
+            "esaio_finish -> invalidate (extension) functions\r\n") );
     ctrl.accept  = NULL;
     ctrl.connect = NULL;
+    ctrl.sendmsg = NULL;
+    ctrl.recvmsg = NULL;
     
     SGDBG( ("WIN-ESAIO", "esaio_finish -> done\r\n") );
 
@@ -1984,8 +2049,6 @@ ERL_NIF_TERM connect_stream_check_result(ErlNifEnv*       env,
             sock_close(descP->sock);
             descP->writeState = ESOCK_STATE_CLOSED;
 
-            WSACleanup();
-
             eres = esock_make_error_t2r(env, tag, reason);
         }
 
@@ -2026,7 +2089,6 @@ ERL_NIF_TERM connect_stream_check_result(ErlNifEnv*       env,
 
             sock_close(descP->sock);
             descP->writeState = ESOCK_STATE_CLOSED;
-            WSACleanup();
 
             eres = esock_make_error(env, ereason);
         }
@@ -2177,7 +2239,6 @@ ERL_NIF_TERM esaio_accept(ErlNifEnv*       env,
         esock_clear_env("esaio_accept - invalid accept socket", opP->env);
         esock_free_env("esaio_accept - invalid accept socket", opP->env);
         FREE( opP );
-        WSACleanup();
 
         SSDBG( descP,
                ("WIN-ESAIO",
@@ -2360,7 +2421,6 @@ ERL_NIF_TERM accept_check_fail(ErlNifEnv*       env,
     FREE( opP );
 
     sock_close(accSock);
-    WSACleanup();
 
     ESOCK_CNT_INC(env, descP, sockRef,
                   esock_atom_acc_fails, &descP->accFails, 1);
@@ -3869,7 +3929,7 @@ ERL_NIF_TERM recv_check_result(ErlNifEnv*       env,
 
                 } else {
 
-                    eres = esock_atom_ok;
+                    eres = esock_atom_timeout; // Will trigger {error, timeout}
 
                 }
 
@@ -3901,7 +3961,7 @@ ERL_NIF_TERM recv_check_ok(ErlNifEnv*       env,
                            ERL_NIF_TERM     sockRef,
                            ERL_NIF_TERM     recvRef)
 {
-    ERL_NIF_TERM data, result;
+    ERL_NIF_TERM data, eres;
     DWORD        read = 0, flags = 0;
 
     SSDBG( descP,
@@ -3940,7 +4000,7 @@ ERL_NIF_TERM recv_check_ok(ErlNifEnv*       env,
             ESOCK_CNT_INC(env, descP, sockRef,
                           esock_atom_read_fails, &descP->readFails, 1);
 
-            result = esock_make_error(env, esock_atom_closed);
+            eres = esock_make_error(env, esock_atom_closed);
             
         } else {
 
@@ -3980,7 +4040,7 @@ ERL_NIF_TERM recv_check_ok(ErlNifEnv*       env,
             if (read > descP->readPkgMax)
                 descP->readPkgMax = read;
 
-            result = esock_make_ok2(env, data);
+            eres = esock_make_ok2(env, data);
 
         }
 
@@ -4000,8 +4060,8 @@ ERL_NIF_TERM recv_check_ok(ErlNifEnv*       env,
 
             if (! IS_ZERO(recvRef)) {
                 
-                result = recv_check_pending(env, descP, opP, caller,
-                                            sockRef, recvRef);
+                eres = recv_check_pending(env, descP, opP, caller,
+                                          sockRef, recvRef);
             } else {
 
                 /* But we are not allowed to wait! => cancel */
@@ -4024,11 +4084,11 @@ ERL_NIF_TERM recv_check_ok(ErlNifEnv*       env,
                             "\r\n   %T"
                             "\r\n", sockRef, descP->sock, reason) );
 
-                    result = esock_make_error(env, MKT2(env, tag, reason));
+                    eres = esock_make_error(env, MKT2(env, tag, reason));
 
                 } else {
 
-                    result = esock_atom_ok; // Will trigger {error, timeout}
+                    eres = esock_atom_timeout; // Will trigger {error, timeout}
 
                 }
             }
@@ -4050,7 +4110,7 @@ ERL_NIF_TERM recv_check_ok(ErlNifEnv*       env,
 
                 MUNLOCK(ctrl.cntMtx);
 
-                result = esock_make_error(env, reason);
+                eres = esock_make_error(env, reason);
             }
             break;
         }
@@ -4061,7 +4121,7 @@ ERL_NIF_TERM recv_check_ok(ErlNifEnv*       env,
             "\r\n",
             sockRef, descP->sock) );
 
-    return result;
+    return eres;
 }
 
 
@@ -4310,7 +4370,7 @@ ERL_NIF_TERM recvfrom_check_result(ErlNifEnv*       env,
 
                 } else {
 
-                    eres = esock_atom_ok; // Will trigger {error, timeout}
+                    eres = esock_atom_timeout; // Will trigger {error, timeout}
 
                 }
 
@@ -4342,7 +4402,7 @@ ERL_NIF_TERM recvfrom_check_ok(ErlNifEnv*       env,
                                ERL_NIF_TERM     sockRef,
                                ERL_NIF_TERM     recvRef)
 {
-    ERL_NIF_TERM data, result;
+    ERL_NIF_TERM data, eres;
     DWORD        read = 0, flags = 0;
 
     SSDBG( descP,
@@ -4393,7 +4453,7 @@ ERL_NIF_TERM recvfrom_check_ok(ErlNifEnv*       env,
          * This is:                 {ok, {Source, Data}}
          * But it should really be: {ok, {Source, Flags, Data}}
          */
-        result = esock_make_ok2(env, MKT2(env, eSockAddr, data));
+        eres = esock_make_ok2(env, MKT2(env, eSockAddr, data));
 
     } else {
 
@@ -4411,8 +4471,8 @@ ERL_NIF_TERM recvfrom_check_ok(ErlNifEnv*       env,
 
             if (! IS_ZERO(recvRef)) {
                 
-                result = recv_check_pending(env, descP, opP, caller,
-                                            sockRef, recvRef);
+                eres = recv_check_pending(env, descP, opP, caller,
+                                          sockRef, recvRef);
 
             } else {
 
@@ -4436,11 +4496,11 @@ ERL_NIF_TERM recvfrom_check_ok(ErlNifEnv*       env,
                             "\r\n   %T"
                             "\r\n", sockRef, descP->sock, reason) );
 
-                    result = esock_make_error(env, MKT2(env, tag, reason));
+                    eres = esock_make_error(env, MKT2(env, tag, reason));
 
                 } else {
 
-                    result = esock_atom_ok; // Will trigger {error, timeout}
+                    eres = esock_atom_timeout; // Will trigger {error, timeout}
 
                 }
             }
@@ -4462,7 +4522,7 @@ ERL_NIF_TERM recvfrom_check_ok(ErlNifEnv*       env,
 
                 MUNLOCK(ctrl.cntMtx);
 
-                result = esock_make_error(env, reason);
+                eres = esock_make_error(env, reason);
             }
             break;
         }
@@ -4472,9 +4532,9 @@ ERL_NIF_TERM recvfrom_check_ok(ErlNifEnv*       env,
            ("WIN-ESAIO", "recvfrom_check_ok(%T) {%d} -> done with"
             "\r\n   result: %T"
             "\r\n",
-            sockRef, descP->sock, result) );
+            sockRef, descP->sock, eres) );
 
-    return result;
+    return eres;
 }
 
 
@@ -4722,7 +4782,7 @@ ERL_NIF_TERM recvmsg_check_result(ErlNifEnv*       env,
 
                 } else {
 
-                    eres = esock_atom_ok; // Will trigger {error, timeout}
+                    eres = esock_atom_timeout; // Will trigger {error, timeout}
 
                 }
                 
@@ -4757,7 +4817,7 @@ ERL_NIF_TERM recvmsg_check_ok(ErlNifEnv*       env,
                               ERL_NIF_TERM     sockRef,
                               ERL_NIF_TERM     recvRef)
 {
-    ERL_NIF_TERM eMsg, result;
+    ERL_NIF_TERM eMsg, eres;
     DWORD        read = 0, flags = 0;
 
     SSDBG( descP,
@@ -4793,7 +4853,7 @@ ERL_NIF_TERM recvmsg_check_ok(ErlNifEnv*       env,
         if (read > descP->readPkgMax)
             descP->readPkgMax = read;
 
-        result = esock_make_ok2(env, eMsg);
+        eres = esock_make_ok2(env, eMsg);
 
     } else {
 
@@ -4811,8 +4871,8 @@ ERL_NIF_TERM recvmsg_check_ok(ErlNifEnv*       env,
 
             if (! IS_ZERO(recvRef)) {
                 
-                result = recv_check_pending(env, descP, opP, caller,
-                                            sockRef, recvRef);
+                eres = recv_check_pending(env, descP, opP, caller,
+                                          sockRef, recvRef);
 
             } else {
 
@@ -4836,11 +4896,11 @@ ERL_NIF_TERM recvmsg_check_ok(ErlNifEnv*       env,
                             "\r\n   %T"
                             "\r\n", sockRef, descP->sock, reason) );
 
-                    result = esock_make_error(env, MKT2(env, tag, reason));
+                    eres = esock_make_error(env, MKT2(env, tag, reason));
 
                 } else {
 
-                    result = esock_atom_ok; // Will trigger {error, timeout}
+                    eres = esock_atom_timeout; // Will trigger {error, timeout}
 
                 }
             }
@@ -4862,7 +4922,7 @@ ERL_NIF_TERM recvmsg_check_ok(ErlNifEnv*       env,
 
                 MUNLOCK(ctrl.cntMtx);
 
-                result = esock_make_error(env, reason);
+                eres = esock_make_error(env, reason);
             }
             break;
         }
@@ -4872,9 +4932,9 @@ ERL_NIF_TERM recvmsg_check_ok(ErlNifEnv*       env,
            ("WIN-ESAIO", "recvmsg_check_ok(%T) {%d} -> done with"
             "\r\n   result: %T"
             "\r\n",
-            sockRef, descP->sock, result) );
+            sockRef, descP->sock, eres) );
 
-    return result;
+    return eres;
 }
 
 
@@ -6709,8 +6769,6 @@ void esaio_completion_connect_completed(ErlNifEnv*          env,
 
         sock_close(descP->sock);
 
-        WSACleanup();
-
         completionStatus = esock_make_error_t2r(descP->connector.env,
                                                 tag, reason);
 
@@ -7206,8 +7264,6 @@ void esaio_completion_accept_completed(ErlNifEnv*         env,
 
         sock_close(descP->sock);
         descP->writeState = ESOCK_STATE_CLOSED;
-
-        WSACleanup();
 
         completionStatus = esock_make_error_t2r(opEnv, tag, reason);
 

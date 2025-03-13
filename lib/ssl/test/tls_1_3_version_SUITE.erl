@@ -56,6 +56,18 @@
          legacy_tls12_client_tls_server/1,
          legacy_tls12_server_tls_client/0,
          legacy_tls12_server_tls_client/1,
+         tls13_client_tls11_server/0,
+         tls13_client_tls11_server/1,
+         tls12_legacy_cert_sign/0,
+         tls12_legacy_cert_sign/1,
+         tls13_legacy_cert_sign/0,
+         tls13_legacy_cert_sign/1,
+         tls13_legacy_cert_sign_with_pss_rsae/0,
+         tls13_legacy_cert_sign_with_pss_rsae/1,
+         tls12_legacy_cert_sign_with_pss_rsae/0,
+         tls12_legacy_cert_sign_with_pss_rsae/1,
+         reject_legacy_cert/0,
+         reject_legacy_cert/1,
          middle_box_tls13_client/0,
          middle_box_tls13_client/1,
          middle_box_tls12_enabled_client/0,
@@ -63,7 +75,11 @@
          middle_box_client_tls_v2_session_reused/0,
          middle_box_client_tls_v2_session_reused/1,
          renegotiate_error/0,
-         renegotiate_error/1
+         renegotiate_error/1,
+         client_cert_fail_alert_active/0,
+         client_cert_fail_alert_active/1,
+         client_cert_fail_alert_passive/0,
+         client_cert_fail_alert_passive/1
         ]).
 
 
@@ -80,7 +96,7 @@ all() ->
 
 groups() ->
     [
-     {rsa, [], tls_1_3_1_2_tests() ++ legacy_tests()},
+     {rsa, [], [reject_legacy_cert | tls_1_3_1_2_tests() ++ legacy_tests()]},
      {ecdsa, [], tls_1_3_1_2_tests()}
     ].
 
@@ -99,7 +115,9 @@ tls_1_3_1_2_tests() ->
      middle_box_tls13_client,
      middle_box_tls12_enabled_client,
      middle_box_client_tls_v2_session_reused,
-     renegotiate_error
+     renegotiate_error,
+     client_cert_fail_alert_active,
+     client_cert_fail_alert_passive
     ].
 legacy_tests() ->
     [tls_client_tls10_server,
@@ -107,7 +125,13 @@ legacy_tests() ->
      tls_client_tls12_server,
      tls10_client_tls_server,
      tls11_client_tls_server,
-     tls12_client_tls_server].
+     tls12_client_tls_server,
+     tls13_client_tls11_server,
+     tls13_legacy_cert_sign,
+     tls13_legacy_cert_sign_with_pss_rsae,
+     tls12_legacy_cert_sign,
+     tls12_legacy_cert_sign_with_pss_rsae
+    ].
 
 init_per_suite(Config) ->
     catch crypto:stop(),
@@ -332,6 +356,111 @@ legacy_tls12_server_tls_client(Config) when is_list(Config) ->
                   | ServerOpts0],
     ssl_test_lib:basic_test(ClientOpts, ServerOpts, Config).
 
+tls13_legacy_cert_sign() ->
+    [{doc,"Test that a TLS 1.3 client can connect to  TLS-1.3 server with pkcs1_SHA2 cert"}].
+
+tls13_legacy_cert_sign(Config) when is_list(Config) ->
+    ClientOpts = [{versions, ['tlsv1.3']},
+                  {signature_algs, rsa_pss_rsae_algs() ++ legacy_rsa_algs()}],
+    ServerOpts = [{versions, ['tlsv1.3']},
+                  {verify, verify_peer},
+                  {fail_if_no_peer_cert, true},
+                  {signature_algs, rsa_pss_rsae_algs()},
+                  {signature_algs_cert, legacy_rsa_algs()}],
+
+    test_rsa_pcks1_cert(sha256, ClientOpts, ServerOpts, Config),
+    test_rsa_pcks1_cert(sha512, ClientOpts, ServerOpts, Config),
+    test_rsa_pcks1_cert(sha384, ClientOpts, ServerOpts, Config).
+
+tls13_legacy_cert_sign_with_pss_rsae() ->
+    [{doc,"Test that a TLS 1.3 enabled client can connect to legacy TLS-1.2 server with legacy pkcs1_SHA2 cert"}].
+
+tls13_legacy_cert_sign_with_pss_rsae(Config) when is_list(Config) ->
+    ClientOpts =  [{versions, ['tlsv1.3', 'tlsv1.2']},
+                   {signature_algs, rsa_pss_rsae_algs()},
+                   {signature_algs_cert, legacy_rsa_algs()}
+                  ],
+    ServerOpts = [{versions, ['tlsv1.2']},
+                  {verify, verify_peer},
+                  {fail_if_no_peer_cert, true},
+                  {signature_algs, rsa_pss_rsae_algs()},
+                  {signature_algs_cert, legacy_rsa_algs()}
+                 ],
+
+    test_rsa_pcks1_cert(sha256, ClientOpts, ServerOpts, Config),
+    test_rsa_pcks1_cert(sha512, ClientOpts, ServerOpts, Config),
+    test_rsa_pcks1_cert(sha384, ClientOpts, ServerOpts, Config).
+
+tls12_legacy_cert_sign() ->
+    [{doc,"Test that a TLS 1.2 client (with old configuration) can connect to  TLS-1.2 server with pkcs1_SHA2 cert"}].
+
+tls12_legacy_cert_sign(Config) when is_list(Config) ->
+    ClientOpts = [{versions, ['tlsv1.2']},
+                  {signature_algs, rsa_algs()}],
+    ServerOpts = [{versions, ['tlsv1.2']},
+                  {verify, verify_peer},
+                  {fail_if_no_peer_cert, true},
+                  {signature_algs, rsa_algs()}],
+
+    test_rsa_pcks1_cert(sha256, ClientOpts, ServerOpts, Config),
+    test_rsa_pcks1_cert(sha512, ClientOpts, ServerOpts, Config),
+    test_rsa_pcks1_cert(sha384, ClientOpts, ServerOpts, Config).
+
+tls12_legacy_cert_sign_with_pss_rsae() ->
+    [{doc,"Test that a modern TLS 1.2 client can connect to TLS-1.2 server with legacy pkcs1_SHA2 cert"}].
+
+tls12_legacy_cert_sign_with_pss_rsae(Config) when is_list(Config) ->
+    ClientOpts =  [{versions, ['tlsv1.2']},
+                   {signature_algs, rsa_pss_rsae_algs() ++ rsa_algs()}
+                  ],
+    ServerOpts = [{versions, ['tlsv1.2']},
+                  {verify, verify_peer},
+                  {fail_if_no_peer_cert, true},
+                  {signature_algs, rsa_pss_rsae_algs()},
+                  {signature_algs_cert, legacy_rsa_algs()}
+                 ],
+
+    test_rsa_pcks1_cert(sha256, ClientOpts, ServerOpts, Config),
+    test_rsa_pcks1_cert(sha512, ClientOpts, ServerOpts, Config),
+    test_rsa_pcks1_cert(sha384, ClientOpts, ServerOpts, Config).
+
+reject_legacy_cert() ->
+    [{doc,"Test that client sends empty cert if does only have legacy pkcs1_SHA2 cert that is not supported by the server"
+      "and do not make connection with client that requires better cert and only option is legacy pkcs1_SHA2 cert"}].
+
+reject_legacy_cert(Config) when is_list(Config) ->
+    reject_legacy_cert('tlsv1.3', certificate_required, Config),
+    reject_legacy_cert('tlsv1.2', handshake_failure, Config).
+
+reject_legacy_cert(Version, Alert, Config) ->
+    COpts =  [{signature_algs, rsa_pss_pss_algs() ++ rsa_pss_rsae_algs()},
+              {versions, [Version]}
+             ],
+    SOpts = [{verify, verify_peer},
+             {fail_if_no_peer_cert, true},
+             {signature_algs, rsa_pss_pss_algs()},
+             {versions, [Version]}
+            ],
+    #{client_config := ClientOpts0,
+      server_config := ServerOpts0} =
+        public_key:pkix_test_data(#{client_chain =>
+                                        #{root => root_key(sha256),
+                                          intermedites => intermediates(sha256, 1),
+                                          peer => peer_key(sha256)}, 
+                                    server_chain => 
+                                        #{root => root_key(sha256, ssl_test_lib:pss_params(sha256)),
+                                          intermedites => intermediates(sha256, 
+                                                                        ssl_test_lib:pss_params(sha256), 
+                                                                        1),
+                                          peer => peer_key(sha256, ssl_test_lib:pss_params(sha256))
+                                         }}),   
+    ClientOpts = ClientOpts0 ++ COpts,
+    ServerOpts = ServerOpts0 ++ SOpts,
+    ssl_test_lib:basic_alert(ClientOpts, ServerOpts, Config, Alert),
+    RevClientOpts = ServerOpts0 ++ [{signature_algs, rsa_pss_pss_algs()}],
+    RevServerOtps = ClientOpts0 ++ [{signature_algs, rsa_pss_pss_algs() ++ rsa_pss_rsae_algs()}],
+    ssl_test_lib:basic_alert(RevClientOpts,  RevServerOtps, Config, insufficient_security).
+
 middle_box_tls13_client() ->
     [{doc,"Test that a TLS 1.3 client can connect to a 1.3 server with and without middle box compatible mode."}].
 middle_box_tls13_client(Config) when is_list(Config) ->
@@ -402,6 +531,66 @@ renegotiate_error(Config) when is_list(Config) ->
             ct:fail(Reason)
     end.
 
+client_cert_fail_alert_active() ->
+    [{doc, "Check that we receive alert message"}].
+client_cert_fail_alert_active(Config) when is_list(Config) ->
+    ssl:clear_pem_cache(),
+    {_ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    ClientOpts0 = ssl_test_lib:ssl_options(extra_client, client_cert_opts, Config),
+    ServerOpts0 = ssl_test_lib:ssl_options(extra_server, server_cert_opts, Config),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    NewClientCertFile = filename:join(PrivDir, "client_invalid_cert.pem"),
+
+    create_bad_client_certfile(NewClientCertFile, ClientOpts0),
+
+    ClientOpts = [{active, true},
+                  {verify, verify_peer},
+                  {certfile, NewClientCertFile} | proplists:delete(certfile, ClientOpts0)],
+    ServerOpts = [{verify, verify_peer}, {fail_if_no_peer_cert, true}| ServerOpts0],
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+                                        {from, self()},
+                                        {mfa, {ssl_test_lib, no_result, []}},
+                                        {options, ServerOpts}]),
+    Port = ssl_test_lib:inet_port(Server),
+    {ok, Socket} = ssl:connect(Hostname, Port, ClientOpts),
+    receive
+        {Server, {error, {tls_alert, {unknown_ca, _}}}} ->
+            receive
+                {ssl_error, Socket, {tls_alert, {unknown_ca, _}}} ->
+                    ok
+            after 500 ->
+                    ct:fail(no_acticv_msg)
+            end
+    end.
+
+client_cert_fail_alert_passive() ->
+    [{doc, "Check that recv or setopts return alert"}].
+client_cert_fail_alert_passive(Config) when is_list(Config) ->
+    ssl:clear_pem_cache(),
+    {_, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    ClientOpts0 = ssl_test_lib:ssl_options(extra_client, client_cert_opts, Config),
+    ServerOpts0 = ssl_test_lib:ssl_options(extra_server, server_cert_opts, Config),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    NewClientCertFile = filename:join(PrivDir, "client_invalid_cert.pem"),
+
+    create_bad_client_certfile(NewClientCertFile, ClientOpts0),
+
+    ClientOpts = [{active, false},
+                  {verify, verify_peer},
+                  {certfile, NewClientCertFile} | proplists:delete(certfile, ClientOpts0)],
+    ServerOpts = [{verify, verify_peer}, {fail_if_no_peer_cert, true}| ServerOpts0],
+    alert_passive(ServerOpts, ClientOpts, recv,
+                  ServerNode, Hostname),
+    alert_passive(ServerOpts, ClientOpts, setopts,
+                  ServerNode, Hostname).
+
+tls13_client_tls11_server() ->
+    [{doc,"Test that a TLS 1.3 client gets old server alert from TLS 1.0 server."}].
+tls13_client_tls11_server(Config) when is_list(Config) ->
+    ClientOpts = [{versions, ['tlsv1.3']} | ssl_test_lib:ssl_options(client_cert_opts, Config)],
+    ServerOpts =  [{versions, ['tlsv1']} | ssl_test_lib:ssl_options(server_cert_opts, Config)],
+    ssl_test_lib:basic_alert(ClientOpts, ServerOpts, Config, insufficient_security).
+
 %%--------------------------------------------------------------------
 %% Internal functions and callbacks -----------------------------------
 %%--------------------------------------------------------------------
@@ -432,4 +621,95 @@ check_session_id(Socket, Expected) ->
             {nok, {{expected, Expected}, {got, SessionId}}}
     end.
 
+alert_passive(ServerOpts, ClientOpts, Function,
+              ServerNode, Hostname) ->
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+                                        {from, self()},
+                                        {mfa, {ssl_test_lib, no_result, []}},
+                                        {options, ServerOpts}]),
+    Port = ssl_test_lib:inet_port(Server),
+    {ok, Socket} = ssl:connect(Hostname, Port, ClientOpts),
+    ct:sleep(500),
+    case Function of
+        recv ->
+            {error, {tls_alert, {unknown_ca,_}}} = ssl:recv(Socket, 0);
+        setopts ->
+            {error, {tls_alert, {unknown_ca,_}}} = ssl:setopts(Socket, [{active, once}])
+    end.
+
+create_bad_client_certfile(NewClientCertFile, ClientOpts0) ->
+    KeyFile =  proplists:get_value(keyfile, ClientOpts0),
+    [KeyEntry] = ssl_test_lib:pem_to_der(KeyFile),
+    Key = ssl_test_lib:public_key(public_key:pem_entry_decode(KeyEntry)),
+    ClientCertFile = proplists:get_value(certfile, ClientOpts0),
+
+    [{'Certificate', ClientDerCert, _}] = ssl_test_lib:pem_to_der(ClientCertFile),
+    ClientOTPCert = public_key:pkix_decode_cert(ClientDerCert, otp),
+    ClientOTPTbsCert = ClientOTPCert#'OTPCertificate'.tbsCertificate,
+    NewClientDerCert = public_key:pkix_sign(ClientOTPTbsCert, Key),
+    ssl_test_lib:der_to_pem(NewClientCertFile, [{'Certificate', NewClientDerCert, not_encrypted}]).
+
+test_rsa_pcks1_cert(SHA, COpts, SOpts, Config) ->
+    #{client_config := ClientOpts,
+      server_config := ServerOpts} =
+        public_key:pkix_test_data(#{server_chain => #{root => root_key(SHA),
+                                                      intermediates => intermediates(SHA, 1),
+                                                      peer => peer_key(SHA)},
+                                    client_chain => #{root => root_key(SHA),
+                                                      intermediates => intermediates(SHA, 1),
+                                                      peer => peer_key(SHA)}}),
+    ssl_test_lib:basic_test(COpts ++ ClientOpts, SOpts ++ ServerOpts, Config).
+
+
+root_key(SHA) ->
+    root_key(SHA, undefined).
+
+peer_key(SHA) ->
+    peer_key(SHA, undefined).
+
+intermediates(SHA, N) ->
+    intermediates(SHA, undefined, N).
+
+root_key(SHA, undefined) ->
+    %% As rsa keygen is not guaranteed to be fast
+    [{digest, SHA},{key, ssl_test_lib:hardcode_rsa_key(6)}];
+root_key(SHA, Params) ->
+    [{digest, SHA}, {key, {ssl_test_lib:hardcode_rsa_key(6), Params}}].
+
+peer_key(SHA, undefined) ->
+    %% As rsa keygen is not guaranteed to be fast
+    [{digest, SHA}, {key, ssl_test_lib:hardcode_rsa_key(5)}];
+peer_key(SHA, Params) ->
+     [{digest, SHA}, {key, {ssl_test_lib:hardcode_rsa_key(5), Params}}].
+
+intermediates(SHA, undefined, N) when N =< 2 ->
+    Default = lists:duplicate(N, [{digest, SHA}]),
+    %% As rsa keygen is not guaranteed to be fast
+    hardcode_rsa_keys(Default, N, []);
+intermediates(SHA, Params, N) when N =< 2 ->
+    Default = lists:duplicate(N, [{digest, SHA}]),
+    %% As rsa keygen is not guaranteed to be fast
+    hardcode_rsa_keys(Default, Params, N, []).
+
+hardcode_rsa_keys([], 0, Acc) ->
+    Acc;
+hardcode_rsa_keys([Head | Tail], N, Acc) ->
+    hardcode_rsa_keys(Tail, N-1, [[{key, ssl_test_lib:hardcode_rsa_key(N)} | Head] | Acc]).
+
+hardcode_rsa_keys([], _, 0, Acc) ->
+    Acc;
+hardcode_rsa_keys([Head | Tail], Params, N, Acc) ->
+    hardcode_rsa_keys(Tail, N-1, [[{key, {ssl_test_lib:hardcode_rsa_key(N)}, Params} | Head] | Acc]).
+
+rsa_algs() ->
+    [{sha512, rsa}, {sha384, rsa}, {sha256, rsa}].
+
+legacy_rsa_algs() ->
+    [rsa_pkcs1_sha512,rsa_pkcs1_sha384,rsa_pkcs1_sha256].
+
+rsa_pss_rsae_algs() ->
+    [rsa_pss_rsae_sha512,rsa_pss_rsae_sha384,rsa_pss_rsae_sha256].
+
+rsa_pss_pss_algs() ->
+    [rsa_pss_pss_sha512,rsa_pss_pss_sha384,rsa_pss_pss_sha256].
 

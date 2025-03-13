@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1997-2023. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2024. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -582,7 +582,12 @@ check_arg([], Res) ->
 		disk_log_1:read_size_file_version(Res#arg.file),
 	    check_wrap_arg(Ret, OldSize, Version);
         Res#arg.type =:= rotate ->
-            {ok, Res#arg{format = external}};
+            case Ret of
+                {ok, Patched} ->
+                    {ok, Patched#arg{format = external}};
+                _ ->
+                    Ret
+            end;
 	true ->
 	    Ret
     end;

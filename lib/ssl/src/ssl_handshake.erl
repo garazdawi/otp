@@ -48,7 +48,7 @@
 
 %% Create handshake messages
 -export([hello_request/0, server_hello/4, server_hello_done/0,
-	 certificate/4,  client_certificate_verify/6,  certificate_request/4, key_exchange/3,
+	 certificate/4,  client_certificate_verify/6,  certificate_request/5, key_exchange/3,
 	 finished/5,  next_protocol/1, digitally_signed/5,
          certificate_authorities/2]).
 
@@ -76,17 +76,25 @@
 %% Extensions handling
 -export([client_hello_extensions/10,
 	 handle_client_hello_extensions/10, %% Returns server hello extensions
-	 handle_server_hello_extensions/10, select_curve/2, select_curve/3,
-         select_hashsign/4, select_hashsign/5,
-	 select_hashsign_algs/3, empty_extensions/2, add_server_share/3,
-	 add_alpn/2, add_selected_version/1, decode_alpn/1, max_frag_enum/1
+	 handle_server_hello_extensions/10,
+         select_curve/2,
+         select_curve/3,
+         select_hashsign/4,
+         select_hashsign/5,
+	 select_hashsign_algs/3,
+         empty_extensions/2,
+         add_server_share/3,
+	 add_alpn/2,
+         add_selected_version/1,
+         decode_alpn/1,
+         supported_hashsigns/1,
+         max_frag_enum/1
 	]).
 
 -export([get_cert_params/1,
          select_own_cert/1,
          path_validation/10,
-         validation_fun_and_state/4,
-         path_validation_alert/1]).
+         validation_fun_and_state/4]).
 
 %% Tracing
 -export([handle_trace/3]).
@@ -172,19 +180,24 @@ client_certificate_verify([OwnCert|_], MasterSecret, Version,
 
 %%--------------------------------------------------------------------
 -spec certificate_request(db_handle(), 
-			  certdb_ref(),  #hash_sign_algos{}, ssl_record:ssl_version()) ->
+			  certdb_ref(),  #hash_sign_algos{}, ssl_record:ssl_version(), boolean()) ->
 				 #certificate_request{}.
 %%
 %% Description: Creates a certificate_request message, called by the server.
 %%--------------------------------------------------------------------
-certificate_request(CertDbHandle, CertDbRef, HashSigns, Version) ->
+certificate_request(CertDbHandle, CertDbRef, HashSigns, Version, IncludeCertAuths) ->
     Types = certificate_types(Version),
-    Authorities = certificate_authorities(CertDbHandle, CertDbRef),
+    Authorities = case IncludeCertAuths of
+                      true ->
+                          certificate_authorities(CertDbHandle, CertDbRef);
+                      false ->
+                          []
+                  end,
     #certificate_request{
-		    certificate_types = Types,
-		    hashsign_algorithms = HashSigns,
-		    certificate_authorities = Authorities
-		   }.
+       certificate_types = Types,
+       hashsign_algorithms = HashSigns,
+       certificate_authorities = Authorities
+      }.
 %%--------------------------------------------------------------------
 -spec key_exchange(client | server, ssl_record:ssl_version(),
 		   {premaster_secret, binary(), public_key_info()} |
@@ -352,7 +365,7 @@ certify(#certificate{asn1_certificates = ASN1Certs}, CertDbHandle, CertDbRef,
 	    {ok, {PublicKeyInfo, _}} ->
                 {PeerCert, PublicKeyInfo};
 	    {error, Reason} ->
-                path_validation_alert(Reason)
+                path_validation_alert(Reason, ServerName, PeerCert)
 	end
     catch
         error:{_,{error, {asn1, Asn1Reason}}} ->
@@ -1449,9 +1462,10 @@ signature_algs_ext(SignatureSchemes0) ->
 
 signature_algs_cert(undefined) ->
     undefined;
+signature_algs_cert([default | SignatureSchemes]) ->
+    #signature_algorithms_cert{signature_scheme_list = SignatureSchemes};
 signature_algs_cert(SignatureSchemes) ->
     #signature_algorithms_cert{signature_scheme_list = SignatureSchemes}.
-
 
 use_srtp_ext(#{use_srtp := #{protection_profiles := Profiles, mki := MKI}}) ->
     #use_srtp{protection_profiles = Profiles, mki = MKI};
@@ -1709,10 +1723,12 @@ do_select_hashsign(HashSigns, PublicKeyAlgo, SupportedHashSigns) ->
                         is_acceptable_hash_sign(Scheme, SupportedHashSigns);
                     rsa_pss_pss when PublicKeyAlgo  == rsa_pss_pss -> %% Backported
                         is_acceptable_hash_sign(Scheme, SupportedHashSigns);
-                              ecdsa when (PublicKeyAlgo == ecdsa) andalso (H == sha) ->
+                    ecdsa when (PublicKeyAlgo == ecdsa) andalso (H == sha) ->
                         is_acceptable_hash_sign({H, S}, SupportedHashSigns) orelse  %% TLS-1.2 name
                             is_acceptable_hash_sign(Scheme, SupportedHashSigns); %% TLS-1.3 legacy name
-                              _ ->
+                    ecdsa when (PublicKeyAlgo == ecdsa)  ->
+                        is_acceptable_hash_sign({H, S}, SupportedHashSigns);
+                    _ ->
                         false
                 end
         end,
@@ -1870,7 +1886,7 @@ client_signature_schemes(ClientHashSigns, undefined) ->
     ClientHashSigns;
 client_signature_schemes(_, #signature_algorithms_cert{
                                signature_scheme_list = ClientSignatureSchemes}) ->
-    ClientSignatureSchemes.
+    ssl_cipher:signature_schemes_1_2(ClientSignatureSchemes).
 
 
 %%--------------------------------------------------------------------
@@ -2104,28 +2120,44 @@ maybe_check_hostname(OtpCert, valid_peer, SslState) ->
 maybe_check_hostname(_, valid, _) ->
     valid.
 
-
-path_validation_alert({bad_cert, cert_expired}) ->
+path_validation_alert({bad_cert, cert_expired}, _, _) ->
     ?ALERT_REC(?FATAL, ?CERTIFICATE_EXPIRED);
-path_validation_alert({bad_cert, invalid_issuer}) ->
-    ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE);
-path_validation_alert({bad_cert, invalid_signature}) ->
-    ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE);
-path_validation_alert({bad_cert, name_not_permitted}) ->
-    ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE);
-path_validation_alert({bad_cert, unknown_critical_extension}) ->
-    ?ALERT_REC(?FATAL, ?UNSUPPORTED_CERTIFICATE);
-path_validation_alert({bad_cert, {revoked, _}}) ->
+path_validation_alert({bad_cert, invalid_issuer}, _, _) ->
+    ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE, invalid_issuer);
+path_validation_alert({bad_cert, invalid_signature}, _, _) ->
+    ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE, invalid_signature);
+path_validation_alert({bad_cert, unsupported_signature}, _, _) ->
+    ?ALERT_REC(?FATAL, ?UNSUPPORTED_CERTIFICATE, unsupported_signature);
+path_validation_alert({bad_cert, name_not_permitted}, _, _) ->
+    ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE, name_not_permitted);
+path_validation_alert({bad_cert, unknown_critical_extension}, _, _) ->
+    ?ALERT_REC(?FATAL, ?UNSUPPORTED_CERTIFICATE, unknown_critical_extension);
+path_validation_alert({bad_cert, {revoked, _}}, _, _) ->
     ?ALERT_REC(?FATAL, ?CERTIFICATE_REVOKED);
-path_validation_alert({bad_cert, {revocation_status_undetermined, Details}}) ->
+path_validation_alert({bad_cert, {revocation_status_undetermined, Details}}, _, _) ->
     ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE, Details);
-path_validation_alert({bad_cert, selfsigned_peer}) ->
-    ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE);
-path_validation_alert({bad_cert, unknown_ca}) ->
+path_validation_alert({bad_cert, selfsigned_peer}, _, _) ->
+    ?ALERT_REC(?FATAL, ?BAD_CERTIFICATE, selfsigned_peer);
+path_validation_alert({bad_cert, unknown_ca}, _, _) ->
     ?ALERT_REC(?FATAL, ?UNKNOWN_CA);
-path_validation_alert(Reason) ->
+path_validation_alert({bad_cert, hostname_check_failed}, ServerName, #cert{otp = PeerCert}) ->
+    SubjAltNames = subject_altnames(PeerCert),
+    ?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE,{bad_cert, {hostname_check_failed, {requested, ServerName}, 
+                                                      {received, SubjAltNames}}});
+path_validation_alert({bad_cert, invalid_ext_keyusage}, _, _) -> %% Detected by public key
+    ?ALERT_REC(?FATAL, ?UNSUPPORTED_CERTIFICATE, {invalid_ext_keyusage,
+                                                  "CA cert purpose anyExtendedKeyUsage"
+                                                  "and extended-key-usage extension marked critical is not allowed"});
+path_validation_alert({bad_cert, {invalid_ext_keyusage, ExtKeyUses}}, _, _) ->
+     Uses = extkey_oids_to_names(ExtKeyUses, []),
+    ?ALERT_REC(?FATAL, ?UNSUPPORTED_CERTIFICATE, {invalid_ext_keyusage, Uses});
+path_validation_alert({bad_cert, {ca_invalid_ext_keyusage, ExtKeyUses}}, _, _) ->
+     Uses = extkey_oids_to_names(ExtKeyUses, []),
+    ?ALERT_REC(?FATAL, ?UNSUPPORTED_CERTIFICATE, {ca_invalid_ext_keyusage, Uses});
+path_validation_alert({bad_cert, {key_usage_mismatch, _} = Reason}, _, _) ->
+    ?ALERT_REC(?FATAL, ?UNSUPPORTED_CERTIFICATE, Reason);
+path_validation_alert(Reason, _,_) ->
     ?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, Reason).
-
 
 digitally_signed(Version, Msg, HashAlgo, PrivateKey, SignAlgo) ->
     try do_digitally_signed(Version, Msg, HashAlgo, PrivateKey, SignAlgo)
@@ -3605,6 +3637,12 @@ sni(SslOpts) ->
         disable -> undefined;
         Hostname -> #sni{hostname = Hostname}
     end.
+supported_hashsigns(undefined) ->
+    undefined;
+supported_hashsigns([default | SigAlgs]) ->
+    supported_hashsigns(SigAlgs);
+supported_hashsigns(SigAlgs) ->
+    ssl_cipher:signature_schemes_1_2(SigAlgs).
 
 %% convert max_fragment_length (in bytes) to the RFC 6066 ENUM
 max_frag_enum(?MAX_FRAGMENT_LENGTH_BYTES_1) ->
@@ -3830,13 +3868,14 @@ path_validation(TrustedCert, Path, ServerName, Role, CertDbHandle, CertDbRef, CR
                 #{verify_fun := VerifyFun,
                   customize_hostname_check := CustomizeHostnameCheck,
                   crl_check := CrlCheck,
+                  allow_any_ca_purpose := AllowAnyPurpose,
                   log_level := Level} = Opts,
                 #{cert_ext := CertExt,
                   ocsp_responder_certs := OcspResponderCerts,
                   ocsp_state := OcspState}) ->
     SignAlgos = maps:get(signature_algs, Opts, undefined),
-    SignAlgosCert = maps:get(signature_algs_cert, Opts, undefined),
-    ValidationFunAndState = 
+    SignAlgosCert = supported_cert_signs(maps:get(signature_algs_cert, Opts, undefined)),
+    ValidationFunAndState =
         validation_fun_and_state(VerifyFun, #{role => Role,
                                               certdb => CertDbHandle,
                                               certdb_ref => CertDbRef,
@@ -3852,6 +3891,7 @@ path_validation(TrustedCert, Path, ServerName, Role, CertDbHandle, CertDbRef, CR
                                               issuer => TrustedCert,
                                               ocsp_responder_certs => OcspResponderCerts,
                                               ocsp_state => OcspState,
+                                              allow_any_ca_purpose => AllowAnyPurpose,
                                               path_len => length(Path)
                                              },
                                  Path, Level),
@@ -3868,6 +3908,51 @@ path_validation_cb(?TLS_1_3) ->
     tls_handshake_1_3;
 path_validation_cb(_) ->
     ?MODULE.
+
+supported_cert_signs(undefined) ->
+    undefined;
+supported_cert_signs([default|Signs]) ->
+    Signs;
+supported_cert_signs(Signs) ->
+    Signs.
+
+subject_altnames(#'OTPCertificate'{tbsCertificate = TBSCert} = OTPCert) ->
+    Extensions = extensions_list(TBSCert#'OTPTBSCertificate'.extensions),
+    %% Fallback to CN-ids
+    {_, Names} = public_key:pkix_subject_id(OTPCert),
+    subject_altnames(Extensions, Names).
+    
+subject_altnames([], Names) ->
+    Names;
+subject_altnames([#'Extension'{extnID = ?'id-ce-subjectAltName',
+                              extnValue = Value} | _], _) ->
+    Value;
+subject_altnames([#'Extension'{} | Extensions], Names) ->
+    subject_altnames(Extensions, Names).
+
+extensions_list(asn1_NOVALUE) ->
+    [];
+extensions_list(Extensions) ->
+    Extensions.
+
+extkey_oids_to_names([], Acc) ->
+    Acc;
+extkey_oids_to_names([?'id-kp-serverAuth'| Rest], Acc) ->
+    extkey_oids_to_names(Rest, ["id-kp-serverAuth"| Acc]);
+extkey_oids_to_names([?'id-kp-clientAuth'| Rest], Acc) ->
+    extkey_oids_to_names(Rest, ["id-kp-clientAuth"| Acc]);
+extkey_oids_to_names([?'id-kp-OCSPSigning'| Rest], Acc) ->
+    extkey_oids_to_names(Rest, ["id-kp-OCSPSigning"| Acc]);
+extkey_oids_to_names([?'id-kp-timeStamping'| Rest], Acc) ->
+    extkey_oids_to_names(Rest, ["id-kp-emailProtection"| Acc]);
+extkey_oids_to_names([?'id-kp-emailProtection'| Rest], Acc) ->
+    extkey_oids_to_names(Rest, ["id-kp-emailProtection"| Acc]);
+extkey_oids_to_names([?'id-kp-codeSigning'| Rest], Acc) ->
+    extkey_oids_to_names(Rest, ["id-kp-codeSigning"| Acc]);
+extkey_oids_to_names([?'anyExtendedKeyUsage'| Rest], Acc) ->
+    extkey_oids_to_names(Rest, ["anyExtendedKeyUsage"| Acc]);
+extkey_oids_to_names([Other| Rest], Acc) ->
+    extkey_oids_to_names(Rest, [Other | Acc]).
 
 %%%################################################################
 %%%#

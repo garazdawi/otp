@@ -31,6 +31,248 @@
   </header>
   <p>This document describes the changes made to the ERTS application.</p>
 
+<section><title>Erts 14.2.5.8</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fixed BEAM crash when a custom thread sends a large
+	    map (>128 keys) externally encoded with for example
+	    <c>erl_drv_send_term()</c>.</p>
+          <p>
+	    Own Id: OTP-19495 Aux Id: GH-8208, PR-8209 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erts 14.2.5.7</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Disabled an unsafe runtime optimization in binary
+	    construction that caused silent memory corruption.</p>
+          <p>
+	    Own Id: OTP-19462 Aux Id: ERIERL-1177, PR-9372 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erts 14.2.5.6</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fixed configure tests for GCC 14</p>
+          <p>
+	    Own Id: OTP-19407 Aux Id: GH-9211, PR-9234 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erts 14.2.5.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fix lock order violation if a NIF monitor <c>down</c>
+	    callback calls <c>enif_whereis_pid</c>. Would cause debug
+	    emulator to crash but could potentially lead to deadlocks
+	    in optimized emulator.</p>
+          <p>
+	    Own Id: OTP-19330 Aux Id: GH-8983, PR-9008 </p>
+        </item>
+        <item>
+	    <p>gen_udp:send on domain local can leak inet_reply
+	    messages.</p>
+          <p>
+	    Own Id: OTP-19332 Aux Id: #8989 </p>
+        </item>
+        <item>
+	    <p>net:getifaddrs does not properly report the running
+	    flag on windows.</p>
+          <p>
+	    Own Id: OTP-19366 Aux Id: OTP-19061, ERIERL-1134 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erts 14.2.5.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A bug has been fixed where receiving an SCTP message with
+	    `gen_sctp` could waste the first fragments of a message
+	    and only deliver the last fragment.</p>
+          <p>
+	    This happened with low probability when the OS signaled
+	    that the socket was ready for reading in combination with
+	    an internal time-out retry.</p>
+          <p>
+	    A bug has been fixed with a lingering time-out from after
+	    an SCTP connect that could stop the flow of incoming
+	    messages on an active `gen_tcp` socket.</p>
+          <p>
+	    Own Id: OTP-19235 Aux Id: ERIERL-1133, PR-8837 </p>
+        </item>
+        <item>
+          <p>
+	    On Windows, successive failed socket calls caused socket
+	    to become "uninitialized".</p>
+          <p>
+	    Own Id: OTP-19251 Aux Id: GH-8853 </p>
+        </item>
+        <item>
+          <p>
+	    The socket framework fails to start on a IPv6-only
+	    Windows machine.</p>
+          <p>
+	    Own Id: OTP-19254 Aux Id: GH-8848 </p>
+        </item>
+        <item>
+          <p>
+	    An boolean option `non_block_send` for SCTP, has ben
+	    added to be able to achieve the old behaviour to avoid
+	    blocking send operations by passing the OS network stack
+	    error message (`{error,eagain}` through.</p>
+          <p>
+	    Own Id: OTP-19258 Aux Id: OTP-19061, ERIERL-1134 </p>
+        </item>
+        <item>
+          <p>
+	    The call `gen_tcp:send/2` could hang indefinitely despite
+	    having set the `send_timeout` option for the following
+	    unfortunate combination of circumstances:</p>
+          <p>
+	    * The socket has to be in passive mode. * All output
+	    buffers had to be filled util the `high_watermark` was
+	    hit, causing the `gen_tcp:send/2` operation to block. *
+	    While the send operation was blocked, a
+	    `gen_tcp:recv/2,3` call had to be done from a different
+	    process. It had to block, waiting for data for a while
+	    before completing the operation, and the received packet
+	    had to fill at least 75% of the receive buffer.</p>
+          <p>
+	    Under these circumstances he information that a send
+	    operation was waiting got lost, so the send operation
+	    that blocked in the first placed would never return. The
+	    data it had would be sent, though, and send operations
+	    from other processes, still work.</p>
+          <p>
+	    This bug has been fixed.</p>
+          <p>
+	    Own Id: OTP-19267 Aux Id: GH-6455, OTP-18520,
+	    ERIERL-1138, PR-8892 </p>
+        </item>
+        <item>
+	    <p>Fixed beam crash that could happen if resetting
+	    <c>call_time</c> or <c>call_memory</c> trace counters of
+	    a function while it is called. Bug exists since OTP
+	    R16.</p>
+          <p>
+	    Own Id: OTP-19269 Aux Id: GH-8835, PR-8897 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erts 14.2.5.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A race in the kTLS flavour of SSL distribution has been
+	    fixed so inet_drv.c doesn't read ahead too much data
+	    which could cause the kTLS encryption to be activated too
+	    late when some encrypted data had already been read into
+	    the inet_drv.c buffer as unencrypted.</p>
+          <p>
+	    Own Id: OTP-19175 Aux Id: GH-8561, PR-8690 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erts 14.2.5.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p> When <seeguide
+	    marker="time_correction#no-time-warp-mode"><i>no time
+	    warp mode</i></seeguide> was enabled, a smaller Erlang
+	    monotonic time could be read than a previously read time,
+	    i.e., breaking the monotonic property. The runtime system
+	    will abort when detecting an issue like this since OTP
+	    24.3.4.17 and OTP 25.0. </p> <p> Up until OTP 25 <i>no
+	    time warp mode</i> is the default. As of OTP 26 <seeguide
+	    marker="time_correction#multi-time-warp-mode"><i>multi
+	    time warp mode</i></seeguide> is the default. </p>
+          <p>
+	    Own Id: OTP-19147 Aux Id: ERIERL-1043, ERIERL-1106,
+	    PR-8619 </p>
+        </item>
+        <item>
+          <p>
+	    A scheduler thread could get stuck when deleting a memory
+	    allocator carrier when adjacent carriers were deleted
+	    and/or inserted simultaneously by other schedulers. This
+	    in turn could cause the other schedulers to get stuck as
+	    well.</p>
+          <p>
+	    Own Id: OTP-19154 Aux Id: GH-8613, PR-8627 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Erts 14.2.5.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A call to socket:[recv|recvfrom|recvmsg]/* with Timeout =
+	    0 on Windows could cause a (case clause) crash if data is
+	    immediately available.</p>
+          <p>
+	    Own Id: OTP-19063 Aux Id: OTP-18835 </p>
+        </item>
+        <item>
+	    <p>When a port command crashed in the inet driver during
+	    <c>gen_tcp:send/2</c>, a monitor <c>'DOWN'</c> message
+	    could be left lingering in the caller's mailbox. This has
+	    now been fixed. </p>
+          <p>
+	    Own Id: OTP-19121 Aux Id: GH-8484 </p>
+        </item>
+        <item>
+	    <p><c>'DOWN'</c> messages originating from a monitored
+	    port, contained the atom <c>process</c> instead of the
+	    atom <c>port</c> as the third element when the exit
+	    reason was not an immediate term.</p>
+          <p>
+	    Own Id: OTP-19123 Aux Id: GH-8484, PR-8546 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Erts 14.2.5</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>

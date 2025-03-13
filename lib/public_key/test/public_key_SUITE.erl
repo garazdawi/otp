@@ -47,6 +47,8 @@
          rsa_pem/1,
          rsa_pss_pss_pem/0,
          rsa_pss_pss_pem/1,
+         rsa_pss_default_pem/0,
+         rsa_pss_default_pem/1,
          rsa_priv_pkcs8/0,
          rsa_priv_pkcs8/1,
          ec_pem/0,
@@ -59,6 +61,8 @@
          eddsa_priv_pkcs8/1,
          eddsa_priv_rfc5958/0,
          eddsa_priv_rfc5958/1,
+         eddsa_pub/0,
+         eddsa_pub/1,
          eddsa_sign_verify_24_compat/1,
          init_ec_pem_encode_generated/1,
          ec_pem_encode_generated/0,
@@ -97,6 +101,8 @@
          pkix_path_validation_root_expired/1,
          pkix_ext_key_usage/0,
          pkix_ext_key_usage/1,
+         pkix_ext_key_usage_any/0,
+         pkix_ext_key_usage_any/1,
          pkix_path_validation_bad_date/0,
          pkix_path_validation_bad_date/1,
          pkix_verify_hostname_cn/1,
@@ -161,6 +167,7 @@ all() ->
      pkix_path_validation,
      pkix_path_validation_root_expired,
      pkix_ext_key_usage,
+     pkix_ext_key_usage_any,
      pkix_path_validation_bad_date,
      pkix_iso_rsa_oid, 
      pkix_iso_dsa_oid, 
@@ -182,7 +189,8 @@ all() ->
     ].
 
 groups() -> 
-    [{pem_decode_encode, [], [dsa_pem, rsa_pem, rsa_pss_pss_pem, ec_pem,
+    [{pem_decode_encode, [], [dsa_pem, rsa_pem, rsa_pss_pss_pem, 
+                              rsa_pss_default_pem, ec_pem,
 			      encrypted_pem_pwdstring, encrypted_pem_pwdfun,
 			      dh_pem, cert_pem, pkcs7_pem, pkcs10_pem, ec_pem2,
 			      rsa_priv_pkcs8, dsa_priv_pkcs8, ec_priv_pkcs8,
@@ -366,6 +374,20 @@ rsa_pss_pss_pem(Config) when is_list(Config) ->
     RSAPemNoEndNewLines = strip_superfluous_newlines(RsaPem),
     RSAPemNoEndNewLines = strip_superfluous_newlines(public_key:pem_encode([PrivEntry0])).
 
+rsa_pss_default_pem() ->
+    [{doc, "RSA PKCS8 RSASSA-PSS private key with default params decode/encode"}].
+rsa_pss_default_pem(Config) when is_list(Config) ->
+    Datadir = proplists:get_value(data_dir, Config),
+    {ok, RsaPem} = file:read_file(filename:join(Datadir, "pss_default.pem")),
+    [{'PrivateKeyInfo', DerRSAKey, not_encrypted} = Entry0 ] = public_key:pem_decode(RsaPem),
+    #'RSASSA-AlgorithmIdentifier'{parameters = Params} = ?'rSASSA-PSS-Default-Identifier',
+    {RSAKey, Params} = public_key:der_decode('PrivateKeyInfo', DerRSAKey),
+    {RSAKey, Parms} = public_key:pem_entry_decode(Entry0),
+    true = check_entry_type(RSAKey, 'RSAPrivateKey'),
+    PrivEntry0 = public_key:pem_entry_encode('PrivateKeyInfo', {RSAKey, Parms}),
+    RSAPemNoEndNewLines = strip_superfluous_newlines(RsaPem),
+    RSAPemNoEndNewLines = strip_superfluous_newlines(public_key:pem_encode([PrivEntry0])).
+
 rsa_priv_pkcs8() ->
     [{doc, "RSA PKCS8 private key decode/encode"}].
 rsa_priv_pkcs8(Config) when is_list(Config) ->
@@ -465,6 +487,20 @@ eddsa_priv_rfc5958(Config) when is_list(Config) ->
     PrivEntry0 = public_key:pem_entry_encode('OneAsymmetricKey', ECPrivKey),
     ECPemNoEndNewLines = strip_superfluous_newlines(ECPrivPem),
     ECPemNoEndNewLines = strip_superfluous_newlines(public_key:pem_encode([PrivEntry0])).
+
+eddsa_pub() ->
+    [{doc, "EDDSA PKCS8 public key decode/encode"}].
+eddsa_pub(Config) when is_list(Config) ->
+    Datadir = proplists:get_value(data_dir, Config),
+    {ok, EDDSAPubPem} = file:read_file(filename:join(Datadir, "public_eddsa.pem")),
+    [{'SubjectPublicKeyInfo', _, not_encrypted} = Key] = PemEntry =
+        public_key:pem_decode(EDDSAPubPem),
+    EDDSAPubKey = public_key:pem_entry_decode(PemEntry),
+    true = check_entry_type(EDDSAPubKey, 'ECPoint'),
+    {_, {namedCurve, ?'id-Ed25519'}} = EDDSAPubKey,
+    PrivEntry0 = public_key:pem_entry_encode('SubjectPublicKeyInfo', EDDSAPubKey),
+    ECPemNoEndNewLines = strip_superfluous_newlines(EDDSAPubPem),
+    ECPemNoEndNewLines = strip_superfluous_newlines(public_key:pem_encode([PemEntry])).
 
 eddsa_sign_verify_24_compat(_Config) ->
     Key =
@@ -941,8 +977,72 @@ pkix_path_validation_root_expired(Config) when is_list(Config) ->
     {error, {bad_cert, cert_expired}} = public_key:pkix_path_validation(Root, [ICA, Peer], []).
     
 pkix_ext_key_usage() ->
-    [{doc, "Extended key usage is usually in end entity certs, may be in CA but should not be critical in such case"}].
+    [{doc, "If extended key usage is a critical extension in a CA (usually not included) make sure it is compatible with keyUsage extension"}].
 pkix_ext_key_usage(Config) when is_list(Config) ->
+    SRootSpec = public_key:pkix_test_root_cert("OTP test server ROOT", []),
+    CRootSpec = public_key:pkix_test_root_cert("OTP test client ROOT", []),
+
+    CAExtServer = [#'Extension'{extnID = ?'id-ce-keyUsage',
+                                extnValue = [digitalSignature, keyCertSign, cRLSign],
+                                critical = false},
+                   #'Extension'{extnID = ?'id-ce-extKeyUsage',
+                                extnValue = [?'id-kp-OCSPSigning', ?'id-kp-emailProtection', ?'id-kp-serverAuth'],
+                                critical = true}],
+
+    CAExtClient = [#'Extension'{extnID = ?'id-ce-keyUsage',
+                                extnValue = [digitalSignature, keyCertSign, cRLSign],
+                                critical = false},
+                   #'Extension'{extnID = ?'id-ce-extKeyUsage',
+                                extnValue = [?'id-kp-codeSigning', ?'id-kp-emailProtection', ?'id-kp-clientAuth'],
+                                critical = true}],
+    #{server_config := SConf,
+      client_config := CConf} = public_key:pkix_test_data(#{server_chain => #{root => SRootSpec,
+                                                                              intermediates => [[{extensions, CAExtServer}]],
+                                                                              peer => []},
+                                                           client_chain => #{root => CRootSpec,
+                                                                             intermediates => [[{extensions, CAExtClient}]],
+                                                                             peer => []}}),
+    [_STRoot, SICA, SRoot] = proplists:get_value(cacerts, SConf),
+    [_CTRoot, CICA, CRoot] = proplists:get_value(cacerts, CConf),
+    SPeer = proplists:get_value(cert, SConf),
+    CPeer = proplists:get_value(cert, CConf),
+
+    {ok, _} = public_key:pkix_path_validation(SRoot, [SICA, SPeer], []),
+    {ok, _} = public_key:pkix_path_validation(CRoot, [CICA, CPeer], []),
+
+    CAExtServerFail = [#'Extension'{extnID = ?'id-ce-keyUsage',
+                                extnValue = [keyAgreement, keyCertSign, cRLSign],
+                                    critical = false},
+                       #'Extension'{extnID = ?'id-ce-extKeyUsage',
+                                    extnValue = [?'id-kp-serverAuth', ?'id-kp-timeStamping'],
+                                    critical = true}],
+
+    CAExtClient1 = [#'Extension'{extnID = ?'id-ce-keyUsage',
+                                extnValue = [keyEncipherment, keyCertSign, cRLSign],
+                                critical = false},
+                   #'Extension'{extnID = ?'id-ce-extKeyUsage',
+                                extnValue = [?'id-kp-emailProtection', ?'id-kp-clientAuth'],
+                                critical = true}],
+
+    #{server_config := SConf1,
+      client_config := CConf1} = public_key:pkix_test_data(#{server_chain => #{root => SRootSpec,
+                                                                                 intermediates => [[{extensions, CAExtServerFail}]],
+                                                                               peer => []},
+                                                               client_chain => #{root => CRootSpec,
+                                                                                 intermediates => [[{extensions, CAExtClient1}]],
+                                                                                 peer => []}}),
+    [_, SICA1, SRoot1] = proplists:get_value(cacerts, SConf1),
+    SPeer1 = proplists:get_value(cert, SConf1),
+
+    {error, {bad_cert,{key_usage_mismatch, _}}} = public_key:pkix_path_validation(SRoot1, [SICA1, SPeer1], []),
+
+    [_, CICA1, CRoot1] = proplists:get_value(cacerts, CConf1),
+    CPeer1 = proplists:get_value(cert, CConf1),
+    {ok, _} = public_key:pkix_path_validation(CRoot1, [CICA1, CPeer1], []).
+
+pkix_ext_key_usage_any() ->
+    [{doc, "Extended key usage is usually in end entity certs, may be in CA but should not be critical in such case"}].
+pkix_ext_key_usage_any(Config) when is_list(Config) ->
     SRootSpec = public_key:pkix_test_root_cert("OTP test server ROOT", []),
     CRootSpec = public_key:pkix_test_root_cert("OTP test client ROOT", []),
 

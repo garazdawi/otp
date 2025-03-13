@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2020-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2020-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -3440,6 +3440,8 @@ recv(?socket(SockRef), Length, Flags, Timeout)
             case prim_socket:recv(SockRef, Length, Flags, zero) of
                 ok ->
                     {error, timeout};
+                timeout ->
+                    {error, timeout};
                 Result ->
                     Result
             end;
@@ -3838,6 +3840,8 @@ recvfrom(?socket(SockRef), BufSz, Flags, Timeout)
             case prim_socket:recvfrom(SockRef, BufSz, Flags, zero) of
                 ok ->
                     {error, timeout};
+                timeout ->
+                    {error, timeout};
                 Result ->
                     recvfrom_result(Result)
             end;
@@ -4136,6 +4140,8 @@ recvmsg(?socket(SockRef), BufSz, CtrlSz, Flags, Timeout)
         zero ->
             case prim_socket:recvmsg(SockRef, BufSz, CtrlSz, Flags, zero) of
                 ok ->
+                    {error, timeout};
+                timeout ->
                     {error, timeout};
                 Result ->
                     recvmsg_result(Result)

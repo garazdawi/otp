@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2020-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2020-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -548,15 +548,6 @@ send_sync_alert(
 
 %% User closes or recursive call!
 close({close, Timeout}, Socket, Transport = gen_tcp, _) ->
-    tls_socket:setopts(Transport, Socket, [{active, false}]),
-    Transport:shutdown(Socket, write),
-    _ = Transport:recv(Socket, 0, Timeout),
-    ok;
-%% Peer closed socket
-close({shutdown, transport_closed}, Socket, Transport = gen_tcp, ConnectionStates) ->
-    close({close, 0}, Socket, Transport, ConnectionStates);
-%% We generate fatal alert
-close({shutdown, own_alert}, Socket, Transport = gen_tcp, ConnectionStates) ->
     %% Standard trick to try to make sure all
     %% data sent to the tcp port is really delivered to the
     %% peer application before tcp port is closed so that the peer will
@@ -565,7 +556,13 @@ close({shutdown, own_alert}, Socket, Transport = gen_tcp, ConnectionStates) ->
     %% e.g. we do not want to hang if something goes wrong
     %% with the network but we want to maximise the odds that
     %% peer application gets all data sent on the tcp connection.
-    close({close, ?DEFAULT_TIMEOUT}, Socket, Transport, ConnectionStates);
+    tls_socket:setopts(Transport, Socket, [{active, false}]),
+    Transport:shutdown(Socket, write),
+    _ = Transport:recv(Socket, 0, Timeout),
+    ok;
+%% Peer closed socket
+close({shutdown, transport_closed}, Socket, Transport = gen_tcp, ConnectionStates) ->
+    close({close, 0}, Socket, Transport, ConnectionStates);
 %% Other
 close(_, Socket, Transport, _) ->
     tls_socket:close(Transport, Socket).
@@ -887,7 +884,14 @@ handle_alerts([#alert{level = ?WARNING, description = ?CLOSE_NOTIFY} | _Alerts],
               {next_state, connection = StateName, #state{connection_env = CEnv, 
                                                           socket_options = #socket_options{active = false},
                                                           start_or_recv_from = From} = State}) when From == undefined ->
+    %% Linger to allow recv and setopts to possibly fetch data not yet delivered to user to be fetched
     {next_state, StateName, State#state{connection_env = CEnv#connection_env{socket_tls_closed = true}}};
+handle_alerts([#alert{level = ?FATAL} = Alert | _Alerts],
+              {next_state, connection = StateName, #state{connection_env = CEnv,
+                                                          socket_options = #socket_options{active = false},
+                                                          start_or_recv_from = From} = State}) when From == undefined ->
+    %% Linger to allow recv and setopts to retrieve alert reason
+    {next_state, StateName, State#state{connection_env = CEnv#connection_env{socket_tls_closed = Alert}}};
 handle_alerts([Alert | Alerts], {next_state, StateName, State}) ->
      handle_alerts(Alerts, ssl_gen_statem:handle_alert(Alert, StateName, State));
 handle_alerts([Alert | Alerts], {next_state, StateName, State, _Actions}) ->

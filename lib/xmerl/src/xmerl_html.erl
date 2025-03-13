@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2003-2016. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2024. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@
 -export(['#root#'/4,
 	 '#element#'/5,
 	 '#text#'/1,
+	 '#cdata#'/1,
 	 p/4]).
 
 -import(xmerl_lib, [start_tag/2, end_tag/1, is_empty_data/1,
@@ -40,11 +41,14 @@
 '#xml-inheritance#'() -> [].
 
 
-%% The '#text#' function is called for every text segment.
-
+%% The '#text#' function is called for every text segment of type text.
 '#text#'(Text) ->
     export_text(Text).
 
+%% The '#cdata#' function is called for every text segment of type cdata.
+%% Handled the same as text.
+'#cdata#'(Text) ->
+    export_text(Text).
 
 %% The '#root#' tag is called when the entire structure has been
 %% exported. It does not appear in the structure itself.

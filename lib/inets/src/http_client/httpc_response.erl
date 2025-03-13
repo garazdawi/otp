@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -150,7 +150,7 @@ result(Response = {{_,Code,_}, _, _}, Request) when (Code div 100) =:= 5 ->
 result(Response, Request) -> 
     transparent(Response, Request).
 
-send(Receiver, Msg) when is_pid(Receiver) ->
+send(Receiver, Msg) when is_pid(Receiver); is_reference(Receiver) ->
     Receiver ! {http, Msg};
 send(Receiver, Msg) when is_function(Receiver) ->
     (catch Receiver(Msg));

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2002-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2024. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1028,19 +1028,7 @@ get_cookies(Opts, #options{cookies = Default}) ->
     proplists:get_value(cookies, Opts, Default).
 
 get_ipfamily(Opts, #options{ipfamily = IpFamily}) ->
-    case lists:keysearch(ipfamily, 1, Opts) of
-	false -> 
-	    case proplists:get_value(ipv6, Opts) of
-		enabled ->
-		    inet6fb4;
-		disabled ->
-		    inet;
-		_ ->
-		    IpFamily
-	    end;
-	{value, {_, Value}} ->
-	    Value
-    end.
+    proplists:get_value(ipfamily, Opts, IpFamily).
 
 get_ip(Opts, #options{ip = Default}) ->
     proplists:get_value(ip, Opts, Default).

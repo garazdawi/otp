@@ -33,6 +33,88 @@
     <file>notes.xml</file>
     </header>
 
+<section><title>Common_Test 1.26.2.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Common test will now not crash when running tests with
+	    OTP-26 and earlier, while having previous test results
+	    from OTP-27.</p>
+          <p>
+	    Own Id: OTP-19385 Aux Id: ERIERL-1166, PR-9155, PR-9156 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.26.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>With this change, cth_surefire hook module handles
+	    group path reduction for a skipped group. This fixes a
+	    bug manifesting with improper group path for a group
+	    executed after a group which was skipped.</p>
+          <p>
+	    Own Id: OTP-19365 Aux Id: ERIERL-1157, PR-9080 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.26.2.2</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>With this change, prefix option can be specified in
+	    cth_conn_log option list. Option allows to specify how
+	    much of additional information is added in raw log
+	    output.</p>
+          <p>
+	    Own Id: OTP-19293 Aux Id: ERIERL-1139, PR-8924, PR-8931 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Common_Test 1.26.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, HTML reports include jQuery version
+	    3.7.1.</p>
+          <p>
+	    Own Id: OTP-19252 Aux Id: PR-8858 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, jquery and tablesorter licenses are
+	    added to COPYRIGHT file. Also tablesorter is updated to
+	    version 2.32.</p>
+          <p>
+	    Own Id: OTP-19265 Aux Id: PR-8876 </p>
+        </item>
+        <item>
+          <p>
+	    Fixed a bug where the sum of testcases' execution time in
+	    HTML logs was sometimes miscalculated, and the table was
+	    not fully printed.</p>
+          <p>
+	    Own Id: OTP-19284 Aux Id: ERIERL-1093, PR-8909 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Common_Test 1.26.2</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>

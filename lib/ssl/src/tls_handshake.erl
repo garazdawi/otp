@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2007-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@
 -export([get_tls_handshakes/4, decode_handshake/3]).
 
 %% Handshake helper
--export([ocsp_nonce/1]).
+-export([ocsp_nonce/1, get_signature_ext/3]).
 
 -type tls_handshake() :: #client_hello{} | ssl_handshake:ssl_handshake().
 
@@ -242,11 +242,11 @@ hello(#client_hello{client_version = _ClientVersion,
                     extensions = #{client_hello_versions :=
                                        #client_hello_versions{versions = ClientVersions}
                                   }} = Hello,
-      #{versions := Versions} = SslOpts,
-      Info, Renegotiation) ->
+      #{versions := Versions = [Version |_]} = SslOpts,
+      Info, Renegotiation) when ?TLS_GTE(Version, ?TLS_1_2)->
     try
-        Version = ssl_handshake:select_supported_version(ClientVersions, Versions),
-        do_hello(Version, Versions, CipherSuites, Hello, SslOpts, Info, Renegotiation)
+        SelectedVersion = ssl_handshake:select_supported_version(ClientVersions, Versions),
+        do_hello(SelectedVersion, Versions, CipherSuites, Hello, SslOpts, Info, Renegotiation)
     catch
 	error:Reason:ST ->
             ?SSL_LOG(info, handshake_error, [{reason,Reason}, {stacktrace, ST}]),
@@ -336,12 +336,13 @@ handle_client_hello(Version,
                     Renegotiation) ->
     case tls_record:is_acceptable_version(Version, Versions) of
 	true ->
-            SupportedHashSigns = supported_hashsigns(maps:get(signature_algs, SslOpts, undefined)),
+            SigAlgs = ssl_handshake:supported_hashsigns(maps:get(signature_algs, SslOpts, undefined)),
+            SigAlgsCert = signature_algs_cert(Version, SslOpts, SigAlgs),
             Curves = maps:get(elliptic_curves, HelloExt, undefined),
             ClientHashSigns = get_signature_ext(signature_algs, HelloExt, Version),
             ClientSignatureSchemes = get_signature_ext(signature_algs_cert, HelloExt, Version),
 	    AvailableHashSigns = ssl_handshake:available_signature_algs(
-				   ClientHashSigns, SupportedHashSigns, Version),
+				   ClientHashSigns, SigAlgs, Version),
 	    ECCCurve = ssl_handshake:select_curve(Curves, SupportedECCs, ECCOrder),
 	    {Type, #session{cipher_suite = CipherSuite,
                             own_certificates = [OwnCert |_]} = Session1}
@@ -356,7 +357,7 @@ handle_client_hello(Version,
 		    #{key_exchange := KeyExAlg} = ssl_cipher_format:suite_bin_to_map(CipherSuite),
                     case ssl_handshake:select_hashsign({ClientHashSigns, ClientSignatureSchemes},
                                                        OwnCert, KeyExAlg,
-                                                       SupportedHashSigns,
+                                                       SigAlgsCert,
                                                        Version) of
 			#alert{} = Alert ->
 			    throw(Alert);
@@ -372,10 +373,15 @@ handle_client_hello(Version,
 	    throw(?ALERT_REC(?FATAL, ?PROTOCOL_VERSION))
     end.
 
-supported_hashsigns(undefined) ->
-    undefined;
-supported_hashsigns(SigAlgs) ->
-    ssl_cipher:signature_schemes_1_2(SigAlgs).
+signature_algs_cert(Version, SslOpts, SigAlgs)  when ?TLS_GTE(Version, ?TLS_1_2) ->
+    case maps:get(signature_algs_cert, SslOpts, undefined) of
+        undefined ->
+            SigAlgs;
+        SigAlgsCert ->
+            ssl_handshake:supported_hashsigns(SigAlgsCert)
+    end;
+signature_algs_cert(_,_,_) ->
+    undefined.
 
 handle_client_hello_extensions(Version, Type, Random, CipherSuites,
                                HelloExt, SslOpts, Session0, ConnectionStates0, 

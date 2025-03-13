@@ -30,6 +30,146 @@
     <file>notes.xml</file>
   </header>
 
+<section><title>Ssh 5.1.4.6</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>SFTP packets exceeding max packet size are not
+	    processed and dropped.</p>
+          <p>
+	    Own Id: OTP-19466 Aux Id: ERIERL-1173, CVE-2025-26618 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Ssh 5.1.4.5</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>With this change, type specs for
+	    ssh:connection_info/1,2 functions are fixed so they
+	    include {error, term()} return value.</p>
+          <p>
+	    Own Id: OTP-19388 Aux Id: ERIERL-1165, PR-9161 </p>
+        </item>
+        <item>
+	    <p>With this change, ssh client accepts a banner sent
+	    during processing keyboard interactive user
+	    authentication.</p>
+          <p>
+	    Own Id: OTP-19392 Aux Id: PR-9139, GH-9065 </p>
+        </item>
+        <item>
+	    <p> With this change, large sftp transfers does not hang.
+	    Redundant window adjustment are not requested. </p>
+          <p>
+	    Own Id: OTP-19435 Aux Id: PR-9309 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Ssh 5.1.4.4</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>With this change, ssh connection does not crash upon
+	    receiving exit-signal message for an already terminated
+	    channel.</p>
+          <p>
+	    Own Id: OTP-19326 Aux Id: PR-8995, GH-8929 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Ssh 5.1.4.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, a race condition is removed from ssh
+	    client connection setup procedure.</p>
+          <p>
+	    Own Id: OTP-19124 Aux Id: GH-7550, PR-8766 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, ssh:connect is not affected by presence
+	    of EXIT message in queue.</p>
+          <p>
+	    Own Id: OTP-19246 Aux Id: GH-8223, PR-8854 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, ssh appends {active, false} option
+	    after socket options received from user - so that false
+	    value is always used.</p>
+          <p>
+	    Own Id: OTP-19247 Aux Id: PR-8226 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Ssh 5.1.4.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, ssh daemon started with TCP port number
+	    argument will re-try to obtain listen socket before
+	    returning error to user.</p>
+          <p>
+	    Own Id: OTP-19170 Aux Id: GH-7746 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, robustness is improved by monitoring
+	    connection handler process before casting socket control
+	    notification.</p>
+          <p>
+	    Own Id: OTP-19173 Aux Id: PR-8310 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Ssh 5.1.4.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    With this change, ssh client will automatically adjust
+	    transfer window size for commands executed remotely over
+	    SSH.</p>
+          <p>
+	    Own Id: OTP-19057 Aux Id: PR-8345, GH-7483 </p>
+        </item>
+        <item>
+          <p>
+	    With this change, race condition between connection
+	    closing and automatic window adjustment is fixed.</p>
+          <p>
+	    Own Id: OTP-19109 Aux Id: PR-8345 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Ssh 5.1.4</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>

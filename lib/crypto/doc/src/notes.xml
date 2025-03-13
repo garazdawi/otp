@@ -31,6 +31,68 @@
   </header>
   <p>This document describes the changes made to the Crypto application.</p>
 
+<section><title>Crypto 5.4.2.3</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>Fixed bug that could cause blocking scheduler threads
+	    in <c>crypto:supports(curves)</c> if called the first
+	    time by more than one Erlang process. Bug exists only in
+	    OTP-26.2.5.4.</p>
+          <p>
+	    Own Id: OTP-19316 Aux Id: GH-8971, PR-8979 </p>
+        </item>
+        <item>
+	    <p>Fixed <c>crypto:hash_final/1</c> for digest types
+	    <c>shake128</c> and <c>shake256</c> when using OpenSSL
+	    3.4 or newer.</p>
+          <p>
+	    Own Id: OTP-19329 Aux Id: GH-8997, PR-9002 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 5.4.2.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+	    <p>crypto built with <c>--enable-fips</c> will now accept
+	    an OpenSSL 3 lib without fips provider as long as fips
+	    mode is not enabled.</p>
+          <p>
+	    Own Id: OTP-19212 Aux Id: GH-8562, PR-8762 </p>
+        </item>
+        <item>
+	    <p><c>crypto:strong_rand_bytes/2</c> fixed to work on
+	    Ubuntu pro with installed FIPS support.</p>
+          <p>
+	    Own Id: OTP-19223 Aux Id: PR-8800, GH-8769 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Crypto 5.4.2.1</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+	    <p>Add warning in documentation to avoid
+	    <c>crypto:start/0</c> as it does not work for FIPS mode.
+	    Use <c>application:start(crypto)</c> instead.</p>
+          <p>
+	    Own Id: OTP-19143 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Crypto 5.4.2</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>

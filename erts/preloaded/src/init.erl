@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2023. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -355,6 +355,11 @@ boot_loop(BootPid, State) ->
 	    notify(State#state.subscribed),
 	    loop(State#state{status = {started,PS},
 			     subscribed = []});
+        {'EXIT',BootPid,terminating} ->
+            %% If BootPid exited with terminating, then AC is about to
+            %% terminate and thus the entire system. We ignore this here
+            %% in order to give kernel a chance to flush logs to disk.
+            boot_loop(BootPid, State);
 	{'EXIT',BootPid,Reason} ->
 	    % erlang:display({"init terminating in do_boot",Reason}),
 	    crash("Runtime terminating during boot", [Reason]);

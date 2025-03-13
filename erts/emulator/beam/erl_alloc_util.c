@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2002-2022. All Rights Reserved.
+ * Copyright Ericsson AB 2002-2024. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -3472,7 +3472,7 @@ cpool_delete(Allctr_t *allctr, Allctr_t *prev_allctr, Carrier_t *crr)
 	b = 1;
 	do {
 	    b = backoff(b);
-	    tmp = cpool_read(&cpd2p->prev);
+	    tmp = cpool_read(&crr->cpool.prev);
 	} while (tmp != val);
     }
 

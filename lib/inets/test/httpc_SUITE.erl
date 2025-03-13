@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2023. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2024. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -155,7 +155,8 @@ real_requests_esi() ->
     [slow_connection].
 
 simulated_unix_socket() ->
-    [unix_domain_socket].
+    [unix_domain_socket,
+    invalid_ipfamily_unix_socket].
 
 only_simulated() ->
     [
@@ -589,13 +590,26 @@ async(Config) when is_list(Config) ->
     {ok, RequestId} =
 	httpc:request(get, Request, [?SSL_NO_VERIFY], [{sync, false}]),
     Body =
-	receive
-	    {http, {RequestId, {{_, 200, _}, _, BinBody}}} ->
-		BinBody;
-	    {http, Msg} ->
-		ct:fail(Msg)
-	end,
+        receive
+            {http, {RequestId, {{_, 200, _}, _, BinBody}}} ->
+                BinBody;
+            {http, Msg} ->
+                ct:fail(Msg)
+        end,
     inets_test_lib:check_body(binary_to_list(Body)),
+
+    %% Check full result false option for async request
+    {ok, RequestId2} =
+        httpc:request(get, Request, [], [{sync, false},
+                                         {full_result, false}]),
+    Body2 =
+        receive
+            {http, {RequestId2, {200, BinBody2}}} ->
+                BinBody2;
+            {http, Msg2} ->
+                ct:fail(Msg2)
+        end,
+    inets_test_lib:check_body(binary_to_list(Body2)),
 
     {ok, NewRequestId} =
 	httpc:request(get, Request, [?SSL_NO_VERIFY], [{sync, false}]),
@@ -1940,6 +1954,20 @@ unix_domain_socket(Config) when is_list(Config) ->
 	= httpc:request(put, {URL, [], [], ""}, [], []),
     {ok, {{_,200,_}, [_ | _], _}}
         = httpc:request(get, {URL, []}, [], []).
+
+invalid_ipfamily_unix_socket() ->
+    [{doc, "Test that httpc profile can't end up having invalid combination of ipfamily and unix_socket options"}].
+invalid_ipfamily_unix_socket(Config) when is_list(Config) ->
+    Profile = proplists:get_value(profile, Config, httpc:default_profile()),
+
+    ct:log("Using profile ~w", [Profile]),
+    {ok,[{unix_socket,?UNIX_SOCKET}, {ipfamily, local}]} =
+        httpc:get_options([unix_socket, ipfamily], Profile),
+    ?assertMatch({error, _}, httpc:set_option(unix_socket, undefined, Profile)),
+    ?assertMatch({error, _}, httpc:set_option(ipfamily, inet, Profile)),
+    ?assertMatch({error, _}, httpc:set_option(ipfamily, inetv6, Profile)),
+    ok = httpc:set_options([{unix_socket, undefined}, {ipfamily, inet}], Profile),
+    ?assertMatch({error, _}, httpc:set_option(unix_socket, ?UNIX_SOCKET, Profile)).
 
 %%-------------------------------------------------------------------------
 delete_no_body(doc) ->
