@@ -3837,6 +3837,171 @@ erts_max_heap_size(Eterm arg, Uint *max_heap_size, Uint *max_heap_flags)
     return 1;
 }
 
+typedef struct debug_binary {
+    BinRef *bin_ref;
+    ErtsDynamicWStack ws;
+} DebugBinary;
+
+static void gather_binaries(ErtsWStack *wsp, Eterm *start, Eterm *stop) {
+    Eterm* tp = start;
+    while (tp < stop) {
+        Eterm val = *tp++;
+
+        switch (primary_tag(val)) {
+        case TAG_PRIMARY_IMMED1:
+        case TAG_PRIMARY_LIST:
+        case TAG_PRIMARY_BOXED:
+            break;
+        case TAG_PRIMARY_HEADER:
+            if (header_is_transparent(val)) {
+                continue;
+            }
+            switch (thing_subtag(val)) {
+                case SUB_BITS_SUBTAG:
+                {
+                    const ErlSubBits *sb = (ErlSubBits*)(tp-1);
+                    const BinRef *underlying = (BinRef*)boxed_val(sb->orig);
+                    if (thing_subtag(underlying->thing_word) != HEAP_BITS_SUBTAG) {
+                        for (UWord *bp = wsp->wstart; 1; bp += 1 + sizeof(ErtsDynamicWStack) / sizeof(UWord) + 1 ) {
+                            if ((BinRef *)bp[0] == underlying) {
+                                ErtsDynamicWStack *bws = (ErtsDynamicWStack *)(bp+1);
+                                WSTACK_PUSH2(bws->ws, sb->start, sb->end);
+                                break;
+                            }
+                            ERTS_ASSERT(bp < wsp->wsp);
+                        }
+                    }
+                }
+                ERTS_FALLTHROUGH();
+            default:
+                {
+                    tp += header_arity(val);
+                }
+                break;
+            }
+            break;
+        }
+    }
+}
+
+Eterm
+erts_gather_binaries(ErtsHeapFactory *hfact, Process *rp) {
+    union erl_off_heap_ptr u;
+    Eterm res = NIL;
+    Eterm tuple;
+    union erts_tmp_aligned_offheap tmp;
+    WSTACK_DECLARE(binaries);
+
+    ErlHeapFragment* bp;
+    ErtsMessage* mp;
+    Eterm *htop, *heap;
+    size_t sz = 0;
+    Eterm *hp;
+
+    for (u.hdr = MSO(rp).first; u.hdr; u.hdr = u.hdr->next) {
+        erts_align_offheap(&u, &tmp);
+	if (u.hdr->thing_word == HEADER_BIN_REF) {
+            WSTACK_PUSH(binaries, (UWord)u.br);
+            WSTACK_RESERVE(binaries, sizeof(ErtsDynamicWStack) / sizeof(UWord) + 1);
+            WSTACK_INIT((ErtsDynamicWStack*)binaries.wsp, ERTS_ALC_T_ESTACK);
+            binaries.wsp += sizeof(ErtsDynamicWStack) / sizeof(UWord) + 1;
+        }
+    }
+
+    for (u.hdr = rp->wrt_bins; u.hdr; u.hdr = u.hdr->next) {
+        erts_align_offheap(&u, &tmp);
+	if (u.hdr->thing_word == HEADER_BIN_REF) {
+            WSTACK_PUSH(binaries, (UWord)u.br);
+            WSTACK_RESERVE(binaries, sizeof(ErtsDynamicWStack) / sizeof(UWord) + 1);
+            WSTACK_INIT((ErtsDynamicWStack*)binaries.wsp, ERTS_ALC_T_ESTACK);
+            binaries.wsp += sizeof(ErtsDynamicWStack) / sizeof(UWord) + 1;
+        }
+    }
+
+    if (rp->abandoned_heap) {
+        heap = get_orig_heap(rp, &htop, NULL);
+	gather_binaries(&binaries, heap, htop);
+    }
+
+    if (OLD_HEAP(rp))
+        gather_binaries(&binaries, OLD_HEAP(rp), OLD_HTOP(rp) /*OLD_HEND(p)*/);
+
+    gather_binaries(&binaries, HEAP_START(rp), HEAP_TOP(rp));
+
+    mp = rp->msg_frag;
+    bp = rp->mbuf;
+
+    if (bp)
+	goto search_heap_frags;
+
+    while (mp) {
+
+        bp = erts_message_to_heap_frag(mp);
+	mp = mp->next;
+
+    search_heap_frags:
+
+	while (bp) {
+            gather_binaries(&binaries,
+                bp->mem, bp->mem + bp->used_size);
+	    bp = bp->next;
+	}
+    }
+
+    for (UWord *bp = binaries.wstart; bp < binaries.wsp; bp += 1 + sizeof(ErtsDynamicWStack) / sizeof(UWord) + 1 ) {
+        BinRef *bin = (BinRef*)bp[0];
+        ErtsDynamicWStack *ws = (ErtsDynamicWStack*)(bp+1);
+        sz += 2 /* cons */ + 6 /* tuple (ptr, sz, refc, binary, subs) */;
+        erts_bld_uword(NULL, &sz, (UWord) bin->val);
+	erts_bld_uint(NULL, &sz, bin->val->orig_size);
+        sz += ERL_REFC_BITS_SIZE;
+        for (UWord *bits = ws->ws.wstart; bits < ws->ws.wsp; bits += 2) {
+            sz += 2 /* cons */ + 3 /* tuple*/;
+            erts_bld_uword(NULL, &sz, bits[0]);
+            erts_bld_uword(NULL, &sz, bits[1]);
+        }
+    }
+
+    hp = erts_produce_heap(hfact, sz, 2);
+    Eterm *orig_hp = hp;
+
+    for (UWord *bp = binaries.wstart; bp < binaries.wsp; bp += 1 + sizeof(ErtsDynamicWStack) / sizeof(UWord) + 1 ) {
+        BinRef *bin = (BinRef*)bp[0];
+        ErtsDynamicWStack *ws = (ErtsDynamicWStack*)(bp+1);
+        Eterm bitslist = NIL;
+        Eterm val = erts_bld_uword(&hp, NULL, (UWord) bin->val);
+        Eterm orig_size = erts_bld_uint(&hp, NULL, bin->val->orig_size);
+        Eterm binary;
+        for (UWord *bits = ws->ws.wstart; bits < ws->ws.wsp; bits += 2) {
+            Eterm offset = erts_bld_uword(&hp, NULL, bits[0]);
+            Eterm size = erts_bld_uword(&hp, NULL, bits[1]);
+            Eterm tuple = TUPLE2(hp, offset, size);
+            hp += 3;
+            bitslist = CONS(hp, tuple, bitslist);
+            hp += 2;
+        }
+        erts_refc_inc(&bin->val->intern.refc, 1);
+        Eterm bitstring = erts_wrap_refc_bitstring(
+                &hfact->off_heap->first,
+                &hfact->off_heap->overhead,
+                &hp, bin->val, (byte*)bin->val->orig_bytes,
+                0, bin->val->orig_size * 8);
+        WSTACK_DESTROY(ws->ws);
+        tuple = TUPLE5(hp, val,
+                orig_size,
+                /* We subtract the bump we did above when copying the binary */
+                make_small(erts_refc_read(&bin->val->intern.refc, 1) - 1),
+                bitstring, bitslist);
+        hp += 6;
+        res = CONS(hp, tuple, res);
+        hp += 2;
+    }
+
+    WSTACK_DESTROY(binaries);
+
+    return res;
+}
+
 #ifdef DEBUG
 void erts_validate_stack(Process *p, Eterm *frame_ptr, Eterm *stack_top) {
     Eterm *stack_bottom = HEAP_END(p);

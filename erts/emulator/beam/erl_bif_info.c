@@ -826,7 +826,7 @@ static ErtsProcessInfoArgs pi_args[] = {
     {am_reductions, 0, 0, ERTS_PROC_LOCK_MAIN},
     {am_priority, 0, 0, 0},
     {am_trace, 0, 0, ERTS_PROC_LOCK_MAIN},
-    {am_binary, 0, ERTS_PI_FLAG_FORCE_SIG_SEND, ERTS_PROC_LOCK_MAIN},
+    {am_binary, 0, ERTS_PI_FLAG_NEED_MSGQ|ERTS_PI_FLAG_FORCE_SIG_SEND, ERTS_PROC_LOCK_MAIN},
     {am_sequential_trace_token, 0, 0, ERTS_PROC_LOCK_MAIN},
     {am_catchlevel, 0, 0, ERTS_PROC_LOCK_MAIN},
     {am_backtrace, 0, ERTS_PI_FLAG_FORCE_SIG_SEND, ERTS_PROC_LOCK_MAIN},
@@ -2127,31 +2127,9 @@ process_info_aux(Process *c_p,
 	res = make_small(ERTS_IS_P_TRACED_FL(rp, TRACEE_FLAGS));
 	break;
 
-    case ERTS_PI_IX_BINARY: {
-        ErlHeapFragment *hfrag;
-        ErlOffHeap wrt_bins;
-        Uint sz;
-
-        res = NIL;
-        sz = 0;
-        wrt_bins.first = rp->wrt_bins;
-
-        (void)erts_bld_bin_list(NULL, &sz, &MSO(rp), NIL);
-        (void)erts_bld_bin_list(NULL, &sz, &wrt_bins, NIL);
-        for (hfrag = rp->mbuf; hfrag != NULL; hfrag = hfrag->next) {
-            (void)erts_bld_bin_list(NULL, &sz, &hfrag->off_heap, NIL);
-        }
-
-        hp = erts_produce_heap(hfact, sz, reserve_size);
-
-        res = erts_bld_bin_list(&hp, NULL, &MSO(rp), NIL);
-        res = erts_bld_bin_list(&hp, NULL, &wrt_bins, res);
-        for (hfrag = rp->mbuf; hfrag != NULL; hfrag = hfrag->next) {
-            res = erts_bld_bin_list(&hp, NULL, &hfrag->off_heap, res);
-        }
-
+    case ERTS_PI_IX_BINARY:
+        res = erts_gather_binaries(hfact, rp);
         break;
-    }
 
     case ERTS_PI_IX_SEQUENTIAL_TRACE_TOKEN: {
         Uint sz = size_object(rp->seq_trace_token);
