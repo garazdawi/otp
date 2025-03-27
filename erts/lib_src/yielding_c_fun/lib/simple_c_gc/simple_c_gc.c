@@ -1,6 +1,8 @@
 /*
  * %CopyrightBegin%
  *
+ * SPDX-License-Identifier: Apache-2.0
+ *
  * Copyright 2019-2021 Kjell Winblad (kjellwinblad@gmail.com, http://winsh.me).
  * All Rights Reserved.
  *
