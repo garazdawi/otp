@@ -28,6 +28,7 @@ changes:
   - 'Makefile.in'
   - 'otp_build'
   - 'configure'
+  - '.github/dockerfiles/**'
 EOF
 
 APPS=$(ls -d lib/*/doc | awk -F '/' '{print $2}')
