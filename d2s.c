@@ -21,13 +21,10 @@
 // -DRYU_ONLY_64_BIT_OPS Avoid using uint128_t or 64-bit intrinsics. Slower,
 //     depending on your compiler.
 //
-// -DRYU_OPTIMIZE_SIZE Use smaller lookup tables. Instead of storing every
-//     required power of 5, only store every 26th entry, and compute
-//     intermediate values with a multiplication. This reduces the lookup table
-//     size by about 10x (only one case, and only double) at the cost of some
-//     performance. Currently requires MSVC intrinsics.
 
-#include "ryu/ryu.h"
+// CHANGE_FOR_ERLANG: "ryu/ryu.h" -> "ryu.h"
+#include "ryu.h"
+// END CHANGE_FOR_ERLANG
 
 #include <assert.h>
 #include <stdbool.h>
@@ -40,16 +37,19 @@
 #include <stdio.h>
 #endif
 
-#include "ryu/common.h"
-#include "ryu/digit_table.h"
-#include "ryu/d2s_intrinsics.h"
+// CHANGE_FOR_ERLANG: "ryu/*.h" -> "*.h"
+#include "common.h"
+#include "digit_table.h"
+#include "d2s_intrinsics.h"
+// END CHANGE_FOR_ERLANG
 
-// Include either the small or the full lookup tables depending on the mode.
-#if defined(RYU_OPTIMIZE_SIZE)
-#include "ryu/d2s_small_table.h"
-#else
-#include "ryu/d2s_full_table.h"
-#endif
+// CHANGE_FOR_ERLANG we got rid of the small_table. Also namespace as above
+#include "d2s_full_table.h"
+// END CHANGE_FOR_ERLANG
+
+// CHANGE_FOR_ERLANG include STL to_chars function
+#include "to_chars.h"
+// END CHANGE_FOR_ERLANG
 
 #define DOUBLE_MANTISSA_BITS 52
 #define DOUBLE_EXPONENT_BITS 11
@@ -126,13 +126,7 @@ static inline floating_decimal_64 d2d(const uint64_t ieeeMantissa, const uint32_
     e10 = (int32_t) q;
     const int32_t k = DOUBLE_POW5_INV_BITCOUNT + pow5bits((int32_t) q) - 1;
     const int32_t i = -e2 + (int32_t) q + k;
-#if defined(RYU_OPTIMIZE_SIZE)
-    uint64_t pow5[2];
-    double_computeInvPow5(q, pow5);
-    vr = mulShiftAll64(m2, pow5, i, &vp, &vm, mmShift);
-#else
     vr = mulShiftAll64(m2, DOUBLE_POW5_INV_SPLIT[q], i, &vp, &vm, mmShift);
-#endif
 #ifdef RYU_DEBUG
     printf("%" PRIu64 " * 2^%d / 10^%u\n", mv, e2, q);
     printf("V+=%" PRIu64 "\nV =%" PRIu64 "\nV-=%" PRIu64 "\n", vp, vr, vm);
@@ -161,13 +155,7 @@ static inline floating_decimal_64 d2d(const uint64_t ieeeMantissa, const uint32_
     const int32_t i = -e2 - (int32_t) q;
     const int32_t k = pow5bits(i) - DOUBLE_POW5_BITCOUNT;
     const int32_t j = (int32_t) q - k;
-#if defined(RYU_OPTIMIZE_SIZE)
-    uint64_t pow5[2];
-    double_computePow5(i, pow5);
-    vr = mulShiftAll64(m2, pow5, j, &vp, &vm, mmShift);
-#else
     vr = mulShiftAll64(m2, DOUBLE_POW5_SPLIT[i], j, &vp, &vm, mmShift);
-#endif
 #ifdef RYU_DEBUG
     printf("%" PRIu64 " * 5^%d / 10^%u\n", mv, -e2, q);
     printf("%u %d %d %d\n", q, i, k, j);
@@ -309,114 +297,6 @@ static inline floating_decimal_64 d2d(const uint64_t ieeeMantissa, const uint32_
   fd.exponent = exp;
   fd.mantissa = output;
   return fd;
-}
-
-static inline int to_chars(const floating_decimal_64 v, const bool sign, char* const result) {
-  // Step 5: Print the decimal representation.
-  int index = 0;
-  if (sign) {
-    result[index++] = '-';
-  }
-
-  uint64_t output = v.mantissa;
-  const uint32_t olength = decimalLength17(output);
-
-#ifdef RYU_DEBUG
-  printf("DIGITS=%" PRIu64 "\n", v.mantissa);
-  printf("OLEN=%u\n", olength);
-  printf("EXP=%u\n", v.exponent + olength);
-#endif
-
-  // Print the decimal digits.
-  // The following code is equivalent to:
-  // for (uint32_t i = 0; i < olength - 1; ++i) {
-  //   const uint32_t c = output % 10; output /= 10;
-  //   result[index + olength - i] = (char) ('0' + c);
-  // }
-  // result[index] = '0' + output % 10;
-
-  uint32_t i = 0;
-  // We prefer 32-bit operations, even on 64-bit platforms.
-  // We have at most 17 digits, and uint32_t can store 9 digits.
-  // If output doesn't fit into uint32_t, we cut off 8 digits,
-  // so the rest will fit into uint32_t.
-  if ((output >> 32) != 0) {
-    // Expensive 64-bit division.
-    const uint64_t q = div1e8(output);
-    uint32_t output2 = ((uint32_t) output) - 100000000 * ((uint32_t) q);
-    output = q;
-
-    const uint32_t c = output2 % 10000;
-    output2 /= 10000;
-    const uint32_t d = output2 % 10000;
-    const uint32_t c0 = (c % 100) << 1;
-    const uint32_t c1 = (c / 100) << 1;
-    const uint32_t d0 = (d % 100) << 1;
-    const uint32_t d1 = (d / 100) << 1;
-    memcpy(result + index + olength - i - 1, DIGIT_TABLE + c0, 2);
-    memcpy(result + index + olength - i - 3, DIGIT_TABLE + c1, 2);
-    memcpy(result + index + olength - i - 5, DIGIT_TABLE + d0, 2);
-    memcpy(result + index + olength - i - 7, DIGIT_TABLE + d1, 2);
-    i += 8;
-  }
-  uint32_t output2 = (uint32_t) output;
-  while (output2 >= 10000) {
-#ifdef __clang__ // https://bugs.llvm.org/show_bug.cgi?id=38217
-    const uint32_t c = output2 - 10000 * (output2 / 10000);
-#else
-    const uint32_t c = output2 % 10000;
-#endif
-    output2 /= 10000;
-    const uint32_t c0 = (c % 100) << 1;
-    const uint32_t c1 = (c / 100) << 1;
-    memcpy(result + index + olength - i - 1, DIGIT_TABLE + c0, 2);
-    memcpy(result + index + olength - i - 3, DIGIT_TABLE + c1, 2);
-    i += 4;
-  }
-  if (output2 >= 100) {
-    const uint32_t c = (output2 % 100) << 1;
-    output2 /= 100;
-    memcpy(result + index + olength - i - 1, DIGIT_TABLE + c, 2);
-    i += 2;
-  }
-  if (output2 >= 10) {
-    const uint32_t c = output2 << 1;
-    // We can't use memcpy here: the decimal dot goes between these two digits.
-    result[index + olength - i] = DIGIT_TABLE[c + 1];
-    result[index] = DIGIT_TABLE[c];
-  } else {
-    result[index] = (char) ('0' + output2);
-  }
-
-  // Print decimal point if needed.
-  if (olength > 1) {
-    result[index + 1] = '.';
-    index += olength + 1;
-  } else {
-    ++index;
-  }
-
-  // Print the exponent.
-  result[index++] = 'E';
-  int32_t exp = v.exponent + (int32_t) olength - 1;
-  if (exp < 0) {
-    result[index++] = '-';
-    exp = -exp;
-  }
-
-  if (exp >= 100) {
-    const int32_t c = exp % 10;
-    memcpy(result + index, DIGIT_TABLE + 2 * (exp / 10), 2);
-    result[index + 2] = (char) ('0' + c);
-    index += 3;
-  } else if (exp >= 10) {
-    memcpy(result + index, DIGIT_TABLE + 2 * exp, 2);
-    index += 2;
-  } else {
-    result[index++] = (char) ('0' + exp);
-  }
-
-  return index;
 }
 
 static inline bool d2d_small_int(const uint64_t ieeeMantissa, const uint32_t ieeeExponent,

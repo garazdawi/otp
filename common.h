@@ -95,7 +95,8 @@ static inline int copy_special_str(char * const result, const bool sign, const b
     memcpy(result + sign, "Infinity", 8);
     return sign + 8;
   }
-  memcpy(result + sign, "0E0", 3);
+  // CHANGE_FOR_ERLANG we use "0.0" as the 0 and not "0E0"
+  memcpy(result + sign, "0.0", 3);
   return sign + 3;
 }
 
