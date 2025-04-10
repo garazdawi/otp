@@ -827,7 +827,7 @@ decode_without_spdx_license(Filename) ->
 
     %% remove comments
     Lines = string:split(Bin, "\n", all),
-    Lines1 = lists:map(fun (Line) -> re:replace(Line, "%.*", "", [global]) end, Lines),
+    Lines1 = lists:map(fun (Line) -> re:replace(Line, "^//.*", "", [global]) end, Lines),
     Bin1 = erlang:iolist_to_binary(Lines1),
 
     json:decode(Bin1).
