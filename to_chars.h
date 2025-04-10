@@ -1,13 +1,13 @@
-// SPDX-SnippetCopyrightText: Copyright (c) Microsoft Corporation.
-// SPDX-SnippetCopyrightText: Copyright 2018 Ulf Adams
-// SPDX-SnippetCopyrightText: Copyright (c) Microsoft Corporation. All rights reserved.
-// SPDX-License-Identifier: (Apache-2.0 WITH LLVM-exception) AND BSL-1.0
+// SPDX-CopyrightText: Copyright (c) Microsoft Corporation.
+// SPDX-CopyrightText: Copyright 2018 Ulf Adams
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception OR BSL-1.0
+//h
+// The license information in the original file is not super clear.
+// Microsoft seems to have changed it from Apache-2.0 to Apache-2.0 WITH LLVM-exception
+// which they most likely are not allowed to do as the LLVM exception is less
+// restrictive than Apache-2.0 plain. There is not much we can do about that
+// though so we use their license.
 //
-// The license information in the original file is not
-// clear on whether it should be AND or OR between
-// "Apache 2.0 with LLVM-exception" and "Boost Software License 1.0".
-// Therefore, just to be safe, an AND was chosen in the SPDX license
-// identifier expression above.
 // Library: STL
 // Git repository: https://github.com/microsoft/STL
 // Commit: e745bad3b1d05b5b19ec652d68abb37865ffa454
@@ -338,4 +338,3 @@ static inline int to_chars(const floating_decimal_64 v, const bool sign, char* c
     // sign as we did it here instead of adding it by default as in the STL
   return _Total_scientific_length + sign;
 }
-// end of STL code, back to ryu
