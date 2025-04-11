@@ -1,6 +1,6 @@
 // SPDX-CopyrightText: Copyright (c) Microsoft Corporation.
 // SPDX-CopyrightText: Copyright 2018 Ulf Adams
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception OR BSL-1.0
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception AND BSL-1.0
 //h
 // The license information in the original file is not super clear.
 // Microsoft seems to have changed it from Apache-2.0 to Apache-2.0 WITH LLVM-exception
