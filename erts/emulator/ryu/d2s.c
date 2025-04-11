@@ -47,10 +47,6 @@
 #include "d2s_full_table.h"
 // END CHANGE_FOR_ERLANG
 
-// CHANGE_FOR_ERLANG include STL to_chars function
-#include "to_chars.h"
-// END CHANGE_FOR_ERLANG
-
 #define DOUBLE_MANTISSA_BITS 52
 #define DOUBLE_EXPONENT_BITS 11
 #define DOUBLE_BIAS 1023
@@ -87,6 +83,10 @@ typedef struct floating_decimal_64 {
   // inclusive, and can fit in a short if needed.
   int32_t exponent;
 } floating_decimal_64;
+
+// CHANGE_FOR_ERLANG include STL to_chars function
+#include "to_chars.h"
+// END CHANGE_FOR_ERLANG
 
 static inline floating_decimal_64 d2d(const uint64_t ieeeMantissa, const uint32_t ieeeExponent) {
   int32_t e2;
