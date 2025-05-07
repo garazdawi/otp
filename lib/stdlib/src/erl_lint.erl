@@ -70,7 +70,7 @@ Module:format_error(ErrorDescriptor)
 `m:epp`, `m:erl_parse`
 """.
 
--export([module/1,module/2,module/3,format_error/1]).
+-export([module/1,module/2,module/3,module/4,format_error/1]).
 -export([exprs/2,exprs_opt/3,used_vars/2]). % Used from erl_eval.erl.
 -export([is_pattern_expr/1,is_guard_test/1,is_guard_test/2,is_guard_test/3]).
 -export([is_guard_expr/1]).
@@ -190,17 +190,14 @@ value_option(Flag, Default, On, OnVal, Off, OffVal, Opts) ->
 	       on_load=[] :: [fa()],		%On-load function
 	       on_load_anno=erl_anno:new(0)	%Location for on_load
                    :: erl_anno:anno(),
-	       clashes=[],			%Exported functions named as BIFs
+               clashes=[],                      %Exported functions named as BIFs
                not_deprecated=[],               %Not considered deprecated
                not_removed=gb_sets:empty()      %Not considered removed
                    :: gb_sets:set(module_or_mfa()),
                func=[],                         %Current function
                type_id=[],                      %Current type id
-               warn_format=0,                   %Warn format calls
-	       enabled_warnings=[],		%All enabled warnings (ordset).
+               diagnostics :: erl_diagnostic:state(),
                nowarn_bif_clash=[],             %All no warn bif clashes (ordset).
-               errors=[]   :: [{file:filename(),error_info()}], %Current errors
-               warnings=[] :: [{file:filename(),error_info()}], %Current warnings
                file = ""        :: string(),	%From last file attribute
                recdef_top=false :: boolean(),	%true in record initialisation
 						%outside any fun or lc
@@ -746,12 +743,19 @@ module(Forms, FileName, Opts0) ->
     %% FIXME Hmm, this is not coherent with the semantics of features
     %% We want the options given on the command line to take
     %% precedence over options in the module.
-    Opts = Opts0 ++ compiler_options(Forms),
+    Opts = Opts0 ++ [O || {O, _} <- compiler_options(Forms)],
     St = forms(Forms, start(FileName, Opts)),
     return_status(St).
 
+-doc false.
+module(Forms, FileName, Opts0, Ds) ->
+    OptionsSource = proplists:get_value(options_source, Opts0),
+    Opts = [{O, OptionsSource} || O <- Opts0] ++ compiler_options(eval_file_attribute(Forms, #lint{file = FileName})),
+    St = forms(Forms, start1(FileName, Opts, Ds)),
+    St#lint.diagnostics.
+
 compiler_options(Forms) ->
-    lists:flatten([C || {attribute,_,compile,C} <- Forms]).
+    lists:flatten([[{O, A} || O <- lists:flatten([Os])] || {attribute,A,compile,Os} <- Forms]).
 
 %% start() -> State
 %% start(FileName, [Option]) -> State
@@ -760,10 +764,12 @@ start() ->
     start("nofile", []).
 
 start(File, Opts) ->
-    Enabled0 = [Category || {Category,true} <- bool_options()],
-    Enabled1 = ordsets:from_list(Enabled0),
-    Enabled = parse_options(Opts, Enabled1),
-    Calls = case ordsets:is_element(unused_function, Enabled) of
+    start1(File, [{O, undefined} || O <- Opts],
+        erl_diagnostic:init(#{})).
+start1(File, Opts, InitialDiag) ->
+    Diag = erl_diagnostic:add_diagnostics(InitialDiag, diagnostics()),
+    D = parse_options(Opts, Diag),
+    Calls = case erl_diagnostic:get_value(D, unused_function) of
 		true ->
 		    #{{module_info,1} => pseudolocals()};
 		false ->
@@ -771,19 +777,17 @@ start(File, Opts) ->
 	    end,
     #lint{state = start,
           exports = gb_sets:from_list([{module_info,0},{module_info,1}]),
-          compile = Opts,
+          compile = [O || {O, _} <- Opts],
           %% Internal pseudo-functions must appear as defined/reached.
           defined = gb_sets:from_list(pseudolocals()),
 	  called = [{F,0} || F <- pseudolocals()],
           usage = #usage{calls=Calls},
-          warn_format = value_option(warn_format, 1, warn_format, 1,
-				     nowarn_format, 0, Opts),
-	  enabled_warnings = Enabled,
+	  diagnostics = D,
           nowarn_bif_clash = nowarn_function(nowarn_bif_clash, Opts),
           file = File
          }.
 
-parse_options([Opt0|Opts], Enabled0) when is_atom(Opt0) ->
+parse_options([{Opt0, Anno}|Opts], D) when is_atom(Opt0) ->
     {Opt2,Enable} = case atom_to_binary(Opt0) of
                         <<"warn_",Opt1/binary>> ->
                             {Opt1,true};
@@ -792,104 +796,661 @@ parse_options([Opt0|Opts], Enabled0) when is_atom(Opt0) ->
                         _ ->
                             {none,none}
                     end,
-    Opt = try
-              binary_to_existing_atom(Opt2)
-          catch
-              _:_ ->
-                  []
-          end,
-    Enabled =
-        maybe
-            true ?= is_atom(Opt),
-            true ?= lists:keymember(Opt, 1, bool_options()),
-            if
-                Enable ->
-                    ordsets:add_element(Opt, Enabled0);
-                not Enable ->
-                    ordsets:del_element(Opt, Enabled0)
-            end
-        else
-            _ ->
-                Enabled0
-        end,
-    parse_options(Opts, Enabled);
+    try
+        Opt = binary_to_existing_atom(Opt2),
+        case erl_diagnostic:get_diagnostic(D, Opt) of
+            {ok, _} ->
+                parse_options(Opts, erl_diagnostic:push_diagnostic(D, Opt, Enable, Anno));
+            undefined ->
+                parse_options(Opts, D)
+        end
+    catch
+        error:badarg ->
+            parse_options(Opts, D)
+    end;
 parse_options([_|Opts], Enabled) ->
     parse_options(Opts, Enabled);
 parse_options([], Enabled) ->
     Enabled.
 
-bool_options() ->
-    [{unused_vars,true},
-     {underscore_match,true},
-     {export_all,true},
-     {export_vars,false},
-     {shadow_vars,true},
-     {unused_import,false},
-     {unused_function,true},
-     {unused_type,true},
-     {bif_clash,true},
-     {unused_record,true},
-     {deprecated_function,true},
-     {deprecated_type,true},
-     {deprecated_callback,true},
-     {deprecated_catch,false},
-     {obsolete_guard,true},
-     {untyped_record,false},
-     {missing_spec,false},
-     {missing_spec_documented,false},
-     {missing_spec_all,false},
-     {removed,true},
-     {nif_inline,true},
-     {keywords,false},
-     {redefined_builtin_type,true},
-     {match_float_zero,true},
-     {update_literal,true},
-     {behaviours,true},
-     {conflicting_behaviours,true},
-     {undefined_behaviour_func,true},
-     {undefined_behaviour,true},
-     {undefined_behaviour_callbacks,true},
-     {ill_defined_behaviour_callbacks,true},
-     {ill_defined_optional_callbacks,true},
-     {unexported_function,true}].
+diagnostics() ->
+    Ds =
+        [
+        #{ key => undefined_module, type => error,
+            format => fun() ->
+                            ~"no module definition"
+                    end},
+        #{ key => redefine_module, type => error,
+            format => fun() ->
+                            ~"redefining module"
+                    end},
+        #{ key => pmod_unsupported, type => error,
+            format => fun() ->
+                            ~"parameterized modules are no longer supported"
+                    end},
+        #{ key => non_latin, type => error,
+            format => fun() ->
+                            ~"module names with non-latin1 characters are not supported"
+                    end},
+        #{ key => empty_module_name, type => error,
+            format => fun() ->
+                            ~"the module name must not be empty"
+                    end},
+        #{ key => blank_module_name, type => error,
+            format => fun() ->
+                            ~"the module name must contain at least one visible character"
+                    end},
+        #{ key => ctrl_chars_in_module_name, type => error,
+            format => fun() ->
+                            ~"the module name must not contain control characters"
+                    end},
+
+        #{ key => invalid_call, type => error,
+            format => fun() ->
+                            ~"invalid function call"
+                    end},
+        #{ key => invalid_record, type => error,
+            format => fun() ->
+                            ~"invalid record expression"
+                    end},
+
+        #{ key => keywords, type => warning, default => false,
+            format => fun({Ftr, Atom}) ->
+                            {~"atom '~p' is reserved in the experimental feature '~p'",
+                            [Atom, Ftr]}
+                    end},
+        #{ key => attribute, type => error,
+            format => fun(A) ->
+                            {~"attribute ~tw after function definitions", [A]}
+                    end},
+        #{ key => missing_qlc_hrl, type => error,
+            format => fun(A) ->
+                            {~"qlc:q/~w called, but \"qlc.hrl\" not included", [A]}
+                    end},
+        #{ key => redefine_import, type => error,
+            format => fun({{F,A},M}) ->
+                            {~"function ~tw/~w already imported from ~w", [F,A,M]}
+                    end},
+        #{ key => bad_inline, type => error,
+            format => fun({F,A}) when is_integer(A) ->
+                            {~"inlined function ~tw/~w undefined", [F,A]};
+                        ({{F,A},GuessFA}) ->
+                            {~"inlined function ~tw/~w undefined, did you mean ~s?", [F,A,format_fa(GuessFA)]}
+                    end},
+        #{ key => undefined_nif, type => error,
+            format => fun({F,A}) when is_integer(A) ->
+                            {~"nif ~tw/~w undefined", [F,A]};
+                        ({{F,A},GuessFA}) ->
+                            {~"nif ~tw/~w undefined, did you mean ~s?", [F,A,format_fa(GuessFA)]}
+                    end},
+        #{ key => no_load_nif, type => warning,
+            format => fun() ->
+                            {~"nifs defined, but no call to erlang:load_nif/2", []}
+                    end},
+        #{ key => invalid_deprecated, type => error,
+            format => fun(D) ->
+                            {~"badly formed deprecated attribute ~tw", [D]}
+                    end},
+        #{ key => bad_deprecated, type => error,
+            format => fun({F,A}) ->
+                            {~"deprecated function ~tw/~w undefined or not exported",
+                            [F,A]}
+                    end},
+        #{ key => invalid_removed, type => error,
+            format => fun(D) ->
+                            {~"badly formed removed attribute ~tw", [D]}
+                    end},
+        #{ key => bad_removed, type => error,
+            format => fun({F,A}) when F =:= '_'; A =:= '_' ->
+                            {~"at least one function matching ~tw/~w is still exported", [F,A]};
+                        ({F,A}) ->
+                            {~"removed function ~tw/~w is still exported", [F,A]}
+                    end},
+        #{ key => bad_nowarn_unused_function, type => error,
+            format => fun({F,A}) when is_integer(A) ->
+                            {~"function ~tw/~w undefined", [F,A]};
+                        ({{F,A},GuessFA}) ->
+                            {~"function ~tw/~w undefined, did you mean ~s?", [F,A,format_fa(GuessFA)]}
+                    end},
+         #{ key => bad_nowarn_bif_clash, type => error,
+            format => fun({F,A}) when is_integer(A) ->
+                              {~"function ~tw/~w undefined", [F,A]};
+                         ({{F,A},GuessFA}) ->
+                              {~"function ~tw/~w undefined, did you mean ~s?", [F,A,format_fa(GuessFA)]}
+                      end},
+         #{ key => disallowed_nowarn_bif_clash, type => error,
+            format => fun() ->
+                              ~"""
+                               compile directive nowarn_bif_clash is no longer allowed --
+                               use explicit module names or -compile({no_auto_import, [F/A]})
+                               """
+                      end},
+        #{ key => bad_on_load, type => error,
+            format => fun(Term) ->
+                            {~"badly formed on_load attribute: ~tw", [Term]}
+                    end},
+        #{ key => multiple_on_loads, type => error,
+            format => fun() ->
+                            ~"more than one on_load attribute"
+                    end},
+        #{ key => bad_on_load_arity, type => error,
+            format => fun({F,A}) ->
+                            {~"function ~tw/~w has wrong arity (must be 0)", [F,A]}
+                    end},
+        #{ key => duplicate_doc_attribute, type => error,
+            format => fun({Tag, PrevLine}) ->
+                            {~"redefining documentation attribute (~p) previously set at line ~p",
+                            [Tag, PrevLine]}
+                    end},
+        #{ key => undefined_on_load, type => error,
+            format => fun({F,A}) when is_integer(A) ->
+                            {~"function ~tw/~w undefined", [F,A]};
+                        ({{F,A},GuessF}) ->
+                            {~"function ~tw/~w undefined, did you mean ~ts/~w?", [F,A,GuessF,A]}
+                    end},
+        #{ key => nif_inline, type => warning,
+            format => fun() ->
+                            ~"inlining is enabled - local calls to NIFs may call their Erlang implementation instead"
+                    end},
+
+        #{ key => export_all, type => warning,
+            format => fun() ->
+                            ~"export_all flag enabled - all functions will be exported"
+                    end},
+        #{ key => duplicated_export, type => warning,
+            format => fun({F,A}) ->
+                            {~"function ~tw/~w already exported", [F,A]}
+                    end},
+        #{ key => unused_import, type => warning, default => false,
+            format => fun({{F,A},M}) ->
+                            {~"import ~w:~tw/~w is unused", [M,F,A]}
+                    end},
+        #{ key => undefined_function, type => error,
+            format => fun({F,A}) ->
+                            {~"function ~tw/~w undefined", [F,A]}
+                    end},
+        #{ key => redefine_function, type => error,
+            format => fun({F,A}) ->
+                            {~"function ~tw/~w already defined", [F,A]}
+                    end},
+        #{ key => define_import, type => error,
+            format => fun({F,A}) ->
+                            {~"defining imported function ~tw/~w", [F,A]}
+                    end},
+        #{ key => fun_import, type => error,
+            format => fun({F,A}) ->
+                            {~"creating a fun from imported name ~tw/~w is not allowed", [F,A]}
+                    end},
+        #{ key => unused_function, type => warning,
+           code => ~"ERL-1001",
+            format => fun({F,A}) ->
+                            {~"function ~tw/~w is unused", [F,A]}
+                    end},
+        #{ key => unexported_function, type => warning,
+            format => fun(MFA) ->
+                            {~"function ~ts is not exported", [format_mfa(MFA)]}
+                    end},
+        #{ key => bif_clash, type => warning,
+            format => fun({function,F,A}) ->
+                              {~"""
+                                ambiguous call of overridden auto-imported BIF ~w/~w --
+                                use erlang:~w/~w or "-compile({no_auto_import,[~w/~w]})." to resolve name clash
+                                """, [F,A,F,A,F,A]};
+                        ({import,F,A}) ->
+                              {~"""
+                                import directive overrides auto-imported BIF ~w/~w --
+                                use "-compile({no_auto_import,[~w/~w]})." to resolve name clash
+                                """, [F,A,F,A]}
+                       end},
+        #{ key => deprecated_function, type => warning,
+            format => fun({MFA, String, Rel}) ->
+                            {~"~s is deprecated and will be removed in ~s; ~s",
+                            [format_mfa(MFA), Rel, String]};
+                        ({MFA, String}) when is_list(String) ->
+                            {~"~s is deprecated; ~s", [format_mfa(MFA), String]}
+                    end},
+        #{ key => deprecated_type, type => warning,
+            format => fun({{M1, F1, A1}, String, Rel}) ->
+                            {~"the type ~p:~p~s is deprecated and will be removed in ~s; ~s",
+                            [M1, F1, gen_type_paren(A1), Rel, String]};
+                        ({{M1, F1, A1}, String}) when is_list(String) ->
+                            {~"the type ~p:~p~s is deprecated; ~s",
+                            [M1, F1, gen_type_paren(A1), String]}
+                    end},
+        #{ key => deprecated_callback, type => warning,
+            format => fun({{M1, F1, A1}, String, Rel}) ->
+                            {~"the callback ~p:~p~s is deprecated and will be removed in ~s; ~s",
+                            [M1, F1, gen_type_paren(A1), Rel, String]};
+                        ({{M1, F1, A1}, String}) when is_list(String) ->
+                            {~"the callback ~p:~p~s is deprecated; ~s",
+                            [M1, F1, gen_type_paren(A1), String]}
+                    end},
+        #{ key => removed, type => warning,
+            format => fun({MFA, ReplacementMFA, Rel}) ->
+                            {~"call to ~s will fail, since it was removed in ~s; use ~s",
+                            [format_mfa(MFA), Rel, format_mfa(ReplacementMFA)]};
+                        ({MFA, String}) when is_list(String) ->
+                            {~"~s is removed; ~s", [format_mfa(MFA), String]}
+                      end},
+         #{ key => removed_type, type => warning,
+            format => fun({MNA, String}) ->
+                              {~"the type ~s is removed; ~s", [format_mna(MNA), String]}
+                      end},
+         #{ key => removed_callback, type => warning,
+            format => fun({MNA, String}) ->
+                              {~"the callback ~s is removed; ~s", [format_mna(MNA), String]}
+                      end},
+         #{ key => obsolete_guard, type => warning,
+            format => fun({F, A}) ->
+                            {~"~p/~p obsolete (use is_~p/~p)", [F, A, F, A]}
+                    end},
+        #{ key => obsolete_guard_overridden, type => error,
+            format => fun(Test) ->
+                            {~"""
+                                obsolete ~s/1 (meaning is_~s/1) is illegal when there is a
+                                local/imported function named is_~p/1
+                                """, [Test,Test,Test]}
+                    end},
+        #{ key => too_many_arguments, type => error,
+            format => fun(Arity) ->
+                            {~"too many arguments (~w) -- maximum allowed is ~w", [Arity,?MAX_ARGUMENTS]}
+                    end},
+        #{ key => update_literal, type => warning,
+            format => fun() ->
+                            ~"expression updates a literal"
+                    end},
+        #{ key => illegal_zip_generator, type => error,
+            format => fun() ->
+                            ~"only generators are allowed in a zip generator."
+                    end},
+        %% --- patterns and guards ---
+        #{ key => illegal_map_assoc_in_pattern, type => error,
+            format => fun() ->
+                            ~"illegal pattern, did you mean to use `:=`?"
+                    end},
+        #{ key => illegal_pattern, type => error,
+            format => fun() -> ~"illegal pattern"
+                    end},
+        #{ key => illegal_expr, type => error,
+            format => fun() -> ~"illegal expression"
+                    end},
+        #{ key => illegal_guard_local_call, type => error,
+            format => fun({F,A}) ->
+                            {~"call to local/imported function ~tw/~w is illegal in guard",
+                            [F,A]}
+                    end},
+        #{ key => illegal_guard_expr, type => error,
+            format => fun() -> ~"illegal guard expression"
+                    end},
+        #{ key => match_float_zero, type => error,
+            format => fun() ->
+                            ~"""
+                            matching on the float 0.0 will no longer also match -0.0 in OTP 27.
+                            If you specifically intend to match 0.0 alone, write +0.0 instead.
+                            """
+                    end},
+        %% --- maps ---
+        #{ key => illegal_map_construction, type => error,
+            format => fun() ->
+                            ~"only association operators '=>' are allowed in map construction"
+                    end},
+        %% --- records ---
+        #{ key => undefined_record, type => error,
+            format => fun({T}) ->
+                            {~"record ~tw undefined", [T]};
+                        ({T,GuessT}) ->
+                            {~"record ~tw undefined, did you mean ~ts?", [T,GuessT]}
+                      end},
+         #{ key => redefine_record, type => error,
+            format => fun(T) ->
+                              {~"record ~tw already defined", [T]}
+                      end},
+         #{ key => redefine_fields, type => error,
+            format => fun({T,F}) ->
+                              {~"field ~tw already defined in record ~tw", [F,T]}
+                      end},
+        #{ key => bad_multi_field_init, type => error,
+            format => fun() ->
+                            {~"'_' initializes no omitted fields", []}
+                    end},
+        #{ key => undefined_field, type => error,
+            format => fun({T,F}) ->
+                            {~"field ~tw undefined in record ~tw", [F,T]};
+                        ({T,F,GuessF}) ->
+                            {~"field ~tw undefined in record ~tw, did you mean ~ts?", [F,T,GuessF]}
+                    end},
+        #{ key => illegal_record_info, type => error,
+            format => fun() ->
+                            ~"illegal record info"
+                    end},
+        #{ key => field_name_is_variable, type => error,
+            format => fun({T,F}) ->
+                            {~"field ~tw is not an atom or _ in record ~tw", [F,T]}
+                    end},
+        #{ key => wildcard_in_update, type => error,
+            format => fun(T) ->
+                            {~"meaningless use of _ in update of record ~tw", [T]}
+                    end},
+        #{ key => unused_record, type => warning,
+            format => fun(T) ->
+                            {~"record ~tw is unused", [T]}
+                    end},
+        #{ key => untyped_record, type => warning, default => false,
+            format => fun(T) ->
+                            {~"record ~tw has field(s) without type information", [T]}
+                    end},
+        %% --- variables ----
+        #{ key => unbound_var, type => error,
+            format => fun(V) when not is_tuple(V) ->
+                            {~"variable ~w is unbound", [V]};
+                        ({V,GuessV}) ->
+                            {~"variable ~w is unbound, did you mean '~s'?", [V,GuessV]}
+                    end},
+        #{ key => unsafe_var, type => error,
+            format => fun({V,{What,Where}}) ->
+                            {~"variable ~w unsafe in ~w ~s",
+                             [V,What,format_where(Where)]};
+                          (V) ->
+                                {~"variable ~w unsafe",[V]}
+                    end},
+        #{ key => export_vars, type => warning, default => false,
+            format => fun({V,{What,Where}}) ->
+                            {~"variable ~w exported from ~w ~s",
+                            [V,What,format_where(Where)]}
+                    end},
+        #{ key => underscore_match, type => warning,
+            format => fun({var,V}) ->
+                            {~"""
+                                variable ~w is already bound. If you mean to ignore this
+                                value, use '_' or a different underscore-prefixed name
+                                """, [V]};
+                        ({var_pat, V}) ->
+                            {~"""
+                                variable ~w is bound multiple times in this pattern.
+                                If you mean to ignore this value, use '_' or
+                                a different underscore-prefixed name
+                                """, [V]}
+                    end},
+        #{ key => shadow_vars, type => warning,
+            format => fun({V,In}) ->
+                            {~"variable ~w shadowed in ~w", [V,In]}
+                    end},
+        #{ key => unused_vars, type => warning,
+            format => fun(V) ->
+                            {~"variable ~w is unused", [V]}
+                    end},
+        #{ key => variable_in_record_def, type => error,
+            format => fun(V) ->
+                            {~"variable ~w in record definition", [V]}
+                    end},
+        #{ key => stacktrace_guard, type => error,
+            format => fun(V) ->
+                            {~"stacktrace variable ~w must not be used in a guard", [V]}
+                    end},
+        #{ key => stacktrace_bound, type => error,
+            format => fun(V) ->
+                            {~"stacktrace variable ~w must not be previously bound", [V]}
+                    end},
+        %% --- binaries ---
+        #{ key => undefined_bittype, type => error,
+            format => fun(Type) ->
+                            {~"bit type ~tw undefined", [Type]}
+                    end},
+        #{ key => bittype_mismatch, type => error,
+            format => fun({Val1,Val2,What}) ->
+                            {~"conflict in ~s specification for bit field: '~p' and '~p'",
+                            [What,Val1,Val2]}
+                    end},
+        #{ key => bittype_unit, type => error,
+            format => fun() ->
+                            ~"a bit unit size must not be specified unless a size is specified too"
+                    end},
+        #{ key => illegal_bitsize, type => error,
+            format => fun() ->
+                            ~"illegal bit size"
+                    end},
+        #{ key => illegal_bitsize_local_call, type => error,
+            format => fun({F,A}) ->
+                            {~"""
+                                call to local/imported function ~tw/~w is illegal
+                                in a size expression for a binary segment
+                                """, [F,A]}
+                    end},
+        #{ key => non_integer_bitsize, type => error,
+            format => fun() ->
+                            ~"""
+                            a size expression in a pattern evaluates to a non-integer value;
+                            this pattern cannot possibly match
+                            """
+                    end},
+        #{ key => unsized_binary_not_at_end, type => error,
+            format => fun() ->
+                            ~"a binary field without size is only allowed at the end of a binary pattern"
+                    end},
+        #{ key => typed_literal_string, type => error,
+            format => fun() ->
+                            ~"a literal string in a binary pattern must not have a type or a size"
+                    end},
+        #{ key => utf_bittype_size_or_unit, type => error,
+            format => fun() ->
+                            ~"neither size nor unit must be given for segments of type utf8/utf16/utf32"
+                    end},
+        #{ key => bad_bitsize, type => error,
+            format => fun(Type) ->
+                            {~"bad ~s bit size", [Type]}
+                    end},
+        #{ key => unsized_binary_in_bin_gen_pattern, type => error,
+            format => fun() ->
+                            ~"binary fields without size are not allowed in patterns of bit string generators"
+                    end},
+        %% --- behaviours ---
+        #{ key => behaviours, type => warning},
+        #{ key => conflicting_behaviours, type => warning,
+            format => fun({{Name,Arity},B,FirstL,FirstB}) ->
+                            {~"conflicting behaviours -- callback ~tw/~w required by both '~p' and '~p' ~s",
+                            [Name,Arity,B,FirstB,format_where(FirstL)]}
+                    end},
+        #{ key => undefined_behaviour_func, type => warning,
+            format => fun({{Func,Arity}, Behaviour}) ->
+                            {~"undefined callback function ~tw/~w (behaviour '~w')",
+                            [Func,Arity,Behaviour]}
+                    end},
+        #{ key => undefined_behaviour, type => warning,
+            format => fun(Behaviour) ->
+                            {~"behaviour ~tw undefined", [Behaviour]}
+                    end},
+        #{ key => undefined_behaviour_callbacks, type => warning,
+            format => fun(Behaviour) ->
+                            {~"behaviour ~w callback functions are undefined",
+                            [Behaviour]}
+                    end},
+        #{ key => ill_defined_behaviour_callbacks, type => error,
+            format => fun(Behaviour) ->
+                            {~"behaviour ~w callback functions erroneously defined",
+                            [Behaviour]}
+                    end},
+        #{ key => ill_defined_optional_callbacks, type => error,
+            format => fun(Behaviour) ->
+                            {~"behaviour ~w optional callback functions erroneously defined",
+                            [Behaviour]}
+                    end},
+        #{ key => behaviour_info, type => error,
+            format => fun({_M,F,A}) ->
+                            {~"cannot define callback attibute for ~tw/~w when behaviour_info is defined",
+                            [F,A]}
+                    end},
+        #{ key => redefine_optional_callback, type => error,
+            format => fun({F, A}) ->
+                            {~"optional callback ~tw/~w duplicated", [F, A]}
+                    end},
+        #{ key => undefined_callback, type => error,
+            format => fun({_M, F, A}) ->
+                            {~"callback ~tw/~w is undefined", [F, A]}
+                    end},
+        %% --- types and specs ---
+        #{ key => singleton_typevar, type => error,
+            format => fun(Name) ->
+                            {~"type variable ~w is only used once (is unbound)", [Name]}
+                    end},
+        #{ key => bad_export_type, type => error,
+            format => fun(_ETs) ->
+                            {~"bad export_type declaration", []}
+                    end},
+        #{ key => duplicated_export_type, type => warning,
+            format => fun({T, A}) ->
+                            {~"type ~tw/~w already exported", [T, A]}
+                    end},
+        #{ key => undefined_type, type => error,
+            format => fun({TypeName, Arity}) ->
+                            {~"type ~tw~s undefined", [TypeName, gen_type_paren(Arity)]}
+                    end},
+        #{ key => unused_type, type => warning,
+            format => fun({TypeName, Arity}) ->
+                            {~"type ~tw~s is unused", [TypeName, gen_type_paren(Arity)]}
+                    end},
+        #{ key => redefine_builtin_type, type => warning,
+            format => fun({TypeName, Arity}) ->
+                            {~"local redefinition of built-in type: ~w~s",
+                            [TypeName, gen_type_paren(Arity)]}
+                    end},
+        #{ key => renamed_type, type => warning,
+            format => fun({OldName, NewName}) ->
+                            {~"type ~w() is now called ~w(); please use the new name instead",
+                            [OldName, NewName]}
+                    end},
+        #{ key => redefine_type, type => error,
+            format => fun({TypeName, Arity}) ->
+                            {~"type ~tw~s already defined",
+                            [TypeName, gen_type_paren(Arity)]}
+                    end},
+        #{ key => type_syntax, type => error,
+            format => fun(Constr) ->
+                            {~"bad ~tw type", [Constr]}
+                    end},
+        #{ key => old_abstract_code, type => error,
+            format => fun() ->
+                            ~"""
+                            abstract code generated before Erlang/OTP 19.0 and
+                            having typed record fields cannot be compiled
+                            """
+                    end},
+        #{ key => redefine_spec, type => error,
+            format => fun({M, F, A}) ->
+                            {~"spec for ~tw:~tw/~w already defined", [M, F, A]};
+                        ({F, A}) ->
+                            {~"spec for ~tw/~w already defined", [F, A]}
+                    end},
+        #{ key => redefine_callback, type => error,
+            format => fun({F, A}) ->
+                            {~"callback ~tw/~w already defined", [F, A]}
+                    end},
+        #{ key => bad_callback, type => error,
+            format => fun({M, F, A}) ->
+                            {~"explicit module not allowed for callback ~tw:~tw/~w",
+                            [M, F, A]}
+                    end},
+        #{ key => bad_module, type => error,
+            format => fun({M, F, A}) ->
+                            {~"spec for function ~w:~tw/~w from other module", [M, F, A]}
+                    end},
+        #{ key => spec_fun_undefined, type => error,
+            format => fun({F, A}) ->
+                            {~"spec for undefined function ~tw/~w", [F, A]}
+                    end},
+        #{ key => missing_spec, type => warning, default => false,
+        code => ~"ERL-1002",
+            format => fun({F,A}) ->
+                            {~"missing specification for function ~tw/~w", [F, A]}
+                    end},
+        #{ key => missing_spec_documented, type => warning, default => false,
+        code => ~"ERL-1002",
+            format => fun({F,A}) ->
+                            {~"missing specification for function ~tw/~w", [F, A]}
+                    end},
+        #{ key => missing_spec_all, type => warning, default => false,
+           code => ~"ERL-1002",
+            format => fun({F,A}) ->
+                            {~"missing specification for function ~tw/~w", [F, A]}
+                    end},
+        #{ key => spec_wrong_arity, type => error,
+            format => fun() ->
+                            ~"spec has wrong arity"
+                    end},
+        #{ key => callback_wrong_arity, type => error,
+            format => fun() ->
+                            ~"callback has wrong arity"
+                    end},
+        #{ key => deprecated_builtin_type, type => warning,
+            format => fun({{Name, Arity}, Replacement, Rel}) ->
+                            UseS = case Replacement of
+                                        {Mod, NewName} ->
+                                            io_lib:format(~"use ~w:~w/~w", [Mod, NewName, Arity]);
+                                        {Mod, NewName, NewArity} ->
+                                            io_lib:format(~"use ~w:~w/~w or preferably ~w:~w/~w",
+                                                        [Mod, NewName, Arity,
+                                                            Mod, NewName, NewArity])
+                                    end,
+                            {~"type ~w/~w is deprecated and will be removed in ~s; use ~s",
+                            [Name, Arity, Rel, UseS]}
+                    end},
+        #{ key => deprecated_catch, type => warning, default => false,
+            format => fun() ->
+                            ~"""
+                             'catch ...' is deprecated and will be removed in a
+                             future version of Erlang/OTP; please use 'try ... catch ... end' instead.
+                             Compile directive 'nowarn_deprecated_catch' can be used to suppress
+                             warnings in selected modules.
+                             """
+                    end},
+        #{ key => not_exported_opaque, type => error,
+            format => fun({TypeName, Arity}) ->
+                            {~"opaque type ~tw~s is not exported",
+                            [TypeName, gen_type_paren(Arity)]}
+                    end},
+        #{ key => bad_dialyzer_attribute, type => error,
+            format => fun(Term) ->
+                            {~"badly formed dialyzer attribute: ~tw", [Term]}
+                    end},
+        #{ key => bad_dialyzer_option, type => error,
+            format => fun(Term) ->
+                            {~"unknown dialyzer warning option: ~tw", [Term]}
+                    end},
+         #{ key => warn_format, type => warning, default => 1,
+            format => fun({Fmt, Args}) ->
+                              {Fmt, Args}
+                      end}
+        ],
+    lists:map(
+      fun(#{ key := Key, type := warning } = W) ->
+              W#{ on => <<"warn_",(atom_to_binary(Key))/binary>>,
+                  off => <<"nowarn_",(atom_to_binary(Key))/binary>>};
+         (Error) ->
+              Error
+      end, Ds).
 
 %% is_warn_enabled(Category, St) -> boolean().
 %%  Check whether a warning of category Category is enabled.
-is_warn_enabled(Type, #lint{enabled_warnings=Enabled}) ->
-    ordsets:is_element(Type, Enabled).
+is_warn_enabled(Type, #lint{diagnostics = D}) ->
+    erl_diagnostic:get_value(D, Type).
 
 %% return_status(State) ->
 %%      {ok,[Warning]} | {error,[Error],[Warning]}
 %%  Pack errors and warnings properly and return ok | error.
 
 return_status(St) ->
-    Ws = pack_warnings(St#lint.warnings),
-    case pack_errors(St#lint.errors) of
+    Ws = erl_diagnostic:get_warnings(St#lint.diagnostics),
+    case erl_diagnostic:get_errors(St#lint.diagnostics) of
         [] -> {ok,Ws};
         Es -> {error,Es,Ws}
     end.
-
-%% pack_errors([{File,ErrD}]) -> [{File,[ErrD]}].
-%%  Sort on (reversed) insertion order.
-
-pack_errors(Es) ->
-    {Es1,_} = mapfoldl(fun ({File,E}, I) -> {{File,{I,E}}, I-1} end, -1, Es),
-    map(fun ({File,EIs}) -> {File, map(fun ({_I,E}) -> E end, EIs)} end,
-        pack_warnings(Es1)).
-
-%% pack_warnings([{File,ErrD}]) -> [{File,[ErrD]}]
-%%  Sort on line number.
-
-pack_warnings(Ws) ->
-    [{File,lists:sort([W || {F,W} <- Ws, F =:= File])} ||
-        File <- lists:usort([F || {F,_} <- Ws])].
 
 %% add_error(ErrorDescriptor, State) -> State'
 %% add_error(Anno, Error, State) -> State'
 %% add_warning(ErrorDescriptor, State) -> State'
 %% add_warning(Anno, Error, State) -> State'
 
-add_error(E, St) -> add_lint_error(E, St#lint.file, St).
+add_error(E, St) ->
+    add_lint_diag(E, erl_anno:new(0), St).
 
 add_error(Anno, E0, #lint{gexpr_context=Context}=St) ->
     E = case {E0,Context} of
@@ -899,38 +1460,26 @@ add_error(Anno, E0, #lint{gexpr_context=Context}=St) ->
                 {illegal_bitsize_local_call,FA};
             {_,_} -> E0
         end,
-    {File,Location} = loc(Anno, St),
-    add_lint_error({Location,erl_lint,E}, File, St).
+    add_lint_diag(E, Anno, St).
 
-add_lint_error(E, File, St) ->
-    St#lint{errors=[{File,E}|St#lint.errors]}.
-
-add_warning(W, St) -> add_lint_warning(W, St#lint.file, St).
+add_error(Anno, Key, Args, Opts, St) ->
+    D = erl_diagnostic:emit(St#lint.diagnostics, Key, loc(Anno, St), Args, Opts),
+    St#lint{ diagnostics = D }.
 
 add_warning(Anno, W, St) ->
-    {File,Location} = loc(Anno, St),
-    add_lint_warning({Location,erl_lint,W}, File, St).
+    add_lint_diag(W, Anno, St).
 
-add_lint_warning(W, File, St) ->
-    St#lint{warnings=[{File,W}|St#lint.warnings]}.
-
-maybe_add_warning(Anno, W, St) ->
-    Tag = if
-              is_tuple(W) -> element(1, W);
-              is_atom(W) -> W
-          end,
-    case is_warn_enabled(Tag, St) of
-        true ->
-            add_warning(Anno, W, St);
-        false ->
-            St
-    end.
+add_lint_diag({Key, Arg}, Anno, St) when not is_list(Arg) ->
+    D = erl_diagnostic:emit(St#lint.diagnostics, Key, loc(Anno, St), [Arg]),
+    St#lint{ diagnostics = D };
+add_lint_diag(Key, Anno, St) when is_atom(Key) ->
+    D = erl_diagnostic:emit(St#lint.diagnostics, Key, loc(Anno, St)),
+    St#lint{ diagnostics = D }.
 
 loc(Anno, St) ->
-    Location = erl_anno:location(Anno),
     case erl_anno:file(Anno) of
-        undefined -> {St#lint.file,Location};
-        File -> {File,Location}
+        undefined -> erl_anno:set_file(St#lint.file, Anno);
+        _File -> Anno
     end.
 
 %% forms([Form], State) -> State'
@@ -942,7 +1491,7 @@ forms(Forms0, St0) ->
     AutoImportSuppressed = auto_import_suppressed(St0#lint.compile),
     StDeprecated = disallowed_compile_flags(Forms,St0),
     St1 = includes_qlc_hrl(Forms, StDeprecated#lint{locals = Locals,
-						    no_auto = AutoImportSuppressed}),
+                                                   no_auto = AutoImportSuppressed}),
     St2 = bif_clashes(Forms, St1),
     St3 = not_deprecated(Forms, St2),
     St4 = not_removed(Forms, St3),
@@ -1002,8 +1551,9 @@ anno_set_file(T, File) ->
 %% form(Form, State) -> State'
 %%  Check a form returning the updated State. Handle generic cases here.
 
-form({error,E}, St)   -> add_error(E, St);
-form({warning,W}, St) -> add_warning(W, St);
+form({Type,{Anno, Mod, Reason}}, St) when Type =:= error; Type =:= warning ->
+    NewD = erl_diagnostic:emit_legacy(St#lint.diagnostics, Type, loc(Anno, St), Mod, Reason),
+    St#lint{ diagnostics = NewD };
 form({attribute,_A,file,{File,_Line}}, St) ->
     St#lint{file = File};
 form({attribute,_A,compile,_}, St) ->
@@ -1212,22 +1762,21 @@ not_removed(Forms, #lint{compile=Opts}=St0) ->
 %% The nowarn_bif_clash directive is not only deprecated, it's actually an error from R14A
 disallowed_compile_flags(Forms, St0) ->
     %% There are (still) no line numbers in St0#lint.compile.
-    Errors0 =  [ {St0#lint.file,{L,erl_lint,disallowed_nowarn_bif_clash}} ||
-		    {attribute,A,compile,nowarn_bif_clash} <- Forms,
-                   {_,L} <- [loc(A, St0)] ],
-    Errors1 = [ {St0#lint.file,{L,erl_lint,disallowed_nowarn_bif_clash}} ||
-		    {attribute,A,compile,{nowarn_bif_clash, {_,_}}} <- Forms,
-                   {_,L} <- [loc(A, St0)] ],
+    Errors0 =  [ A || {attribute,A,compile,nowarn_bif_clash} <- Forms],
+    Errors1 = [ A || {attribute,A,compile,{nowarn_bif_clash, {_,_}}} <- Forms],
     Disabled = (not is_warn_enabled(bif_clash, St0)),
-    Errors = if
-		   Disabled andalso Errors0 =:= [] ->
-		       [{St0#lint.file,{erl_lint,disallowed_nowarn_bif_clash}} | St0#lint.errors];
-                   Disabled ->
-		       Errors0 ++ Errors1 ++ St0#lint.errors;
-		   true ->
-		       Errors1 ++ St0#lint.errors
-	       end,
-    St0#lint{errors=Errors}.
+    if
+        Disabled andalso Errors0 =:= [] ->
+            add_error(disallowed_nowarn_bif_clash, St0);
+        Disabled ->
+            lists:foldl(fun(A, St) ->
+                                add_error(A, disallowed_nowarn_bif_clash, St)
+                        end, St0, Errors0 ++ Errors1);
+        true ->
+            lists:foldl(fun(A, St) ->
+                                add_error(A, disallowed_nowarn_bif_clash, St)
+                        end, St0, Errors1)
+    end.
 
 %% post_traversal_check(Forms, State0) -> State.
 %% Do some further checking after the forms have been traversed and
@@ -1288,13 +1837,10 @@ all_behaviour_callbacks([{Anno,B}|Bs], Acc, St0) ->
     all_behaviour_callbacks(Bs, [{{Anno,B},Bfs0,OBfs0}|Acc], St);
 all_behaviour_callbacks([], Acc, St) -> {reverse(Acc),St}.
 
-add_behaviour_warning(Anno, Warning, St) when is_tuple(Warning) ->
-    maybe_add_warning(Anno, Warning, St).
-
 behaviour_callbacks(Anno, B, St0) ->
     try B:behaviour_info(callbacks) of
         undefined ->
-            St1 = add_behaviour_warning(Anno,
+            St1 = add_warning(Anno,
                                         {undefined_behaviour_callbacks, B},
                                         St0),
             {[], [], St1};
@@ -1312,7 +1858,7 @@ behaviour_callbacks(Anno, B, St0) ->
                                     {Funcs, OptFuncs, St0};
                                 false ->
                                     W = {ill_defined_optional_callbacks, B},
-                                    St1 = add_behaviour_warning(Anno, W, St0),
+                                    St1 = add_warning(Anno, W, St0),
                                     {Funcs, [], St1}
                             end
                     catch
@@ -1320,14 +1866,14 @@ behaviour_callbacks(Anno, B, St0) ->
                             {Funcs, [], St0}
                     end;
                 false ->
-                    St1 = add_behaviour_warning(Anno,
+                    St1 = add_warning(Anno,
                                                 {ill_defined_behaviour_callbacks, B},
                                                 St0),
                     {[], [], St1}
             end
     catch
         _:_ ->
-            St1 = add_behaviour_warning(Anno, {undefined_behaviour, B}, St0),
+            St1 = add_warning(Anno, {undefined_behaviour, B}, St0),
             St2 = check_module_name(B, Anno, St1),
             {[], [], St2}
     end.
@@ -1347,9 +1893,9 @@ behaviour_deprecated(Anno, B, [{F, A} | T], Exports, St0) ->
             true ->
                 case otp_internal:obsolete_callback(B, F, A) of
                     {deprecated, String} when is_list(String) ->
-                        maybe_add_warning(Anno, {deprecated_callback, {B, F, A}, String}, St0);
+                        add_warning(Anno, {deprecated_callback, {{B, F, A}, String}}, St0);
                     {removed, String} ->
-                        add_warning(Anno, {removed_callback, {B, F, A}, String}, St0);
+                        add_warning(Anno, {removed_callback, {{B, F, A}, String}}, St0);
                     no ->
                         St0
                 end
@@ -1366,7 +1912,7 @@ behaviour_missing_callbacks([{{Anno,B},Bfs0,OBfs}|T], St0) ->
                        case is_fa(F) of
                            true ->
                                M = {undefined_behaviour_func,F,B},
-                               add_behaviour_warning(Anno, M, S0);
+                               add_warning(Anno, M, S0);
                            false ->
                                S0 % ill_defined_behaviour_callbacks
                        end
@@ -1384,15 +1930,13 @@ behaviour_conflicting(AllBfs, St) ->
     behaviour_add_conflicts(R, St).
 
 behaviour_add_conflicts([{Cb,[{FirstAnno,FirstB}|Cs]}|T], St0) ->
-    FirstL = element(2, loc(FirstAnno, St0)),
+    FirstL = erl_anno:line(loc(FirstAnno, St0)),
     St = behaviour_add_conflict(Cs, Cb, FirstL, FirstB, St0),
     behaviour_add_conflicts(T, St);
 behaviour_add_conflicts([], St) -> St.
 
 behaviour_add_conflict([{Anno,B}|Cs], Cb, FirstL, FirstB, St0) ->
-    St = add_behaviour_warning(Anno,
-                               {conflicting_behaviours,Cb,B,FirstL,FirstB},
-                               St0),
+    St = add_warning(Anno,{conflicting_behaviours,Cb,B,FirstL,FirstB},St0),
     behaviour_add_conflict(Cs, Cb, FirstL, FirstB, St);
 behaviour_add_conflict([], _, _, _, St) -> St.
 
@@ -1681,7 +2225,7 @@ check_unexported_functions_1({F, A}=Key, Annos, Acc0) ->
     end.
 
 nowarn_function(Tag, Opts) ->
-    ordsets:from_list([FA || {Tag1,FAs} <- Opts,
+    ordsets:from_list([FA || {{Tag1,FAs},_} <- Opts,
                              Tag1 =:= Tag,
                              FA <- lists:flatten([FAs])]).
 
@@ -1693,17 +2237,11 @@ func_location_error(Type, [{F,Anno}|Fs], St0, FAList) ->
     PossibleAs = lists:sort([A || {FName, A} <:- FAList, FName =:= Name]),
     case PossibleAs of
         [] ->
-            PossibleFs = [atom_to_list(Func) ||
-                             {Func, A} <:- FAList, A =:= Arity],
-            St1 = case most_possible_string(Name, PossibleFs) of
-                      [] ->
-                          add_error(Anno, {Type,F}, St0);
-                      GuessF ->
-                          add_error(Anno, {Type,F,{GuessF,[Arity]}}, St0)
-                  end,
+            PossibleFs = [Func || {Func, A} <:- FAList, A =:= Arity],
+            St1 = add_error(Anno, Type, [F], #{ possible => {Name, PossibleFs} }, St0),
             func_location_error(Type, Fs, St1, FAList);
         _ ->
-            St1 = add_error(Anno, {Type,F,{Name,PossibleAs}}, St0),
+            St1 = add_error(Anno, {Type,{F,{Name,PossibleAs}}}, St0),
             func_location_error(Type, Fs, St1, FAList)
     end;
 func_location_error(_, [], St, _) ->
@@ -1753,7 +2291,7 @@ check_unused_records(Forms, St0) ->
                                  end, St1#lint.records, UsedRecords),
             Unused = [{Name,Anno} ||
                          Name := {Anno,_Fields} <- URecs,
-                         element(1, loc(Anno, St1)) =:= FirstFile],
+                         erl_anno:file(loc(Anno, St1)) =:= FirstFile],
             foldl(fun ({N,Anno}, St) ->
                           add_warning(Anno, {unused_record, N}, St)
                   end, St1, Unused);
@@ -1860,7 +2398,7 @@ import(Anno, {Mod,Fs}, St00) ->
 				       Warn and (not AutoImpSup) ->
 					   add_warning
 					     (Anno,
-					      {redefine_bif_import, {F,A}},
+					      {bif_clash, {import, {F,A}}},
 					      St0);
 				       true ->
 					   St0
@@ -2046,7 +2584,7 @@ pattern({integer,_Anno,_I}, _Vt, _Old, St) -> {[],[],St};
 pattern({float,Anno,F}, _Vt, _Old, St0) ->
     St = if
              F == 0 ->
-                 maybe_add_warning(Anno, match_float_zero, St0);
+                 add_warning(Anno, match_float_zero, St0);
              true ->
                  St0
          end,
@@ -2934,7 +3472,7 @@ check_call(Anno, F, As, _Aa, St0) ->
                              false ?= AutoSuppressed,
                              true ?= is_warn_enabled(bif_clash, St0),
                              false ?= bif_clash_specifically_disabled(St0, {F,A}),
-                             add_warning(Anno, {call_to_redefined_bif, {F,A}}, St0)
+                             add_warning(Anno, {bif_clash, {function,F,A}}, St0)
                          else
                              _ ->
                                  St0
@@ -2955,7 +3493,7 @@ check_call(Anno, F, As, _Aa, St0) ->
 expr_check_match_zero({float,Anno,F}, St) ->
     if
         F == 0 ->
-            maybe_add_warning(Anno, match_float_zero, St);
+            add_warning(Anno, match_float_zero, St);
         true ->
             St
     end;
@@ -3096,13 +3634,13 @@ def_fields(Fs0, Name, St0) ->
                           {_,St2} = expr(V, [], St1),
                           %% Warnings and errors found are kept, but
                           %% updated calls, records, etc. are discarded.
-                          St3 = St1#lint{warnings = St2#lint.warnings,
-                                         errors = St2#lint.errors,
+                          St3 = St1#lint{diagnostics = St2#lint.diagnostics,
                                          called = St2#lint.called,
                                          recdef_top = false},
                           %% This is one way of avoiding a loop for
                           %% "recursive" definitions.
-                          NV = case St2#lint.errors =:= St1#lint.errors of
+                          NV = case erl_diagnostic:get_errors(St2#lint.diagnostics)
+                                        =:= erl_diagnostic:get_errors(St1#lint.diagnostics) of
                                    true -> V;
                                    false -> {atom,Aa,undefined}
                                end,
@@ -3277,10 +3815,9 @@ init_fields(Ifs, Anno, Name, Dfs, Vt0, St0) ->
 ginit_fields(Ifs, Anno, Name, Dfs, Vt0, St0) ->
     {Vt1,St1} = check_fields(Ifs, Name, Dfs, Vt0, St0, fun gexpr/3),
     Defs = init_fields(Ifs, Anno, Dfs),
-    St2 = St1#lint{errors = []},
-    {_,St3} = check_fields(Defs, Name, Dfs, Vt1, St2, fun gexpr/3),
-    #lint{usage = Usage, errors = IllErrors} = St3,
-    St4 = St1#lint{usage = Usage, errors = IllErrors ++ St1#lint.errors},
+    {_,St3} = check_fields(Defs, Name, Dfs, Vt1, St1, fun gexpr/3),
+    #lint{usage = Usage, diagnostics = IllDiag} = St3,
+    St4 = St1#lint{usage = Usage, diagnostics = IllDiag},
     {Vt1,St4}.
 
 %% Default initializations to be carried out
@@ -3750,15 +4287,15 @@ check_specs_without_function(#lint{module=Mod,defined=Funcs,specs=Specs}=St) ->
 check_functions_without_spec(Forms, St0) ->
     case is_warn_enabled(missing_spec_all, St0) of
 	true ->
-	    add_missing_spec_warnings(Forms, St0, all);
+	    add_missing_spec_warnings(Forms, St0, missing_spec_all);
 	false ->
 	    case is_warn_enabled(missing_spec, St0) of
 		true ->
-		    add_missing_spec_warnings(Forms, St0, exported);
+		    add_missing_spec_warnings(Forms, St0, missing_spec);
 		false ->
                     case is_warn_enabled(missing_spec_documented, St0) of
                         true ->
-                            add_missing_spec_warnings(Forms, St0, documented);
+                            add_missing_spec_warnings(Forms, St0, missing_spec_documented);
                         false ->
                             St0
                     end
@@ -3769,15 +4306,15 @@ add_missing_spec_warnings(Forms, St0, Type) ->
     Specs = [{F,A} || {_M,F,A} <- maps:keys(St0#lint.specs)],
     Warns = %% functions + line numbers for which we should warn
 	case Type of
-	    all ->
+	    missing_spec_all ->
 		[{FA,Anno} || {function,Anno,F,A,_} <- Forms,
 			   not lists:member(FA = {F,A}, Specs)];
 	    _ ->
                 Exps0 = gb_sets:to_list(exports(St0)) -- pseudolocals(),
                 Exps1 =
-                    if Type =:= documented ->
+                    if Type =:= missing_spec_documented ->
                             Exps0 -- sets:to_list(St0#lint.hidden_docs);
-                       true ->
+                        Type =:= missing_spec ->
                             Exps0
                     end,
                 Exps = Exps1 -- Specs,
@@ -3785,7 +4322,7 @@ add_missing_spec_warnings(Forms, St0, Type) ->
 			   member(FA = {F,A}, Exps)]
 	end,
     foldl(fun ({FA,Anno}, St) ->
-		  add_warning(Anno, {missing_spec,FA}, St)
+		  add_warning(Anno, {Type,FA}, St)
 	  end, St0, Warns).
 
 check_unused_types(Forms, St) ->
@@ -3803,8 +4340,8 @@ check_unused_types_1(Forms, #lint{types=Ts}=St) ->
                 fun({{record, _}=_Type, 0}, _, AccSt) ->
                         AccSt; % Before Erlang/OTP 19.0
                    (Type, #typeinfo{anno = Anno}, AccSt) ->
-                        case loc(Anno, AccSt) of
-			    {FirstFile, _} ->
+                        case erl_anno:file(loc(Anno, AccSt)) of
+			    FirstFile ->
 				case gb_sets:is_member(Type, UsedTypes) of
 				    true -> AccSt;
 				    false ->
@@ -3972,7 +4509,7 @@ taint_stack_var(_, Vt, St) ->
     {Vt, St}.
 
 icrt_export(Vts, Vt, {Tag,Attrs}, St) ->
-    {_File,Loc} = loc(Attrs, St),
+    Loc = erl_anno:location(loc(Attrs, St)),
     icrt_export(lists:merge(Vts), Vt, {Tag,Loc}, length(Vts), []).
 
 icrt_export([{V,{{export,_},_,_}}|Vs0], [{V,{{export,_}=S0,_,As}}|Vt],
@@ -4299,12 +4836,12 @@ pat_var(V, Anno, Vt, New, St0) ->
                     {[{V,{bound,used,Ls}}],[],St};
                 {ok,{{unsafe,In},_Usage,Ls}} ->
                     {[{V,{bound,used,Ls}}],[],
-                     add_error(Anno, {unsafe_var,V,In}, St0)};
+                     add_error(Anno, {unsafe_var,{V,In}}, St0)};
                 {ok,{{export,From},_Usage,Ls}} ->
                     St = warn_underscore_match(V, Anno, St0),
                     {[{V,{bound,used,Ls}}],[],
                      %% As this is matching, exported vars are risky.
-                     add_warning(Anno, {exported_var,V,From}, St)};
+                     add_warning(Anno, {exported_var,{V,From}}, St)};
                 error when St0#lint.recdef_top ->
                     {[],[{V,{bound,unused,[Anno]}}],
                      add_error(Anno, {variable_in_record_def,V}, St0)};
@@ -4354,7 +4891,7 @@ pat_binsize_var(V, Anno, Vt, New, St) ->
                     {[{V,{bound,used,As}}],[],St};
                 {ok,{{unsafe,In},_Used,As}} ->
                     {[{V,{bound,used,As}}],[],
-                     add_error(Anno, {unsafe_var,V,In}, St)};
+                     add_error(Anno, {unsafe_var,{V,In}}, St)};
                 {ok,{{export,From},_Used,As}} ->
                     {[{V,{bound,used,As}}],[],
                      %% As this is not matching, exported vars are
@@ -4368,7 +4905,7 @@ pat_binsize_var(V, Anno, Vt, New, St) ->
                              add_error(Anno, {unbound_var,V}, St)};
                         GuessV ->
                             {[{V,{bound,used,[Anno]}}],[],
-                             add_error(Anno, {unbound_var,V,GuessV}, St)}
+                             add_error(Anno, {unbound_var,{V,GuessV}}, St)}
                     end
             end
     end.
@@ -4392,14 +4929,17 @@ do_expr_var(V, Anno, Vt, St) ->
     case orddict:find(V, Vt) of
         {ok,{bound,_Usage,As}} ->
             {[{V,{bound,used,As}}],St};
-        {ok,{{unsafe,In},_Usage,As}} ->
+        {ok,{{unsafe,{What, Where}},_Usage,As}} ->
             {[{V,{bound,used,As}}],
-             add_error(Anno, {unsafe_var,V,In}, St)};
+             St#lint{ diagnostics =
+             erl_diagnostic:emit(St#lint.diagnostics, unsafe_var, loc(Anno, St), 
+            [V],
+                #{ related => [{loc(Where, St), io_lib:format("in ~w",[What])}]})}};
         {ok,{{export,From},_Usage,As}} ->
             case is_warn_enabled(export_vars, St) of
                 true ->
                     {[{V,{bound,used,As}}],
-                     add_warning(Anno, {exported_var,V,From}, St)};
+                     add_warning(Anno, {export_vars,{V,From}}, St)};
                 false ->
                     {[{V,{{export,From},used,As}}],St}
             end;
@@ -4414,13 +4954,13 @@ do_expr_var(V, Anno, Vt, St) ->
                      add_error(Anno, {unbound_var,V}, St)};
                 GuessV ->
                     {[{V,{bound,used,[Anno]}}],
-                     add_error(Anno, {unbound_var,V,GuessV}, St)}
+                     add_error(Anno, {unbound_var,{V,GuessV}}, St)}
             end
     end.
 
 exported_var(Anno, V, From, St) ->
     case is_warn_enabled(export_vars, St) of
-        true -> add_warning(Anno, {exported_var,V,From}, St);
+        true -> add_warning(Anno, {export_vars,{V,From}}, St);
         false -> St
     end.
 
@@ -4428,7 +4968,7 @@ shadow_vars(Vt, Vt0, In, St0) ->
     case is_warn_enabled(shadow_vars, St0) of
         true ->
             foldl(fun ({V,{_,_,[A | _]}}, St) ->
-                          add_warning(A, {shadowed_var,V,In}, St);
+                          add_warning(A, {shadow_vars,{V,In}}, St);
                       (_, St) -> St
                   end, St0, vtold(Vt, vt_no_unsafe(Vt0)));
         false -> St0
@@ -4460,7 +5000,7 @@ warn_unused_vars(U, Vt, St0) ->
 	      true ->
 		  foldl(fun ({V,{_,unused,As}}, St) ->
 				foldl(fun (A, St2) ->
-					      add_warning(A, {unused_var,V},
+					      add_warning(A, {unused_vars,V},
 							  St2)
 				      end, St, As)
 			end, St0, U)
@@ -4689,12 +5229,12 @@ deprecated_function(Anno, M, F, As, St) ->
                 true ->
 		    St;
                 false ->
-		    add_warning(Anno, {deprecated, MFA, Replacement, Rel}, St)
+		    add_warning(Anno, {deprecated_function, MFA, Replacement, Rel}, St)
             end;
 	{removed, String} when is_list(String) ->
-	    add_removed_warning(Anno, MFA, {removed, MFA, String}, St);
+	    add_removed_warning(Anno, MFA, {removed_function, MFA, String}, St);
 	{removed, Replacement, Rel} ->
-	    add_removed_warning(Anno, MFA, {removed, MFA, Replacement, Rel}, St);
+	    add_removed_warning(Anno, MFA, {removed_function, MFA, Replacement, Rel}, St);
         no ->
 	    St
     end.
@@ -4715,7 +5255,7 @@ deprecated_type(Anno, M, N, As, St) ->
     NAs = length(As),
     case otp_internal:obsolete_type(M, N, NAs) of
         {deprecated, String} when is_list(String) ->
-            maybe_add_warning(Anno, {deprecated_type, {M,N,NAs}, String}, St);
+            add_warning(Anno, {deprecated_type, {M,N,NAs}, String}, St);
         {removed, String} ->
             add_warning(Anno, {removed_type, {M,N,NAs}, String}, St);
         no ->
@@ -4728,7 +5268,7 @@ obsolete_guard({call,Anno,{atom,Ar,F},As}, St0) ->
 	false ->
 	    deprecated_function(Anno, erlang, F, As, St0);
 	true ->
-	    St = maybe_add_warning(Ar, {obsolete_guard, {F, Arity}}, St0),
+	    St = add_warning(Ar, {obsolete_guard, {F, Arity}}, St0),
 	    test_overriden_by_local(Ar, F, Arity, St)
     end;
 obsolete_guard(_G, St) ->
@@ -4780,13 +5320,14 @@ keyword_warning(Anno, Atom, St) ->
 format_function(DefAnno, M, F, As, St) ->
     maybe
         true ?= is_format_function(M, F),
-        Lev = St#lint.warn_format,
+        Lev = erl_diagnostic:get_value(St#lint.diagnostics, warn_format),
+        true = 0 =< Lev andalso Lev =< 3,
         true ?= Lev > 0,
         case check_format_1(As) of
             {warn,Level,Fmt,Fas} when Level =< Lev ->
-                add_warning(DefAnno, {format_error,{Fmt,Fas}}, St);
+                add_warning(DefAnno, {warn_format,{Fmt,Fas}}, St);
             {warn,Level,Anno,Fmt,Fas} when Level =< Lev ->
-                add_warning(Anno, {format_error,{Fmt,Fas}}, St);
+                add_warning(Anno, {warn_format,{Fmt,Fas}}, St);
             _ -> St
         end
     else

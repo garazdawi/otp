@@ -2185,14 +2185,16 @@ add_default_base(St, Forms) ->
     end.
 
 lint_module(Code, St) ->
-    case erl_lint:module(Code, St#compile.ifile, St#compile.options) of
-	{ok,Ws} ->
+    % io:format("~p~n",[St#compile.options]),
+    LintDs = erl_lint:module(Code, St#compile.ifile, St#compile.options, St#compile.diagnostics),
+    case erl_diagnostic:has_errors(LintDs)  of
+	false ->
 	    %% Insert name of module as base name, if needed. This is
 	    %% for compile:forms to work with listing files.
 	    St1 = add_default_base(St, Code),
-	    {ok,Code,emit_warnings(St1, Ws)};
-	{error,Es,Ws} ->
-	    {error,emit_warnings(emit_errors(St, Es), Ws)}
+            {ok, Code, St1#compile{ diagnostics = LintDs }};
+	true ->
+	    {error,St#compile{ diagnostics = LintDs }}
     end.
 
 core_lint_module(Code, St) ->
