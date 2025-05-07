@@ -92,7 +92,7 @@ Armstrong, Virding and Williams: 'Concurrent Programming in Erlang', Chapter 13.
          category/1,symbol/1]).
 
 %%% Private
--export([continuation_location/1]).
+-export([continuation_location/1, error_code/1]).
 
 -export_type([error_info/0,
               options/0,
@@ -175,6 +175,11 @@ format_error(string_concat) ->
     "adjacent string literals without intervening white space";
 format_error(Other) ->
     lists:flatten(io_lib:write(Other)).
+
+-doc false.
+error_code({unterminated, _}) -> ~"ERL-0003";
+error_code({illegal, _}) -> ~"ERL-0004";
+error_code(_) -> undefined.
 
 -doc(#{equiv => string(String, 1)}).
 -spec string(String) -> Return when
@@ -600,7 +605,7 @@ scan1([$\%=C|Cs], St, Line, Col, Toks) ->
     scan_comment(Cs, St, Line, Col, Toks, [C]);
 %% More punctuation characters below.
 scan1([C|_], _St, _Line, _Col0, _Toks) when not ?CHAR(C) ->
-    error({not_character,C});
+    erlang:error({not_character,C});
 scan1([C|Cs], St, Line, Col, Toks) when C >= $A, C =< $Z ->
     scan_variable(Cs, St, Line, Col, Toks, [C]);
 scan1([C|Cs], St, Line, Col, Toks) when C >= $a, C =< $z ->
