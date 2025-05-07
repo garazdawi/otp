@@ -69,6 +69,7 @@ MODULES= \
 	erl_bits \
 	erl_compile \
 	erl_error \
+	erl_diagnostic \
 	erl_eval \
 	erl_expand_records \
 	erl_features \

@@ -388,7 +388,7 @@ representing an [RFC 3986](https://www.ietf.org/rfc/rfc3986.txt) compliant URI
 set: the letters of the basic Latin alphabet, digits, and a few special
 characters.
 """.
--type uri_string() :: iodata().
+-type uri_string() :: unicode:chardata().
 -doc """
 Error tuple indicating the type of error. Possible values of the second
 component:
