@@ -22,7 +22,7 @@
 
 -module(beam_ssa_recv).
 -moduledoc false.
--export([format_error/1, module/2]).
+-export([module/3]).
 
 %%%
 %%% In code such as:
@@ -114,11 +114,6 @@
 -define(RETURN_BLOCK, -1).
 -define(ENTRY_BLOCK, 0).
 
--spec format_error(term()) -> nonempty_string().
-
-format_error(OptInfo) ->
-    format_opt_info(OptInfo).
-
 -record(scan, { graph=beam_digraph:new(),
                 module :: #{ beam_ssa:b_local() => {beam_ssa:block_map(),
                                                     [beam_ssa:b_var()],
@@ -126,12 +121,13 @@ format_error(OptInfo) ->
                 recv_candidates=#{},
                 ref_candidates=#{} }).
 
--spec module(Module, Options) -> Result when
+-spec module(Module, Options, Diagnostics) -> Result when
       Module :: beam_ssa:b_module(),
       Options :: [compile:option()],
+      Diagnostics :: erl_diagnostic:state(),
       Result :: {ok, beam_ssa:b_module(), list()}.
 
-module(#b_module{}=Mod0, Opts) ->
+module(#b_module{}=Mod0, Opts, Ds) ->
     case scan(Mod0) of
         #scan{}=Scan ->
             %% Figure out where to place marker creation, usage, and clearing
@@ -145,15 +141,12 @@ module(#b_module{}=Mod0, Opts) ->
 
             Mod = optimize(Mod0, Markers, Uses, Clears),
 
-            Ws = case proplists:get_bool(recv_opt_info, Opts) of
-                     true -> collect_opt_info(Mod);
-                     false -> []
-                 end,
+            RecvOptDs = collect_opt_info(Mod, Ds, Opts),
 
-            {ok, Mod, Ws};
+            {ok, Mod, RecvOptDs};
         none ->
             %% No peek_message instructions; just skip it all.
-            {ok, Mod0, []}
+            {ok, Mod0, Ds}
     end.
 
 scan(#b_module{body=Fs}) ->
@@ -868,10 +861,21 @@ insert_clears_1([], Count, Acc) ->
 %%% +recv_opt_info
 %%%
 
-collect_opt_info(#b_module{body=Fs}) ->
-    coi_1(Fs, []).
+collect_opt_info(#b_module{body=Fs}, Ds0, Opts) ->
+    RecvOptInfo = #{ key => recv_opt_info,
+                     format => fun format_opt_info/1,
+                     type => info,
+                     default => false,
+                     on => ~"recv_opt_info",
+                     code => ~"ERL-2001" },
+    Ds1 = erl_diagnostic:add_diagnostics(Ds0, [RecvOptInfo]),
+    case proplists:get_bool(recv_opt_info, Opts) of
+        false -> Ds1;
+        true ->
+            coi_1(Fs, erl_diagnostic:push_diagnostic(Ds1, recv_opt_info, true, erl_anno:new(0)))
+    end.
 
-coi_1([#b_function{args=Args,bs=Blocks}=F | Fs], Acc0) ->
+coi_1([#b_function{args=Args,bs=Blocks}=F | Fs], Ds0) ->
     Lbls = beam_ssa:rpo(Blocks),
     Where = beam_ssa:get_anno(location, F, []),
     {Defs, _} = foldl(fun(Var, {Defs0, Index0}) ->
@@ -879,25 +883,26 @@ coi_1([#b_function{args=Args,bs=Blocks}=F | Fs], Acc0) ->
                               Index = Index0 + 1,
                               {Defs, Index}
                       end, {#{}, 1}, Args),
-    Acc = coi_bs(Lbls, Blocks, Where, Defs, Acc0),
-    coi_1(Fs, Acc);
-coi_1([], Acc) ->
-    Acc.
+    Ds = coi_bs(Lbls, Blocks, Where, Defs, Ds0),
+    coi_1(Fs, Ds);
+coi_1([], Ds) ->
+    Ds.
 
-coi_bs([Lbl | Lbls], Blocks, Where, Defs0, Ws0) ->
+coi_bs([Lbl | Lbls], Blocks, Where, Defs0, Ds0) ->
     #{ Lbl := #b_blk{is=Is,last=Last} } = Blocks,
-    {Defs, Ws} = coi_is(Is, Last, Blocks, Where, Defs0, Ws0),
-    coi_bs(Lbls, Blocks, Where, Defs, Ws);
-coi_bs([], _Blocks, _Where, _Defs, Ws) ->
-    Ws.
+    {Defs, Ds} = coi_is(Is, Last, Blocks, Where, Defs0, Ds0),
+    coi_bs(Lbls, Blocks, Where, Defs, Ds);
+coi_bs([], _Blocks, _Where, _Defs, Ds) ->
+    Ds.
 
 coi_is([#b_set{anno=Anno,op=peek_message,args=[#b_var{}]=Args } | Is],
-       Last, Blocks, Where, Defs, Ws) ->
+       Last, Blocks, Where, Defs, Ds) ->
     [Creation] = coi_creations(Args, Blocks, Defs), %Assertion.
-    Warning = make_warning({used_receive_marker, Creation}, Anno, Where),
-    coi_is(Is, Last, Blocks, Where, Defs, [Warning | Ws]);
+    Ds1 = erl_diagnostic:emit(Ds, recv_opt_info, loc(Anno, Where),
+                              [{used_receive_marker, Creation}]),
+    coi_is(Is, Last, Blocks, Where, Defs, Ds1);
 coi_is([#b_set{anno=Anno,op=peek_message,args=[#b_literal{}] } | Is],
-       Last, Blocks, Where, Defs, Ws) ->
+       Last, Blocks, Where, Defs, Ds) ->
 
     %% Is this a selective receive?
     #b_br{succ=NextMsg} = Last,
@@ -907,23 +912,28 @@ coi_is([#b_set{anno=Anno,op=peek_message,args=[#b_literal{}] } | Is],
                _ -> unoptimized_selective_receive
            end,
 
-    Warning = make_warning(Info, Anno, Where),
-    coi_is(Is, Last, Blocks, Where, Defs, [Warning | Ws]);
+    Ds1 = erl_diagnostic:emit(Ds, recv_opt_info, loc(Anno, Where),
+                              [Info]),
+    coi_is(Is, Last, Blocks, Where, Defs, Ds1);
 coi_is([#b_set{anno=Anno,op=recv_marker_reserve} | Is],
-       Last, Blocks, Where, Defs, Ws) ->
-    Warning = make_warning(reserved_receive_marker, Anno, Where),
-    coi_is(Is, Last, Blocks, Where, Defs, [Warning | Ws]);
+       Last, Blocks, Where, Defs, Ds) ->
+    Ds1 = erl_diagnostic:emit(Ds, recv_opt_info, loc(Anno, Where),
+    [reserved_receive_marker]),
+    coi_is(Is, Last, Blocks, Where, Defs, Ds1);
 coi_is([#b_set{anno=Anno,op=call,dst=Dst,args=[#b_local{} | Args] }=I | Is],
-       Last, Blocks, Where, Defs0, Ws0) ->
+       Last, Blocks, Where, Defs0, Ds0) ->
     Defs = Defs0#{ Dst => I },
-    Ws = [make_warning({passed_marker, Creation}, Anno, Where)
-          || #b_set{}=Creation <- coi_creations(Args, Blocks, Defs)] ++ Ws0,
-    coi_is(Is, Last, Blocks, Where, Defs, Ws);
-coi_is([#b_set{dst=Dst}=I | Is], Last, Blocks, Where, Defs0, Ws) ->
+    Ds1 = foldl(fun(#b_set{}=Creation, Ds) ->
+                        erl_diagnostic:emit(Ds, recv_opt_info, loc(Anno, Where),
+                                            [{passed_marker, Creation}]);
+                   (_, Ds) -> Ds
+                end, Ds0, coi_creations(Args, Blocks, Defs)),
+    coi_is(Is, Last, Blocks, Where, Defs, Ds1);
+coi_is([#b_set{dst=Dst}=I | Is], Last, Blocks, Where, Defs0, Ds) ->
     Defs = Defs0#{ Dst => I },
-    coi_is(Is, Last, Blocks, Where, Defs, Ws);
-coi_is([], _Last, _Blocks, _Where, Defs, Ws) ->
-    {Defs, Ws}.
+    coi_is(Is, Last, Blocks, Where, Defs, Ds);
+coi_is([], _Last, _Blocks, _Where, Defs, Ds) ->
+    {Defs, Ds}.
 
 coi_creations([Var | Vars], Blocks, Defs) ->
     case Defs of
@@ -944,13 +954,11 @@ coi_creations([Var | Vars], Blocks, Defs) ->
 coi_creations([], _Blocks, _Defs) ->
     [].
 
-make_warning(Term, Anno, Where) ->
-    {File, Line} =
-        case maps:get(location, Anno, Where) of
-            {_, _} = Location -> Location;
-            _ -> {"no_file", none}
-        end,
-    {File,[{Line,?MODULE,Term}]}.
+loc(Anno, Where) ->
+    case maps:get(location, Anno, Where) of
+        {File, Line} -> erl_anno:set_file(File, erl_anno:new(Line));
+        _ -> erl_anno:new(0)
+    end.
 
 format_opt_info(matches_any_message) ->
     "INFO: receive matches any message, this is always fast";
