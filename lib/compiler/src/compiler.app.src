@@ -33,7 +33,7 @@
 	     beam_dict,
 	     beam_digraph,
 	     beam_disasm,
-         beam_doc,
+             beam_doc,
 	     beam_flatten,
 	     beam_jump,
 	     beam_listing,
@@ -80,7 +80,6 @@
 	     sys_core_inline,
 	     sys_core_prepare,
              sys_coverage,
-	     sys_messages,
 	     sys_pre_attributes,
 	     v3_core
 	    ]},

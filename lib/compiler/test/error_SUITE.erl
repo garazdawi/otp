@@ -178,8 +178,8 @@ bif_clashes(Config) when is_list(Config) ->
 
 %% Tests that a head mismatch is reported on the correct line (OTP-2125).
 head_mismatch_line(Config) when is_list(Config) ->
-    [E|_] = get_compilation_errors(Config, "head_mismatch_line"),
-    {{28,1}, Mod, Reason} = E,
+    {{28,1}, Mod, Reason} =
+        lists:keyfind({28,1}, 1, get_compilation_errors(Config, "head_mismatch_line")),
     ("head mismatch: previous function foo/1 is distinct from bar/1. "
      "Is the semicolon in foo/1 unwanted?") = lists:flatten(Reason),
     Mod:format_error(Reason),
@@ -188,8 +188,8 @@ head_mismatch_line(Config) when is_list(Config) ->
 %% Tests that a head mismatch with the same function name reports a different error from above.
 %% https://github.com/erlang/otp/pull/7383#issuecomment-1586564294
 head_mismatch_same_function_name(Config) when is_list(Config) ->
-    [E|_] = get_compilation_errors(Config, "head_mismatch_same_function_name"),
-    {{27,1}, Mod, Reason} = E,
+    {{27,1}, Mod, Reason} =
+        lists:keyfind({27,1}, 1, get_compilation_errors(Config, "head_mismatch_same_function_name")),
     ("head mismatch: function foo with arities 1 and 2 is regarded as "
      "two distinct functions. Is the number of arguments incorrect "
      "or is the semicolon in foo/1 unwanted?") = lists:flatten(Reason),
