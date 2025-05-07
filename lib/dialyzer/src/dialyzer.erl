@@ -395,7 +395,7 @@ for the function `f/0`, include the following line:
 To turn off warnings for improper lists, add the following line to the source
 file:
 
-```text
+```erlang
 -dialyzer(no_improper_lists).
 ```
 
@@ -448,7 +448,8 @@ line can help in assuring that no new unmatched return warnings are introduced:
 	 run_report_modules_changed_and_analyzed/1,
 	 plt_info/1,
 	 format_warning/1,
-	 format_warning/2]).
+	 format_warning/2,
+         message_to_string/1]).
 
 -include("dialyzer.hrl").
 
@@ -774,6 +775,11 @@ pos(Line) when is_integer(Line) ->
 %% Message classification and pretty-printing below. Messages appear in
 %% categories and in more or less alphabetical ordering within each category.
 %%-----------------------------------------------------------------------------
+
+-doc false.
+-spec message_to_string(term()) -> unicode:chardata().
+message_to_string(Msg) ->
+    message_to_string(Msg, true, basename).
 
 %%----- Warnings for general discrepancies ----------------
 message_to_string({apply, [Args, ArgNs, FailReason,
@@ -1158,7 +1164,7 @@ sig(Src, true) ->
 a(""=Args, _I) ->
   Args;
 a(Args, I) ->
-  t(Args, I).
+  string:trim(t(Args, I), leading).
 
 c(Cerl, _I) ->
   Cerl.
