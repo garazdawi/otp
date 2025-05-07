@@ -172,7 +172,7 @@ source_url_pattern =
 ## Merge the local config with the default
 extras =
   (Access.get(local_config, :extras, []) ++
-     Path.wildcard("*.md") ++ Path.wildcard("{guides,references,internal_docs}/*.md"))
+     Path.wildcard("*.md") ++ Path.wildcard("{guides,references,internal_docs,diagnostics}/*.md"))
   |> Enum.uniq()
 
 annotations = Access.get(local_config, :annotations_for_docs, fn _ -> [] end)
@@ -199,7 +199,8 @@ config = [
     (Access.get(local_config, :groups_for_extras, []) ++
        [
          "User's Guides": ~r/guides/,
-         "Command Line Tools": ~r|references/.*_cmd.md$|,
+         "Command Line Tools": ~r|references/.*_cmd\.md$|,
+         "Diagnostic Index": ~r|diagnostics/.*\.md$|,
          References: ~r|references|,
          "Internal Docs": ~r/internal_doc/
        ])

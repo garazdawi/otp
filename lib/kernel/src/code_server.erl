@@ -1022,6 +1022,8 @@ lookup_name(Name, Db) ->
 %%
 do_dir(Root,lib_dir,_) ->
     filename:append(Root, "lib");
+do_dir(_Root,libs,NameDb) ->
+    [list_to_atom(A) || {A, _D, _Base, _} <:- ets:tab2list(NameDb)];
 do_dir(Root,root_dir,_) ->
     Root;
 do_dir(_Root,compiler_dir,NameDb) ->

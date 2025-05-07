@@ -32,6 +32,7 @@
 	 control_application/1, is_running/1,
 	 change_application_data/2, prep_config_change/0, config_change/1,
 	 which_applications/0, which_applications/1,
+         available_applications/0, available_applications/1,
 	 loaded_applications/0, info/0, set_env/2,
 	 get_pid_env/2, get_env/2, get_env/3, get_pid_all_env/1, get_all_env/1,
 	 get_pid_key/2, get_key/2, get_pid_all_key/1, get_all_key/1,
@@ -164,7 +165,8 @@
 %% Env         = [{Key, Value}]
 %%-----------------------------------------------------------------
 
--record(appl, {name, appl_data, descr, id, vsn, inc_apps, opt_apps, apps}).
+-record(appl, {name, appl_data, descr, id, vsn, inc_apps, opt_apps, apps,
+               documentation_url}).
 
 %%-----------------------------------------------------------------
 %% Func: start/1
@@ -298,6 +300,12 @@ loaded_applications() ->
                   [{{'$1', '$2', '$3'}}]
                 }]).
 
+available_applications() ->
+    call(available_applications).
+
+available_applications(Timeout) ->
+    call(available_applications, Timeout).
+
 %% Returns some debug info
 info() ->
     call(info).
@@ -390,6 +398,8 @@ get_key(AppName, optional_applications) ->
     get_key_direct(AppName, #appl{opt_apps = '$1', _ = '_'});
 get_key(AppName, applications) ->
     get_key_direct(AppName, #appl{apps = '$1', _ = '_'});
+get_key(AppName, documentation_url) ->
+    get_key_direct(AppName, #appl{documentation_url = '$1', _ = '_'});
 get_key(AppName, env) ->
     case ets:member(ac_tab, {loaded, AppName}) of
         true -> {ok, get_all_env(AppName)};
@@ -420,24 +430,27 @@ get_pid_all_key(Master) ->
 get_all_key(AppName) ->
     case ets:lookup(ac_tab, {loaded, AppName}) of
 	[{_, Appl}] ->
-	    {ok, [{description, Appl#appl.descr},
-		  {id, Appl#appl.id},
-		  {vsn, Appl#appl.vsn},
-		  {modules, (Appl#appl.appl_data)#appl_data.mods},
-		  {maxP, (Appl#appl.appl_data)#appl_data.maxP},
-		  {maxT, (Appl#appl.appl_data)#appl_data.maxT},
-		  {registered, (Appl#appl.appl_data)#appl_data.regs},
-		  {included_applications, Appl#appl.inc_apps},
-                  {optional_applications, Appl#appl.opt_apps},
-		  {applications, Appl#appl.apps},
-		  {env, get_all_env(AppName)},
-		  {mod, (Appl#appl.appl_data)#appl_data.mod},
-		  {start_phases, (Appl#appl.appl_data)#appl_data.phases}
-		 ]};
+	    {ok, format_appl(Appl, get_all_env(AppName))};
 	_ -> 
 	    undefined
     end.
 
+format_appl(Appl, Env) ->
+    [{description, Appl#appl.descr},
+     {id, Appl#appl.id},
+     {vsn, Appl#appl.vsn},
+     {modules, (Appl#appl.appl_data)#appl_data.mods},
+     {documentation_url, Appl#appl.documentation_url},
+     {maxP, (Appl#appl.appl_data)#appl_data.maxP},
+     {maxT, (Appl#appl.appl_data)#appl_data.maxT},
+     {registered, (Appl#appl.appl_data)#appl_data.regs},
+     {included_applications, Appl#appl.inc_apps},
+     {optional_applications, Appl#appl.opt_apps},
+     {applications, Appl#appl.apps},
+     {env, Env},
+     {mod, (Appl#appl.appl_data)#appl_data.mod},
+     {start_phases, (Appl#appl.appl_data)#appl_data.phases}
+    ].
 
 start_type(Master) ->
     case ets:match(ac_tab, {{application_master, '$1'}, Master}) of
@@ -686,6 +699,25 @@ handle_call({unload_application, AppName}, _From, S) ->
 		    {reply, {error, {not_loaded, AppName}}, S}
 	    end
     end;
+
+handle_call(available_applications, _From, S) ->
+    Apps =
+        lists:foldl(fun(Name, Acc) ->
+                            case make_appl(Name) of
+                                {error, _} -> Acc;
+                                {ok, {ApplData, ApplEnv, IncApps, OptApps, Descr, Id, Vsn, Apps, DocUrl}} ->
+                                    Name = ApplData#appl_data.name,
+                                    ConfEnv = get_env_i(Name, S),
+                                    NewEnv = merge_app_env(ApplEnv, ConfEnv),
+                                    CmdLineEnv = get_cmd_env(Name),
+                                    NewEnv2 = merge_app_env(NewEnv, CmdLineEnv),
+                                    Appl = #appl{name = Name, descr = Descr, id = Id, vsn = Vsn, apps = Apps,
+                                                 appl_data = ApplData, inc_apps = IncApps, opt_apps = OptApps,
+                                                documentation_url = DocUrl},
+                                    [{Name, format_appl(Appl, NewEnv2)} | Acc]
+                            end
+                    end, [], code:libs()),
+    {reply, Apps, S};
 
 handle_call({start_application, AppName, RestartType}, From, S) ->
     #state{running = Running, starting = Starting, start_p_false = SPF, 
@@ -1324,7 +1356,7 @@ do_load_application(Application, S) ->
 
 %% Recursively load the application and its included apps.
 %load(S, {ApplData, ApplEnv, IncApps, Descr, Vsn, Apps}) ->
-load(S, {ApplData, ApplEnv, IncApps, OptApps, Descr, Id, Vsn, Apps}) ->
+load(S, {ApplData, ApplEnv, IncApps, OptApps, Descr, Id, Vsn, Apps, DocUrl}) ->
     Name = ApplData#appl_data.name,
     ConfEnv = get_env_i(Name, S),
     NewEnv = merge_app_env(ApplEnv, ConfEnv),
@@ -1332,7 +1364,8 @@ load(S, {ApplData, ApplEnv, IncApps, OptApps, Descr, Id, Vsn, Apps}) ->
     NewEnv2 = merge_app_env(NewEnv, CmdLineEnv),
     add_env(Name, NewEnv2),
     Appl = #appl{name = Name, descr = Descr, id = Id, vsn = Vsn, apps = Apps,
-		 appl_data = ApplData, inc_apps = IncApps, opt_apps = OptApps},
+		 appl_data = ApplData, inc_apps = IncApps, opt_apps = OptApps,
+                 documentation_url = DocUrl},
     ets:insert(ac_tab, {{loaded, Name}, Appl}),
     NewS =
 	foldl(fun(App, S1) ->
@@ -1555,9 +1588,10 @@ make_appl_i({application, Name, Opts}) when is_atom(Name), is_list(Opts) ->
     MaxT = get_opt(maxT, Opts, infinity),
     IncApps = get_opt(included_applications, Opts, []),
     OptApps = get_opt(optional_applications, Opts, []),
+    DocUrl = get_opt(documentation_url, Opts, undefined),
     {#appl_data{name = Name, regs = Regs, mod = Mod, phases = Phases,
 		mods = Mods, maxP = MaxP, maxT = MaxT},
-     Env, IncApps, OptApps, Descr, Id, Vsn, Apps};
+     Env, IncApps, OptApps, Descr, Id, Vsn, Apps, DocUrl};
 make_appl_i({application, Name, Opts}) when is_list(Opts) ->
     throw({error,{invalid_name,Name}});
 make_appl_i({application, _Name, Opts}) ->
@@ -1609,7 +1643,7 @@ is_loaded_app(AppName, [{application, AppName, App} | _]) ->
 is_loaded_app(AppName, [_ | T]) -> is_loaded_app(AppName, T);
 is_loaded_app(_AppName, []) -> false.
 
-do_change_appl({ok, {ApplData, Env, IncApps, OptApps, Descr, Id, Vsn, Apps}},
+do_change_appl({ok, {ApplData, Env, IncApps, OptApps, Descr, Id, Vsn, Apps, DocUrl}},
 	       OldAppl, Config) ->
     AppName = OldAppl#appl.name,
 
@@ -1631,7 +1665,8 @@ do_change_appl({ok, {ApplData, Env, IncApps, OptApps, Descr, Id, Vsn, Apps}},
 		 vsn=Vsn,
 		 inc_apps=IncApps,
                  opt_apps=OptApps,
-		 apps=Apps};
+		 apps=Apps,
+                 documentation_url = DocUrl};
 do_change_appl({error, _R} = Error, _Appl, _ConfData) ->
     throw(Error).
 
