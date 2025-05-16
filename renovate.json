@@ -24,7 +24,6 @@
             "datasourceTemplate": "github-releases",
             "depNameTemplate": "{{{downloadLocation}}}",
             "versioningTemplate": "semver",
-            "updateTypes": ["minor", "patch", "major"],
             "enabled": true
         }
     ],
