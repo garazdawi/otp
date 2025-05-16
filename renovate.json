@@ -31,8 +31,7 @@
                 "\"downloadLocation\"\\s*:\\s*\"https://github.com/(?<depName>[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
             ],
             "datasourceTemplate": "github-tags",
-            "depNameTemplate": "{{{depName}}}",
-            "versioningTemplate": "semver-coerced"
+            "depNameTemplate": "{{{depName}}}"
         }
     ],
     "baseBranches": ["master", "maint", "maint-27", "maint-26", "maint-25"],
