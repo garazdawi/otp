@@ -1,0 +1,44 @@
+{
+    "extends": ["config:base"],
+    "description": "Renovate configuration for vendored dependencies and GitHub Actions.",
+    "labels": ["team:VM"],
+    "assignees": ["garazdawi", "kikofernandez"],
+    "prHourlyLimit": 0,
+    "prConcurrentLimit": 10,
+    "packageRules": [
+        {
+            "matchManagers": ["github-actions"],
+            "addLabels": ["team:VM"],
+            "assignees": ["garazdawi", "kikofernandez"],
+            "groupName": "github-actions",
+            "matchPaths": [
+                ".github/workflows/*.yml",
+                ".github/workflows/*.yaml",
+                ".github/actions/*/*.yml",
+                ".github/actions/*/*.yaml"
+            ]
+        },
+        {
+            "matchPaths": ["**/vendor.info"],
+            "extractVersion": "^\\s*\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\"",
+            "datasourceTemplate": "github-releases",
+            "depNameTemplate": "{{{downloadLocation}}}",
+            "versioningTemplate": "semver",
+            "updateTypes": ["minor", "patch", "major"],
+            "enabled": true
+        }
+    ],
+    "regexManagers": [
+        {
+            "fileMatch": ["^.*vendor\\.info$"],
+            "matchStrings": [
+                "\"downloadLocation\"\\s*:\\s*\"(?<depName>https://github.com/[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
+            ],
+            "datasourceTemplate": "github-releases",
+            "depNameTemplate": "{{{depName}}}",
+            "versioningTemplate": "semver"
+        }
+    ],
+    "baseBranches": ["master", "maint", "maint-27", "maint-26", "maint-25"],
+    "schedule": ["after 2am on monday"]
+}
