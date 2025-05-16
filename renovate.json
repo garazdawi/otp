@@ -21,9 +21,6 @@
         {
             "matchPaths": ["**/vendor.info"],
             "extractVersion": "^\\s*\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\"",
-            "datasourceTemplate": "github-releases",
-            "depNameTemplate": "{{{downloadLocation}}}",
-            "versioningTemplate": "semver",
             "enabled": true
         }
     ],
@@ -31,7 +28,7 @@
         {
             "fileMatch": ["^.*vendor\\.info$"],
             "matchStrings": [
-                "\"downloadLocation\"\\s*:\\s*\"(?<depName>https://github.com/[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
+                "\"downloadLocation\"\\s*:\\s*\"https://github.com/(?<depName>[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
             ],
             "datasourceTemplate": "github-releases",
             "depNameTemplate": "{{{depName}}}",
