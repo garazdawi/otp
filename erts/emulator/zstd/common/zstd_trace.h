@@ -11,20 +11,23 @@
 #ifndef ZSTD_TRACE_H
 #define ZSTD_TRACE_H
 
+#if defined (__cplusplus)
+extern "C" {
+#endif
+
 #include <stddef.h>
 
 /* weak symbol support
  * For now, enable conservatively:
  * - Only GNUC
  * - Only ELF
- * - Only x86-64, i386, aarch64 and risc-v.
+ * - Only x86-64, i386 and aarch64
  * Also, explicitly disable on platforms known not to work so they aren't
  * forgotten in the future.
  */
 #if !defined(ZSTD_HAVE_WEAK_SYMBOLS) && \
     defined(__GNUC__) && defined(__ELF__) && \
-    (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || \
-     defined(_M_IX86) || defined(__aarch64__) || defined(__riscv)) && \
+    (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86) || defined(__aarch64__)) && \
     !defined(__APPLE__) && !defined(_WIN32) && !defined(__MINGW32__) && \
     !defined(__CYGWIN__) && !defined(_AIX)
 #  define ZSTD_HAVE_WEAK_SYMBOLS 1
@@ -61,7 +64,7 @@ typedef struct {
     /**
      * Non-zero if streaming (de)compression is used.
      */
-    int streaming;
+    unsigned streaming;
     /**
      * The dictionary ID.
      */
@@ -70,7 +73,7 @@ typedef struct {
      * Is the dictionary cold?
      * Only set on decompression.
      */
-    int dictionaryIsCold;
+    unsigned dictionaryIsCold;
     /**
      * The dictionary size or zero if no dictionary.
      */
@@ -152,5 +155,9 @@ ZSTD_WEAK_ATTR void ZSTD_trace_decompress_end(
     ZSTD_Trace const* trace);
 
 #endif /* ZSTD_TRACE */
+
+#if defined (__cplusplus)
+}
+#endif
 
 #endif /* ZSTD_TRACE_H */
