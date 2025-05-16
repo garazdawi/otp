@@ -30,7 +30,7 @@
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"https://github.com/(?<depName>[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
             ],
-            "datasourceTemplate": "github-releases",
+            "datasourceTemplate": "github-tags",
             "depNameTemplate": "{{{depName}}}",
             "versioningTemplate": "semver"
         }
