@@ -16,6 +16,10 @@
 
 #include "debug.h"
 
+#if defined (__cplusplus)
+extern "C" {
+#endif
+
 #if defined(ZSTD_MULTITHREAD) && defined(_WIN32)
 
 /**
@@ -67,6 +71,7 @@ int ZSTD_pthread_join(ZSTD_pthread_t thread);
 /**
  * add here more wrappers as required
  */
+
 
 #elif defined(ZSTD_MULTITHREAD)    /* posix assumed ; need a better detection method */
 /* ===   POSIX Systems   === */
@@ -138,5 +143,8 @@ typedef int ZSTD_pthread_cond_t;
 
 #endif /* ZSTD_MULTITHREAD */
 
+#if defined (__cplusplus)
+}
+#endif
 
 #endif /* THREADING_H_938743 */
