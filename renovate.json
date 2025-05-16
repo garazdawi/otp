@@ -30,9 +30,9 @@
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"https://github.com/(?<depName>[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
             ],
-            "datasourceTemplate": "github-tags",
+            "datasourceTemplate": "github-releases",
             "depNameTemplate": "{{{depName}}}",
-            "versioningTemplate": "semver"
+            "versioningTemplate": "semver-coerced"
         }
     ],
     "baseBranches": ["master", "maint", "maint-27", "maint-26", "maint-25"],
