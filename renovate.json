@@ -1,15 +1,11 @@
 {
     "extends": ["config:base"],
     "description": "Renovate configuration for vendored dependencies and GitHub Actions.",
-    "labels": ["team:VM"],
-    "assignees": ["garazdawi", "kikofernandez"],
     "prHourlyLimit": 0,
     "prConcurrentLimit": 10,
     "packageRules": [
         {
             "matchManagers": ["github-actions"],
-            "addLabels": ["team:VM"],
-            "assignees": ["garazdawi", "kikofernandez"],
             "groupName": "github-actions",
             "matchPaths": [
                 ".github/workflows/*.yml",
