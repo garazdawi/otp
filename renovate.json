@@ -22,15 +22,20 @@
             "matchPaths": ["**/vendor.info"],
             "extractVersion": "^\\s*\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\"",
             "enabled": true
+        },
+        {
+            "matchPackageNames": ["facebook/zstd"],
+            "extractVersion": "^(?<version>v.*)"
         }
     ],
-    "regexManagers": [
+    "customManagers": [
         {
-            "fileMatch": ["^.*vendor\\.info$"],
+            "managerFilePatterns": ["/vendor.info$/"],
+            "customType": "regex",
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"https://github.com/(?<depName>[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
             ],
-            "datasourceTemplate": "github-tags",
+            "datasourceTemplate": "github-releases",
             "depNameTemplate": "{{{depName}}}"
         }
     ],
