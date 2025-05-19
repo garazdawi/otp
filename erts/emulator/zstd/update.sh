@@ -32,7 +32,7 @@ git rm -rf $(ls -d !(update.sh|vendor.info|zstd.mk|obj))
 shopt -u extglob
 
 ## Fetch latest version of zstd from github
-VSN=$(curl -sL -H "Authorization: Bearer $(GITHUB_TOKEN)" -H "Accept: application/vnd.github+json"   -H "X-GitHub-Api-Version: 2022-11-28"   https://api.github.com/repos/facebook/zstd/releases/latest | jq ".tag_name" | sed 's/"//g')
+VSN=$(curl -sL -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json"   -H "X-GitHub-Api-Version: 2022-11-28"   https://api.github.com/repos/facebook/zstd/releases/latest | jq ".tag_name" | sed 's/"//g')
 
 ## Clone it
 git clone https://github.com/facebook/zstd -b $VSN zstd-copy
