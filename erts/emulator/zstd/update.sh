@@ -20,7 +20,7 @@
 #
 # %CopyrightEnd%
 
-GITHUB_TOKEN=$(GITHUB_TOKEN:-$(cat ~/.githubtoken))
+GITHUB_TOKEN=${GITHUB_TOKEN:-$(cat ~/.githubtoken)}
 
 cd $ERL_TOP/erts/emulator/zstd
 
