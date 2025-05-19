@@ -21,6 +21,10 @@
         {
             "matchPackageNames": ["facebook/zstd"],
             "extractVersion": "^(?<version>v.*)"
+        },
+        {
+            "matchPackageNames": ["microsoft/STL"],
+            "extractVersion": "^(?<version>vs-.*)"
         }
     ],
     "customManagers": [
@@ -32,7 +36,18 @@
             ],
             "datasourceTemplate": "github-releases",
             "depNameTemplate": "{{{depName}}}"
-        }
+        },
+        {
+            "customType": "regex",
+            "managerFilePatterns": ["/vendor.info$/"],
+            "matchStrings": [
+                "\"downloadLocation\"\\s*:\\s*\"(?<packageName>https://github.com/(?<depName>[^/]+/[^/\"]+))\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^a-f0-9]+)\""
+            ],
+            "currentValueTemplate": "master",
+            "depNameTemplate": "{{depName}}",
+            "packageNameTemplate": "{{packageName}}",
+            "datasourceTemplate": "git-refs"
+          }
     ],
     "baseBranches": ["master", "maint", "maint-27", "maint-26", "maint-25"],
     "schedule": ["after 2am on monday"]
