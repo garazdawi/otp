@@ -19,6 +19,7 @@
     "path": "./erts/emulator/zstd",
     "supplier": "Organization: Meta",
     "purl": "pkg:github/facebook/zstd",
-    "update": "./erts/emulator/zstd/update.sh"
+    "update": "./erts/emulator/zstd/update.sh",
+    "sha": "f8745da6ff1ad1e7bab384bd1f9d742439278e99"
   }
 ]
