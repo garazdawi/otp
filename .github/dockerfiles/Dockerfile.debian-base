@@ -1,7 +1,7 @@
 ##
 ## This docker file will build a base image for building Erlang/OTP
 ##
-ARG BASE=debian:bullseye
+ARG BASE=debian:bookworm
 FROM $BASE
 ## Need to have a second arg here as the first does not expose the $BASE in the script below
 ARG BASE=debian:bullseye
