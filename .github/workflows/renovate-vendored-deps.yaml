@@ -49,6 +49,8 @@ jobs:
       - name: Find and process modified vendor.info files
         id: update-deps
         run: |
+          ERL_TOP=$(pwd)
+          
           # Find all vendor.info files modified in this PR
           MODIFIED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | grep 'vendor\.info$' || true)
           

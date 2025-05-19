@@ -1,8 +1,7 @@
 {
     "extends": ["config:base"],
     "description": "Renovate configuration for vendored dependencies and GitHub Actions.",
-    "prHourlyLimit": 0,
-    "prConcurrentLimit": 10,
+    "prCreation": "not-pending",
     "packageRules": [
         {
             "matchManagers": ["github-actions"],
