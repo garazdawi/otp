@@ -98,13 +98,11 @@ jobs:
             done
           done
           
-          if $SUCCESS; then
+          if $SUCCESS && git diff --quiet ${{ github.event.pull_request.head.sha }}; then
             if git diff --quiet; then
                 echo "No changes to commit"
-                exit 0
+            else
+                git commit -m "Update vendored dependencies per vendor.info"
             fi
-            
-            git commit -m "Update vendored dependencies per vendor.info"
             git push
-          
           fi
