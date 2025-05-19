@@ -68,9 +68,7 @@ jobs:
             VENDOR_DIR=$(dirname "$VENDOR_INFO")
             
             # Parse the vendor.info file
-            ENTRIES=$(jq -c '.[]' "$VENDOR_INFO")
-            
-            for ENTRY in $ENTRIES; do
+            sed 's@^/.*@@' "$VENDOR_INFO" | jq -c '.[]' | while read -r ENTRY; do
               ID=$(echo $ENTRY | jq -r '.ID')
               UPDATE_SCRIPT=$(echo $ENTRY | jq -r '.update')
               VERSION=$(echo $ENTRY | jq -r '.versionInfo')
