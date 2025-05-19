@@ -97,12 +97,17 @@ jobs:
               fi
             done
           done
+
+          git diff --names-only "${{ github.event.pull_request.head.sha }}"
           
-          if $SUCCESS && git diff --quiet ${{ github.event.pull_request.head.sha }}; then
+          git push --dry-run
+          
+          if $SUCCESS && git diff --quiet "${{ github.event.pull_request.head.sha }}"; then
             if git diff --quiet; then
                 echo "No changes to commit"
             else
                 git commit -m "Update vendored dependencies per vendor.info"
             fi
+            echo "✅ Pushing $(git rev-parse HEAD) to "
             git push
           fi
