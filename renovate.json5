@@ -29,10 +29,21 @@
         },
         {
             "matchPackageNames": ["microsoft/STL"],
-            "extractVersion": "^(?<version>vs-.*)"
+            "extractVersion": "^vs-[0-9]+-(?<version>.*)"
         }
     ],
     "customManagers": [
+        {
+            // STL uses the tag "vs-YYYY-V.S.N, so we need to special case it to
+            // only match the V.S.N part.
+            "customType": "regex",
+            "managerFilePatterns": ["erts/emulator/ryu/vendor.info"],
+            "matchStrings": [
+                "\"downloadLocation\"\\s*:\\s*\"https://github.com/microsoft/STL\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"vs-[0-9]+-(?<currentValue>[^\"]+)\""
+            ],
+            "datasourceTemplate": "github-releases",
+            "depNameTemplate": "microsoft/STL"
+        },
         {
             "customType": "regex",
             "managerFilePatterns": ["**/vendor.info"],
