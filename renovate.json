@@ -45,7 +45,7 @@
             "customType": "regex",
             "managerFilePatterns": ["/vendor.info$/"],
             "matchStrings": [
-                "\"downloadLocation\"\\s*:\\s*\"(?<packageName>https://github.com/(?<depName>[^/]+/[^/\"]+))\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[a-f0-9]+)\""
+                "\"downloadLocation\"\\s*:\\s*\"(?<packageName>https://github.com/(?<depName>[^/]+/[^/\"]+))\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]+)\""
             ],
             "currentValueTemplate": "master",
             "depNameTemplate": "{{depName}}",
