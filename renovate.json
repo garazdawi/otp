@@ -1,12 +1,16 @@
 {
-    "extends": ["config:base"],
+    "extends": [
+        "config:recommended"
+    ],
     "description": "Renovate configuration for vendored dependencies and GitHub Actions.",
     "prCreation": "not-pending",
     "packageRules": [
         {
-            "matchManagers": ["github-actions"],
+            "matchManagers": [
+                "github-actions"
+            ],
             "groupName": "github-actions",
-            "matchPaths": [
+            "matchFileNames": [
                 ".github/workflows/*.yml",
                 ".github/workflows/*.yaml",
                 ".github/actions/*/*.yml",
@@ -14,22 +18,30 @@
             ]
         },
         {
-            "matchPaths": ["**/vendor.info"],
+            "matchFileNames": [
+                "**/vendor.info"
+            ],
             "extractVersion": "^\\s*\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\"",
             "enabled": true
         },
         {
-            "matchPackageNames": ["facebook/zstd"],
+            "matchPackageNames": [
+                "facebook/zstd"
+            ],
             "extractVersion": "^(?<version>v.*)"
         },
         {
-            "matchPackageNames": ["microsoft/STL"],
+            "matchPackageNames": [
+                "microsoft/STL"
+            ],
             "extractVersion": "^(?<version>vs-.*)"
         }
     ],
     "customManagers": [
         {
-            "managerFilePatterns": ["/vendor.info$/"],
+            "managerFilePatterns": [
+                "/vendor.info$/"
+            ],
             "customType": "regex",
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"https://github.com/(?<depName>[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
@@ -39,7 +51,9 @@
         },
         {
             "customType": "regex",
-            "managerFilePatterns": ["/vendor.info$/"],
+            "managerFilePatterns": [
+                "/vendor.info$/"
+            ],
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"(?<packageName>https://github.com/(?<depName>[^/]+/[^/\"]+))\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^a-f0-9]+)\""
             ],
@@ -47,8 +61,16 @@
             "depNameTemplate": "{{depName}}",
             "packageNameTemplate": "{{packageName}}",
             "datasourceTemplate": "git-refs"
-          }
+        }
     ],
-    "baseBranches": ["master", "maint", "maint-27", "maint-26", "maint-25"],
-    "schedule": ["after 2am on monday"]
+    "baseBranches": [
+        "master",
+        "maint",
+        "maint-27",
+        "maint-26",
+        "maint-25"
+    ],
+    "schedule": [
+        "after 2am on monday"
+    ]
 }
