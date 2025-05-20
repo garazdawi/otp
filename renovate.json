@@ -32,8 +32,8 @@
     ],
     "customManagers": [
         {
-            "managerFilePatterns": ["/vendor.info$/"],
             "customType": "regex",
+            "managerFilePatterns": ["**/vendor.info"],
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"https://github.com/(?<depName>[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
             ],
@@ -42,7 +42,7 @@
         },
         {
             "customType": "regex",
-            "managerFilePatterns": ["/vendor.info$/"],
+            "managerFilePatterns": ["**/vendor.info"],
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"(?<packageName>https://github.com/(?<depName>[^/]+/[^/\"]+))\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]+)\""
             ],
