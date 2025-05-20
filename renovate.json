@@ -6,7 +6,7 @@
         {
             "matchManagers": ["github-actions"],
             "groupName": "github-actions",
-            "matchFilesNames": [
+            "matchFileNames": [
                 ".github/workflows/*.yml",
                 ".github/workflows/*.yaml",
                 ".github/actions/*/*.yml",
@@ -14,7 +14,7 @@
             ]
         },
         {
-            "matchFilesNames": ["**/vendor.info"],
+            "matchFileNames": ["**/vendor.info"],
             "extractVersion": "^\\s*\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
         },
         {
