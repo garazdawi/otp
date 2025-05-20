@@ -18,7 +18,7 @@
             "extractVersion": "^\\s*\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
         },
         {
-            "matchPackageNames": ["facebook/zstd", "jquery/jquery", "Mottie/tablesorter"],
+            "matchPackageNames": ["facebook/zstd"],
             "extractVersion": "^(?<version>v?.*)"
         },
         {
@@ -34,6 +34,8 @@
         {
             "customType": "regex",
             "managerFilePatterns": ["**/vendor.info"],
+            // config:base ignores files in "*test*" which we do not want
+            "ignorePaths": [],
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"https://github.com/(?<depName>[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
             ],
@@ -43,6 +45,8 @@
         {
             "customType": "regex",
             "managerFilePatterns": ["**/vendor.info"],
+            // config:base ignores files in "*test*" which we do not want
+            "ignorePaths": [],
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"(?<packageName>https://github.com/(?<depName>[^/]+/[^/\"]+))\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]+)\""
             ],
