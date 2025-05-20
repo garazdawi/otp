@@ -2,6 +2,8 @@
     "extends": ["config:base"],
     "description": "Renovate configuration for vendored dependencies and GitHub Actions.",
     "prCreation": "not-pending",
+    // config:base ignores files in "*test*" which we do not want
+    "ignorePaths": [],
     "packageRules": [
         {
             "matchManagers": ["github-actions"],
@@ -34,8 +36,6 @@
         {
             "customType": "regex",
             "managerFilePatterns": ["**/vendor.info"],
-            // config:base ignores files in "*test*" which we do not want
-            "ignorePaths": [],
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"https://github.com/(?<depName>[^/]+/[^/\"]+)\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
             ],
@@ -45,8 +45,6 @@
         {
             "customType": "regex",
             "managerFilePatterns": ["**/vendor.info"],
-            // config:base ignores files in "*test*" which we do not want
-            "ignorePaths": [],
             "matchStrings": [
                 "\"downloadLocation\"\\s*:\\s*\"(?<packageName>https://github.com/(?<depName>[^/]+/[^/\"]+))\"[\\s\\S]*?\"versionInfo\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]+)\""
             ],
