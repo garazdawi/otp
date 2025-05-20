@@ -6,7 +6,7 @@
         {
             "matchManagers": ["github-actions"],
             "groupName": "github-actions",
-            "matchPaths": [
+            "matchFilesNames": [
                 ".github/workflows/*.yml",
                 ".github/workflows/*.yaml",
                 ".github/actions/*/*.yml",
@@ -14,13 +14,12 @@
             ]
         },
         {
-            "matchPaths": ["**/vendor.info"],
-            "extractVersion": "^\\s*\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\"",
-            "enabled": true
+            "matchFilesNames": ["**/vendor.info"],
+            "extractVersion": "^\\s*\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
         },
         {
-            "matchPackageNames": ["facebook/zstd"],
-            "extractVersion": "^(?<version>v.*)"
+            "matchPackageNames": ["facebook/zstd", "jquery/jquery", "Mottie/tablesorter"],
+            "extractVersion": "^(?<version>v?.*)"
         },
         {
             "matchPackageNames": ["openssl/openssl"],
