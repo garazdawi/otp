@@ -14,7 +14,7 @@
       "homepage": "https://jquery.com",
       "licenseDeclared": "MIT",
       "name": "jquery",
-      "versionInfo": "3.7",
+      "versionInfo": "3.7.0",
       "path": ["./lib/common_test/priv/jquery-latest.js"],
       "supplier": "Organization: The jQuery Team",
       "purl": "pkg:github/jquery/jquery"
@@ -27,7 +27,7 @@
       "homepage": "https://github.com/Mottie/tablesorter",
       "licenseDeclared": "BSD-3-Clause OR GPL-2.0-only",
       "name": "jquery-tablesorter",
-      "versionInfo": "2.31",
+      "versionInfo": "2.31.0",
       "path": ["./lib/common_test/priv/jquery.tablesorter.min.js"],
       "supplier": "Person: Christian Bach",
       "purl": "pkg:github/mottie/tablesorter"
