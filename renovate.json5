@@ -1,5 +1,5 @@
 {
-    "extends": ["config:base"],
+    "extends": ["config:recommended"],
     "description": "Renovate configuration for vendored dependencies and GitHub Actions.",
     "prCreation": "not-pending",
     // config:base ignores files in "*test*" which we do not want
@@ -20,7 +20,7 @@
             "extractVersion": "^\\s*\"versionInfo\"\\s*:\\s*\"(?<currentValue>[^\"]+)\""
         },
         {
-            "matchPackageNames": ["facebook/zstd"],
+            "matchPackageNames": ["facebook/zstd", "jquery/jquery", "Mottie/tablesorter"],
             "extractVersion": "^(?<version>v?.*)"
         },
         {
