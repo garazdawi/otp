@@ -208,9 +208,11 @@ Example:
 %% unsupported capability
 4> io_ansi:tput("slm").
 ** exception error: {enotsup,"slm"}
+     in function  io_ansi:tput/2
 %% unknown capability
 5> io_ansi:tput("foobar").
-** exception error: {einval, "foobar", []}
+** exception error: {einval,"foobar",[]}
+     in function  io_ansi:tput/2
 ```
 """.
 -doc #{ group => ~"Functions: terminfo"}.
@@ -245,7 +247,7 @@ Example:
 ```erlang
 1> io_ansi:tigetnum("co").
 80
-1> io_ansi:tigetnum("foobar").
+2> io_ansi:tigetnum("foobar").
 -1
 ```
 """.
@@ -265,9 +267,9 @@ started. It is not possible to change after startup.
 Example:
 
 ```erlang
-1> io_ansi:tigetflag("xc").
+1> io_ansi:tigetflag("xn").
 true
-1> io_ansi:tigetflag("foobar").
+2> io_ansi:tigetflag("foobar").
 false
 ```
 """.
@@ -570,14 +572,34 @@ Scan the string for input terminal sequences.
 -spec scan(unicode:chardata()) -> chardata().
 scan(Data) -> Data.
 
+-doc #{ equiv => format(Format, []) }.
 -spec format(format()) -> unicode:unicode_binary().
 format(Format) ->
     format(Format, []).
 
+-doc #{ equiv => format(Format, [], []) }.
 -spec format(format(), Data :: [term()]) -> unicode:unicode_binary().
 format(Format, Data) ->
     format(Format, Data, []).
 
+-doc """
+Returns an character list that represents `Data` formatted in accordance with
+`Format`.
+
+This function works just as `io_lib:bformat/2`, except that it also allows
+atoms and tuples represeting virtual terminal sequences as part of the
+`Format` string.
+
+Example:
+
+```erlang
+1> io_ansi:format([blue, underline, "Hello world"]).
+~"\e[34m\e[4mHello world\e(B\e[m"
+```
+
+For a detailed description of the available formatting options, see
+[`io:fwrite/1,2,3`](`io:fwrite/1`).
+""".
 -spec format(format(), Data :: [term()], options()) -> unicode:unicode_binary().
 format(Format, Data, Options) ->
     format_internal(Format, Data, Options).
@@ -596,9 +618,9 @@ format_internal(Format, Data, Options) ->
                 AnsiFun = lookup(Mappings, Ansi, 0),
                   {[AnsiFun() | Acc], Args};
              (Ansi, {Acc, Args}) when is_tuple(Ansi), UseAnsi ->
-                [Ansi | Args] = tuple_to_list(Ansi),
-                AnsiFun = lookup(Mappings, Ansi, length(Args)),
-                  {[apply(AnsiFun, Args) | Acc], Args};
+                [AnsiCode | AnsiArgs] = tuple_to_list(Ansi),
+                AnsiFun = lookup(Mappings, AnsiCode, length(AnsiArgs)),
+                  {[apply(AnsiFun, AnsiArgs) | Acc], Args};
              (Ansi, {Acc, Args}) when is_atom(Ansi); is_tuple(Ansi) ->
                   {Acc, Args};
              (Fmt, {Acc, Args}) ->
