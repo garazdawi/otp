@@ -427,7 +427,7 @@ Change background color to white.
 ?FUNCTION(white_background).
 -doc """
 Change background color to index color. `Index` 0-15 are equivilant to
-the named colors in `t:backround_color/0` in the order that they are listed.
+the named colors in `t:background_color/0` in the order that they are listed.
 """.
 -spec background(Index :: 0..255 | 0..87) -> unicode:chardata().
 ?FUNCTION(background, Index).
@@ -874,7 +874,7 @@ fwrite(Format, Data) ->
 fwrite(Format, Data, Options) ->
     fwrite(standard_io, Format, Data, Options).
 -doc """
-Writes the items in `Data` on the [`IoDevice`](`t:device/0`) in accordance with `Format`.
+Writes the items in `Data` on the [`IoDevice`](`t:io:device/0`) in accordance with `Format`.
 
 This function works just as `io:fwrite/2`, except that it also allows atoms and
 tuples representing virtual terminal sequences (VTS) as part of the `Format` string.
@@ -1158,7 +1158,7 @@ default_mappings() ->
        light_red_background => { {"setab", [9]}, sgr(["101"]) },
        light_green_background => { {"setab", [10]}, sgr(["102"]) },
        light_yellow_background => { {"setab", [11]}, sgr(["103"]) },
-       light_light_blue_background => { {"setab", [12]}, sgr(["104"]) },
+       light_blue_background => { {"setab", [12]}, sgr(["104"]) },
        light_magenta_background => { {"setab", [13]}, sgr(["105"]) },
        light_cyan_background => { {"setab", [14]}, sgr(["106"]) },
        light_white_background => { {"setab", [15]}, sgr(["107"]) },
