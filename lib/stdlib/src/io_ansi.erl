@@ -565,16 +565,36 @@ Turn off negative text style.
 ?FUNCTION(negative_off).
 
 
+-doc """
+Clear screen and set cursor to home.
+""".
 ?SPEC(clear).
 ?FUNCTION(clear).
+-doc """
+Clear screen after cursor.
+""".
 ?SPEC(erase_display).
 ?FUNCTION(erase_display).
+-doc """
+Insert `Chars` at cursor.
+""".
 ?SPEC(insert_character, Chars).
 ?FUNCTION(insert_character, Chars).
+-doc """
+Delete 1 character at cursor.
+""".
 ?SPEC(delete_character).
 ?FUNCTION(delete_character).
+-doc """
+Delete `Chars` characters at cursor by shifting the text `Chars` characters to
+the left.
+""".
 ?SPEC(delete_character, Chars).
 ?FUNCTION(delete_character, Chars).
+-doc """
+Erase `Chars` characters at cursor by making `Chars` characters before the
+cursor blank.
+""".
 ?SPEC(erase_character, Chars).
 ?FUNCTION(erase_character, Chars).
 ?SPEC(insert_line).
