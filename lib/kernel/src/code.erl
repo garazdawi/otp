@@ -374,6 +374,7 @@ common reasons.
          all_available/0,
 	 stop/0,
 	 root_dir/0,
+         libs/0,
 	 lib_dir/0,
 	 lib_dir/1,
 	 lib_dir/2,
@@ -860,6 +861,9 @@ _Example:_
 """.
 -spec root_dir() -> file:filename().
 root_dir() -> call({dir,root_dir}).
+
+-doc false.
+libs() -> call({dir,libs}).
 
 -doc """
 Returns the library directory, `$OTPROOT/lib`, where `$OTPROOT` is the root

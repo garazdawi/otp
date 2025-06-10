@@ -5826,7 +5826,17 @@ call_format_error(L) ->
     %% Smoke test of format_error/1 to make sure that no crashes
     %% slip through.
     _ = [Mod:format_error(Term) || {_,Mod,Term} <- L],
-    L.
+    diagnostic_to_legacy(L).
+
+diagnostic_to_legacy([{Anno, erl_diagnostic, {#{ diagnostic := D}, Args}} | T]) ->
+    #{ key := Key, format := Fmt } = D,
+    {module, Mod} = erlang:fun_info(Fmt, module),
+    As = case Args of
+            [] -> Key;
+            _ -> list_to_tuple([Key] ++ Args)
+         end,
+    [{Anno, Mod, As} | diagnostic_to_legacy(T)];
+diagnostic_to_legacy([]) -> [].
 
 print_diagnostics(Warnings, Source) ->
     case binary:match(Source, <<"-file(">>) of

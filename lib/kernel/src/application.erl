@@ -60,6 +60,8 @@ For details about applications and behaviours, see
 -export([get_env/1, get_env/2, get_env/3, get_all_env/0, get_all_env/1]).
 -export([get_key/1, get_key/2, get_all_key/0, get_all_key/1]).
 -export([get_application/0, get_application/1, get_supervisor/1, info/0]).
+-export([get_diagnostic/1, get_diagnostic/2, explain/1, explain/2,
+         print_explain/1, print_explain/2]).
 -export([start_type/0]).
 
 -export_type([start_type/0, restart_type/0]).
@@ -1073,6 +1075,172 @@ function returns `undefined`.
 
 start_type() ->
     application_controller:start_type(group_leader()).
+
+-doc """
+Fetches the data associated with the `DiagnosticCode`.
+
+This function will search the `doc/diagnostics/` folders of all applications
+in the code path looking for files with the [`rootname`](`filename:rootname/1`) of
+the `DiagnosticCode` in ether short or long form.
+
+It will return all occurrences together with which application defined it,
+the absolute filename of the file, the long and short diagnostic code
+and the diagnostic file's contents.
+
+The `url` returned is composed by adding the [`documentation_url`](app.md#documentation_url)
+application key with the `DiagnosticCode` in short form suffixed by `.html`.
+
+Example:
+
+```
+> application:get_diagnostic("ERL-0001").
+{ok, [#{application => compiler,
+        filename => "/home/erlang/lib/compiler/doc/diagnostics/ERL-0001-update-literal.md",
+        url => "https://erlang.org/doc/ERL-0001.html",
+        short => "ERL-0001",
+        long => "ERL-0001-update-literal",
+        doc => ~"# ERL-0001\n..."}]}
+```
+
+If no application defines the diagnostic code, then `{ok,[]}` is returned.
+
+""".
+-spec get_diagnostic(DiagnosticCode :: unicode:chardata()) ->
+  {ok, [#{application := atom(), filename := file:name(),
+          url => uri_string:uri_string(),
+          short := string(), long := string(),
+          diagnostic => unicode:unicode_binary()}]}.
+get_diagnostic(Code) ->
+    Apps = application_controller:available_applications(),
+    Diagnostics =
+        lists:flatmap(fun({App, Keys}) ->
+                              %% TODO: Should this work for archives?
+                              DiagnosticsDir = filename:join([code:lib_dir(App), "doc", "diagnostics"]),
+                              case file:list_dir(DiagnosticsDir) of
+                                  {ok, Codes} ->
+                                      [read_diagnostic(filename:join(DiagnosticsDir, C), App, Keys) || C <- Codes, is_code_prefix(C, Code)];
+                                  _ -> []
+                              end
+                      end, Apps),
+    {ok, Diagnostics}.
+
+-doc """
+Equivalent to `get_diagnostic/1`, but only searches a specific application for
+the `DiagnosticCode`.
+
+If the diagnostic is not found, but the application has a [`documentation_url`](app.md#documentation_url)
+application key, then only the url will be returned.
+
+Example:
+
+```
+> application:get_diagnostic(compiler, "ERL-0001").
+{ok, #{application => compiler,
+       filename => "/home/erlang/lib/compiler/doc/diagnostics/ERL-0001-update-literal.md",
+       url => "https://erlang.org/doc/ERL-0001.html",
+       short => "ERL-0001",
+       long => "ERL-0001-update-literal",
+       doc => ~"# ERL-0001\n..."}}
+> application:get_diagnostic(compiler, "ERL-7654-slogan").
+{ok, #{application => compiler,
+       url => "https://erlang.org/doc/ERL-7654.html",
+       short => "ERL-7654",
+       long => "ERL-7654-slogan" }}
+```
+
+""".
+-spec get_diagnostic(Application :: atom(), DiagnosticCode :: unicode:chardata()) ->
+          {ok, #{application := atom(), filename := file:name(),
+                 url => uri_string:uri_string(),
+                 short := string(), long := string(),
+                 diagnostic => unicode:unicode_binary()} |
+           #{application := atom(),
+             url := uri_string:uri_string(),
+             short => string(),
+             long => string() }
+          } | error.
+get_diagnostic(App, Code) ->
+    ListCode = unicode:characters_to_list(Code),
+    DiagnosticsDir = filename:join([code:lib_dir(App), "doc", "diagnostics", unicode:characters_to_list(Code) ++ "*"]),
+    Keys = proplists:get_value(App, application_controller:available_applications()),
+    case filelib:wildcard(DiagnosticsDir) of
+            [File] ->
+                read_diagnostic(File, App, Keys);
+            [] ->
+                read_diagnostic(ListCode ++ ".md", App, Keys)
+    end.
+
+-doc false.
+explain([DiagnosticCode]) ->
+    case get_diagnostic(DiagnosticCode) of
+        {ok, [#{ diagnostic := D }]} ->
+            io_lib:format("~n~ts~n",[shell_docs:render_markdown(D)])
+    end.
+
+-doc false.
+explain(App, [DiagnosticCode]) ->
+    case get_diagnostic(App, DiagnosticCode) of
+        {ok, #{ diagnostic := D }} ->
+            io_lib:format("~n~ts~n",[shell_docs:render_markdown(D)])
+    end.
+
+-doc false.
+print_explain(Arguments) ->
+    io:format("~ts",[explain(Arguments)]).
+
+-doc false.
+print_explain(App, Arguments) ->
+    io:format("~ts",[explain(App, Arguments)]).
+
+is_code_prefix(Filename, Code) ->
+    {FNSpace, FNNumber, FNSlug, _} = split_code(Filename),
+    {CSpace, CNumber, CSlug, _} = split_code(Code),
+
+    string:equal(FNSpace, CSpace)
+        andalso
+          (string:equal(FNNumber, CNumber) orelse
+           string:equal(FNSlug, CNumber) orelse
+           string:equal(FNNumber, CSlug)).
+
+split_code(Code) ->
+    [Namespace, NamespaceT] = string:split(Code, "-"),
+    [Number, NumberT] =
+        case string:split(NamespaceT, "-") of
+            [N, T] -> [N, T];
+            [NamespaceT] ->
+                case string:split(NamespaceT, ".") of
+                    [N, T] -> [N, "." ++ T];
+                    [NamespaceT] -> [NamespaceT, ""]
+                end
+        end,
+    case string:split(NumberT, ".") of
+        [Extension] -> {Namespace, Number, undefined, Extension};
+        ["", Extension] -> {Namespace, Number, undefined, Extension};
+        [Slug, Extension] -> {Namespace, Number, Slug, Extension}
+    end.
+
+read_diagnostic(Filename, App, AppKeys) ->
+    {Namespace, Number, Slug, _Ext} = split_code(filename:basename(Filename)),
+    Long = if Slug =:= undefined ->
+                   #{};
+              true ->
+                   #{ long => Namespace ++ "-" ++ Number ++ "-" ++ Slug }
+           end,
+    Common = Long#{ short => Namespace ++ "-" ++ Number, application => App },
+    case file:read_file(Filename) of
+        {ok, Diagnostic} ->
+            UrlMap = diagnostic_url(Namespace, Number, AppKeys),
+            maps:merge(Common#{ filename => Filename, diagnostic => Diagnostic}, UrlMap);
+        _ ->
+            UrlMap = diagnostic_url(Namespace, Number, AppKeys),
+            maps:merge(Common, UrlMap)
+    end.
+
+diagnostic_url(Namespace, Number, AppKeys) ->
+    case proplists:get_value(documentation_url, AppKeys) of
+        undefined -> #{};
+        DocUrl -> #{ url => DocUrl ++ Namespace ++ "-" ++ Number ++ ".html" }
+    end.
 
 %% Internal
 get_appl_name(Name) when is_atom(Name) -> Name;

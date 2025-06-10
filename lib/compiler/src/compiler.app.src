@@ -33,7 +33,7 @@
 	     beam_dict,
 	     beam_digraph,
 	     beam_disasm,
-         beam_doc,
+             beam_doc,
 	     beam_flatten,
 	     beam_jump,
 	     beam_listing,
@@ -80,12 +80,12 @@
 	     sys_core_inline,
 	     sys_core_prepare,
              sys_coverage,
-	     sys_messages,
 	     sys_pre_attributes,
 	     v3_core
 	    ]},
   {registered, []},
   {applications, [kernel, stdlib]},
   {env, []},
+  {documentation_url, "https://erlang.org/doc/apps/compiler/"},
   {runtime_dependencies, ["stdlib-6.0","kernel-8.4","erts-13.0",
 			  "crypto-5.1"]}]}.

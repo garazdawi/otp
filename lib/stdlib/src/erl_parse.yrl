@@ -791,6 +791,7 @@ processed (see section [Error Information](#module-error-information)).
          new_anno/1, anno_to_term/1, anno_from_term/1]).
 
 -export([first_anno/1]). % Internal export.
+-export([error_code/1]).
 
 -export_type([abstract_clause/0, abstract_expr/0, abstract_form/0,
               abstract_type/0, form_info/0, error_info/0]).
@@ -2317,5 +2318,12 @@ build_ssa_check_label({atom,L,_}, _) ->
 
 add_anno_check({check_expr,Loc,Args}, AnnoCheck) ->
     {check_expr,Loc,Args,AnnoCheck}.
+
+%% Errors in erl_parse are strings, so producing an error code is a bit difficult.
+%% Should do something about that so that we get an ID even for erl_parse errors.
+-doc false.
+error_code("bad attribute") -> ~"ERL-0006";
+error_code(["syntax error before:" ++ _ | _]) -> ~"ERL-0007";
+error_code(_) -> undefined.
 
 %% vim: ft=erlang

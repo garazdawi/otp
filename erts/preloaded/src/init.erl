@@ -1674,10 +1674,15 @@ parse_boot_args([B|Bs], Ss, Fs, As) ->
 	    {S,Rest} = get_args(Bs, []),
             Instructions = run_args_to_start_instructions(S, fun bs2as/1),
             parse_boot_args(Rest, Instructions ++ Ss, Fs, As);
-	start_arg2 ->
+	run_arg ->
 	    {S,Rest} = get_args(Bs, []),
             Instructions = run_args_to_start_instructions(S, fun bs2ss/1),
             parse_boot_args(Rest, Instructions ++ Ss, Fs, As);
+        explain_arg ->
+	    {S,Rest} = get_args(Bs, []),
+            Instructions = [{apply, application, print_explain, [S]},
+                            {apply, init, stop, []}],
+            parse_boot_args(Rest, Instructions ++ Ss, [{noinput, []} | Fs], As);
 	ending_start_arg ->
             {S,Rest} = get_args(Bs, []),
             %% Forward any additional arguments to the function we are calling,
@@ -1709,7 +1714,8 @@ parse_boot_args([], Start, Flags, Args) ->
 check(<<"-extra">>, _Bs) ->
     start_extra_arg;
 check(<<"-s">>, _Bs) -> start_arg;
-check(<<"-run">>, _Bs) -> start_arg2;
+check(<<"-run">>, _Bs) -> run_arg;
+check(<<"-explain">>, _Bs) -> explain_arg;
 check(<<"-S">>, Bs) ->
     case has_end_args(Bs) of
         true ->
@@ -1731,15 +1737,8 @@ has_end_args([]) ->
 
 get_args([B|Bs], As) ->
     case check(B, Bs) of
-	start_extra_arg -> {reverse(As), [B|Bs]};
-	start_arg -> {reverse(As), [B|Bs]};
-	start_arg2 -> {reverse(As), [B|Bs]};
-	eval_arg -> {reverse(As), [B|Bs]};
-	end_args -> {reverse(As), Bs};
-	ending_start_arg -> {reverse(As), [B|Bs]};
-	{flag,_} -> {reverse(As), [B|Bs]};
-	arg ->
-	    get_args(Bs, [B|As])
+        arg -> get_args(Bs, [B|As]);
+	_ -> {reverse(As), [B|Bs]}
     end;
 get_args([], As) -> {reverse(As),[]}.
 

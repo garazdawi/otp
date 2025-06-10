@@ -76,6 +76,9 @@ compile_cmdline1(Args) ->
             case Result of
                 ok ->
                     halt(0);
+                {info, Output} ->
+                    io:put_chars(standard_io, Output),
+                    halt(0);
                 {error, Output} ->
                     io:put_chars(standard_error, Output),
                     halt(1);
@@ -100,6 +103,8 @@ do_compile(Args, Cwd) ->
     catch
         throw:{error, Output} ->
             {error, unicode:characters_to_binary(Output)};
+        throw:{info, Output} ->
+            {info, unicode:characters_to_binary(Output)};
         C:E:Stk ->
             {crash, {C,E,Stk}}
     end.
@@ -203,6 +208,10 @@ parse_generic_option("describe-feature" ++ Str, T0,
 parse_generic_option("list-features", T,
                      #options{specific = Spec} = Opts) ->
     compile1(T, Opts#options{specific =[{list_features, true}| Spec]});
+parse_generic_option("explain" ++ Str, T0,
+                     #options{specific = Spec} = Opts) ->
+    {ExplainStr, T} = get_option("explain", Str, T0),
+    compile1(T, Opts#options{specific =[{explain, ExplainStr}| Spec]});
 parse_generic_option(Option, _T, _Opts) ->
     usage(io_lib:format("Unknown option: -~ts\n", [Option])).
 
@@ -270,6 +279,8 @@ usage(Error) ->
           "list short descriptions of available features (Erlang compiler)"},
          {"-describe-feature <feature>",
           "show long description of <feature>"},
+          {"-explain <DiagnosticCode>",
+          "print long explanation for <DiagnosticCode>"},
 	 {"+term","pass the Erlang term unchanged to the compiler"}],
     Fmt = fun(K, D) when length(K) < 15 ->
                   io_lib:format("~-14s ~s\n", [K, D]);
@@ -299,7 +310,7 @@ split_at_equals([], Acc) ->
 compile2(Files, #options{cwd=Cwd,includes=Incl,outfile=Outfile}=Opts0) ->
     case show_info(Opts0) of
         {ok, Msg} ->
-            throw({error, Msg});
+            throw({info, Msg});
         false ->
             Opts = Opts0#options{includes=lists:reverse(Incl)},
             case {Outfile,length(Files)} of
@@ -351,7 +362,9 @@ show_info(#options{specific = Spec}) ->
                 end
         end,
 
-    case G([list_features, describe_feature]) of
+    case G([list_features, describe_feature, explain]) of
+        {explain, DiagnosticCode} ->
+            {ok, application:explain(compiler, [DiagnosticCode])};
         {list_features, true} ->
             Features = erl_features:configurable(),
             Msg = ["Available features:\n",

@@ -180,7 +180,7 @@ See `m:erl_id_trans` for an example and an explanation of the function
 -include("core_parse.hrl").
 
 -import(lists, [member/2,reverse/1,reverse/2,keyfind/3,last/1,
-		map/2,flatmap/2,flatten/1,foreach/2,foldr/3,any/2]).
+		map/2,flatten/1,foreach/2,foldr/3,any/2]).
 
 -define(PASS_TIMES, compile__pass_times).
 -define(SUB_PASS_TIMES, compile__sub_pass_times).
@@ -198,10 +198,8 @@ List of Erlang abstract or Core Erlang format representations, as used by
 -doc "See `file/2` for detailed description.".
 -type option() :: atom() | {atom(), term()} | {'d', atom(), term()}.
 
--type error_description() :: erl_lint:error_description().
--type error_info() :: erl_lint:error_info().
--type errors()   :: [{file:filename(), [error_info()]}].
--type warnings() :: [{file:filename(), [error_info()]}].
+-type errors()   :: erl_diagnostic:error_listing().
+-type warnings() :: erl_diagnostic:error_listing().
 -type mod_ret()  :: {'ok', module()}
                   | {'ok', module(), cerl:c_module()} %% with option 'to_core'
                   | {'ok',                            %% with option 'to_pp'
@@ -1109,7 +1107,7 @@ the error.
 This function is usually called implicitly when an `ErrorInfo`
 structure is processed.
 """.
--spec format_error(ErrorDescription :: error_description()) -> string().
+-spec format_error(ErrorDescription :: erl_diagnostic:error_description()) -> string().
 
 format_error({obsolete_option,Ver}) ->
     io_lib:fwrite("the ~p option is no longer supported", [Ver]);
@@ -1172,8 +1170,7 @@ format_error_reason(Class, Reason, Stack) ->
                   options=[]       :: [option()],  %Options for compilation
                   mod_options=[]   :: [option()], %Options for module_info
                   encoding=none    :: none | epp:source_encoding(),
-                  errors=[]        :: errors(),
-                  warnings=[]      :: warnings(),
+                  diagnostics      :: erl_diagnostic:state() | undefined,
                   extra_chunks=[]  :: [{binary(), binary()}]}).
 
 internal({forms,Forms}, Opts0) ->
@@ -1196,7 +1193,8 @@ internal({file,File}, Opts) ->
 build_compile(Opts0) ->
     ExtraChunks = proplists:get_value(extra_chunks, Opts0, []),
     Opts1 = proplists:delete(extra_chunks, Opts0),
-    #compile{options=Opts1,mod_options=Opts1,extra_chunks=ExtraChunks}.
+    #compile{options=Opts1,mod_options=Opts1,extra_chunks=ExtraChunks,
+             diagnostics=erl_diagnostic:init(#{ warnings_as_errors => member(warnings_as_errors, Opts1) })}.
 
 internal_comp(Passes, Code0, File, Suffix, St0) ->
     Dir = filename:dirname(File),
@@ -1243,8 +1241,7 @@ fold_comp([{Name,Pass}|Ps], Run, Code0, St0) ->
             Error
     catch
         error:Reason:Stk ->
-	    Es = [{St0#compile.ifile,[{none,?MODULE,{crash,Name,Reason,Stk}}]}],
-	    {error,St0#compile{errors=St0#compile.errors ++ Es}}
+	    {error,emit_error(St0, none, ?MODULE, {crash,Name,Reason,Stk})}
     end;
 fold_comp([], _Run, Code, St) -> {ok,Code,St}.
 
@@ -1365,8 +1362,24 @@ run_tprof({Name,Fun}, Code, Name, Measurement, St) ->
 run_tprof({_,Fun}, Code, _, _, St) ->
     Fun(Code, St).
 
-comp_ret_ok(Code, #compile{warnings=Warn0,module=Mod,options=Opts}=St) ->
-    Warn1 = filter_warnings(Warn0, Opts),
+emit_errors(St, Errors) ->
+    St#compile{ diagnostics = erl_diagnostic:emit_legacy(
+        St#compile.diagnostics, error, Errors)}.
+emit_error(St, Location, Mod, Reason) ->
+    emit_error(St, St#compile.ifile, Location, Mod, Reason).
+emit_error(St, File, none, Mod, Reason) ->
+    emit_error(St, File, 0, Mod, Reason);
+emit_error(St, File, Location, Mod, Reason) ->
+    Anno = erl_anno:set_file(File, erl_anno:new(Location)),
+    St#compile{ diagnostics = erl_diagnostic:emit_legacy(
+        St#compile.diagnostics, error, Anno, Mod, Reason)}.
+
+emit_warnings(St, Warnings) ->
+    Filtered = filter_warnings(Warnings, St#compile.options),
+    St#compile{ diagnostics = erl_diagnostic:emit_legacy(
+        St#compile.diagnostics, warning, Filtered)}.
+
+comp_ret_ok(Code, #compile{module=Mod,diagnostics=Ds,options=Opts}=St) when is_map(Ds) ->
     case werror(St) of
         true ->
             case member(report_warnings, Opts) of
@@ -1378,52 +1391,44 @@ comp_ret_ok(Code, #compile{warnings=Warn0,module=Mod,options=Opts}=St) ->
             end,
             comp_ret_err(St);
         false ->
-            Warn = messages_per_file(Warn1),
-            report_warnings(St#compile{warnings = Warn}),
+            [erl_diagnostic:report(
+               standard_io, Ds,
+               proplists:get_value(report_format, Opts, ansi),
+               #{ brief => proplists:get_bool(brief, Opts) })
+             || member(report_warnings, Opts)],
             Ret1 = case member(binary, Opts) andalso
-		       not member(no_code_generation, Opts) of
+                       not member(no_code_generation, Opts) of
                        true -> [Code];
                        false -> []
                    end,
             Ret2 = case member(return_warnings, Opts) of
-                       true -> Ret1 ++ [Warn];
+                       true -> Ret1 ++ [erl_diagnostic:get_warnings(Ds)];
                        false -> Ret1
                    end,
             list_to_tuple([ok,Mod|Ret2])
     end.
 
-comp_ret_err(#compile{warnings=Warn0,errors=Err0,options=Opts}=St) ->
-    Warn = messages_per_file(Warn0),
-    Err = messages_per_file(Err0),
-    report_errors(St#compile{errors=Err}),
-    report_warnings(St#compile{warnings=Warn}),
+comp_ret_err(#compile{options=Opts,diagnostics = Ds}) ->
+    erl_diagnostic:report(
+      standard_io, Ds,
+      proplists:get_value(report_format, Opts, ansi),
+      #{ brief => proplists:get_bool(brief, Opts),
+         types => [error || member(report_errors, Opts)] ++
+             [warning || member(report_warnings, Opts)] ++
+             [info || member(report_warnings, Opts)] ++
+             [hint || member(report_warnings, Opts)]
+       }),
+    
     case member(return_errors, Opts) of
-	true -> {error,Err,Warn};
+	true -> {error,erl_diagnostic:get_errors(Ds),
+                    erl_diagnostic:get_warnings(Ds)};
 	false -> error
     end.
 
 not_werror(St) -> not werror(St).
 
-werror(#compile{options=Opts,warnings=Ws}) ->
-    Ws =/= [] andalso member(warnings_as_errors, Opts).
-
-%% messages_per_file([{File,[Message]}]) -> [{File,[Message]}]
-messages_per_file(Ms) ->
-    T = lists:sort([{File,M} || {File,Messages} <:- Ms, M <- Messages]),
-    PrioMs = [erl_scan, epp, erl_parse],
-    {Prio0, Rest} =
-        lists:mapfoldl(fun(M, A) ->
-                               lists:partition(fun({_,{_,Mod,_}}) -> Mod =:= M;
-                                                  (_) -> false
-                                               end, A)
-                       end, T, PrioMs),
-    Prio = lists:sort(fun({_,{L1,_,_}}, {_,{L2,_,_}}) -> L1 =< L2 end,
-                      lists:append(Prio0)),
-    flatmap(fun mpf/1, [Prio, Rest]).
-
-mpf(Ms) ->
-    [{File,[M || {F,M} <- Ms, F =:= File]} ||
-	File <- lists:usort([F || {F,_} <:- Ms])].
+werror(#compile{options=Opts,diagnostics = D}) ->
+    erl_diagnostic:has_warnings(D) andalso member(warnings_as_errors, Opts).
 
 %% passes(forms|file, [Option]) -> {Extension,[{Name,PassFun}]}
 %%  Figure out the extension of the input file and which passes
@@ -1538,17 +1543,28 @@ fix_first_pass([_|Passes]) ->
 
 select_passes([{pass,Mod}|Ps], Opts) ->
     F = fun(Code0, St) ->
-		case Mod:module(Code0, St#compile.options) of
-		    {ok,Code} ->
-			{ok,Code,St};
-		    {ok,Code,Ws} ->
-			{ok,Code,St#compile{warnings=St#compile.warnings++Ws}};
-                    {error,Es} ->
-                        {error,St#compile{errors=St#compile.errors ++ Es}};
-                    Other ->
-                        Es = [{St#compile.ifile,[{none,?MODULE,{bad_return,Mod,Other}}]}],
-                        {error,St#compile{errors=St#compile.errors ++ Es}}
-		end
+                case erlang:function_exported(Mod, module, 3) of
+                    true ->
+                        case Mod:module(Code0, St#compile.options, St#compile.diagnostics) of
+                            {ok, Code, Ds} ->
+                                {ok, Code, St#compile{ diagnostics = Ds }};
+                            {error, Ds} ->
+                                {error, St#compile{ diagnostics = Ds }};
+                            Other ->
+                                {error,emit_error(St, none, ?MODULE, {bad_return,Mod,Other})}
+                        end;
+                    false ->
+                        case Mod:module(Code0, St#compile.options) of
+                            {ok,Code} ->
+                                {ok,Code,St};
+                            {ok,Code,Ws} ->
+                                {ok,Code,emit_warnings(St, Ws)};
+                            {error,Es} ->
+                                {error,emit_errors(St, Es)};
+                            Other ->
+                                {error,emit_error(St, none, ?MODULE, {bad_return,Mod,Other})}
+                        end
+                end
 	end,
     [{Mod,F}|select_passes(Ps, Opts)];
 select_passes([{_,Fun}=P|Ps], Opts) when is_function(Fun) ->
@@ -1640,7 +1656,7 @@ make_ssa_check_pass(PassFlag) ->
                 case beam_ssa_check:module(Code, PassFlag) of
                     ok -> {ok, Code, St};
                     {error, Errors} ->
-                        {error, St#compile{errors=St#compile.errors++Errors}}
+                        {error, emit_errors(St, Errors)}
                 end
         end,
     {iff, PassFlag, {PassFlag, F}}.
@@ -1863,8 +1879,7 @@ beam_consult_asm(_Code, St) ->
 	    {Module,Forms} = preprocess_asm_forms(Forms0),
 	    {ok,Forms,St#compile{module=Module,encoding=Encoding}};
 	{error,E} ->
-	    Es = [{St#compile.ifile,[{none,?MODULE,{open,E}}]}],
-	    {error,St#compile{errors=St#compile.errors ++ Es}}
+	    {error,emit_error(St, none, ?MODULE, {open, E})}
     end.
 
 get_module_name_from_asm({Mod,_,_,_,_}=Asm, St) ->
@@ -1936,12 +1951,10 @@ do_parse_module(DefEncoding, #compile{ifile=File,options=Opts,dir=Dir}=St) ->
                             end,
                     {ok,Forms,St1#compile{encoding=Encoding}};
                 {error,E} ->
-                    Es = [{St#compile.ifile,[{none,?MODULE,{epp,E}}]}],
-                    {error,St#compile{errors=St#compile.errors ++ Es}}
+                    {error, emit_error(St, St#compile.ifile, none, ?MODULE, {epp, E})}
             end;
         {error, {Mod, Reason}} ->
-            Es = [{St#compile.ifile,[{none, Mod, Reason}]}],
-            {error, St#compile{errors = St#compile.errors ++ Es}}
+            {error, emit_error(St, none, Mod, Reason)}
     end.
 
 %% The atom to be used in the proplist of the meta chunk indicating
@@ -1992,8 +2005,7 @@ consult_abstr(_Code, St) ->
             Encoding = epp:read_encoding(St#compile.ifile),
 	    {ok,Forms,St#compile{encoding=Encoding}};
 	{error,E} ->
-	    Es = [{St#compile.ifile,[{none,?MODULE,{open,E}}]}],
-	    {error,St#compile{errors=St#compile.errors ++ Es}}
+	    {error,emit_error(St, none, ?MODULE, {open, E})}
     end.
 
 parse_core(_Code, St) ->
@@ -2007,15 +2019,15 @@ parse_core(_Code, St) ->
 			    {ok,Mod,St#compile{module=Name}};
 			{error,E} ->
 			    Es = [{St#compile.ifile,[E]}],
-			    {error,St#compile{errors=St#compile.errors ++ Es}}
+			    {error,emit_errors(St, Es)}
 		    end;
 		{error,E,_} ->
 		    Es = [{St#compile.ifile,[E]}],
-		    {error,St#compile{errors=St#compile.errors ++ Es}}
+		    {error,emit_errors(St, Es)}
 	    end;
 	{error,E} ->
 	    Es = [{St#compile.ifile,[{none,compile,{open,E}}]}],
-	    {error,St#compile{errors=St#compile.errors ++ Es}}
+	    {error,emit_errors(St, Es)}
     end.
 
 get_module_name_from_core(Core, St) ->
@@ -2076,23 +2088,22 @@ foldl_transform([T|Ts], Code0, St) ->
             StrippedCode = maybe_strip_columns(Code0, T, St),
             try Run({Name, Fun}, StrippedCode, St) of
                 {error,Es,Ws} ->
-                    {error,St#compile{warnings=St#compile.warnings ++ Ws,
-                                      errors=St#compile.errors ++ Es}};
+                    {error,emit_warnings(emit_errors(St, Es), Ws)};
                 {warning, Forms, Ws} ->
                     foldl_transform(Ts, Forms,
-                                    St#compile{warnings=St#compile.warnings ++ Ws});
+                    emit_warnings(St, Ws));
                 Forms ->
                     foldl_transform(Ts, Forms, St)
             catch
                 Class:Reason:Stk ->
                     Es = [{St#compile.ifile,[{none,compile,
                                               {parse_transform,T,{Class,Reason,Stk}}}]}],
-                    {error,St#compile{errors=St#compile.errors ++ Es}}
+                    {error,emit_errors(St, Es)}
             end;
         false ->
             Es = [{St#compile.ifile,[{none,compile,
                                       {undef_parse_transform,T}}]}],
-            {error,St#compile{errors=St#compile.errors ++ Es}}
+            {error,emit_errors(St, Es)}
     end;
 foldl_transform([], Code, St) ->
     %% We may need to strip columns added by parse transforms before returning
@@ -2150,7 +2161,7 @@ foldl_core_transforms([T|Ts], Code0, St) ->
         Class:Reason:Stk ->
             Es = [{St#compile.ifile,[{none,compile,
                                       {core_transform,T,{Class,Reason,Stk}}}]}],
-            {error,St#compile{errors=St#compile.errors ++ Es}}
+            {error,emit_errors(St, Es)}
     end;
 foldl_core_transforms([], Code, St) -> {ok,Code,St}.
 
@@ -2174,24 +2185,24 @@ add_default_base(St, Forms) ->
     end.
 
 lint_module(Code, St) ->
-    case erl_lint:module(Code, St#compile.ifile, St#compile.options) of
-	{ok,Ws} ->
+    % io:format("~p~n",[St#compile.options]),
+    LintDs = erl_lint:module(Code, St#compile.ifile, St#compile.options, St#compile.diagnostics),
+    case erl_diagnostic:has_errors(LintDs)  of
+	false ->
 	    %% Insert name of module as base name, if needed. This is
 	    %% for compile:forms to work with listing files.
 	    St1 = add_default_base(St, Code),
-	    {ok,Code,St1#compile{warnings=St1#compile.warnings ++ Ws}};
-	{error,Es,Ws} ->
-	    {error,St#compile{warnings=St#compile.warnings ++ Ws,
-			      errors=St#compile.errors ++ Es}}
+            {ok, Code, St1#compile{ diagnostics = LintDs }};
+	true ->
+	    {error,St#compile{ diagnostics = LintDs }}
     end.
 
 core_lint_module(Code, St) ->
     case core_lint:module(Code, St#compile.options) of
 	{ok,Ws} ->
-	    {ok,Code,St#compile{warnings=St#compile.warnings ++ Ws}};
+	    {ok,Code,emit_warnings(St, Ws)};
 	{error,Es,Ws} ->
-	    {error,St#compile{warnings=St#compile.warnings ++ Ws,
-			      errors=St#compile.errors ++ Es}}
+	    {error,emit_warnings(emit_errors(St, Es), Ws)}
     end.
 
 %% makedep + output and continue
@@ -2342,7 +2353,7 @@ makedep_output(Code, #compile{options=Opts,ofile=Ofile}=St) ->
                     {ok,Code,St};
                 {error,Reason} ->
                     Err = {St#compile.ifile,[{none,?MODULE,{write_error,Reason}}]},
-                    {error,St#compile{errors=St#compile.errors++[Err]}}
+                    {error,emit_errors(St, [Err])}
             end;
         true ->
             %% Write the dependencies to a device.
@@ -2352,7 +2363,7 @@ makedep_output(Code, #compile{options=Opts,ofile=Ofile}=St) ->
             catch
                 error:_ ->
                     Err = {St#compile.ifile,[{none,?MODULE,write_error}]},
-                    {error,St#compile{errors=St#compile.errors++[Err]}}
+                    {error,emit_errors(St, [Err])}
             end
     end.
 
@@ -2384,8 +2395,7 @@ compile_directives_1(Opts1, Forms, #compile{options=Opts0}=St0) ->
     case any_obsolete_option(Opts) of
         {yes,Opt} ->
             Error = {St1#compile.ifile,[{none,?MODULE,{obsolete_option,Opt}}]},
-            St = St1#compile{errors=[Error|St1#compile.errors]},
-            {error,St};
+            {error,emit_errors(St1, [Error])};
         no ->
             {ok,Forms,St1}
     end.
@@ -2419,8 +2429,7 @@ is_obsolete(_) -> false.
 core(Forms, #compile{options=Opts}=St) ->
     {ok,Core,Ws} = v3_core:module(Forms, Opts),
     Mod = cerl:concrete(cerl:module_name(Core)),
-    {ok,Core,St#compile{module=Mod,options=Opts,
-                        warnings=St#compile.warnings++Ws}}.
+    {ok,Core,emit_warnings(St#compile{module=Mod,options=Opts}, Ws)}.
 
 core_fold_module_after_inlining(Code0, #compile{options=Opts}=St) ->
     %% Inlining may produce code that generates spurious warnings.
@@ -2428,11 +2437,11 @@ core_fold_module_after_inlining(Code0, #compile{options=Opts}=St) ->
     {ok,Code,_Ws} = sys_core_fold:module(Code0, Opts),
     {ok,Code,St}.
 
-core_to_ssa(Code0, #compile{options=Opts,warnings=Ws0}=St) ->
+core_to_ssa(Code0, #compile{options=Opts}=St) ->
     {ok,Code,Ws} = beam_core_to_ssa:module(Code0, Opts),
     case Ws =:= [] orelse test_core_inliner(St) of
 	false ->
-	    {ok,Code,St#compile{warnings=Ws0++Ws}};
+	    {ok,Code,emit_warnings(St, Ws)};
 	true ->
 	    %% cerl_inline may produce code that generates spurious
 	    %% warnings. Ignore any such warnings.
@@ -2482,8 +2491,7 @@ beam_docs(Code, #compile{dir = Dir, options = Options,
         {ok, Docs, Ws} ->
             Binary = term_to_binary(Docs, [deterministic, compressed]),
             MetaDocs = [{?META_DOC_CHUNK, Binary} | ExtraChunks],
-            {ok, Code, St#compile{extra_chunks = MetaDocs,
-                                  warnings = St#compile.warnings ++ Ws}};
+            {ok, Code, emit_warnings(St#compile{extra_chunks = MetaDocs}, Ws)};
         {error, no_docs} ->
             {ok, Code, St}
     end.
@@ -2613,12 +2621,12 @@ beam_validator_strong(Code, St) ->
 beam_validator_weak(Code, St) ->
     beam_validator_1(Code, St, weak).
 
-beam_validator_1(Code, #compile{errors=Errors0}=St, Level) ->
+beam_validator_1(Code, St, Level) ->
     case beam_validator:validate(Code, Level) of
         ok ->
             {ok, Code, St};
         {error, Es} ->
-            {error, St#compile{errors=Errors0 ++ Es}}
+            {error, emit_errors(St, Es)}
     end.
 
 beam_asm(Code0, #compile{ifile=File,extra_chunks=ExtraChunks,options=CompilerOpts}=St) ->
@@ -2630,7 +2638,7 @@ beam_asm(Code0, #compile{ifile=File,extra_chunks=ExtraChunks,options=CompilerOpt
 	    {ok,Code} = beam_asm:module(Code0, Chunks, CompileInfo, CompilerOpts),
 	    {ok,Code,St#compile{abstract_code=[]}};
 	{error,Es} ->
-	    {error,St#compile{errors=St#compile.errors ++ [{File,Es}]}}
+	    {error,emit_errors(St, [{File,Es}])}
     end.
 
 beam_strip_types(Beam0, #compile{}=St) ->
@@ -2701,7 +2709,7 @@ save_binary(Code, #compile{module=Mod,ofile=Outfile,options=Opts}=St) ->
 		_ ->
 		    Es = [{St#compile.ofile,
 			   [{none,?MODULE,{module_name,Mod,Base}}]}],
-		    {error,St#compile{errors=St#compile.errors ++ Es}}
+		    {error,emit_errors(St, Es)}
 	    end
     end.
 
@@ -2717,11 +2725,11 @@ save_binary_1(Code, St) ->
                     Es = [{Ofile,[{none,?MODULE,{rename,Tfile,Ofile,
                                                  RenameError}}]}],
                     _ = file:delete(Tfile),
-		    {error,St#compile{errors=St#compile.errors ++ Es}}
+		    {error,emit_errors(St, Es)}
 	    end;
 	{error,Error} ->
 	    Es = [{Tfile,[{none,compile,{write_error,Error}}]}],
-	    {error,St#compile{errors=St#compile.errors ++ Es}}
+	    {error,emit_errors(St, Es)}
     end.
 
 write_binary(Name, Bin, St) ->
@@ -2732,35 +2740,6 @@ write_binary(Name, Bin, St) ->
     case file:write_file(Name, Bin, Opts) of
 	ok -> ok;
 	{error,_}=Error -> Error
-    end.
-
-%% report_errors(State) -> ok
-%% report_warnings(State) -> ok
-
-report_errors(#compile{options=Opts,errors=Errors}) ->
-    case member(report_errors, Opts) of
-	true ->
-	    foreach(fun ({{F,_L},Eds}) -> sys_messages:list_errors(F, Eds, Opts);
-			({F,Eds}) -> sys_messages:list_errors(F, Eds, Opts) end,
-		    Errors);
-	false -> ok
-    end.
-
-report_warnings(#compile{options=Opts,warnings=Ws0}) ->
-    Werror = member(warnings_as_errors, Opts),
-    P = case Werror of
-	    true -> "";
-	    false -> "Warning: "
-	end,
-    ReportWerror = Werror andalso member(report_errors, Opts),
-    case member(report_warnings, Opts) orelse ReportWerror of
-	true ->
-	    Ws1 = flatmap(fun({{F,_L},Eds}) -> sys_messages:format_messages(F, P, Eds, Opts);
-			     ({F,Eds}) -> sys_messages:format_messages(F, P, Eds, Opts) end,
-			  Ws0),
-	    Ws = lists:sort(Ws1),
-	    foreach(fun({_,Str}) -> io:put_chars(Str) end, Ws);
-	false -> ok
     end.
 
 %%%
@@ -2797,6 +2776,7 @@ ignore_tags([nowarn_nomatch|Opts], Ignore) ->
 ignore_tags([_|Opts], Ignore) ->
     ignore_tags(Opts, Ignore);
 ignore_tags([], Ignore) -> Ignore.
+
 
 %% erlfile(Dir, Base) -> ErlFile
 %% outfile(Base, Extension, Options) -> OutputFile
@@ -2888,7 +2868,7 @@ listing(LFun, Ext, Code, St) ->
 	    {ok,Code,St};
 	{error,Error} ->
 	    Es = [{Lfile,[{none,compile,{write_error,Error}}]}],
-	    {error,St#compile{errors=St#compile.errors ++ Es}}
+	    {error,emit_errors(St, Es)}
     end.
 
 to_dis(Code, #compile{module=Module,ofile=Outfile}=St) ->
@@ -3058,7 +3038,7 @@ make_erl_options(Opts) ->
 		(Name) ->
 		    {d,Name}
             end, Defines),
-    Options ++ [report_errors, {cwd, Cwd}, {outdir, Outdir} |
+    Options ++ [{options_source, erlc}, report_errors, {cwd, Cwd}, {outdir, Outdir} |
                 [{i, Dir} || Dir <- Includes]] ++ Specific.
 
 pre_load() ->

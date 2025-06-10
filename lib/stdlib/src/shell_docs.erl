@@ -68,6 +68,8 @@ be rendered as is.
 -export([render_type/2, render_type/3, render_type/4, render_type/5]).
 -export([render_callback/2, render_callback/3, render_callback/4, render_callback/5]).
 
+-export([render_markdown/1]).
+
 -export([test/2]).
 
 %% Used by chunks.escript in erl_docgen
@@ -818,6 +820,10 @@ render_callback(_Module, Callback, Arity, #docs_v1{ } = D, Config) ->
 render_cb(_Module, Type, Arity, #docs_v1{ } = D, Config) ->
     renderer(Config, {_Module, callback, Type, Arity}, D).
 
+-doc false.
+render_markdown(MD) ->
+    HTML = shell_docs_markdown:parse_md(MD),
+    render_docs(HTML, init_config(#{}, #{ columns => 80, ansi => true })).
 
 %% Get the docs in the correct locale if it exists.
 -spec get_local_doc(atom() | tuple() | binary(), Docs, D) -> term() when

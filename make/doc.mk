@@ -48,6 +48,11 @@ EX_DOC_FORMATS=
 endif
 
 # ----------------------------------------------------
+# Error-index dependencies
+# ----------------------------------------------------
+ERROR_INDEX_FILES?=$(wildcard diagnostic-index/*.diagnosticmd)
+
+# ----------------------------------------------------
 # Man dependencies
 # ----------------------------------------------------
 MAN1_DEPS?=$(wildcard */*_cmd.md)
@@ -72,7 +77,7 @@ docs: $(DOC_TARGETS)
 
 chunks:
 
-HTML_DEPS?=$(wildcard $(APP_EBIN_DIR)/*.beam) $(wildcard *.md) $(wildcard */*.md) $(wildcard assets/*)
+HTML_DEPS?=$(ERROR_INDEX) $(wildcard $(APP_EBIN_DIR)/*.beam) $(wildcard *.md) $(wildcard */*.md) $(ERROR_INDEX_FILES) $(wildcard assets/*)
 
 $(HTMLDIR)/index.html: $(HTML_DEPS) docs.exs $(ERL_TOP)/make/ex_doc.exs
 	$(gen_verbose)EX_DOC_WARNINGS_AS_ERRORS=$(EX_DOC_WARNINGS_AS_ERRORS) ERL_FLAGS="-pz $(ERL_TOP)/erts/ebin" \

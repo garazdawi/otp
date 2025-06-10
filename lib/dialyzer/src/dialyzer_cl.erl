@@ -823,14 +823,24 @@ print_warnings(#cl_state{output = Output,
     [_|_] ->
       PrWarningsId = set_warning_id(PrWarnings, EOpt),
       S = case Format of
-	    formatted ->
+            formatted ->
+              D = erl_diagnostic:init(#{}),
+              NewD =
+                lists:foldl(
+                  fun({Key, {File, Loc}, Msg}, Acc) ->
+                      erl_diagnostic:emit(Acc, Key, erl_anno:set_file(File, erl_anno:new(Loc)),
+                                          [], #{}, #{ key => Key, type => warning,
+                                                      format =>  fun() -> dialyzer:message_to_string(Msg) end})
+                  end, D, PrWarningsId),
+              erl_diagnostic:report(Output, NewD, ansi, #{}),
+                                                %     "";
               Opts = [{filename_opt, FOpt},
                       {indent_opt, IOpt},
                       {error_location, EOpt}],
-	      [dialyzer:format_warning(W, Opts) || W <- PrWarningsId];
+              [dialyzer:format_warning(W, Opts) || W <- PrWarningsId];
 	    raw ->
 	      [io_lib:format("~tp. \n",
-                             [W]) || W <- set_warning_id(PrWarningsId, EOpt)]
+                             [W]) || W <- PrWarningsId]
 	  end,
       io:format(Output, "\n~ts", [S])
   end.
