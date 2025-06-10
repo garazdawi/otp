@@ -743,7 +743,11 @@ enabled(Device) ->
         case os:type() of
             {win32, _} -> true;
             _ ->
-                prim_tty:tigetstr("sgr0") =/= false
+                try
+                    prim_tty:tigetstr("sgr0") =/= false
+                catch error:badarg ->
+                    false
+                end
         end,
     IsTerminal andalso IsSmartTerminal.
 

@@ -82,6 +82,9 @@ stop_tmux(_Config) ->
     ok.
 
 %% Setup a TTY, or a ssh server and client but do not type anything in terminal (except password)
+-spec setup_tty([{peer, peer:config()} | {tc_path, file:name()} |
+                 {env, [{Key :: string(), Value :: string()}]} |
+                 {args, [string()]}]) -> term().
 setup_tty(Config) ->
     ClientName = maps:get(name,proplists:get_value(peer, Config, #{}),
                     peer:random_name(proplists:get_value(tc_path, Config))),

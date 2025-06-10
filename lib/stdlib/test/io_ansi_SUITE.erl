@@ -28,7 +28,7 @@
 -export([all/0, suite/0, groups/0, init_per_suite/1, end_per_suite/1,
          init_per_group/2, end_per_group/2, init_per_testcase/2, end_per_testcase/2]).
 
--export([format_3/1, doctests/1]).
+-export([enabled/1, doctests/1]).
 
 -include_lib("stdlib/include/assert.hrl").
 
@@ -36,17 +36,17 @@ suite() ->
     [].
 
 all() ->
-    [ doctests, format_3 ].
+    [ doctests, enabled ].
 
 
 groups() ->
     [ ].
 
 init_per_suite(Config) ->
-    Config.
+    shell_test_lib:start_tmux(Config).
 
-end_per_suite(_Config) ->
-    ok.
+end_per_suite(Config) ->
+    shell_test_lib:stop_tmux(Config).
 
 init_per_group(_GroupName, Config) ->
     Config.
@@ -60,12 +60,42 @@ init_per_testcase(_TestCase, Config) ->
 end_per_testcase(_TestCase, _Config) ->
     ok.
 
-format_3(_Config) ->
-    true = io_ansi:enabled(),
-    ok.
+enabled(Config) ->
+    enabled_test(true, "xterm-256color", Config),
+    enabled_test(false, "abc", Config),
+    enabled_test(false, "dumb", Config).
+enabled_test(Expect, TermType, Config) ->
+    Term = shell_test_lib:setup_tty([{env, [{"TERM",TermType}]}|Config]),
+    try
+        ?assertEqual(Expect,
+                     shell_test_lib:rpc(
+                       Term,
+                       fun() ->
+                               group_leader(whereis(user), self()),
+                               io_ansi:enabled()
+                       end)),
+        ?assertEqual(Expect,
+                     shell_test_lib:rpc(
+                       Term,
+                       fun() ->
+                               io_ansi:enabled(user)
+                       end)),
+        ?assertEqual(Expect,
+                     shell_test_lib:rpc(
+                       Term,
+                       fun() ->
+                               group_leader(whereis(user), self()),
+                               {group_leader, GL} = erlang:process_info(shell:whereis(), group_leader),
+                               io_ansi:enabled(GL)
+                       end))
+    after
+        shell_test_lib:stop_tty(Term)
+    end.
 
-doctests(_Config) ->
-    shell_docs:test(
-      io_ansi,
-      []),
-    ok.
+doctests(Config) ->
+    Term = shell_test_lib:setup_tty([{env, [{"TERM","xterm-256color"}]}|Config]),
+    try
+        shell_test_lib:rpc(Term, shell_docs, test, [io_ansi, []])
+    after
+        shell_test_lib:stop_tty(Term)
+    end.
