@@ -241,9 +241,50 @@ operating system kernel.
 -export_type([date_time/0, fd/0, file_info/0, filename/0, filename_all/0,
               io_device/0, io_server/0, location/0, mode/0, name/0, name_all/0, posix/0]).
 
-%%% Includes and defines
--include("file_int.hrl").
 
+-export_record([file_info, file_descriptor]).
+-record #file_info
+        {size = undefined   :: non_neg_integer() | 'undefined',  % Size of file in bytes.
+         type = undefined   :: 'device' | 'directory' | 'other' | 'regular' | 'symlink'
+                 | 'undefined',
+         access = undefined :: 'read' | 'write' | 'read_write' | 'none' | 'undefined',
+         atime = undefined  :: file:date_time() | non_neg_integer() | 'undefined',
+                                     % The local time the file was last read:
+                                     % {{Year, Mon, Day}, {Hour, Min, Sec}}.
+                                     % atime, ctime, mtime may also be unix epochs()
+         mtime = undefined  :: file:date_time() | non_neg_integer() | 'undefined',
+                                     % The local time the file was last written.
+         ctime = undefined  :: file:date_time() | non_neg_integer() | 'undefined',
+                                     % The interpretation of this time field
+                                     % is dependent on operating system.
+                                     % On Unix it is the last time the file
+                                     % or the inode was changed.  On Windows,
+                                     % it is the creation time.
+         mode = undefined   :: non_neg_integer() | 'undefined',
+                                     % File permissions.  On Windows,
+                                     % the owner permissions will be
+                                     % duplicated for group and user.
+         links = undefined  :: non_neg_integer() | 'undefined',
+                                     % Number of links to the file (1 if the
+                                     % filesystem doesn't support links).
+         major_device = undefined :: non_neg_integer() | 'undefined',
+                                     % Identifies the file system (Unix),
+                                     % or the drive number (A: = 0, B: = 1)
+                                     % (Windows).
+         %% The following are Unix specific.
+         %% They are set to zero on other operating systems.
+         minor_device = undefined :: non_neg_integer() | 'undefined',
+                                             % Only valid for devices.
+         inode = undefined   :: non_neg_integer() | 'undefined',  % Inode number for file.
+         uid = undefined     :: non_neg_integer() | 'undefined',   % User id for owner.
+         gid = undefined     :: non_neg_integer() | 'undefined'}. % Group id for owner.
+
+-record #file_descriptor{
+         module = undefined :: module(),     % Module that handles this kind of file
+	 data = undefined   :: term()}.     % Module dependent data
+
+
+%%% Includes and defines
 -define(FILE_IO_SERVER_TABLE, file_io_servers).
 
 -define(FILE_SERVER, file_server_2).   % Registered name
@@ -671,7 +712,7 @@ otherwise `{error, Reason}`.
 Include the following directive in the module from which the function is called:
 
 ```erlang
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 ```
 
 The time type returned in `atime`, `mtime`, and `ctime` is dependent on the time
@@ -921,7 +962,7 @@ include file `file.hrl`. Include the following directive in the module from
 which the function is called:
 
 ```erlang
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 ```
 
 The time type set in `atime`, `mtime`, and `ctime` depends on the time type set
