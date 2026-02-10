@@ -674,12 +674,23 @@ read_handle_info_1(Fd, TimeType) ->
         #{ handle := FRef } = get_fd_data(Fd),
         case read_handle_info_nif(FRef) of
             {error, Reason} -> {error, Reason};
-            FileInfo -> {ok, adjust_times(FileInfo, TimeType)}
+            FileInfo ->
+                erlang:display(FileInfo),
+                AT = adjust_times(FileInfo, TimeType),
+                erlang:display(AT),
+                {ok, AT}
         end
     catch
         error:_ -> {error, badarg}
     end.
 
+adjust_times({file_info, S, T, A, AT, MT, CT, M, L,
+              MAD, MID, I, U, G}, TimeType) ->
+    adjust_times(#file_info{size = S, type = T, access = A,
+                            atime = AT, mtime = MT, ctime = CT,
+                            mode = M, links = L,
+                            major_device = MAD, minor_device = MID, inode = I,
+                            uid = U, gid = G}, TimeType);
 adjust_times(FileInfo, posix) ->
     FileInfo;
 adjust_times(FileInfo, TimeType) ->
