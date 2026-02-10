@@ -64,7 +64,7 @@ For more information about raw filenames, see the `m:file` module.
 %% For debugging/testing.
 -export([compile_wildcard/1]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -define(HANDLE_ERROR(Expr),
 	try

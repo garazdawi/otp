@@ -83,7 +83,7 @@
 -define(dbg(Fmd, Args), ok).
 -endif.
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).

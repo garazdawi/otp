@@ -53,7 +53,7 @@
 -export([regulator_init/1]).
 
 -include("mnesia.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -import(mnesia_lib, [fatal/2, dbg_out/2]).
 

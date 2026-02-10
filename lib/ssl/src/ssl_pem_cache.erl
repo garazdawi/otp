@@ -51,7 +51,7 @@
 
 -include("ssl_handshake.hrl").
 -include("ssl_internal.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -record(state, {
 	  pem_cache,                  

@@ -36,7 +36,7 @@
 %% Spawn export
 -export([init/1]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -record(progress, {
 	  file                  :: string() | 'undefined',

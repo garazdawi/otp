@@ -37,7 +37,7 @@ An XML structure is validated by [`xmerl_xsd:validate/[2,3]`](`validate/2`).
 -include("xmerl.hrl").
 -include("xmerl_internal.hrl").
 -include("xmerl_xsd.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %%----------------------------------------------------------------------
 %% External exports
