@@ -96,7 +96,7 @@ The `erl_prim_loader` module interprets the following command-line flags:
 %% Used by init and the code server
 -export([get_modules/2, is_basename/1]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -type host() :: atom().
 
@@ -305,7 +305,7 @@ record [`file_info`](`t:file:file_info/0`), defined in the Kernel include file
 function is called:
 
 ```erlang
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 ```
 
 For more information about the record see `file:read_file_info/2`.

@@ -57,7 +57,7 @@
 -include("ct.hrl").
 -include("ct_event.hrl").
 -include("ct_util.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -define(suitelog_name,"suite.log").
 -define(run_summary, "suite.summary").

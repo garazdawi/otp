@@ -62,7 +62,7 @@
 	 intersection/2, partition/2, relation/1, relation_to_family/1, 
 	 restriction/2, set/1, to_external/1, type/1]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %%
 %%  Exported functions

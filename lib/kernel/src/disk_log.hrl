@@ -51,7 +51,7 @@
 %% Needed for the definition of #file_info{}
 %% Must use include_lib() so that we always can be sure to find
 %% file.hrl. A relative path will not work in an installed system.
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %%------------------------------------------------------------------------
 %% Types -- alphabetically

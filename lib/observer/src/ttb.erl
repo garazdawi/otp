@@ -47,7 +47,7 @@ parallel.
 %% For debugging
 -export([dump_ti/1]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -define(meta_time,5000).
 -define(fetch_time, 10000).
 -define(history_table,ttb_history_table).

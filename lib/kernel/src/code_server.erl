@@ -33,7 +33,7 @@
 	 error_msg/2, info_msg/2
 	]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 
 -import(lists, [foreach/2]).

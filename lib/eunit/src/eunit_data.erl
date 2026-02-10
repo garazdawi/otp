@@ -39,7 +39,7 @@
 -include("eunit.hrl").
 -include("eunit_internal.hrl").
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -export([iter_init/3, iter_next/1, iter_prev/1, iter_id/1,
 	 enter_context/3, get_module_tests/2]).

@@ -71,7 +71,7 @@ all other files in the current directory should be compiled with only the
 
 -export([all_or_nothing/0,all/0,all/1,files/1,files/2]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -define(MakeOpts,[noexec,load,netload,noload,emake]).
 

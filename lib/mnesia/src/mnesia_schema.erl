@@ -131,7 +131,7 @@
          do_change_table_copy_type/3]).
 
 -include("mnesia.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -import(mnesia_lib, [set/2, del/2, verbose/2, dbg_out/2]).
 

@@ -80,7 +80,7 @@ Module:format_error(ErrorDescriptor)
 -export([interpret_file_attribute/1]).
 -export([normalize_typed_record_fields/1,restore_typed_record_fields/1]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %%------------------------------------------------------------------------
 

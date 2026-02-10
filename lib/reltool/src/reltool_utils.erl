@@ -53,7 +53,7 @@
 %% For testing
 -export([erl_libs/2]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include_lib("wx/include/wx.hrl").
 -include("reltool.hrl").
 

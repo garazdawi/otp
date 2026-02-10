@@ -50,7 +50,7 @@
 -include("ssl_internal.hrl").
 -include("ssl_api.hrl").
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -export_type([certdb_ref/0,
               db_handle/0]).

@@ -176,7 +176,7 @@ startup is found in the `m:logger_disk_log_h` manual.
 -include("logger_internal.hrl").
 -include("logger_h_common.hrl").
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %% API
 -export([filesync/1]).

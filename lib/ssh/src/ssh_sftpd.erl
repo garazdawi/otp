@@ -33,7 +33,7 @@ Specifies a channel process to handle an SFTP subsystem.
 
 -behaviour(ssh_server_channel).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include("ssh.hrl").
 -include("ssh_xfer.hrl").

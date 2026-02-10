@@ -187,7 +187,7 @@ The possible values of `Reason` returned when an error occurs are:
 
 -dialyzer(no_improper_lists).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -define(CHUNKSIZE, 16384).
 -define(RUNSIZE, 524288).

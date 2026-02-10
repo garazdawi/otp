@@ -137,7 +137,7 @@ The directory could be changed with the option
 -include("ssh.hrl").
 -include("ssh_connect.hrl").
 -include_lib("public_key/include/public_key.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include_lib("kernel/include/inet.hrl").
 
 -export([start/0, start/1, stop/0,

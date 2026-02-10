@@ -29,7 +29,7 @@
 
 -include("ssl_internal.hrl").
 -include_lib("public_key/include/public_key.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include_lib("kernel/include/logger.hrl").
 
 -export([create/1, create_pem_cache/1, 

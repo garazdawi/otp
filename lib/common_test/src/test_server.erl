@@ -58,7 +58,7 @@
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 -include("test_server_internal.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 
 init_target_info() ->

@@ -37,7 +37,7 @@
 -export([splitter/3]).
 
 %% includes
--include_lib("kernel/include/file.hrl"). % #file_info
+-include("file.hrl"). % #file_info
 -include_lib("stdlib/include/zip.hrl").  % #zip_file, #zip_comment
 -include("zip_internal.hrl").            % #cd_file_header etc
 

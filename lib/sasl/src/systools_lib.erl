@@ -30,7 +30,7 @@
 -export([file_term2binary/2, read_term/1, read_term_from_stream/2,
 	 get_dirs/1, get_path/1, werror/2]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %% reads a single term form a file - convert it to binary and 
 %% dump it in a file

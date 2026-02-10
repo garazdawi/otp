@@ -26,7 +26,7 @@
 -moduledoc false.
 
 -include("ssh.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -export([default/1,
          get_value/5,  get_value/6,

@@ -33,7 +33,7 @@
 
 %% Includes
 -include_lib("wx/include/wx.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -include("observer_defs.hrl").
 

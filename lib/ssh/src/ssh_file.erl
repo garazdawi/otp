@@ -173,7 +173,7 @@ Clients uses all files stored in the [USERDIR](`m:ssh_file#USERDIR`) directory.
 -moduledoc(#{since => "OTP 21.2"}).
 
 -include_lib("public_key/include/public_key.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -include("ssh.hrl").
 

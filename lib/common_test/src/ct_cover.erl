@@ -31,7 +31,7 @@ This module exports help functions for performing code coverage analysis.
 
 -include("ct_util.hrl").
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -doc """
 Adds nodes to current cover test. Notice that this only works if cover support

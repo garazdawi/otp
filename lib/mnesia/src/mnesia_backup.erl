@@ -56,7 +56,7 @@
 -module(mnesia_backup).
 -moduledoc false.
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -export([
 	 %% Write access

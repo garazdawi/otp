@@ -84,7 +84,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -include("test_server_internal.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -define(suite_ext, "_SUITE").
 -define(log_ext, ".log.html").
 -define(src_listing_ext,  ".src.html").

@@ -42,7 +42,7 @@
 
 -include("systools.hrl").
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -define(XREF_SERVER, systools_make).
 

@@ -58,7 +58,7 @@ See also the
 %-define(debug, 1).
 -include("xmerl.hrl").		% record def, macros
 -include("xmerl_internal.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -compile({nowarn_hidden_doc, [xmerl_scanner/0]}).
 -doc hidden.
