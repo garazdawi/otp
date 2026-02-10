@@ -173,5 +173,8 @@ dialyzer: $(DIA_PLT)
                   ../ebin \
                   $(DIA_WARNINGS) \
                   --verbose
+
+ifneq ($(filter $(APP_TARGET),$(MAKECMDGOALS)),$(APP_TARGET))
 DEP_REL_TOP=../../../lib/
 include $(ERL_TOP)/make/dep.mk
+endif
