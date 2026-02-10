@@ -675,10 +675,7 @@ read_handle_info_1(Fd, TimeType) ->
         case read_handle_info_nif(FRef) of
             {error, Reason} -> {error, Reason};
             FileInfo ->
-                erlang:display(FileInfo),
-                AT = adjust_times(FileInfo, TimeType),
-                erlang:display(AT),
-                {ok, AT}
+                {ok, adjust_times(FileInfo, TimeType)}
         end
     catch
         error:_ -> {error, badarg}
