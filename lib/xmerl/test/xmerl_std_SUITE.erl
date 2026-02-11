@@ -31,6 +31,8 @@
 %%-include("xmerl.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
 
+-include_lib("kernel/include/file.hrl").
+
 -define(ibm_dir,"ibm").
 -define(sun_dir,"sun").
 -define(japanese_dir,"japanese").
@@ -9921,7 +9923,6 @@ rm_files([F|Fs]) ->
     end,
     rm_files(Fs).
 
--include_lib("kernel/include/file.hrl").
 change_mode(Files) ->
     change_mode3(Files).
 change_mode2(Dir)->
