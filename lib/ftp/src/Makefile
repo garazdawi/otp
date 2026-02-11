@@ -74,7 +74,7 @@ APPUP_TARGET= $(EBIN)/$(APPUP_FILE)
 # FLAGS
 # ----------------------------------------------------
 EXTRA_ERLC_FLAGS = +warn_unused_vars +nowarn_deprecated_catch
-ERL_COMPILE_FLAGS += -I$(ERL_TOP)/lib/kernel/src \
+ERL_COMPILE_FLAGS += -I../../kernel/include -I$(ERL_TOP)/lib/kernel/src \
 	-pz $(EBIN) \
 	-pz $(ERL_TOP)/lib/public_key/ebin \
 	$(EXTRA_ERLC_FLAGS) -DVSN=\"$(VSN)\"

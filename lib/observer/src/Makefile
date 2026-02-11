@@ -123,6 +123,7 @@ APPUP_TARGET= $(EBIN)/$(APPUP_FILE)
 # ----------------------------------------------------
 ERL_COMPILE_FLAGS += \
 	-I../include \
+	-I../../kernel/include \
 	-I ../../et/include \
 	-I ../../../libraries/et/include \
 	-I $(ERL_TOP)/lib \
