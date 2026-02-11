@@ -34,6 +34,8 @@
 -define(privdir, proplists:get_value(priv_dir, Conf)).
 -endif.
 
+-include_lib("kernel/include/file.hrl").
+
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
 	 init_per_group/2,end_per_group/2, 
 	 normal/1, error/1, cmp/1, cmp_literals/1, strip/1, strip_add_chunks/1, otp_6711/1,
@@ -548,8 +550,6 @@ otp_6711(Conf) when is_list(Conf) ->
     file:del_dir(Lib),
     file:del_dir(Dir),
     ok.
-
--include_lib("kernel/include/file.hrl").
 
 unwritable(Fname) ->
     {ok, Info} = file:read_file_info(Fname),
