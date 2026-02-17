@@ -368,7 +368,6 @@ extern void enif_ioq_destroy(ErlNifIOQueue *q);
 
 #  define ERL_NIF_API_FUNC_DECL(RET_TYPE, NAME, ARGS) extern RET_TYPE NAME ARGS
 #  include "erl_nif_api_funcs.h"
-#  undef ERL_NIF_API_FUNC_DECL
 #endif
 
 #if (defined(__WIN32__) || defined(_WIN32) || defined(_WIN32_))
@@ -445,10 +444,12 @@ ERL_NIF_INIT_EPILOGUE
 #endif
 
 #ifdef HAVE_USE_DTRACE
-ERL_NIF_TERM erl_nif_user_trace_s1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-ERL_NIF_TERM erl_nif_user_trace_i4s4(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-ERL_NIF_TERM erl_nif_user_trace_n(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_API_FUNC_DECL(ERL_NIF_TERM,erl_nif_user_trace_s1,(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]));
+ERL_NIF_API_FUNC_DECL(ERL_NIF_TERM,erl_nif_user_trace_i4s4,(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]));
+ERL_NIF_API_FUNC_DECL(ERL_NIF_TERM,erl_nif_user_trace_n,(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]));
 #endif
+
+#undef ERL_NIF_API_FUNC_DECL
 
 #endif /* __ERL_NIF_H__ */
 
