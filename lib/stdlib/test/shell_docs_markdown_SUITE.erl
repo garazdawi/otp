@@ -77,6 +77,7 @@
          inline_em_with_attrs_suffix/1, inline_link_with_attrs_suffix/1,
          inline_key_value_attrs_suffix/1, inline_all_attr_variants_suffix/1,
          block_key_value_attrs_line/1, block_all_attr_variants_line/1,
+         commonmark_spec_json_compat/1,
          list_format_with_italics_in_sentence/1, list_format_with_bold_in_sentence/1,
          new_lines_test/1, format_separator_test/1, list_with_format/1, multi_word_format_test/1,
          multiline_link/1, multiline_link_not_allowed/1, inline_mfa_link/1,
@@ -252,6 +253,7 @@ format_tests() ->
       inline_all_attr_variants_suffix,
       block_key_value_attrs_line,
       block_all_attr_variants_line,
+      commonmark_spec_json_compat,
       italic_in_middle_word_test,
       italic_with_colons,
       list_format_with_italics_in_sentence,
@@ -888,6 +890,101 @@ block_all_attr_variants_line(_Config) ->
   Result = [{p, [{class, ~"cls"}, {id, ~"ident"}, {title, ~"Guide"}], [~"Text before"]},
             p(~"Text after")],
   compile_and_compare(Input, Result).
+
+commonmark_spec_json_compat(Config) ->
+  DataDir = proplists:get_value(data_dir, Config),
+  SpecPath = filename:join(DataDir, ~"spec.json"),
+  SpecBin = element(2, file:read_file(SpecPath)),
+  SpecExamples = json:decode(SpecBin),
+
+  {Pass, Fail, FailingExamples} =
+      lists:foldl(
+        fun(Example, {P, F, Fails}) ->
+            Markdown = maps:get(~"markdown", Example),
+            ExpectedHtml = maps:get(~"html", Example),
+            ExampleId = maps:get(~"example", Example),
+            Parsed = shell_docs_markdown:parse_md(Markdown),
+            ActualHtml = markdown_ast_to_html(Parsed),
+            case ActualHtml =:= ExpectedHtml of
+                true ->
+                    {P + 1, F, Fails};
+                false ->
+                    {P, F + 1, [ExampleId | Fails]}
+            end
+        end, {0, 0, []}, SpecExamples),
+
+  ct:log("commonmark_spec_json_compat: pass=~p fail=~p total=~p",
+         [Pass, Fail, length(SpecExamples)]),
+  case Fail of
+      0 ->
+          ok;
+      _ ->
+          First = lists:sublist(lists:reverse(FailingExamples), 20),
+          ct:fail({commonmark_examples_failed, pass, Pass, fail, Fail,
+                   total, length(SpecExamples), first_failing_examples, First})
+  end.
+
+markdown_ast_to_html(Elems) when is_list(Elems) ->
+    iolist_to_binary([chunk_to_html(E) || E <- Elems]).
+
+chunk_to_html({pre, Attrs, [{code, CodeAttrs, Chunks}]}) ->
+    [~"<pre", attrs_to_html(Attrs), ~"><code", attrs_to_html(CodeAttrs), ~">",
+     inline_to_html(Chunks), ~"</code></pre>\n"];
+chunk_to_html({blockquote, Attrs, Chunks}) ->
+    [~"<blockquote", attrs_to_html(Attrs), ~">\n", markdown_ast_to_html(Chunks), ~"</blockquote>\n"];
+chunk_to_html({ul, Attrs, Chunks}) ->
+    [~"<ul", attrs_to_html(Attrs), ~">\n", markdown_ast_to_html(Chunks), ~"</ul>\n"];
+chunk_to_html({ol, Attrs, Chunks}) ->
+    [~"<ol", attrs_to_html(Attrs), ~">\n", markdown_ast_to_html(Chunks), ~"</ol>\n"];
+chunk_to_html({li, Attrs, Chunks}) ->
+    case has_block_children(Chunks) of
+        true ->
+            [~"<li", attrs_to_html(Attrs), ~">\n", markdown_ast_to_html(Chunks), ~"</li>\n"];
+        false ->
+            [~"<li", attrs_to_html(Attrs), ~">", inline_to_html(Chunks), ~"</li>\n"]
+    end;
+chunk_to_html({Tag, Attrs, Chunks}) when Tag =:= p; Tag =:= h1; Tag =:= h2; Tag =:= h3;
+                                         Tag =:= h4; Tag =:= h5; Tag =:= h6 ->
+    TagBin = atom_to_binary(Tag),
+    [~"<", TagBin, attrs_to_html(Attrs), ~">", inline_to_html(Chunks), ~"</", TagBin, ~">\n"].
+
+inline_to_html(Chunks) when is_list(Chunks) ->
+    [inline_chunk_to_html(C) || C <- Chunks].
+
+inline_chunk_to_html({i, Attrs, Chunks}) ->
+    [~"<em", attrs_to_html(Attrs), ~">", inline_to_html(Chunks), ~"</em>"];
+inline_chunk_to_html({em, Attrs, Chunks}) ->
+    [~"<em", attrs_to_html(Attrs), ~">", inline_to_html(Chunks), ~"</em>"];
+inline_chunk_to_html({code, Attrs, Chunks}) ->
+    [~"<code", attrs_to_html(Attrs), ~">", inline_to_html(Chunks), ~"</code>"];
+inline_chunk_to_html(Bin) when is_binary(Bin) ->
+    escape_html(Bin).
+
+attrs_to_html([]) ->
+    [];
+attrs_to_html(Attrs) ->
+    [~" ", lists:join(~" ", [attr_to_html(A) || A <- Attrs])].
+
+attr_to_html({Key, Value}) ->
+    [atom_to_binary(Key), ~"=\"", escape_attr(Value), ~"\""].
+
+escape_html(Bin) when is_binary(Bin) ->
+    R1 = binary:replace(Bin, ~"&", ~"&amp;", [global]),
+    R2 = binary:replace(R1, ~"<", ~"&lt;", [global]),
+    binary:replace(R2, ~">", ~"&gt;", [global]).
+
+escape_attr(Bin) when is_binary(Bin) ->
+    binary:replace(escape_html(Bin), ~"\"", ~"&quot;", [global]).
+
+has_block_children(Chunks) ->
+    lists:any(fun is_block_chunk/1, Chunks).
+
+is_block_chunk({Tag, _, _}) when Tag =:= p; Tag =:= blockquote; Tag =:= pre; Tag =:= ul; Tag =:= ol;
+                                 Tag =:= li; Tag =:= h1; Tag =:= h2; Tag =:= h3; Tag =:= h4; Tag =:= h5;
+                                 Tag =:= h6 ->
+    true;
+is_block_chunk(_) ->
+    false.
 
 markdown_attrs_ignored_in_inline_code(_Config) ->
   Input = ~"`{: #id .class }`",
