@@ -47,50 +47,33 @@
      fn a ->
        a.kind == :type
      end},
-    {"Checksum",
+    {"Processes and Ports",
      fn a ->
-       a[:category] == :checksum
-     end},
-    {"Code",
-     fn a ->
-       a[:category] == :code
+       a[:category] == :processes || a[:category] == :ports
      end},
     {"Distributed Erlang",
      fn a ->
        a[:category] == :distribution
      end},
-    {"Erlang Terms",
+    {"Time",
      fn a ->
-       a[:category] == :terms
+       a[:category] == :time
      end},
-    {"Processes and Ports",
+    {"Timers",
      fn a ->
-       a[:category] == :processes || a[:category] == :ports
-     end},
-    {"System",
-     fn a ->
-       a[:category] == :system
-     end},
-    {"Time and timers",
-     fn a ->
-       a[:category] == :time || a[:category] == :timer
+       a[:category] == :timer
      end},
     {"Tracing",
      fn a ->
        a[:category] == :trace
      end},
+    {"Functions",
+     fn a ->
+       a[:category] != :deprecated
+     end},
     {"Deprecated functions",
      fn a ->
        a[:category] == :deprecated
-     end},
-    {"Functions without group",
-     fn a ->
-       if a.module == :erlang do
-         IO.puts(:stderr, "Undefined group #{a[:category]} for #{a.module}:#{a.name}/#{a.arity}")
-         true
-       else
-         false
-       end
      end}
   ],
   ## The order of these items determine
