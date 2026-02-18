@@ -45,6 +45,7 @@
       :gen_fsm,
       :gen_server,
       :gen_statem,
+      :log_mf_h,
       :pool,
       :proc_lib,
       :supervisor,

@@ -47,26 +47,6 @@
      fn a ->
        a.kind == :type
      end},
-    {"Processes and Ports",
-     fn a ->
-       a[:category] == :processes || a[:category] == :ports
-     end},
-    {"Distributed Erlang",
-     fn a ->
-       a[:category] == :distribution
-     end},
-    {"Time",
-     fn a ->
-       a[:category] == :time
-     end},
-    {"Timers",
-     fn a ->
-       a[:category] == :timer
-     end},
-    {"Tracing",
-     fn a ->
-       a[:category] == :trace
-     end},
     {"Functions",
      fn a ->
        a[:category] != :deprecated
