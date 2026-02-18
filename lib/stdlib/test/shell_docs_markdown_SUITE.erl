@@ -35,24 +35,28 @@
 
 %% headings
 -export([h1_test/1, h2_test/1, h3_test/1, h4_test/1, h5_test/1, h6_test/1,
-         setext_h1/1, setext_h2/1]).
+         setext_h1/1, setext_h2/1, atx_h1_with_attrs_line/1, setext_h1_with_attrs_line/1]).
 
 %% quotes
 -export([single_line_quote_test/1, double_char_for_quote_test/1,
          ignore_three_spaces_before_quote/1, multiple_line_quote_test/1,
-         paragraph_in_between_test/1, quote_with_anchor_test/1, quote_without_space/1]).
+         paragraph_in_between_test/1, quote_with_anchor_test/1, quote_without_space/1,
+         quote_with_attrs_line/1]).
 
 %% paragraph
--export([paragraph_after_heading_test/1, quote_before_and_after_paragraph_test/1]).
+-export([paragraph_after_heading_test/1, quote_before_and_after_paragraph_test/1,
+         paragraph_with_attrs_line/1]).
 
 %% inline code
--export([single_line_code_test/1, multiple_line_code_test/1, paragraph_between_code_test/1]).
+-export([single_line_code_test/1, multiple_line_code_test/1, paragraph_between_code_test/1,
+         indented_code_with_attrs_line/1]).
 
 %% fence code
 -export([single_line_fence_code_test/1, multiple_line_fence_code_test/1,
          single_line_fence_code_no_language_test/1, single_line_fence_code_no_language_spaces_test/1,
          paragraph_between_fence_code_test/1, fence_code_ignores_link_format_test/1,
-         fence_code_with_spaces/1, fence_code_with_tabs/1]).
+         fence_code_with_spaces/1, fence_code_with_tabs/1,
+         fence_code_with_attrs_line/1]).
 
 %% br
 -export([start_with_br_test/1, multiple_br_followed_by_paragraph_test/1,
@@ -68,6 +72,11 @@
          unmatched_format_with_inline/1, unmatched_complex_format_with_inline/1,
          format_inline_link_with_inline/1, complex_inline_format/1, skip_symbols_in_inline/1,
          format_header_identifier/1, italic_in_middle_word_test/1, italic_with_colons/1,
+         markdown_attrs_line/1, markdown_attrs_ignored_in_inline_code/1,
+         inline_italic_with_attrs_suffix/1, inline_code_with_attrs_suffix/1,
+         inline_em_with_attrs_suffix/1, inline_link_with_attrs_suffix/1,
+         inline_key_value_attrs_suffix/1, inline_all_attr_variants_suffix/1,
+         block_key_value_attrs_line/1, block_all_attr_variants_line/1,
          list_format_with_italics_in_sentence/1, list_format_with_bold_in_sentence/1,
          new_lines_test/1, format_separator_test/1, list_with_format/1, multi_word_format_test/1,
          multiline_link/1, multiline_link_not_allowed/1, inline_mfa_link/1,
@@ -79,16 +88,18 @@
          singleton_bullet_list_followed_inner_paragraph3/1, multiline_bullet_indented_list/1, multiline_bullet_indented_list2/1,
          multiline_bullet_list/1, even_nested_bullet_list/1, odd_nested_bullet_list/1,
          complex_nested_bullet_list/1, complex_nested_bullet_list2/1, complex_nested_bullet_list3/1,
-         bullet_list_mix_with_number_list/1, inline_code_list/1, bullet_list_with_anchor/1]).
+         bullet_list_mix_with_number_list/1, inline_code_list/1, bullet_list_with_anchor/1,
+         bullet_list_with_attrs_line/1]).
 
 %% Numbered lists
 -export([singleton_numbered_list/1, singleton_numbered_list_followed_new_paragraph/1,
          singleton_numbered_list_with_format/1, singleton_numbered_list_followed_inner_paragraph/1,
          singleton_numbered_list_followed_inner_paragraph2/1, multiline_numbered_indented_list/1,
          multiline_numbered_indented_list2/1, multiline_numbered_list/1, even_nested_numbered_list/1,
-         odd_nested_numbered_list/1]).
+         odd_nested_numbered_list/1, numbered_list_with_attrs_line/1]).
 
--export([table_with_rows/1, table_with_escaped_bars/1, fake_table_test/1]).
+-export([table_with_rows/1, table_with_escaped_bars/1, fake_table_test/1,
+         table_with_attrs_line/1]).
 
 -define(ERLANG_HTML, ~"application/erlang+html").
 
@@ -164,7 +175,9 @@ header_tests() ->
       h5_test,
       h6_test,
       setext_h1,
-      setext_h2
+      setext_h2,
+      atx_h1_with_attrs_line,
+      setext_h1_with_attrs_line
     ].
 
 quote_tests() ->
@@ -174,18 +187,21 @@ quote_tests() ->
       multiple_line_quote_test,
       paragraph_in_between_test,
       quote_with_anchor_test,
-      quote_without_space
+      quote_without_space,
+      quote_with_attrs_line
     ].
 
 paragraph_tests() ->
     [ paragraph_after_heading_test,
-      quote_before_and_after_paragraph_test
+      quote_before_and_after_paragraph_test,
+      paragraph_with_attrs_line
     ].
 
 code_tests() ->
     [ single_line_code_test,
       multiple_line_code_test,
-      paragraph_between_code_test
+      paragraph_between_code_test,
+      indented_code_with_attrs_line
     ].
 
 fence_code_tests() ->
@@ -195,7 +211,8 @@ fence_code_tests() ->
    single_line_fence_code_no_language_spaces_test,
    paragraph_between_fence_code_test,
    fence_code_ignores_link_format_test,
-   fence_code_with_spaces, fence_code_with_tabs
+   fence_code_with_spaces, fence_code_with_tabs,
+   fence_code_with_attrs_line
   ].
 
 br_tests() ->
@@ -225,6 +242,16 @@ format_tests() ->
       complex_inline_format,
       skip_symbols_in_inline,
       format_header_identifier,
+      markdown_attrs_line,
+      markdown_attrs_ignored_in_inline_code,
+      inline_italic_with_attrs_suffix,
+      inline_code_with_attrs_suffix,
+      inline_em_with_attrs_suffix,
+      inline_link_with_attrs_suffix,
+      inline_key_value_attrs_suffix,
+      inline_all_attr_variants_suffix,
+      block_key_value_attrs_line,
+      block_all_attr_variants_line,
       italic_in_middle_word_test,
       italic_with_colons,
       list_format_with_italics_in_sentence,
@@ -257,7 +284,8 @@ bullet_list_tests() ->
       complex_nested_bullet_list3,
       bullet_list_mix_with_number_list,
       inline_code_list,
-      bullet_list_with_anchor
+      bullet_list_with_anchor,
+      bullet_list_with_attrs_line
     ].
 
 numbered_list_tests() ->
@@ -270,13 +298,15 @@ numbered_list_tests() ->
       multiline_numbered_indented_list2,
       multiline_numbered_list,
       even_nested_numbered_list,
-      odd_nested_numbered_list
+      odd_nested_numbered_list,
+      numbered_list_with_attrs_line
     ].
 
 table_tests() ->
   [ table_with_rows,
     table_with_escaped_bars,
-    fake_table_test].
+    fake_table_test,
+    table_with_attrs_line].
 
 convert_erlang_html(_Conf) ->
     Doc = #{~"en" => [{p, [], [~"Test"]}]},
@@ -403,6 +433,18 @@ setext_h2(_Config) ->
                p(~"New text")],
     compile_and_compare(Input, Result).
 
+atx_h1_with_attrs_line(_Config) ->
+    Input = ~"# Here\n{: #id .class }\n\nBody",
+    Result = [{h1, [{class, ~"class"}, {id, ~"id"}], [~"Here"]},
+              p(~"Body")],
+    compile_and_compare(Input, Result).
+
+setext_h1_with_attrs_line(_Config) ->
+    Input = ~"Here\n===\n{: #id .class }\n\nBody",
+    Result = [{h1, [{class, ~"class"}, {id, ~"id"}], [~"Here"]},
+              p(~"Body")],
+    compile_and_compare(Input, Result).
+
 single_line_quote_test(_Conf) ->
     Input = ~"# Here\n> This is a quote",
     Result = [ header(1, ~"Here"),
@@ -455,11 +497,23 @@ quote_without_space(_Config) ->
                                      p([~"The User's Guide has examples and a Getting Started section."])])],
     compile_and_compare(Input, Result).
 
+quote_with_attrs_line(_Config) ->
+    Input = ~"> First line\n> {: .info }\n> Second line",
+    Result = [blockquote([{p, [{class, ~"info"}], [~"First line"]},
+                          p(~"Second line")])],
+    compile_and_compare(Input, Result).
+
 paragraph_after_heading_test(_Conf) ->
     Input = ~"# Header 1\nThis is text\n\nBody content",
     Result = [ header(1, ~"Header 1"),
                p(~"This is text"),
                p(~"Body content")],
+    compile_and_compare(Input, Result).
+
+paragraph_with_attrs_line(_Config) ->
+    Input = ~"Paragraph text\n\n{: .lead }\n\nNext paragraph",
+    Result = [{p, [{class, ~"lead"}], [~"Paragraph text"]},
+              p(~"Next paragraph")],
     compile_and_compare(Input, Result).
 
 quote_before_and_after_paragraph_test(_Conf) ->
@@ -491,6 +545,12 @@ paragraph_between_code_test(_Conf) ->
     Result = [ p(~"This is a paragraph"),
                code(~"# Here\nThis is code\n    Nested Line\n"),
                p(~"Another paragraph")],
+    compile_and_compare(Input, Result).
+
+indented_code_with_attrs_line(_Config) ->
+    Input = ~"    code()\n\n{: .snippet }\n\nAfter",
+    Result = [{pre, [{class, ~"snippet"}], [{code, [], [~"code()\n"]}]},
+              p(~"After")],
     compile_and_compare(Input, Result).
 
 single_line_fence_code_test(_Conf) ->
@@ -559,6 +619,17 @@ fence_code_with_tabs(_Config) ->
   [foo](bar)
 ```",
     Result = [code(~"  [foo](bar)\n", [{class, ~"language-erlang"}])],
+    compile_and_compare(Input, Result).
+
+fence_code_with_attrs_line(_Config) ->
+    Input = ~"
+```erlang
+test() -> ok.
+```
+{: .erl-code }
+Next paragraph",
+    Result = [code(~"test() -> ok.\n", [{class, ~"language-erlang erl-code"}]),
+              p(~"Next paragraph")],
     compile_and_compare(Input, Result).
 
 start_with_br_test(_Conf) ->
@@ -801,6 +872,58 @@ format_header_identifier(_Config) ->
   Result = header(2, ~"Test  there"),
   compile_and_compare(Input, Result).
 
+markdown_attrs_line(_Config) ->
+  Input = ~"Text before\n{: #id .class }\nText after",
+  Result = p(~"Text before  Text after"),
+  compile_and_compare(Input, Result).
+
+block_key_value_attrs_line(_Config) ->
+  Input = ~"Text before\n\n{: title=Guide }\n\nText after",
+  Result = [{p, [{title, ~"Guide"}], [~"Text before"]},
+            p(~"Text after")],
+  compile_and_compare(Input, Result).
+
+block_all_attr_variants_line(_Config) ->
+  Input = ~"Text before\n\n{: .cls #ident title=\"Guide\" }\n\nText after",
+  Result = [{p, [{class, ~"cls"}, {id, ~"ident"}, {title, ~"Guide"}], [~"Text before"]},
+            p(~"Text after")],
+  compile_and_compare(Input, Result).
+
+markdown_attrs_ignored_in_inline_code(_Config) ->
+  Input = ~"`{: #id .class }`",
+  Result = p(inline_code(~"{: #id .class }")),
+  compile_and_compare(Input, Result).
+
+inline_italic_with_attrs_suffix(_Config) ->
+  Input = ~"_equal_{: #equal }",
+  Result = p({i, [{id, ~"equal"}], [~"equal"]}),
+  compile_and_compare(Input, Result).
+
+inline_code_with_attrs_suffix(_Config) ->
+  Input = ~"`term`{: .inline-code }",
+  Result = p({code, [{class, ~"inline-code"}], [~"term"]}),
+  compile_and_compare(Input, Result).
+
+inline_em_with_attrs_suffix(_Config) ->
+  Input = ~"**name**{: .n }",
+  Result = p({em, [{class, ~"n"}], [~"name"]}),
+  compile_and_compare(Input, Result).
+
+inline_link_with_attrs_suffix(_Config) ->
+  Input = ~"[label](https://example.org){: #ref }",
+  Result = p([~"label"]),
+  compile_and_compare(Input, Result).
+
+inline_key_value_attrs_suffix(_Config) ->
+  Input = ~"_label_{: title=\"Guide\" }",
+  Result = p({i, [{title, ~"Guide"}], [~"label"]}),
+  compile_and_compare(Input, Result).
+
+inline_all_attr_variants_suffix(_Config) ->
+  Input = ~"_label_{: .cls #ident title=Guide }",
+  Result = p({i, [{class, ~"cls"}, {id, ~"ident"}, {title, ~"Guide"}], [~"label"]}),
+  compile_and_compare(Input, Result).
+
 singleton_bullet_list(_Config) ->
     Input = ~"* One liner",
     Result = [ul([li(p(~"One liner"))])],
@@ -945,7 +1068,7 @@ inline_code_list(_Config) ->
   ```
   {: .class }
 """,
-    Result = [ul([li([ code(~"Code block\n  More code\n")])])],
+    Result = [ul([li([code(~"Code block\n  More code\n", [{class, ~"class"}])])])],
     compile_and_compare(Input, Result).
 
 %% this example could render the last line within the inner ul.
@@ -960,11 +1083,17 @@ bullet_list_with_anchor(_Config) ->
 
   - **`false`** - Disables time correction.
 """,
-    Result = [ul([li([ p([em(inline_code(~"+c true | false")),
+    Result = [ul([li([ p([{em, [{id, ~"+c"}], [inline_code(~"+c true | false")]},
                           ~" - Enables or disables time correction:"]),
                        ul([li([ p([ em(inline_code(~"true")), ~" - Enables time correction."])]),
                            li([ p(~"another example")])]),
                        ul([li(p([ em(inline_code(~"false")), ~" - Disables time correction."]))])])])],
+    compile_and_compare(Input, Result).
+
+bullet_list_with_attrs_line(_Config) ->
+    Input = ~"* Bullet list\n\n{: .list-note }\n\nAfter",
+    Result = [{ul, [{class, ~"list-note"}], [{li, [], [{p, [], [~"Bullet list"]}]}]},
+              p(~"After")],
     compile_and_compare(Input, Result).
 
 singleton_numbered_list(_Config) ->
@@ -1031,6 +1160,12 @@ odd_nested_numbered_list(_Config) ->
                  ])],
     compile_and_compare(Input, Result).
 
+numbered_list_with_attrs_line(_Config) ->
+    Input = ~"1. One liner\n\n{: .steps }\n\nAfter",
+    Result = [{ol, [{class, ~"steps"}], [{li, [], [{p, [], [~"One liner"]}]}]},
+              p(~"After")],
+    compile_and_compare(Input, Result).
+
 
 table_with_rows(_Config) ->
     Input = ~"""
@@ -1060,6 +1195,22 @@ fake_table_test(_Config) ->
 """,
     Result = [p([~"| ", em(~"JSON"), ~" | ", em(~"Erlang")])],
     compile_and_compare(NotTable, Result).
+
+table_with_attrs_line(_Config) ->
+    Input = ~"""
+| H1 | H2 |
+|----|----|
+| A  | B  |
+
+{: .data-table }
+
+After
+""",
+    Result = [{pre, [{class, ~"data-table"}], [{code, [{class, ~"table"}], [~"| H1 | H2 |\n",
+                                                                              ~"|----|----|\n",
+                                                                              ~"| A  | B  |\n"]}]},
+              p(~"After")],
+    compile_and_compare(Input, Result).
 
 header(Level, Text) when is_integer(Level) ->
     HeadingLevel = integer_to_list(Level),
