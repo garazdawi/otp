@@ -486,7 +486,7 @@ away, and then get it back if the receiver terminates.
 ```erlang
 1> Parent = self().
 2> Giver = spawn(fun() ->
-    T = ets:new(t, []).
+    T = ets:new(t, []),
     ets:give_away(T, Parent, gift)
   end).
 3> receive M -> M end.
@@ -555,20 +555,21 @@ correct type, a `badarg` exception is raised.
 
 ```erlang
 1> T = ets:new(t, []).
-2> ets:info(T)).
-[{id,T},
- {node,'nonode@nohost'},
- {owner,_},
- {memory,123},
- {protection,protected},
- {heir,none},
- {type,set},
- {keypos,1},
- {named_table,false},
- {size,0},
+2> lists:sort(ets:info(T)).
+[{compressed,false},
  {decentralized_counters,false},
- {compressed,false},
+ {heir,none},
+ {id,_},
+ {keypos,1},
+ {memory,312},
+ {name,t},
+ {named_table,false},
+ {node,_},
+ {owner,_},
+ {protection,protected},
  {read_concurrency,false},
+ {size,0},
+ {type,set},
  {write_concurrency,false}]
 ```
 """.
@@ -721,7 +722,6 @@ inserted in list order (from head to tail). That is, a subsequent call to
 
 ```erlang
 1> T = ets:new(t, []).
-[{k,1}]
 2> ets:insert(T, {k,1}).
 true
 3> ets:lookup(T, k).
@@ -786,11 +786,11 @@ only valid on the Erlang node where it was compiled by calling
 ## Examples
 
 ```erlang
-1> MS = ets:fun2ms(fun(X) -> X end)
+1> MS = ets:fun2ms(fun(X) -> X end).
 2> ets:is_compiled_ms(MS).
 false
-2> CMS = ets:match_spec_compile(MS).
-3> ets:is_compiled_ms(CMS).
+3> CMS = ets:match_spec_compile(MS).
+4> ets:is_compiled_ms(CMS).
 true
 ```
 """.
@@ -1022,7 +1022,7 @@ subsequent calls to `match/1`.
 2> ets:insert(T, [{a,1},{b,2}]).
 true
 3> ets:match(T, '$1', 1).
-{[{a,1}],_}
+{[[{a,1}]],_}
 ```
 """.
 -spec match(Table, Pattern, Limit) -> {[Match], Continuation} |
@@ -1141,9 +1141,9 @@ When there are no more objects in the table, `'$end_of_table'` is returned.
 2> ets:insert(T, [{1,a},{2,a},{3,a},{4,b}]).
 true
 3> {_, C} = ets:match_object(T, {'_', a}, 2).
-{[[{1,a}],[{2,a}]], _}
+{[{1,a},{2,a}], _}
 4> ets:match_object(C).
-{[[{3,a}]], '$end_of_table'}
+{[{3,a}], '$end_of_table'}
 ```
 """.
 -spec match_object(Continuation) -> {[Object], Continuation} |
@@ -1171,8 +1171,8 @@ exception is raised.
 ## Examples
 
 ```erlang
-1> MS = ets:fun2ms(fun(X) -> X end),
-2> CMS = ets:match_spec_compile(MS),
+1> MS = ets:fun2ms(fun(X) -> X end).
+2> CMS = ets:match_spec_compile(MS).
 3> [foo] = ets:match_spec_run([foo], CMS).
 [foo]
 ```
