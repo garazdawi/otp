@@ -897,28 +897,24 @@ commonmark_spec_json_compat(Config) ->
   SpecBin = element(2, file:read_file(SpecPath)),
   SpecExamples = json:decode(SpecBin),
 
-  {Pass, Fail, FailingExamples, FailingSections} =
+  {Pass, Fail, FailingExamples} =
       lists:foldl(
-        fun(Example, {P, F, Fails, SecFails}) ->
+        fun(Example, {P, F, Fails}) ->
             Markdown = maps:get(~"markdown", Example),
             ExpectedHtml = maps:get(~"html", Example),
             ExampleId = maps:get(~"example", Example),
-            Section = maps:get(~"section", Example),
             Parsed = shell_docs_markdown:parse_md(Markdown),
             ActualHtml = markdown_ast_to_html(Parsed),
             case ActualHtml =:= ExpectedHtml of
                 true ->
-                    {P + 1, F, Fails, SecFails};
+                    {P + 1, F, Fails};
                 false ->
-                    Count = maps:get(Section, SecFails, 0),
-                    {P, F + 1, [ExampleId | Fails], SecFails#{Section => Count + 1}}
+                    {P, F + 1, [ExampleId | Fails]}
             end
-        end, {0, 0, [], #{}}, SpecExamples),
+        end, {0, 0, []}, SpecExamples),
 
   ct:log("commonmark_spec_json_compat: pass=~p fail=~p total=~p",
          [Pass, Fail, length(SpecExamples)]),
-  ct:log("commonmark_spec_json_compat: failing sections=~p",
-         [lists:sort(maps:to_list(FailingSections))]),
   case Fail of
       0 ->
           ok;

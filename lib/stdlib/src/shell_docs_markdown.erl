@@ -691,14 +691,6 @@ process_format(<<"{:", Rest/binary>>, Fs, Buffer) ->
             process_format(Rest, Fs, merge_buffers([<<"{:">>], Buffer))
     end;
 
-%%
-%% Handle delimiter runs for emphasis/strong emphasis with CommonMark-like
-%% left/right-flanking checks.
-%%
-process_format(<<Format, _/binary>> = Line, Fs, Buffer)
-  when ?VALID_FORMAT(Format) ->
-    process_delimiter_run(Line, Fs, Buffer);
-
 %% This case deals with closing of formatting code on special characters,
 %% e.g.,"_Keys (ssh)_," should understand the last underscore as the closing
 %% of italics. This is not the general case, see example "ssh_added_here"
@@ -717,14 +709,14 @@ process_format(<<Char, Format, Char2, Rest/binary>>, [<<Format>>], Buffer)
 %% This case deals with ssh_added_here to not be consider italics,
 %% so no formatting of code should happen
 process_format(<<Char, Format, Char2, Rest/binary>>, Fs, Buffer)
-  when Format =:= $_ andalso
+  when ?VALID_FORMAT(Format) andalso
        (Char  =/= Format andalso Char  =/= $\s andalso Char  =/= $\n andalso not ?VALID_FORMAT(Char) andalso
         not ?VALID_PUNCTUATION(Char)) andalso
        (Char2 =/= ${ andalso Char2 =/= Format andalso Char2 =/= $\s andalso Char2 =/= $\n andalso not ?VALID_FORMAT(Char2) andalso
         not ?VALID_PUNCTUATION(Char2)) ->
     process_format(Rest, Fs, merge_buffers([<<Char, Format, Char2>>],  Buffer));
 process_format(<<Char, Format, Format, Char2, Rest/binary>>, Fs, Buffer)
-  when Format =:= $_ andalso
+  when ?VALID_FORMAT(Format) andalso
        (Char  =/= Format andalso Char  =/= $\s andalso Char  =/= $\n andalso not ?VALID_FORMAT(Char) andalso
         not ?VALID_PUNCTUATION(Char)) andalso
        (Char2 =/= ${ andalso Char2 =/= Format andalso Char2 =/= $\s andalso Char2 =/= $\n andalso not ?VALID_FORMAT(Char2) andalso
@@ -815,160 +807,6 @@ process_format(<<>>, [], Buffer) ->
     {ok, Buffer};
 process_format(<<>>, _Format, Buffer) ->
     {not_closed, Buffer}.
-
--spec process_delimiter_run(binary(), [binary()], shell_docs:chunk_elements()) ->
-          {not_closed | ok | binary(), shell_docs:chunk_elements()}.
-process_delimiter_run(<<Format, _/binary>> = Line, Fs, Buffer) ->
-    {RunLen, Continuation0} = take_delimiter_run(Line, Format, 0),
-    PrevChar = previous_char(Buffer),
-    NextChar = first_char(Continuation0),
-    CanOpen = delimiter_can_open(Format, PrevChar, NextChar),
-    CanClose = delimiter_can_close(Format, PrevChar, NextChar),
-    case maybe_current_delimiter_len(Fs, Format) of
-        DelimLen when DelimLen > 0, CanClose ->
-            close_delimiter_run(Format, RunLen, DelimLen, Continuation0, Fs, Buffer);
-        DelimLen when DelimLen > 0 ->
-            RunBin = delimiter_bin(Format, RunLen),
-            process_format(Continuation0, Fs, merge_buffers([RunBin], Buffer));
-        _ when CanOpen ->
-            open_delimiter_run(Format, RunLen, Continuation0, Fs, Buffer);
-        _ ->
-            RunBin = delimiter_bin(Format, RunLen),
-            process_format(Continuation0, Fs, merge_buffers([RunBin], Buffer))
-    end.
-
--spec close_delimiter_run(byte(), non_neg_integer(), non_neg_integer(), binary(),
-                          [binary()], shell_docs:chunk_elements()) ->
-          {not_closed | ok | binary(), shell_docs:chunk_elements()}.
-close_delimiter_run(Format, RunLen, DelimLen, Continuation0, Fs, Buffer) when RunLen >= DelimLen ->
-    Extra = RunLen - DelimLen,
-    Continuation = <<(delimiter_bin(Format, Extra))/binary, Continuation0/binary>>,
-    close_format(Continuation, Fs, Buffer);
-close_delimiter_run(Format, RunLen, _DelimLen, Continuation0, Fs, Buffer) ->
-    %% Not enough delimiters to close the current run, keep them as text.
-    RunBin = delimiter_bin(Format, RunLen),
-    process_format(Continuation0, Fs, merge_buffers([RunBin], Buffer)).
-
--spec open_delimiter_run(byte(), non_neg_integer(), binary(), [binary()], shell_docs:chunk_elements()) ->
-          {not_closed | ok | binary(), shell_docs:chunk_elements()}.
-open_delimiter_run(Format, RunLen, Continuation0, Fs, Buffer) ->
-    OpenLen = if RunLen >= 2 -> 2;
-                 true -> 1
-              end,
-    Continuation = <<(delimiter_bin(Format, RunLen - OpenLen))/binary, Continuation0/binary>>,
-    open_format(Continuation, delimiter_format(Format, OpenLen), Fs, Buffer).
-
--spec delimiter_format(byte(), 1 | 2) -> [binary()].
-delimiter_format(Format, 1) ->
-    [<<Format>>];
-delimiter_format(Format, 2) ->
-    [<<Format>>, <<Format>>].
-
--spec maybe_current_delimiter_len([binary()], byte()) -> 0 | 1 | 2.
-maybe_current_delimiter_len([<<Format>>, <<Format>>], Format) ->
-    2;
-maybe_current_delimiter_len([<<Format>>], Format) ->
-    1;
-maybe_current_delimiter_len(_, _) ->
-    0.
-
--spec take_delimiter_run(binary(), byte(), non_neg_integer()) -> {non_neg_integer(), binary()}.
-take_delimiter_run(<<Format, Rest/binary>>, Format, Acc) ->
-    take_delimiter_run(Rest, Format, Acc + 1);
-take_delimiter_run(Rest, _Format, Acc) ->
-    {Acc, Rest}.
-
--spec delimiter_can_open(byte(), none | byte(), none | byte()) -> boolean().
-delimiter_can_open(Format, Prev, Next) ->
-    LeftFlanking = is_left_flanking(Prev, Next),
-    RightFlanking = is_right_flanking(Prev, Next),
-    case Format of
-        $* ->
-            LeftFlanking;
-        $_ ->
-            LeftFlanking andalso (not RightFlanking orelse is_punctuation(Prev))
-    end.
-
--spec delimiter_can_close(byte(), none | byte(), none | byte()) -> boolean().
-delimiter_can_close(Format, Prev, Next) ->
-    LeftFlanking = is_left_flanking(Prev, Next),
-    RightFlanking = is_right_flanking(Prev, Next),
-    case Format of
-        $* ->
-            RightFlanking;
-        $_ ->
-            RightFlanking andalso (not LeftFlanking orelse is_punctuation(Next))
-    end.
-
--spec is_left_flanking(none | byte(), none | byte()) -> boolean().
-is_left_flanking(_Prev, Next) ->
-    not is_whitespace(Next) andalso
-    (not is_punctuation(Next) orelse is_whitespace(_Prev) orelse is_punctuation(_Prev)).
-
--spec is_right_flanking(none | byte(), none | byte()) -> boolean().
-is_right_flanking(Prev, Next) ->
-    not is_whitespace(Prev) andalso
-    (not is_punctuation(Prev) orelse is_whitespace(Next) orelse is_punctuation(Next)).
-
--spec previous_char(shell_docs:chunk_elements()) -> none | byte().
-previous_char([Head | _]) ->
-    last_char_of_element(Head);
-previous_char([]) ->
-    none.
-
--spec last_char_of_element(binary() | tuple()) -> none | byte().
-last_char_of_element(Bin) when is_binary(Bin) ->
-    last_char(Bin);
-last_char_of_element({_Tag, _Attrs, Children}) when is_list(Children) ->
-    last_char_of_children(lists:reverse(Children));
-last_char_of_element(_) ->
-    none.
-
--spec last_char_of_children([binary() | tuple()]) -> none | byte().
-last_char_of_children([Elem | Rest]) ->
-    case last_char_of_element(Elem) of
-        none -> last_char_of_children(Rest);
-        Char -> Char
-    end;
-last_char_of_children([]) ->
-    none.
-
--spec first_char(binary()) -> none | byte().
-first_char(<<>>) ->
-    none;
-first_char(<<Char, _/binary>>) ->
-    Char.
-
--spec last_char(binary()) -> none | byte().
-last_char(<<>>) ->
-    none;
-last_char(Bin) ->
-    binary:at(Bin, byte_size(Bin) - 1).
-
--spec delimiter_bin(byte(), non_neg_integer()) -> binary().
-delimiter_bin(_Format, 0) ->
-    <<>>;
-delimiter_bin(Format, Count) when Count > 0 ->
-    <<Format, (delimiter_bin(Format, Count - 1))/binary>>.
-
--spec is_whitespace(none | byte()) -> boolean().
-is_whitespace(none) ->
-    true;
-is_whitespace(Char) ->
-    Char =:= $\s orelse Char =:= $\t orelse Char =:= $\n orelse Char =:= $\r.
-
--spec is_punctuation(none | byte()) -> boolean().
-is_punctuation(none) ->
-    false;
-is_punctuation(Char) ->
-    Char =:= $! orelse Char =:= $" orelse Char =:= $# orelse Char =:= $$
-        orelse Char =:= $% orelse Char =:= $& orelse Char =:= $' orelse Char =:= $(
-        orelse Char =:= $\) orelse Char =:= $* orelse Char =:= $+ orelse Char =:= $,
-        orelse Char =:= $- orelse Char =:= $. orelse Char =:= $/ orelse Char =:= $:
-        orelse Char =:= $; orelse Char =:= $< orelse Char =:= $= orelse Char =:= $>
-        orelse Char =:= $? orelse Char =:= $@ orelse Char =:= $[ orelse Char =:= $\\
-        orelse Char =:= $] orelse Char =:= $^ orelse Char =:= $_ orelse Char =:= $`
-        orelse Char =:= ${ orelse Char =:= $| orelse Char =:= $} orelse Char =:= $~.
 
 -spec maybe_take_md_attr(binary()) -> {ok, chunk_element_attrs(), binary()} | no_match.
 maybe_take_md_attr(Line) when is_binary(Line) ->
