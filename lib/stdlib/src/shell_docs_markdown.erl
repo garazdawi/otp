@@ -61,43 +61,8 @@ parse_md(Doc) when is_binary(Doc) ->
     Doc1 = re:replace(Doc, ~b"\\[([^\\]]*?)\\]\\[(.*?)\\]", "\\1", [{return, binary}, global]),
 
     Lines = binary:split(Doc1, [<<"\r\n">>, <<"\n">>], [global]),
-    AST0 = parse_md(Lines, []),
-    AST = apply_md_attrs(AST0),
+    AST = parse_md(Lines, []),
     format_line(AST).
-
--spec apply_md_attrs(shell_docs:chunk_elements()) -> shell_docs:chunk_elements().
-apply_md_attrs(Elems) ->
-    lists:reverse(apply_md_attrs(Elems, [], true)).
-
-apply_md_attrs([], Acc, _AllowAttrs) ->
-    Acc;
-apply_md_attrs([{Tag, Attrs, Children} | Rest], Acc, AllowAttrs) ->
-    AllowChildAttrs = is_attr_container(Tag),
-    Children1 =
-        case AllowChildAttrs of
-            true -> apply_md_attrs(Children);
-            false -> Children
-        end,
-    apply_md_attrs(Rest, [{Tag, Attrs, Children1} | Acc], AllowAttrs);
-apply_md_attrs([Bin | Rest], Acc, true) when is_binary(Bin) ->
-    case parse_md_attr_line(Bin) of
-        {ok, Attrs} ->
-            apply_md_attrs(Rest, apply_attr_to_last_acc(Acc, Attrs), true);
-        error ->
-            apply_md_attrs(Rest, [Bin | Acc], true)
-    end;
-apply_md_attrs([Bin | Rest], Acc, false) when is_binary(Bin) ->
-    apply_md_attrs(Rest, [Bin | Acc], false).
-
--spec is_attr_container(chunk_element_type()) -> boolean().
-is_attr_container(Tag) ->
-    lists:member(Tag, [blockquote, ul, ol, li, dl, dt, dd, 'div']).
-
--spec apply_attr_to_last_acc(shell_docs:chunk_elements(), chunk_element_attrs()) -> shell_docs:chunk_elements().
-apply_attr_to_last_acc([Last | Rest], Attrs) ->
-    [maybe_merge_elem_attrs(Last, Attrs) | Rest];
-apply_attr_to_last_acc([], _Attrs) ->
-    [].
 
 %% Formats a line
 -spec format_line(Input :: shell_docs:chunk_elements()) -> Result :: shell_docs:chunk_elements().
@@ -119,7 +84,7 @@ format_line([{Tag, Attrs, List} | Rest], BlockSet0) ->
     end;
 format_line([Bin | Rest], BlockSet0) when is_binary(Bin) ->
     %% Ignores formatting these elements
-    Restriction = sets:from_list([p, h1, h2, h3, h4, h5, h6, pre]),
+    Restriction = sets:from_list([h1, h2, h3, h4, h5, h6, pre]),
 
     case sets:is_disjoint(Restriction, BlockSet0) of
         true ->
@@ -495,8 +460,8 @@ strip_spaces(Rest, Acc, _) ->
                               p | 'div' | br | pre | ul |
                               ol | li | dl | dt | dd |
                               h1 | h2 | h3 | h4 | h5 | h6.
--type chunk_element_attrs() :: [shell_docs:chunk_element_attr()].
--type code_element_attrs() :: chunk_element_attrs().
+-type chunk_element_attrs() :: [].
+-type code_element_attrs() :: [{class,unicode:chardata()}].
 -type quote() :: {blockquote, chunk_element_attrs(), shell_docs:chunk_elements()}.
 -type code() :: {pre, chunk_element_attrs(), [{code, code_element_attrs(), shell_docs:chunk_elements()}]}.
 -type p() :: {p, chunk_element_attrs(), shell_docs:chunk_elements()}.
@@ -542,76 +507,7 @@ process_quote([<<">> ", Line/binary>> | Rest], PrevLines) ->
 process_quote([<<">", Line/binary>> | Rest], PrevLines) ->
     process_quote([<<"> ", Line/binary>> | Rest], PrevLines);
 process_quote(Rest, PrevLines) ->
-    QuoteLines = lists:reverse(PrevLines),
-    QuoteElems = parse_quote_with_attrs(QuoteLines),
-    [quote(QuoteElems)] ++ parse_md(Rest, []).
-
--spec parse_quote_with_attrs([binary()]) -> shell_docs:chunk_elements().
-parse_quote_with_attrs(Lines) when is_list(Lines) ->
-    parse_quote_with_attrs(Lines, [], []).
-
-parse_quote_with_attrs([], [], AccElems) ->
-    AccElems;
-parse_quote_with_attrs([], CurrLines, AccElems) ->
-    AccElems ++ parse_md(lines_to_doc(CurrLines));
-parse_quote_with_attrs([Line | Rest], CurrLines, AccElems) ->
-    case parse_md_attr_line(Line) of
-        {ok, Attrs} ->
-            AccElems1 =
-                case CurrLines of
-                    [] ->
-                        apply_attrs_to_last(AccElems, Attrs);
-                    _ ->
-                        Elems = parse_md(lines_to_doc(CurrLines)),
-                        apply_attrs_to_last(AccElems ++ Elems, Attrs)
-                end,
-            parse_quote_with_attrs(Rest, [], AccElems1);
-        error ->
-            parse_quote_with_attrs(Rest, CurrLines ++ [Line], AccElems)
-    end.
-
--spec lines_to_doc([binary()]) -> binary().
-lines_to_doc(Lines) ->
-    iolist_to_binary(lists:join(<<"\n">>, Lines)).
-
--spec apply_attrs_to_last(shell_docs:chunk_elements(), chunk_element_attrs()) -> shell_docs:chunk_elements().
-apply_attrs_to_last([], _Attrs) ->
-    [];
-apply_attrs_to_last(Elems, Attrs) ->
-    Rev = lists:reverse(Elems),
-    [Last | RestRev] = Rev,
-    lists:reverse([maybe_merge_elem_attrs(Last, Attrs) | RestRev]).
-
--spec maybe_merge_elem_attrs(shell_docs:chunk_element(), chunk_element_attrs()) -> shell_docs:chunk_element().
-maybe_merge_elem_attrs({Tag, Attrs0, Chunks}, Attrs)
-  when is_atom(Tag), is_list(Attrs), is_list(Chunks) ->
-    {Tag, merge_attrs(Attrs0, Attrs), Chunks};
-maybe_merge_elem_attrs(Bin, Attrs) when is_binary(Bin) ->
-    case format_inline(create_paragraph(Bin)) of
-        {p, Attrs0, Chunks} ->
-            {p, merge_attrs(Attrs0, Attrs), Chunks};
-        Elem ->
-            Elem
-    end;
-maybe_merge_elem_attrs(Elem, _Attrs) ->
-    Elem.
-
--spec merge_attrs(chunk_element_attrs(), chunk_element_attrs()) -> chunk_element_attrs().
-merge_attrs(Attrs0, AttrsToMerge) ->
-    lists:foldl(fun merge_attr/2, Attrs0, AttrsToMerge).
-
-merge_attr({class, NewClass}, Attrs) ->
-    case lists:keytake(class, 1, Attrs) of
-        {value, {class, Existing}, Rest} ->
-            [{class, <<(unicode:characters_to_binary(Existing))/binary, " ",
-                       (unicode:characters_to_binary(NewClass))/binary>>} | Rest];
-        false ->
-            [{class, NewClass} | Attrs]
-    end;
-merge_attr({id, Id}, Attrs) ->
-    [{id, Id} | lists:keydelete(id, 1, Attrs)];
-merge_attr({Key, Value}, Attrs) ->
-    [{Key, Value} | lists:keydelete(Key, 1, Attrs)].
+    [quote(parse_md(lists:reverse(PrevLines), []))] ++ parse_md(Rest, []).
 
 -spec format_inline(Inline) -> Inline :: {chunk_element_type(), [], shell_docs:chunk_elements()} when
       Inline :: {chunk_element_type(), [], [binary()]}.
@@ -644,8 +540,11 @@ format_link(Bin) when is_binary(Bin) ->
     %% e.g., [`foo([ok])`](etc)
     R2 = re:replace(R1, ~b"\\[(.*)\\]\\((.*?)\\)", "\\1", Options),
 
+    %% remove anchors
+    R3 = re:replace(R2, ~b"{:[^}]*}", <<>>, Options),
+
     %% remove links of the form: `[foo]: erlang.org`
-    re:replace(R2, ~b"\\[([^\\]]*?)\\]: (.*?)", "", [{return, binary}, global]).
+    re:replace(R3, ~b"\\[([^\\]]*?)\\]: (.*?)", "", [{return, binary}, global]).
 
 -spec process_inline(Line, Format, Buffer) -> Result when
       Line :: binary(),
@@ -680,17 +579,6 @@ process_format(<<$\\, Char, Rest/binary>>, Fs, Buffer)
   when ?VALID_ESCAPED(Char) ->
     process_format(Rest, Fs, merge_buffers([<<Char>>],  Buffer));
 
-%%
-%% Handle markdown attributes syntax: `{: ... }`
-%%
-process_format(<<"{:", Rest/binary>>, Fs, Buffer) ->
-    case maybe_take_md_attr(Rest) of
-        {ok, Attrs, Continuation} ->
-            process_format(Continuation, Fs, maybe_merge_last_inline(Buffer, Attrs));
-        no_match ->
-            process_format(Rest, Fs, merge_buffers([<<"{:">>], Buffer))
-    end;
-
 %% This case deals with closing of formatting code on special characters,
 %% e.g.,"_Keys (ssh)_," should understand the last underscore as the closing
 %% of italics. This is not the general case, see example "ssh_added_here"
@@ -712,14 +600,14 @@ process_format(<<Char, Format, Char2, Rest/binary>>, Fs, Buffer)
   when ?VALID_FORMAT(Format) andalso
        (Char  =/= Format andalso Char  =/= $\s andalso Char  =/= $\n andalso not ?VALID_FORMAT(Char) andalso
         not ?VALID_PUNCTUATION(Char)) andalso
-       (Char2 =/= ${ andalso Char2 =/= Format andalso Char2 =/= $\s andalso Char2 =/= $\n andalso not ?VALID_FORMAT(Char2) andalso
+       (Char2 =/= Format andalso Char2 =/= $\s andalso Char2 =/= $\n andalso not ?VALID_FORMAT(Char2) andalso
         not ?VALID_PUNCTUATION(Char2)) ->
     process_format(Rest, Fs, merge_buffers([<<Char, Format, Char2>>],  Buffer));
 process_format(<<Char, Format, Format, Char2, Rest/binary>>, Fs, Buffer)
   when ?VALID_FORMAT(Format) andalso
        (Char  =/= Format andalso Char  =/= $\s andalso Char  =/= $\n andalso not ?VALID_FORMAT(Char) andalso
         not ?VALID_PUNCTUATION(Char)) andalso
-       (Char2 =/= ${ andalso Char2 =/= Format andalso Char2 =/= $\s andalso Char2 =/= $\n andalso not ?VALID_FORMAT(Char2) andalso
+       (Char2 =/= Format andalso Char2 =/= $\s andalso Char2 =/= $\n andalso not ?VALID_FORMAT(Char2) andalso
         not ?VALID_PUNCTUATION(Char2)) ->
     process_format(Rest, Fs, merge_buffers([<<Char, Format, Char2>>],  Buffer));
 
@@ -808,20 +696,6 @@ process_format(<<>>, [], Buffer) ->
 process_format(<<>>, _Format, Buffer) ->
     {not_closed, Buffer}.
 
--spec maybe_take_md_attr(binary()) -> {ok, chunk_element_attrs(), binary()} | no_match.
-maybe_take_md_attr(Line) when is_binary(Line) ->
-    case binary:match(Line, <<"}">>) of
-        {Pos, 1} ->
-            AttrPart = binary:part(Line, 0, Pos),
-            Continuation = binary:part(Line, Pos + 1, byte_size(Line) - Pos - 1),
-            case parse_md_attr_tokens(AttrPart) of
-                {ok, Attrs} -> {ok, Attrs, Continuation};
-                error -> no_match
-            end;
-        nomatch ->
-            no_match
-    end.
-
 %%
 %% Parses text until it finds a closing $`
 -spec code_inliner(Line, Buffer) -> {ReturnedBuffer, Rest} when
@@ -900,12 +774,6 @@ close_format(Continuation, ClosingFormat, Buffer) ->
 merge_buffers(EndBuffer, BeginningBuffer) ->
     lists:foldr(fun compact_buffers/2, [], EndBuffer ++ BeginningBuffer).
 
--spec maybe_merge_last_inline(shell_docs:chunk_elements(), chunk_element_attrs()) -> shell_docs:chunk_elements().
-maybe_merge_last_inline([Last | Rest], Attrs) when is_tuple(Last) ->
-    [maybe_merge_elem_attrs(Last, Attrs) | Rest];
-maybe_merge_last_inline(Buffer, _Attrs) ->
-    Buffer.
-
 compact_buffers(X, []) when is_binary(X); is_tuple(X) ->
     [X];
 compact_buffers(X, Acc) when is_tuple(X) ->
@@ -954,9 +822,7 @@ process_fence_code([], Block, Leading) ->
     end;
 process_fence_code([<<"```">> | Rest], Block, Leading) ->
     %% close block
-    [Code0] = process_fence_code([], Block, Leading),
-    {Code1, Rest1} = maybe_apply_fence_attrs(Code0, Rest),
-    [Code1] ++ parse_md(Rest1, []);
+    process_fence_code([], Block, Leading) ++ parse_md(Rest, []);
 process_fence_code([Line | Rest], Block, Leading) ->
     {Stripped, _} = strip_spaces(Line, 0, infinity),
     maybe
@@ -967,79 +833,6 @@ process_fence_code([Line | Rest], Block, Leading) ->
         _ ->
             process_fence_code(Rest, [Line | Block], Leading)
     end.
-
--spec maybe_apply_fence_attrs(code(), [binary()]) -> {code(), [binary()]}.
-maybe_apply_fence_attrs(Code, [Line | Rest]) ->
-    case parse_md_attr_line(Line) of
-        {ok, Attrs} ->
-            {merge_code_class(Code, Attrs), Rest};
-        error ->
-            {Code, [Line | Rest]}
-    end;
-maybe_apply_fence_attrs(Code, []) ->
-    {Code, []}.
-
--spec parse_md_attr_line(binary()) -> {ok, chunk_element_attrs()} | error.
-parse_md_attr_line(Line) when is_binary(Line) ->
-    case re:run(Line, ~b"^\\s*\\{:\\s*([^}]*)\\}\\s*$", [{capture, all_but_first, binary}]) of
-        {match, [Attrs]} ->
-            parse_md_attr_tokens(Attrs);
-        _ ->
-            error
-    end.
-
--spec parse_md_attr_tokens(binary()) -> {ok, chunk_element_attrs()} | error.
-parse_md_attr_tokens(Attrs) ->
-    Tokens = [Token || Token <- binary:split(Attrs, [<<"\s">>, <<"\t">>], [global]),
-                       Token =/= <<>>],
-    Classes = [Class || <<".", Class/binary>> <- Tokens, Class =/= <<>>],
-    Ids = [Id || <<"#", Id/binary>> <- Tokens, Id =/= <<>>],
-    KeyVals0 = lists:filtermap(fun parse_md_attr_key_value/1, Tokens),
-    Attrs0 =
-        case Classes of
-            [] -> [];
-            _ -> [{class, iolist_to_binary(lists:join(<<" ">>, Classes))}]
-        end,
-    Attrs1 =
-        case Ids of
-            [] -> Attrs0;
-            _ -> [{id, lists:last(Ids)} | Attrs0]
-        end,
-    Attrs2 = lists:foldl(fun merge_attr/2, Attrs1, KeyVals0),
-    case Attrs2 of
-        [] -> error;
-        _ -> {ok, Attrs2}
-    end.
-
-parse_md_attr_key_value(Token) ->
-    case binary:split(Token, <<"=">>) of
-        [Key, Value] when Key =/= <<>>, Value =/= <<>> ->
-            {true, {binary_to_atom(Key, utf8), strip_attr_quotes(Value)}};
-        _ ->
-            false
-    end.
-
-strip_attr_quotes(<<$", Rest/binary>>) ->
-    case split_last_byte(Rest) of
-        {Body, $"} -> Body;
-        _ -> <<$", Rest/binary>>
-    end;
-strip_attr_quotes(<<$', Rest/binary>>) ->
-    case split_last_byte(Rest) of
-        {Body, $'} -> Body;
-        _ -> <<$', Rest/binary>>
-    end;
-strip_attr_quotes(Value) ->
-    Value.
-
-split_last_byte(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
-    Size = byte_size(Bin),
-    {binary:part(Bin, 0, Size - 1), binary:at(Bin, Size - 1)}.
-
--spec merge_code_class(code(), chunk_element_attrs()) -> code().
-merge_code_class({pre, PreAttrs, [{code, CodeAttrs0, Chunks}]}, Attrs) ->
-    CodeAttrs = merge_attrs(CodeAttrs0, Attrs),
-    {pre, PreAttrs, [{code, CodeAttrs, Chunks}]}.
 
 -spec process_comment(Line :: [binary()]) -> [binary()].
 process_comment([]) ->
