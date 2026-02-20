@@ -30,7 +30,7 @@ Using `ct_doctest` allows you to ensure that the examples in your documentation 
 correct, up-to-date and also stylistically consistent. It can be used in Common Test
 suites to validate documentation examples as part of your test runs.
 
-Normal usage is to call `module/2` with a module and optional bindings. For example:
+Normal usage is to call `module/1` with a module name. For example:
 
 ```
 all() ->
@@ -141,12 +141,18 @@ Any variable defined in the examples will be available in the following prompts.
 ## Prebound variables:
 
 If the documentation examples rely on certain variables being prebound, you can provide these
-bindings when calling `module/2`. For example, if you have a module doc that uses a variable `Prebound`,
-you can set it up like this:
+bindings in the `bindings` option when calling `module/2`. For example, if you have a module
+doc that uses a variable `Prebound`, you can set it up like this:
 
 ```
 1> Prebound.
 hello
+```
+
+```
+binding_test(_Config) ->
+    Prebound = erl_eval:add_binding('Prebound', hello, erl_eval:new_bindings()),
+    ct_doctest:module(my_module, [{bindings, [{module_doc, Prebound}]}]).
 ```
 
 ## Ignore result:
@@ -253,6 +259,23 @@ should not be tested
 -type doc_binding() :: {{function | type | callback, atom(), non_neg_integer()}
                          | module_doc, erl_eval:binding_struct()}.
 
+-doc "HTML representation of parsed markdown, as returned by the markdown parser function.".
+-type html() :: {HtmlTag :: atom(),
+                 HtmlAttr :: [{Key :: unicode:unicode_binary(),
+                               Value :: unicode:unicode_binary()}],
+                 HtmlContent :: [html()]}.
+
+-doc """
+Options for doctest execution.
+
+`markdown_parser` can be used to plug in an external markdown parser. The
+parser callback must be a `fun/1` and return a list of `t:html()` elements.
+`ct_doctest` will recursively look for any `code` elements with no `class` attribute
+or it containing `language-erlang` and run those as doctests. If no parser is provided
+a built-in markdown parser will be used.
+""".
+-type options() :: [{markdown_parser, fun((binary()) -> [html()] | {error, term()}) }].
+
 -doc #{equiv => module(Module, [])}.
 -spec module(module()) ->
           ok | {comment, string()} | {error, term()} | no_return().
@@ -262,16 +285,20 @@ module(Module) ->
 -doc """
 Run doctests for a module with markdown EEP-48 docs.
 
-`Bindings` can provide prebound variables for a specific doc entry. Use
+`bindings` can provide prebound variables for a specific doc entry. Use
 `module_doc` for module docs and `{function, Name, Arity}` (or corresponding
 `type`/`callback` keys) for entry-specific bindings.
+
+See `options/0` for available options.
 """.
--spec module(module(), [doc_binding()]) ->
+-spec module(module(), [{bindings, [doc_binding()]}] | options()) ->
           ok | {comment, string()} | {error, term()} | no_return().
-module(Module, Bindings) ->
+module(Module, Options) ->
+    Bindings = options_bindings(Options),
+    ParserFun = options_markdown_parser(Options),
     case code:get_doc(Module) of
         {ok, #docs_v1{ format = ~"text/markdown" } = Docs} ->
-            run_module_docs(Docs, Bindings);
+            run_module_docs(Docs, Bindings, ParserFun);
         {ok, _} ->
             {error, unsupported_format};
         Else ->
@@ -289,17 +316,23 @@ Run doctests for markdown file(s).
 
 `PathPattern` is passed through `filelib:wildcard/1`, so wildcard patterns such
 as `"docs/*.md"` are supported.
+
+`bindings` can provide prebound variables for all matched files.
+
+See `options/0` for available options.
 """.
--spec file(file:filename_all(), erl_eval:binding_struct()) ->
-          ok | {error, term()} | no_return().
-file(PathPattern0, Bindings) ->
+-spec file(file:filename_all(), [{bindings, erl_eval:binding_struct()}] | options()) ->
+          ok | {comment, string()} | {error, term()} | no_return().
+file(PathPattern0, Options) ->
+    Bindings = options_bindings(Options),
+    ParserFun = options_markdown_parser(Options),
     PathPattern = filename_pattern(PathPattern0),
     Paths = filelib:wildcard(PathPattern),
     case Paths of
         [] ->
             {error, {no_files_matched, PathPattern0}};
         _ ->
-            run_files(Paths, Bindings)
+            run_files(Paths, Bindings, ParserFun)
     end.
 
 filename_pattern(PathPattern) when is_binary(PathPattern) ->
@@ -307,8 +340,8 @@ filename_pattern(PathPattern) when is_binary(PathPattern) ->
 filename_pattern(PathPattern) ->
     PathPattern.
 
-run_files(Paths, Bindings) ->
-    Res = [parse_file(Path, Bindings) || Path <- Paths],
+run_files(Paths, Bindings, ParserFun) ->
+    Res = [parse_file(Path, Bindings, ParserFun) || Path <- Paths],
     Errors = [{file, Path, E} || {Path, {error, E}} <- Res],
     _ = [print_error(E) || E <- Errors],
     case length(Errors) of
@@ -318,11 +351,11 @@ run_files(Paths, Bindings) ->
             error({N, errors})
     end.
 
-parse_file(Path, Bindings) ->
+parse_file(Path, Bindings, ParserFun) ->
     case file:read_file(Path) of
         {ok, Markdown} ->
             try
-                Items = inspect(shell_docs_markdown:parse_md(Markdown)),
+                Items = inspect(parse_markdown(Markdown, ParserFun)),
                 _ = run_items(Items, Bindings),
                 {Path, ok}
             catch
@@ -336,11 +369,11 @@ parse_file(Path, Bindings) ->
             {Path, Error}
     end.
 
-run_module_docs(#docs_v1{ docs = Docs, module_doc = MD }, Bindings) ->
-    MDRes = lists:append([parse_and_run(module_doc, MD, Bindings)]),
+run_module_docs(#docs_v1{ docs = Docs, module_doc = MD }, Bindings, ParserFun) ->
+    MDRes = lists:append([parse_and_run(module_doc, MD, Bindings, ParserFun)]),
     Res =
         lists:append(
-          [parse_and_run(KFA, EntryDocs, Bindings) ||
+          [parse_and_run(KFA, EntryDocs, Bindings, ParserFun) ||
               {KFA, _Anno, _Sig, EntryDocs, _Meta} <- Docs,
               is_map(EntryDocs)]),
     Errors =
@@ -377,15 +410,15 @@ print_error({{Name,Arity},{Message,Line,Context}}) ->
 print_error({{Name,Arity},{Message,Context}}) ->
     io:format("~p/~p: ~ts~n~ts~n", [Name,Arity,Context,Message]).
 
-parse_and_run(_, hidden, _) -> [];
-parse_and_run(_, none, _) -> [];
-parse_and_run(KFA, #{} = Ds, Bindings) ->
-    [do_parse_and_run(KFA, D, Bindings) || _ := D <- Ds].
+parse_and_run(_, hidden, _, _) -> [];
+parse_and_run(_, none, _, _) -> [];
+parse_and_run(KFA, #{} = Ds, Bindings, ParserFun) ->
+    [do_parse_and_run(KFA, D, Bindings, ParserFun) || _ := D <- Ds].
 
-do_parse_and_run(KFA, Docs, Bindings) ->
+do_parse_and_run(KFA, Docs, Bindings, ParserFun) ->
     try
         InitialBindings = proplists:get_value(KFA, Bindings, erl_eval:new_bindings()),
-        Items = inspect(shell_docs_markdown:parse_md(Docs)),
+        Items = inspect(parse_markdown(Docs, ParserFun)),
         {KFA, run_items(Items, InitialBindings)}
     catch
         throw:{error,_}=Error ->
@@ -399,8 +432,10 @@ run_items(Tests, Bindings) ->
     lists:flatmap(fun(Test) -> test_item(Test, Bindings) end, Tests).
 
 test_item({pre,[],[{code,Attrs,[Code]}]}, Bindings) when is_binary(Code) ->
-    case proplists:get_value(class, Attrs, ~"language-erlang") of
-        ~"language-erlang" ->
+    Class = proplists:get_value(class, Attrs, ~"language-erlang"),
+    case lists:member(~"language-erlang",
+                      string:split(unicode:characters_to_binary(Class), ~" ", all)) of
+        true ->
             run_test(Code, Bindings);
         _ ->
             []
@@ -409,6 +444,30 @@ test_item({_Tag,_Attr, Content}, Bindings) ->
     run_items(Content, Bindings);
 test_item(Header, _Bindings) when is_binary(Header) ->
     [].
+
+parse_markdown(Markdown, ParserFun) ->
+    normalize_markdown_result(apply_markdown_parser(ParserFun, Markdown)).
+
+apply_markdown_parser(ParserFun, Markdown) when is_function(ParserFun, 1) ->
+    ParserFun(Markdown);
+apply_markdown_parser(Parser, _Markdown) ->
+    throw({error, {unsupported_markdown_parser, Parser}}).
+
+normalize_markdown_result({ok, Ast}) ->
+    Ast;
+normalize_markdown_result({ok, Ast, _Warnings}) ->
+    Ast;
+normalize_markdown_result({error, Reason}) ->
+    throw({error, {markdown_parser_error, Reason}});
+normalize_markdown_result(Ast) ->
+    Ast.
+
+options_bindings(Options) ->
+    proplists:get_value(bindings, Options, []).
+
+options_markdown_parser(Options) ->
+    proplists:get_value(markdown_parser, Options,
+                        fun shell_docs_markdown:parse_md/1).
 
 -define(RE_CAPTURE, ~"(?:(?'line_number'[0-9]+)(?'prefix'>\s)|(?'prefix'%))?(?'content'.*)").
 -define(RE_OPTIONS, [{capture, [line_number, prefix, content] ,binary}, dupnames]).

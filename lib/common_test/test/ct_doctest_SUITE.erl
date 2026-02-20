@@ -28,6 +28,7 @@
 -export([api_branches/1, module_result_modes/1,
          docs_filtering_and_error_formatting/1, parser_prompt_parsing/1,
          runtime_failure_matching/1, parse_rewrite_helpers/1, file_support/1,
+         external_markdown_parser/1,
          integration_smoke/1]).
 
 suite() ->
@@ -41,6 +42,7 @@ all() ->
      runtime_failure_matching,
      parse_rewrite_helpers,
      file_support,
+     external_markdown_parser,
      integration_smoke].
 
 init_per_suite(Config) ->
@@ -90,15 +92,25 @@ parse_rewrite_helpers(_Config) ->
 file_support(Config) ->
     DataDir = ?config(data_dir, Config),
     Bindings = erl_eval:add_binding('Prebound', hello, erl_eval:new_bindings()),
-    ok = ct_doctest:file(filename:join(DataDir, "doctest_ok.md"), Bindings),
-    ok = ct_doctest:file(filename:join(DataDir, "doctest_ok_*.md"), Bindings),
+    Opts = [{bindings, Bindings}],
+    ok = ct_doctest:file(filename:join(DataDir, "doctest_ok.md"), Opts),
+    ok = ct_doctest:file(filename:join(DataDir, "doctest_ok_*.md"), Opts),
     expect_error_count(filename:join(DataDir, "doctest_fail.md"), [], 1),
     {error, {no_files_matched, _}} = ct_doctest:file(filename:join(DataDir, "missing_*.md"), []).
+
+external_markdown_parser(Config) ->
+    DataDir = ?config(data_dir, Config),
+    ParserOpt = {markdown_parser, fun ct_doctest_external_parser_mod:parse_md/1},
+    Prebound = erl_eval:add_binding('Prebound', hello, erl_eval:new_bindings()),
+    ok = ct_doctest:module(ct_doctest_no_tests_mod,
+                           [ParserOpt, {bindings, [{{function, f, 0}, Prebound}]}]),
+    ok = ct_doctest:file(filename:join(DataDir, "doctest_fail.md"),
+                         [ParserOpt, {bindings, Prebound}]).
 
 integration_smoke(_Config) ->
     Bindings = [{module_doc,
                  erl_eval:add_binding('Prebound', hello, erl_eval:new_bindings())}],
-    ct_doctest:module(ct_doctest, Bindings).
+    ct_doctest:module(ct_doctest, [{bindings, Bindings}]).
 
 compile_fixture(File, OutDir) ->
     Module = list_to_atom(filename:basename(File, ".erl")),
