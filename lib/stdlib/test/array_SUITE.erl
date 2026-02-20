@@ -821,7 +821,7 @@ import_export(_Config) ->
     ok.
 
 doctests(Config) when is_list(Config) ->
-    ct_doctest:test(array, []).
+    ct_doctest:module(array, []).
 
 
 new_test(Config) when is_list(Config) -> new_test_(), ok.
