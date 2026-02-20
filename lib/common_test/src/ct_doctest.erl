@@ -36,7 +36,7 @@ Normal usage is to call `module/2` with a module and optional bindings. For exam
 all() ->
     [doctests].
 doctests(_Config) ->
-    ct_doctest:module(my_module, []).
+    ct_doctest:module(my_module).
 ```
 
 The doctest parser looks for examples that are formatted as if they were run in the
@@ -247,11 +247,17 @@ should not be tested
 
 -include_lib("kernel/include/eep48.hrl").
 
--export([module/2, file/2]).
+-export([module/1, module/2, file/1, file/2]).
 
 -doc "Variable bindings passed as option to `module/2` or `file/2`.".
 -type doc_binding() :: {{function | type | callback, atom(), non_neg_integer()}
                          | module_doc, erl_eval:binding_struct()}.
+
+-doc #{equiv => module(Module, [])}.
+-spec module(module()) ->
+          ok | {comment, string()} | {error, term()} | no_return().
+module(Module) ->
+    module(Module, []).
 
 -doc """
 Run doctests for a module with markdown EEP-48 docs.
@@ -271,6 +277,12 @@ module(Module, Bindings) ->
         Else ->
             Else
     end.
+
+-doc #{equiv => file(PathPattern0, [])}.
+-spec file(file:filename_all()) ->
+          ok | {error, term()} | no_return().
+file(PathPattern0) ->
+    file(PathPattern0, []).
 
 -doc """
 Run doctests for markdown file(s).
