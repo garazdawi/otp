@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2026. All Rights Reserved.
+%% Copyright Ericsson AB 2025-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,37 +19,22 @@
 %%
 %% %CopyrightEnd%
 %%
--module(records_SUITE).
--export([all/0, suite/0,
-         init_per_suite/1, end_per_suite/1,
-	 init_per_group/2, end_per_group/2,
-         init_per_testcase/2, end_per_testcase/2]).
--export([doctests/1]).
+
+-module(ct_doctest_SUITE).
+-moduledoc false.
+
+-export([all/0, suite/0, doctests/1]).
 
 suite() ->
-    [{ct_hooks,[ts_install_cth]},
-     {timetrap,{minutes,1}}].
+    [{timetrap, {minutes, 1}}].
 
 all() ->
     [doctests].
 
-init_per_suite(Config) ->
-    Config.
-
-end_per_suite(_Config) ->
-    ok.
-
-init_per_group(_GroupName, Config) ->
-    Config.
-
-end_per_group(_GroupName, Config) ->
-    Config.
-
-init_per_testcase(_Case, Config) ->
-    Config.
-
-end_per_testcase(_Case, _Config) ->
-    ok.
-
 doctests(_Config) ->
-   ct_doctest:test(records, []).
+    ct_doctest:test(
+      ct_doctest,
+      [
+       {module_doc, erl_eval:add_binding('Prebound', hello,
+                                         erl_eval:new_bindings())}
+      ]).

@@ -8326,7 +8326,7 @@ ms_excessive_nesting(Config) when is_list(Config) ->
     {comment, "match_spec_compile() "++ENMSC++"; select_replace(_,[ordered_set]) "++SRT++"; select_replace(_,[set]) "++SRH}.
 
 doctests(_Config) ->
-    shell_docs:test(ets, []).
+    ct_doctest:test(ets, []).
 
 %% The following help functions are used by
 %% throughput_benchmark. They are declared on the top level beacuse
