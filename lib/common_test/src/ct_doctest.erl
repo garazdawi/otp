@@ -19,15 +19,42 @@
 %% 
 %% %CopyrightEnd%
 %%
--module(shell_docs_test).
--moduledoc false.
+-module(ct_doctest).
+-moduledoc """"
+`ct_doctest` runs doctests embedded in EEP-48 markdown documentation, normally
+written using [documentation attributes](`e:system:documentation.md`).
 
--include_lib("kernel/include/eep48.hrl").
+Using `ct_doctest` allows you to ensure that the examples in your documentation are
+correct, up-to-date and also stylistically consistent. It can be used in Common Test
+suites to validate documentation examples as part of your test runs.
 
--export([module/2]).
+Normal usage is to call `test/2` with a module and optional bindings. For example:
 
+```
+all() ->
+    [doctests].
+doctests(_Config) ->
+    ct_doctest:test(my_module, []).
+```
+
+The doctest parser looks for examples that are formatted as if they were run in the
+Erlang shell, using prompts of the form `N>`, where `N` starts at `1` for each block.
+The expected output is written on the lines following the prompt. For example:
+
+````
 -doc """
-Here are some examples of what should work:
+This is an example of a doctest:
+
+```
+1> 1+2.
+3
+```
+""".
+````
+
+Below are examples of supported formats for the code blocks in the documentation. The parser
+is quite flexible and supports various styles, including multi-line expressions, comments,
+and even prebound variables.
 
 ## Basic example:
 
@@ -38,14 +65,25 @@ Here are some examples of what should work:
 
 ## Basic example using erlang code:
 
-```erlang
+This example uses an explicit erlang code block. That is
+
+    ```erlang
+    1> 1+2.
+    3
+    ```
+
+instead of the previous one which is a generic code block. Both formats are supported.
+
+```
 1> 1+2.
 3
 ```
 
 ## Multi-line prompt example:
 
-```erlang
+Use multiline prompts for expressions that span multiple lines by starting the prompt with `>` and indenting the continuation lines. For example:
+
+```
 1> 1
   +
   2
@@ -55,7 +93,9 @@ Here are some examples of what should work:
 
 ## Multi-line with comma example:
 
-```erlang
+It is possible to have multiple expressions in the same prompt, separated by commas. For example:
+
+```
 1> A = 1,
   A + 2.
 3
@@ -63,7 +103,9 @@ Here are some examples of what should work:
 
 ## Multi-match example:
 
-```erlang
+The expected output can span multiple lines. For example:
+
+```
 1> [1, 2].
 [
  1
@@ -74,6 +116,8 @@ Here are some examples of what should work:
 
 ## Multiple prompts:
 
+Examples can have multiple prompts. For example:
+
 ```
 1> 1 + 2.
 3
@@ -81,21 +125,41 @@ Here are some examples of what should work:
 7
 ```
 
-## Ignore result:
-
-```
-1> 1 + 2.
-```
-
 ## Defining variables:
 
+Any variable defined in the examples will be available in the following prompts. For example:
+
 ```
-1> A = 1+2.
+1> A = 1 + 2.
+3
 2> A + 3.
 6
 ```
 
+## Prebound variables:
+
+If the documentation examples rely on certain variables being prebound, you can provide these
+bindings when calling `test/2`. For example, if you have a module doc that uses a variable `Prebound`,
+you can set it up like this:
+
+```
+1> Prebound.
+hello
+```
+
+## Ignore result:
+
+To ignore the results of a prompt, just skip writing the expected output. For example:
+
+```
+1> 1 + 2.
+2> 3 + 4.
+7
+```
+
 ## Matching exceptions.
+
+Examples of failures can be tested by writing the expected exception after the prompt. For example:
 
 ```
 1> hello + 1.
@@ -106,9 +170,15 @@ Here are some examples of what should work:
 ** exception error: no function clause matching lists:last([])
 ```
 
+The simplest way to know what output to write is to run the example in the shell and copy the output,
+including the `** exception` line.
+
 ## Comments:
 
+Comments can be inserted anywhere in the code block. For example:
+
 ```
+%% A comment before the first prompt
 1> [1,
 %% A comment between prompts
   2].
@@ -123,14 +193,10 @@ Here are some examples of what should work:
  2]
 ```
 
-## Prebound variables:
-
-```
-1> Prebound.
-hello
-```
-
 ## Matching of maps:
+
+When matching on maps it is possible to use the syntax of the shell, that is `=>` and not `:=` as in
+normal Erlang code. For example:
 
 ```
 1> #{ a => b }.
@@ -138,6 +204,9 @@ hello
 ```
 
 ## Matching of ...:
+
+It is possible to use `...` in the expected output to indicate that the rest of the output
+should be ignored. This is useful for outputs that are large or contain non-deterministic elements.
 
 ```
 1> lists:seq(1,100).
@@ -147,6 +216,8 @@ hello
 ```
 
 ## Edge cases:
+
+The following are examples that are not supported by the parser and will be ignored.
 
 ```
 a> should not be tested
@@ -167,16 +238,37 @@ should not be tested
 
 ```
 %% should probably be tested?
-1> ok.
-```
-
-```
-%% should probably be tested?
 
 1> ok.
 ```
+"""".
+
+-include_lib("kernel/include/eep48.hrl").
+
+-export([test/2]).
+
+-doc "Variable bindings passed as option to `module/2` or `file/2`.".
+-type doc_binding() :: {{function | type | callback, atom(), non_neg_integer()}
+                         | module_doc, erl_eval:binding_struct()}.
+
+-doc """
+Run doctests for a module with markdown EEP-48 docs.
+
+`Bindings` can provide prebound variables for a specific doc entry. Use
+`module_doc` for module docs and `{function, Name, Arity}` (or corresponding
+`type`/`callback` keys) for entry-specific bindings.
 """.
--spec module(#docs_v1{}, erl_eval:binding_struct()) -> _.
+-spec test(module(), [doc_binding()]) -> ok | {comment, string()} | {error, term()} | no_return().
+test(Module, Bindings) ->
+    case code:get_doc(Module) of
+        {ok, #docs_v1{ format = ~"text/markdown" } = Docs} ->
+            module(Docs, Bindings);
+        {ok, _} ->
+            {error, unsupported_format};
+        Else ->
+            Else
+    end.
+
 module(#docs_v1{ docs = Docs, module_doc = MD }, Bindings) ->
     MDRes = lists:append([parse_and_run(module_doc, MD, Bindings)]),
     Res =
@@ -223,7 +315,7 @@ do_parse_and_run(KFA, Docs, Bindings) ->
     try
         InitialBindings = proplists:get_value(KFA, Bindings, erl_eval:new_bindings()),
         Items = inspect(shell_docs_markdown:parse_md(Docs)),
-        {KFA, test(Items, InitialBindings)}
+        {KFA, run_items(Items, InitialBindings)}
     catch
         throw:{error,_}=Error ->
             {KFA, [Error]};
@@ -232,7 +324,7 @@ do_parse_and_run(KFA, Docs, Bindings) ->
             erlang:raise(C, R, ST)
     end.
 
-test(Tests, Bindings) ->
+run_items(Tests, Bindings) ->
     lists:flatmap(fun(Test) -> test_item(Test, Bindings) end, Tests).
 
 test_item({pre,[],[{code,Attrs,[Code]}]}, Bindings) when is_binary(Code) ->
@@ -243,7 +335,7 @@ test_item({pre,[],[{code,Attrs,[Code]}]}, Bindings) when is_binary(Code) ->
             []
     end;
 test_item({_Tag,_Attr, Content}, Bindings) ->
-    test(Content, Bindings);
+    run_items(Content, Bindings);
 test_item(Header, _Bindings) when is_binary(Header) ->
     [].
 

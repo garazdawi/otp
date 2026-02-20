@@ -19,37 +19,36 @@
 %%
 %% %CopyrightEnd%
 %%
--module(records_SUITE).
--export([all/0, suite/0,
-         init_per_suite/1, end_per_suite/1,
-	 init_per_group/2, end_per_group/2,
-         init_per_testcase/2, end_per_testcase/2]).
--export([doctests/1]).
 
-suite() ->
-    [{ct_hooks,[ts_install_cth]},
-     {timetrap,{minutes,1}}].
+-module(ct_doctest_prompt_parser_mod).
+-moduledoc """
+```
+%% Comment before first prompt
+1> A = 1,
+  A + 2.
+3
+2> [1, 2].
+[
+ 1
+ ,
+ 2
+ ]
+3> [1,
+  %% Comment between prompts
+  2].
+[1,
+ %% Comment in match
+ 2]
+4> [1,
+  2].
+[1,
+ 2]
+5> 1 + 2.
+```
+""".
 
-all() ->
-    [doctests].
+-export([f/0]).
 
-init_per_suite(Config) ->
-    Config.
-
-end_per_suite(_Config) ->
+-doc false.
+f() ->
     ok.
-
-init_per_group(_GroupName, Config) ->
-    Config.
-
-end_per_group(_GroupName, Config) ->
-    Config.
-
-init_per_testcase(_Case, Config) ->
-    Config.
-
-end_per_testcase(_Case, _Config) ->
-    ok.
-
-doctests(_Config) ->
-   ct_doctest:test(records, []).
