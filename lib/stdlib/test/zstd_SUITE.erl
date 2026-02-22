@@ -468,13 +468,12 @@ doc_tests(Config) ->
             DictBinding = erl_eval:add_binding('Dict', Dict, erl_eval:new_bindings()),
             File = filename:join(proplists:get_value(priv_dir, Config), "example"),
             ok = file:write_file(File, ~"lorem ipsum"),
-            shell_docs:test(
+            ct_doctest:module(
               zstd,
-              [
-               {module_doc, erl_eval:add_binding('File', File, erl_eval:new_bindings())},
-               {{function, get_dict_id, 1}, DictBinding},
-               {{function, dict, 3}, DictBinding}
-              ]
+              [{bindings,
+                [{module_doc, erl_eval:add_binding('File', File, erl_eval:new_bindings())},
+                 {{function, get_dict_id, 1}, DictBinding},
+                 {{function, dict, 3}, DictBinding}]}]
              )
     end.
 

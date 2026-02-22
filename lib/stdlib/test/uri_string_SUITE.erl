@@ -58,6 +58,7 @@
          regression_parse/1, regression_recompose/1, regression_normalize/1,
          recompose_host_relative_path/1,
          recompose_host_absolute_path/1,
+         doctest_uri_string_usage/1,
          quote/1
         ]).
 
@@ -154,6 +155,7 @@ all() ->
      regression_normalize,
      recompose_host_relative_path,
      recompose_host_absolute_path,
+     doctest_uri_string_usage,
      quote
     ].
 
@@ -1365,6 +1367,15 @@ recompose_host_absolute_path(_Config) ->
         uri_string:recompose(#{host => <<"example.com">>,
                                path => [<<"/f">>,<<"oo">>]}),
     ok.
+
+%%-------------------------------------------------------------------------
+%% Doctest tests
+%%-------------------------------------------------------------------------
+doctest_uri_string_usage(_Config) ->
+    Path = filename:join([os:getenv("ERL_TOP"),
+                          "lib", "stdlib", "doc", "guides",
+                          "uri_string_usage.md"]),
+    ct_doctest:file(Path).
 
 %%-------------------------------------------------------------------------
 %% Quote tests

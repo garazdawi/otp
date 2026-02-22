@@ -19,37 +19,12 @@
 %%
 %% %CopyrightEnd%
 %%
--module(records_SUITE).
--export([all/0, suite/0,
-         init_per_suite/1, end_per_suite/1,
-	 init_per_group/2, end_per_group/2,
-         init_per_testcase/2, end_per_testcase/2]).
--export([doctests/1]).
 
-suite() ->
-    [{ct_hooks,[ts_install_cth]},
-     {timetrap,{minutes,1}}].
+-module(ct_doctest_external_parser_mod).
+-export([parse_md/1]).
 
-all() ->
-    [doctests].
-
-init_per_suite(Config) ->
-    Config.
-
-end_per_suite(_Config) ->
-    ok.
-
-init_per_group(_GroupName, Config) ->
-    Config.
-
-end_per_group(_GroupName, Config) ->
-    Config.
-
-init_per_testcase(_Case, Config) ->
-    Config.
-
-end_per_testcase(_Case, _Config) ->
-    ok.
-
-doctests(_Config) ->
-   ct_doctest:module(records).
+%% Return the same AST shape as shell_docs_markdown:parse_md/1.
+parse_md(_Markdown) ->
+    [{pre, [],
+      [{code, [{class, ~"language-erlang"}],
+        [~"1> Prebound.\nhello\n"]}]}].
