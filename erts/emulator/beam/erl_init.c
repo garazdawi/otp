@@ -138,6 +138,8 @@ int erts_atom_table_size = ATOM_LIMIT;	/* Maximum number of atoms */
 
 int erts_pd_initial_size = 8;  /* must be power of 2 */
 
+extern int erts_map_inline_cache;
+
 int erts_modified_timing_level;
 
 int erts_no_crash_dump = 0;	/* Use -d to suppress crash dump. */
@@ -594,6 +596,7 @@ __decl_noreturn void __noreturn  erts_usage(void)
     erts_fprintf(stderr, "-IOPt number   set number of threads to be used to poll for I/O\n");
     erts_fprintf(stderr, "               as a percentage of the number of schedulers\n");
     erts_fprintf(stderr, "-i module      set the boot module (default init)\n");
+    erts_fprintf(stderr, "-mic bool      enable or disable flatmap inline caches (default false)\n");
     erts_fprintf(stderr, "\n");
 
 #ifdef BEAMASM
@@ -1696,6 +1699,24 @@ erl_start(int argc, char **argv)
 	    /* define name of module for initial function */
 	    init = get_arg(argv[i]+2, argv[i+1], &i);
 	    break;
+    case 'm': {
+        char *sub_param = argv[i] + 2;
+        if (has_prefix("ic", sub_param)) {
+            arg = get_arg(sub_param + 2, argv[i + 1], &i);
+            if (sys_strcmp(arg, "true") == 0) {
+                erts_map_inline_cache = 1;
+            } else if (sys_strcmp(arg, "false") == 0) {
+                erts_map_inline_cache = 0;
+            } else {
+                erts_fprintf(stderr, "bad flatmap inline cache flag %s\n", arg);
+                erts_usage();
+            }
+        } else {
+            erts_fprintf(stderr, "Unknown map option %s\n", argv[i]);
+            erts_usage();
+        }
+        break;
+    }
 
 	case 'J':
 #ifdef BEAMASM

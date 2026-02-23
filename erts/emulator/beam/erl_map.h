@@ -133,6 +133,24 @@ const Eterm *erts_hashmap_get(erts_ihash_t hx, Eterm key, Eterm map);
 
 Sint erts_map_size(Eterm map);
 
+/*
+ * Flatmap inline cache runtime controls and counters.
+ *
+ * The initial implementation keeps the feature globally controlled by a VM
+ * flag and defaults to disabled.
+ */
+extern int erts_map_inline_cache;
+
+typedef struct {
+    erts_atomic64_t attempts;
+    erts_atomic64_t hits;
+    erts_atomic64_t misses;
+    erts_atomic64_t fills;
+    erts_atomic64_t disabled;
+} ErtsMapInlineCacheCounters;
+
+extern ErtsMapInlineCacheCounters erts_map_ic_counters;
+
 /* hamt nodes v2.0
  *
  * node :: leaf | array | bitmap

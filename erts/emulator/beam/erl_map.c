@@ -130,7 +130,16 @@ static int hxnodecmpkey(const void* a, const void* b);
 #define NOT_YCF_YIELDING_VERSION 1
 #define YCF_CONSUME_REDS(X) while(0){}
 
+int erts_map_inline_cache = 0;
+ErtsMapInlineCacheCounters erts_map_ic_counters;
+
 void erts_init_map(void) {
+    erts_atomic64_init_nob(&erts_map_ic_counters.attempts, 0);
+    erts_atomic64_init_nob(&erts_map_ic_counters.hits, 0);
+    erts_atomic64_init_nob(&erts_map_ic_counters.misses, 0);
+    erts_atomic64_init_nob(&erts_map_ic_counters.fills, 0);
+    erts_atomic64_init_nob(&erts_map_ic_counters.disabled, 0);
+
     erts_init_trap_export(&hashmap_merge_trap_export,
 			  am_maps, am_merge_trap, 1,
 			  &maps_merge_trap_1);
