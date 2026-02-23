@@ -49,7 +49,7 @@
 
 -import(lists, [reverse/1]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include("inet_int.hrl").
 
 %% --------------------------------------------------------------------------

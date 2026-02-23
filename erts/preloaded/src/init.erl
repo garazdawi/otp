@@ -267,7 +267,7 @@ error
 	 objfile_extension/0, archive_extension/0,code_path_choice/0,
          get_configfd/1, set_configfd/2]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -doc "Current status of init.".
 -type internal_status() :: 'starting' | 'started' | 'stopping'.

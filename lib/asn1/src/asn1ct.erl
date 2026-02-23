@@ -72,7 +72,7 @@ ASN.1 data (encoded as `BER` or `PER`).
 
 -include("asn1_records.hrl").
 -include_lib("stdlib/include/erl_compile.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -ifndef(vsn).
 -define(vsn,"0.0.1").

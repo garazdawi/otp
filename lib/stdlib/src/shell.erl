@@ -37,6 +37,8 @@
 -export([prompt_width/1, prompt_width/2]).
 -export([help/0,whereis/0]).
 
+-include("file.hrl").
+
 -define(LINEMAX, 30).
 -define(CHAR_MAX, 60).
 -define(DEF_HISTORY, 20).
@@ -1765,8 +1767,6 @@ read_records(FileOrModule, Opts0) ->
         Error ->
             Error
     end.
-
--include_lib("kernel/include/file.hrl").
 
 find_file(Mod) when is_atom(Mod) ->
     case code:which(Mod) of

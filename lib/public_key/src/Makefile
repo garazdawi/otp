@@ -80,7 +80,7 @@ PUB_KEY_FLAGS =
 # ----------------------------------------------------
 # FLAGS
 # ----------------------------------------------------
-PUB_KEY_ERL_FLAGS += -I $(INCLUDE) -I ../asn1/
+PUB_KEY_ERL_FLAGS += -I $(INCLUDE) -I ../asn1/ -I../../kernel/include 
 
 ERL_COMPILE_FLAGS += $(PUB_KEY_ERL_FLAGS) +warn_obsolete_bool_op \
 		     $(PUB_KEY_FLAGS) \

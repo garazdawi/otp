@@ -80,7 +80,7 @@ CSS = $(PRIVDIR)/styles.css
 # ----------------------------------------------------
 # FLAGS
 # ----------------------------------------------------
-ERL_COMPILE_FLAGS += -Werror +nowarn_deprecated_catch
+ERL_COMPILE_FLAGS += -Werror +nowarn_deprecated_catch -I../../kernel/include
 
 ifeq ($(ERL_DETERMINISTIC),yes)
 	DEP_SKIP_FILES = xref_parser.erl

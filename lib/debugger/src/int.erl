@@ -96,7 +96,7 @@ in the User's Guide for Debugger.
 %% External export only to be used by error_handler
 -export([eval/3]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %%==Erlang Interpreter================================================
 %%

@@ -28,7 +28,7 @@
 -moduledoc false.
 
 -include("mnesia.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -export([core_file/0]).
 

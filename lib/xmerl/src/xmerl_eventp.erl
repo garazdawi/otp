@@ -38,7 +38,7 @@ Each front-end contains more elaborate settings of
 
 -include("xmerl.hrl").
 -include("xmerl_internal.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -doc "Record `#xmlElement{}`".
 -type xmlElement() :: #xmlElement{}.

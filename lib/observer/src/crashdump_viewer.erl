@@ -104,7 +104,7 @@ For details about how to get started with the Crashdump Viewer, see the
 -export([debug/1,stop_debug/0]).
 
 -include("crashdump_viewer.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 
 -define(SERVER, crashdump_viewer_server).
