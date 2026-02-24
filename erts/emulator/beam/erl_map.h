@@ -151,6 +151,42 @@ typedef struct {
 
 extern ErtsMapInlineCacheCounters erts_map_ic_counters;
 
+ERTS_GLB_INLINE int
+erts_map_ic_enabled(void)
+{
+    return ERTS_UNLIKELY(erts_map_inline_cache);
+}
+
+ERTS_GLB_INLINE void
+erts_map_ic_note_attempt(void)
+{
+    erts_atomic64_inc_nob(&erts_map_ic_counters.attempts);
+}
+
+ERTS_GLB_INLINE void
+erts_map_ic_note_hit(void)
+{
+    erts_atomic64_inc_nob(&erts_map_ic_counters.hits);
+}
+
+ERTS_GLB_INLINE void
+erts_map_ic_note_miss(void)
+{
+    erts_atomic64_inc_nob(&erts_map_ic_counters.misses);
+}
+
+ERTS_GLB_INLINE void
+erts_map_ic_note_fill(void)
+{
+    erts_atomic64_inc_nob(&erts_map_ic_counters.fills);
+}
+
+ERTS_GLB_INLINE void
+erts_map_ic_note_disabled(void)
+{
+    erts_atomic64_inc_nob(&erts_map_ic_counters.disabled);
+}
+
 /* hamt nodes v2.0
  *
  * node :: leaf | array | bitmap

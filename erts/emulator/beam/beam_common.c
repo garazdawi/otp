@@ -1782,6 +1782,11 @@ Eterm get_map_element(Eterm map, Eterm key)
 	Uint i;
 	Uint n;
 
+        if (erts_map_ic_enabled()) {
+            erts_map_ic_note_attempt();
+            erts_map_ic_note_miss();
+        }
+
 	mp = (flatmap_t *)flatmap_val(map);
 	ks = flatmap_get_keys(mp);
 	vs = flatmap_get_values(mp);
@@ -1816,6 +1821,11 @@ Eterm get_map_element_hash(Eterm map, Eterm key, erts_ihash_t hx)
 	Eterm *ks;
 	Uint i;
 	Uint n;
+
+        if (erts_map_ic_enabled()) {
+            erts_map_ic_note_attempt();
+            erts_map_ic_note_miss();
+        }
 
 	mp = (flatmap_t *)flatmap_val(map);
 	ks = flatmap_get_keys(mp);
@@ -1977,6 +1987,11 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
 
     num_updates = n / 2;
     map = reg[live];
+
+    if (erts_map_ic_enabled() && is_flatmap(map)) {
+        erts_map_ic_note_attempt();
+        erts_map_ic_note_miss();
+    }
 
     if (is_not_flatmap(map)) {
 	erts_ihash_t hx;
@@ -2220,6 +2235,11 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
     n /= 2;		/* Number of values to be updated */
     ASSERT(n > 0);
     map = reg[live];
+
+    if (erts_map_ic_enabled() && is_flatmap(map)) {
+        erts_map_ic_note_attempt();
+        erts_map_ic_note_miss();
+    }
 
     if (is_not_flatmap(map)) {
 	erts_ihash_t hx;
