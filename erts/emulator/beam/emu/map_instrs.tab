@@ -47,7 +47,7 @@ i_new_small_map_lit(Dst, Live, Keys) {
 }
 
 i_get_map_element(Fail, Src, Key, Dst) {
-    Eterm res = get_map_element($Src, $Key);
+    Eterm res = get_map_element_ic($NEXT_INSTRUCTION, $Src, $Key);
     if (is_non_value(res)) {
         $FAIL($Fail);
     }
@@ -55,7 +55,7 @@ i_get_map_element(Fail, Src, Key, Dst) {
 }
 
 i_get_map_element_hash(Fail, Src, Key, Hx, Dst) {
-     Eterm res = get_map_element_hash($Src, $Key, $Hx);
+     Eterm res = get_map_element_hash_ic($NEXT_INSTRUCTION, $Src, $Key, $Hx);
      if (is_non_value(res)) {
         $FAIL($Fail);
      }

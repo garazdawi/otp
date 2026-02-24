@@ -1772,39 +1772,50 @@ is_function2(Eterm Term, Uint arity)
     return 0;
 }
 
+static ERTS_INLINE Eterm
+flatmap_get_element(Eterm map, Eterm key, Uint *index_out)
+{
+    flatmap_t *mp;
+    Eterm *ks;
+    const Eterm *vs;
+    Uint i;
+    Uint n;
+
+    ASSERT(is_flatmap(map));
+    mp = (flatmap_t *)flatmap_val(map);
+    ks = flatmap_get_keys(mp);
+    vs = flatmap_get_values(mp);
+    n = flatmap_get_size(mp);
+
+    if (is_immed(key)) {
+        for (i = 0; i < n; i++) {
+            if (ks[i] == key) {
+                if (index_out != NULL) {
+                    *index_out = i;
+                }
+                return vs[i];
+            }
+        }
+    } else {
+        for (i = 0; i < n; i++) {
+            if (EQ(ks[i], key)) {
+                if (index_out != NULL) {
+                    *index_out = i;
+                }
+                return vs[i];
+            }
+        }
+    }
+
+    return THE_NON_VALUE;
+}
+
 Eterm get_map_element(Eterm map, Eterm key)
 {
     erts_ihash_t hx;
     const Eterm *vs;
     if (is_flatmap(map)) {
-	flatmap_t *mp;
-	Eterm *ks;
-	Uint i;
-	Uint n;
-
-        if (erts_map_ic_enabled()) {
-            erts_map_ic_note_attempt();
-            erts_map_ic_note_miss();
-        }
-
-	mp = (flatmap_t *)flatmap_val(map);
-	ks = flatmap_get_keys(mp);
-	vs = flatmap_get_values(mp);
-	n  = flatmap_get_size(mp);
-	if (is_immed(key)) {
-	    for (i = 0; i < n; i++) {
-		if (ks[i] == key) {
-		    return vs[i];
-		}
-	    }
-	} else {
-	    for (i = 0; i < n; i++) {
-		if (EQ(ks[i], key)) {
-		    return vs[i];
-		}
-	    }
-	}
-	return THE_NON_VALUE;
+	return flatmap_get_element(map, key, NULL);
     }
     ASSERT(is_hashmap(map));
     hx = hashmap_make_hash(key);
@@ -1812,45 +1823,58 @@ Eterm get_map_element(Eterm map, Eterm key)
     return vs ? *vs : THE_NON_VALUE;
 }
 
+Eterm
+get_map_element_ic(const void *site, Eterm map, Eterm key)
+{
+    Eterm res;
+    Uint index;
+    int ic_status;
+
+    if (!(erts_map_ic_enabled() && is_flatmap(map))) {
+        return get_map_element(map, key);
+    }
+
+    erts_map_ic_note_attempt();
+    ic_status = erts_map_ic_try_get_flatmap_index(site, map, key, &index);
+    if (ic_status > 0) {
+        const Eterm *vs = flatmap_get_values((flatmap_t *)flatmap_val(map));
+        return vs[index];
+    } else if (ic_status < 0) {
+        return get_map_element(map, key);
+    }
+
+    erts_map_ic_note_miss();
+    res = flatmap_get_element(map, key, &index);
+    erts_map_ic_update_flatmap_index(site, map, key, is_value(res), index);
+    return res;
+}
+
 Eterm get_map_element_hash(Eterm map, Eterm key, erts_ihash_t hx)
 {
     const Eterm *vs;
 
     if (is_flatmap(map)) {
-	flatmap_t *mp;
-	Eterm *ks;
-	Uint i;
-	Uint n;
-
-        if (erts_map_ic_enabled()) {
-            erts_map_ic_note_attempt();
-            erts_map_ic_note_miss();
-        }
-
-	mp = (flatmap_t *)flatmap_val(map);
-	ks = flatmap_get_keys(mp);
-	vs = flatmap_get_values(mp);
-	n  = flatmap_get_size(mp);
-	if (is_immed(key)) {
-	    for (i = 0; i < n; i++) {
-		if (ks[i] == key) {
-		    return vs[i];
-		}
-	    }
-	} else {
-	    for (i = 0; i < n; i++) {
-		if (EQ(ks[i], key)) {
-		    return vs[i];
-		}
-	    }
-	}
-	return THE_NON_VALUE;
+	return flatmap_get_element(map, key, NULL);
     }
 
     ASSERT(is_hashmap(map));
     ASSERT(hx == hashmap_make_hash(key));
     vs = erts_hashmap_get(hx, key, map);
     return vs ? *vs : THE_NON_VALUE;
+}
+
+Eterm
+get_map_element_hash_ic(const void *site, Eterm map, Eterm key, erts_ihash_t hx)
+{
+    if (!(erts_map_ic_enabled() && is_flatmap(map))) {
+        return get_map_element_hash(map, key, hx);
+    }
+
+    /*
+     * Flatmap lookup does not use hashes, so this can share the same
+     * monomorphic IC as get_map_element_ic/3.
+     */
+    return get_map_element_ic(site, map, key);
 }
 
 #define GET_TERM(term, dest)			\

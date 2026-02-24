@@ -110,6 +110,21 @@ static int hxnodecmpkey(const void* a, const void* b);
 #define DBG_PRINT(X)
 /*erts_printf X*/
 #define HALLOC_EXTRA 200
+#define ERTS_MAP_IC_READ_TABLE_SIZE (4096)
+
+typedef enum {
+    ERTS_MAP_IC_EMPTY = 0,
+    ERTS_MAP_IC_ACTIVE = 1,
+    ERTS_MAP_IC_DISABLED = 2
+} ErtsMapIcState;
+
+typedef struct {
+    const void *site;
+    Eterm key;
+    Eterm shape;
+    Uint index;
+    ErtsMapIcState state;
+} ErtsMapIcReadEntry;
 
 /* *******************************
  * ** Yielding C Fun (YCF) Note **
@@ -132,18 +147,122 @@ static int hxnodecmpkey(const void* a, const void* b);
 
 int erts_map_inline_cache = 0;
 ErtsMapInlineCacheCounters erts_map_ic_counters;
+static erts_mtx_t erts_map_ic_lock;
+static ErtsMapIcReadEntry erts_map_ic_read_table[ERTS_MAP_IC_READ_TABLE_SIZE];
+
+static ERTS_INLINE Uint
+erts_map_ic_read_slot(const void *site)
+{
+    UWord h = (UWord)site;
+    h ^= h >> 7;
+    h ^= h >> 17;
+    return h & (ERTS_MAP_IC_READ_TABLE_SIZE - 1);
+}
 
 void erts_init_map(void) {
+    Uint i;
+
     erts_atomic64_init_nob(&erts_map_ic_counters.attempts, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.hits, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.misses, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.fills, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.disabled, 0);
+    erts_mtx_init(&erts_map_ic_lock,
+                  "erts_map_ic_lock",
+                  NIL,
+                  ERTS_LOCK_FLAGS_PROPERTY_STATIC |
+                          ERTS_LOCK_FLAGS_CATEGORY_GENERIC);
+    for (i = 0; i < ERTS_MAP_IC_READ_TABLE_SIZE; i++) {
+        erts_map_ic_read_table[i].site = NULL;
+        erts_map_ic_read_table[i].state = ERTS_MAP_IC_EMPTY;
+    }
 
     erts_init_trap_export(&hashmap_merge_trap_export,
 			  am_maps, am_merge_trap, 1,
 			  &maps_merge_trap_1);
     return;
+}
+
+int
+erts_map_ic_try_get_flatmap_index(const void *site,
+                                  Eterm map,
+                                  Eterm key,
+                                  Uint *index_out)
+{
+    Uint slot;
+    ErtsMapIcReadEntry *entry;
+    flatmap_t *mp;
+
+    ASSERT(site != NULL);
+    ASSERT(is_flatmap(map));
+
+    slot = erts_map_ic_read_slot(site);
+
+    erts_mtx_lock(&erts_map_ic_lock);
+    entry = &erts_map_ic_read_table[slot];
+
+    if (entry->state == ERTS_MAP_IC_EMPTY || entry->site != site) {
+        erts_mtx_unlock(&erts_map_ic_lock);
+        return 0;
+    }
+
+    if (entry->state == ERTS_MAP_IC_DISABLED) {
+        erts_map_ic_note_disabled();
+        erts_mtx_unlock(&erts_map_ic_lock);
+        return -1;
+    }
+
+    mp = (flatmap_t *)flatmap_val(map);
+    if (!EQ(entry->key, key) || entry->shape != mp->keys ||
+        entry->index >= flatmap_get_size(mp)) {
+        entry->state = ERTS_MAP_IC_DISABLED;
+        erts_mtx_unlock(&erts_map_ic_lock);
+        return 0;
+    }
+
+    *index_out = entry->index;
+    erts_map_ic_note_hit();
+    erts_mtx_unlock(&erts_map_ic_lock);
+    return 1;
+}
+
+void
+erts_map_ic_update_flatmap_index(const void *site,
+                                 Eterm map,
+                                 Eterm key,
+                                 int key_found,
+                                 Uint index)
+{
+    Uint slot;
+    ErtsMapIcReadEntry *entry;
+
+    ASSERT(site != NULL);
+    ASSERT(is_flatmap(map));
+
+    slot = erts_map_ic_read_slot(site);
+
+    erts_mtx_lock(&erts_map_ic_lock);
+    entry = &erts_map_ic_read_table[slot];
+
+    if (entry->site == site && entry->state == ERTS_MAP_IC_ACTIVE) {
+        entry->state = ERTS_MAP_IC_DISABLED;
+        erts_mtx_unlock(&erts_map_ic_lock);
+        return;
+    }
+
+    entry->site = site;
+    if (key_found) {
+        flatmap_t *mp = (flatmap_t *)flatmap_val(map);
+        entry->key = key;
+        entry->shape = mp->keys;
+        entry->index = index;
+        entry->state = ERTS_MAP_IC_ACTIVE;
+        erts_map_ic_note_fill();
+    } else {
+        entry->state = ERTS_MAP_IC_DISABLED;
+    }
+
+    erts_mtx_unlock(&erts_map_ic_lock);
 }
 
 

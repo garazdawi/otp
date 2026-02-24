@@ -187,6 +187,16 @@ erts_map_ic_note_disabled(void)
     erts_atomic64_inc_nob(&erts_map_ic_counters.disabled);
 }
 
+int erts_map_ic_try_get_flatmap_index(const void *site,
+                                      Eterm map,
+                                      Eterm key,
+                                      Uint *index_out);
+void erts_map_ic_update_flatmap_index(const void *site,
+                                      Eterm map,
+                                      Eterm key,
+                                      int key_found,
+                                      Uint index);
+
 /* hamt nodes v2.0
  *
  * node :: leaf | array | bitmap
