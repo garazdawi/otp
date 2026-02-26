@@ -723,18 +723,13 @@ run_tests({test, Test0, Match0}, Bindings) ->
     case Match0 of
         [<<"** ", _/binary>> | _] ->
             Match = unicode:characters_to_list(Match0),
-            Cmd = Test ++ ".",
-            run_failing(Cmd, Test, Match, Bindings);
+            run_failing(Test, Match, Bindings);
         _ ->
-            Cmd = [unicode:characters_to_list(Match0),
-                   " = begin ",
-                   Test,
-                   " end."],
-            run_successful(Cmd, Test, Match0, Bindings)
+            run_successful(Test, Match0, Bindings)
     end.
 
-run_successful(Cmd, Test, Match, Bindings) ->
-    Ast = rewrite(parse(Cmd, Test, Match)),
+run_successful(Test, Match, Bindings) ->
+    Ast = rewrite(parse_exprs(Test, Match)),
     try
         {value, _Res, NewBindings} = inspect(erl_eval:exprs(Ast, Bindings)),
         NewBindings
@@ -746,8 +741,8 @@ run_successful(Cmd, Test, Match, Bindings) ->
             throw({error,{Message,Match}})
     end.
 
-run_failing(Cmd, Test, Match, Bindings) ->
-    Ast = parse(Cmd, Test, Match),
+run_failing(Test, Match, Bindings) ->
+    Ast = parse_exprs(Test, "_"),
     try inspect(erl_eval:exprs(Ast, Bindings)) of
         {value, Res, _} ->
             Message = io_lib:format("Expected failure ~ts; got ~ts",
@@ -766,12 +761,34 @@ run_failing(Cmd, Test, Match, Bindings) ->
             end
     end.
 
-parse(Cmd0, _Test, _Match) ->
-    Cmd = lists:flatten(Cmd0),
+%% As we allow <0.1.0> style matches we first need to check
+%% if the match actually is a valid pattern. So we parse and
+%% evaluate it first, and if that fails we convert it to a literal
+%% and try again.
+parse_exprs(Test, Match0) ->
+    try parse_exprs(Match0 ++ " = 1.") of
+        Ast ->
+            Match =
+                try erl_eval:exprs(Ast, erl_eval:new_bindings()) of
+                    {value, _Res, _} ->
+                        Match0
+                catch
+                    error:illegal_pattern ->
+                        maybe_convert_to_literal(Match0);
+                    _:_ ->
+                        Match0
+                end,
+            parse_exprs(Match ++ " = begin " ++ Test ++ " end.")
+    catch throw:_ ->
+            parse_exprs(Match0 ++ " = begin " ++ Test ++ " end.")
+    end.
+
+parse_exprs(Str) ->
+    Cmd = lists:flatten(unicode:characters_to_list(Str)),
     maybe
-        {ok, T, _} ?= erl_scan:string(Cmd),
+        {ok, T, _} ?= erl_scan:string(Cmd, erl_anno:from_term(0), [text]),
         RewrittenToks = rewrite_tokens(T),
-        {ok, Ast} ?= inspect(erl_parse:parse_exprs(RewrittenToks)),
+        {ok, Ast} ?= inspect(erl_eval:extended_parse_exprs(RewrittenToks)),
         Ast
     else
         {error, {Line,Mod,Reason}, _} ->
@@ -780,6 +797,24 @@ parse(Cmd0, _Test, _Match) ->
         {error, {Line,Mod,Reason}} ->
             Message = Mod:format_error(Reason),
             throw({error,{Message,Line,Cmd}})
+    end.
+
+%% We do a little dance here in order to allow refs, pids and ports
+%% to be matched as literals, since the shell prints them as literals
+%% but erl_eval doesn't accept them as such.
+%% In a nutshell we convert "<0.1.0> = Test" to "L = <0.1.0>, L = Test".
+maybe_convert_to_literal(Match0) ->
+    Match = unicode:characters_to_list(Match0),
+    maybe
+        {ok, Toks, _} ?= erl_scan:string(Match ++ ".", 0, [text]),
+        RewrittenToks = rewrite_tokens(Toks),
+        {ok, Exprs} ?= erl_eval:extended_parse_exprs(RewrittenToks),
+        {value, Lit, _} ?= try erl_eval:exprs(Exprs, erl_eval:new_bindings()) catch _:_ -> error end,
+        Variable = "_L" ++ integer_to_list(erlang:unique_integer([positive])),
+        lists:flatten(io_lib:format("~s = ~p, ~s", [Variable, Lit, Variable]))
+    else
+        _E ->
+            Match
     end.
 
 %% We rewrite ...>> to _/binary>> to match shell syntax better
