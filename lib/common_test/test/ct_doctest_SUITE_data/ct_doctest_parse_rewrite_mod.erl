@@ -19,37 +19,26 @@
 %%
 %% %CopyrightEnd%
 %%
--module(records_SUITE).
--export([all/0, suite/0,
-         init_per_suite/1, end_per_suite/1,
-	 init_per_group/2, end_per_group/2,
-         init_per_testcase/2, end_per_testcase/2]).
--export([doctests/1]).
 
-suite() ->
-    [{ct_hooks,[ts_install_cth]},
-     {timetrap,{minutes,1}}].
+-module(ct_doctest_parse_rewrite_mod).
+-moduledoc false.
+-export([f/0]).
 
-all() ->
-    [doctests].
-
-init_per_suite(Config) ->
-    Config.
-
-end_per_suite(_Config) ->
+-doc """
+```
+1> {lists:seq(1,100), <<1,2,0:1024>>, foo}.
+{[1, 2, 3, ...], <<1,2,...>>, ...}
+2> #{ a => #{ b => c } }.
+#{ a => #{ b => c } }
+3> <<1,2,0:1024>>
+<<1,2, ...>>
+4> <0.1.0>.
+<0.1.0>
+5> #Port<0.1>.
+#Port<0.1>
+6> #Ref<0.1136485427.3140747270.104881>.
+#Ref<0.1136485427.3140747270.104881>
+```
+""".
+f() ->
     ok.
-
-init_per_group(_GroupName, Config) ->
-    Config.
-
-end_per_group(_GroupName, Config) ->
-    Config.
-
-init_per_testcase(_Case, Config) ->
-    Config.
-
-end_per_testcase(_Case, _Config) ->
-    ok.
-
-doctests(_Config) ->
-   ct_doctest:module(records).

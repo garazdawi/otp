@@ -977,7 +977,7 @@ import_export(_Config) ->
     ok.
 
 doctests(Config) when is_list(Config) ->
-    shell_docs:test(array, []).
+    ct_doctest:module(array, [{skipped_blocks, 12}]).
 
 
 %%
