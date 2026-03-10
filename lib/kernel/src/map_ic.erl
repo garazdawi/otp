@@ -30,7 +30,7 @@
 %% map operations in your code are hitting or missing the cache.
 -module(map_ic).
 
--export([info/0, counters/0, summary/0, print_summary/0]).
+-export([info/0, counters/0, summary/0, summary/1, print_summary/0]).
 
 %% @doc Return raw per-site IC entries from all schedulers.
 %%
@@ -66,7 +66,11 @@ counters() ->
 %% '''
 -spec summary() -> [map()].
 summary() ->
-    Entries = info(),
+    summary(info()).
+
+%% @doc Like `summary/0' but takes pre-fetched entries from `info/0'.
+-spec summary([tuple()]) -> [map()].
+summary(Entries) ->
     Grouped = aggregate_entries(Entries, #{}),
     Sorted = lists:sort(fun(#{hits := H1}, #{hits := H2}) -> H1 >= H2 end,
                         maps:values(Grouped)),

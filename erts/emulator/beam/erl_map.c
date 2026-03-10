@@ -501,13 +501,16 @@ BIF_RETTYPE map_ic_info_0(BIF_ALIST_0) {
     Eterm *hp;
     Uint entry_count = 0;
     Uint heap_needed;
+    Uint n_schedulers;
 
     if (!erts_map_ic_enabled()) {
         BIF_RET(NIL);
     }
 
+    n_schedulers = erts_no_schedulers;
+
     /* First pass: count non-empty entries */
-    for (s = 0; s < erts_no_schedulers; s++) {
+    for (s = 0; s < n_schedulers; s++) {
         ErtsMapIcPerSchedTable *tab = &erts_map_ic_sched_tables[s];
         for (i = 0; i < ERTS_MAP_IC_READ_TABLE_SIZE; i++) {
             ErtsMapIcReadEntry *e = &tab->table[i];
@@ -522,42 +525,100 @@ BIF_RETTYPE map_ic_info_0(BIF_ALIST_0) {
     }
 
     /*
-     * Per entry:
-     *   MFA tuple: 4 words (arityval + 3 elements)
-     *   7-element tuple: 8 words (arityval + 7 elements)
-     *   cons cell: 2 words
-     *   Total: 14 words max per entry
+     * Snapshot entries into a temporary C array, then build Erlang
+     * terms. This avoids issues with concurrent entry modifications
+     * between the count pass and build pass.
+     *
+     * Heap per entry: 8 (7-tuple) + 2 (cons) = 10 words base,
+     * plus 4 (3-tuple) if MFA is resolved. We calculate exact
+     * heap needed after snapshotting to avoid leaving uninitialized
+     * gaps that would confuse the GC.
      */
-    heap_needed = entry_count * 14;
-    hp = HAlloc(BIF_P, heap_needed);
+    {
+        typedef struct {
+            Eterm module;
+            Eterm function;
+            Uint arity;
+            int has_mfa;
+            const void *site;  /* raw site pointer for deferred MFA lookup */
+            Eterm key;
+            ErtsMapIcState state;
+            Uint hits;
+            Uint misses;
+            Uint sched;
+            Uint shape_arity;
+        } IcSnapshot;
 
-    for (s = 0; s < erts_no_schedulers; s++) {
-        ErtsMapIcPerSchedTable *tab = &erts_map_ic_sched_tables[s];
-        for (i = 0; i < ERTS_MAP_IC_READ_TABLE_SIZE; i++) {
-            ErtsMapIcReadEntry *e = &tab->table[i];
+        IcSnapshot *snaps;
+        Uint snap_count = 0;
+
+        snaps = erts_alloc(ERTS_ALC_T_TMP, sizeof(IcSnapshot) * entry_count);
+
+        for (s = 0; s < n_schedulers && snap_count < entry_count; s++) {
+            ErtsMapIcPerSchedTable *tab = &erts_map_ic_sched_tables[s];
+            for (i = 0; i < ERTS_MAP_IC_READ_TABLE_SIZE && snap_count < entry_count; i++) {
+                ErtsMapIcReadEntry *e = &tab->table[i];
+
+                if (e->site == NULL || e->state == ERTS_MAP_IC_EMPTY)
+                    continue;
+
+                {
+                    const ErtsCodeMFA *mfa = erts_find_function_from_pc(e->site);
+                    if (mfa) {
+                        snaps[snap_count].has_mfa = 1;
+                        snaps[snap_count].module = mfa->module;
+                        snaps[snap_count].function = mfa->function;
+                        snaps[snap_count].arity = mfa->arity;
+                    } else {
+                        snaps[snap_count].has_mfa = 0;
+                    }
+                }
+                snaps[snap_count].site = e->site;
+                snaps[snap_count].key = is_immed(e->key) ? e->key : am_undefined;
+                snaps[snap_count].state = e->state;
+                snaps[snap_count].hits = e->hits;
+                snaps[snap_count].misses = e->misses;
+                snaps[snap_count].sched = s + 1;
+                snaps[snap_count].shape_arity = 0;
+                snap_count++;
+            }
+        }
+
+        /*
+         * Calculate exact heap needed:
+         *   Per entry: 8 (7-tuple) + 2 (cons) = 10 words
+         *   If has_mfa: +4 (3-tuple for MFA)
+         */
+        {
+            Uint mfa_count = 0;
+            for (i = 0; i < snap_count; i++) {
+                if (snaps[i].has_mfa)
+                    mfa_count++;
+            }
+            heap_needed = snap_count * 10 + mfa_count * 4;
+        }
+        if (heap_needed == 0) {
+            erts_free(ERTS_ALC_T_TMP, snaps);
+            BIF_RET(NIL);
+        }
+        hp = HAlloc(BIF_P, heap_needed);
+        for (i = 0; i < snap_count; i++) {
             Eterm mfa_tuple;
             Eterm state_atom;
-            Eterm shape_arity;
             Eterm entry_tuple;
-            const ErtsCodeMFA *mfa;
 
-            if (e->site == NULL || e->state == ERTS_MAP_IC_EMPTY)
-                continue;
-
-            /* Resolve site to MFA */
-            mfa = erts_find_function_from_pc((ErtsCodePtr)e->site);
-            if (mfa) {
+            if (snaps[i].has_mfa) {
                 hp[0] = make_arityval(3);
-                hp[1] = mfa->module;
-                hp[2] = mfa->function;
-                hp[3] = make_small(mfa->arity);
+                hp[1] = snaps[i].module;
+                hp[2] = snaps[i].function;
+                hp[3] = make_small(snaps[i].arity);
                 mfa_tuple = make_tuple(hp);
                 hp += 4;
             } else {
                 mfa_tuple = am_undefined;
             }
 
-            switch (e->state) {
+            switch (snaps[i].state) {
             case ERTS_MAP_IC_ACTIVE:
                 state_atom = ERTS_MAKE_AM("active");
                 break;
@@ -569,27 +630,22 @@ BIF_RETTYPE map_ic_info_0(BIF_ALIST_0) {
                 break;
             }
 
-            if (e->state == ERTS_MAP_IC_ACTIVE && is_tuple(e->shape)) {
-                shape_arity = make_small(arityval(*tuple_val(e->shape)));
-            } else {
-                shape_arity = make_small(0);
-            }
-
-            /* {Site, Key, State, Hits, Misses, Scheduler, ShapeArity} */
             hp[0] = make_arityval(7);
             hp[1] = mfa_tuple;
-            hp[2] = is_immed(e->key) ? e->key : am_undefined;
+            hp[2] = snaps[i].key;
             hp[3] = state_atom;
-            hp[4] = make_small(e->hits);
-            hp[5] = make_small(e->misses);
-            hp[6] = make_small(s + 1);
-            hp[7] = shape_arity;
+            hp[4] = make_small(snaps[i].hits);
+            hp[5] = make_small(snaps[i].misses);
+            hp[6] = make_small(snaps[i].sched);
+            hp[7] = make_small(snaps[i].shape_arity);
             entry_tuple = make_tuple(hp);
             hp += 8;
 
             result = CONS(hp, entry_tuple, result);
             hp += 2;
         }
+
+        erts_free(ERTS_ALC_T_TMP, snaps);
     }
 
     BIF_RET(result);
