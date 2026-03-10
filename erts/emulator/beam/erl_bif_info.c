@@ -45,6 +45,7 @@
 #include "erl_gc.h"
 #include "erl_cpu_topology.h"
 #include "erl_async.h"
+#include "erl_map.h"
 #include "erl_thr_progress.h"
 #include "erl_bif_unique.h"
 #include "erl_map.h"
@@ -2879,6 +2880,43 @@ BIF_RETTYPE system_info_1(BIF_ALIST_1)
     } else if (BIF_ARG_1 == am_allocated_areas) {
 	res = erts_allocated_areas(NULL, NULL, BIF_P);
 	BIF_RET(res);
+    } else if (ERTS_IS_ATOM_STR("map_ic_counters", BIF_ARG_1)) {
+        /* Return [{attempts,N}, {hits,N}, ...] proplist */
+        Eterm tags[5];
+        Sint64 raw[5];
+        Uint sz = 0;
+        Uint *szp = &sz;
+        Eterm *hpp = NULL;
+        int j;
+
+        raw[0] = erts_atomic64_read_nob(&erts_map_ic_counters.attempts);
+        raw[1] = erts_atomic64_read_nob(&erts_map_ic_counters.hits);
+        raw[2] = erts_atomic64_read_nob(&erts_map_ic_counters.misses);
+        raw[3] = erts_atomic64_read_nob(&erts_map_ic_counters.fills);
+        raw[4] = erts_atomic64_read_nob(&erts_map_ic_counters.disabled);
+
+        tags[0] = ERTS_MAKE_AM("attempts");
+        tags[1] = ERTS_MAKE_AM("hits");
+        tags[2] = ERTS_MAKE_AM("misses");
+        tags[3] = ERTS_MAKE_AM("fills");
+        tags[4] = ERTS_MAKE_AM("disabled");
+
+        /* Two-pass: first calculate size, then build */
+        while (1) {
+            Eterm tuples[5];
+            for (j = 0; j < 5; j++) {
+                tuples[j] = erts_bld_tuple(hpp, szp, 2,
+                                           tags[j],
+                                           erts_bld_sint64(hpp, szp, raw[j]));
+            }
+            res = erts_bld_list(hpp, szp, 5, tuples);
+            if (hpp)
+                break;
+            hp = HAlloc(BIF_P, sz);
+            hpp = &hp;
+            szp = NULL;
+        }
+        BIF_RET(res);
     } else if (ERTS_IS_ATOM_STR("hipe_architecture", BIF_ARG_1)) {
 	BIF_RET(am_undefined);
     } else if (BIF_ARG_1 == am_trace_control_word) {
