@@ -126,6 +126,15 @@ typedef struct {
     ErtsMapIcState state;
 } ErtsMapIcReadEntry;
 
+/*
+ * Per-scheduler IC table. Each normal scheduler owns its own table,
+ * eliminating the need for locking. Dirty schedulers bypass the IC
+ * entirely since they don't have a stable scheduler identity.
+ */
+typedef struct {
+    ErtsMapIcReadEntry table[ERTS_MAP_IC_READ_TABLE_SIZE];
+} ErtsMapIcPerSchedTable;
+
 /* *******************************
  * ** Yielding C Fun (YCF) Note **
  * *******************************
@@ -147,8 +156,7 @@ typedef struct {
 
 int erts_map_inline_cache = 0;
 ErtsMapInlineCacheCounters erts_map_ic_counters;
-static erts_mtx_t erts_map_ic_lock;
-static ErtsMapIcReadEntry erts_map_ic_read_table[ERTS_MAP_IC_READ_TABLE_SIZE];
+static ErtsMapIcPerSchedTable *erts_map_ic_sched_tables; /* [0..erts_no_schedulers-1] */
 
 static ERTS_INLINE Uint
 erts_map_ic_read_slot(const void *site)
@@ -160,21 +168,26 @@ erts_map_ic_read_slot(const void *site)
 }
 
 void erts_init_map(void) {
-    Uint i;
+    Uint i, s;
 
     erts_atomic64_init_nob(&erts_map_ic_counters.attempts, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.hits, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.misses, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.fills, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.disabled, 0);
-    erts_mtx_init(&erts_map_ic_lock,
-                  "erts_map_ic_lock",
-                  NIL,
-                  ERTS_LOCK_FLAGS_PROPERTY_STATIC |
-                          ERTS_LOCK_FLAGS_CATEGORY_GENERIC);
-    for (i = 0; i < ERTS_MAP_IC_READ_TABLE_SIZE; i++) {
-        erts_map_ic_read_table[i].site = NULL;
-        erts_map_ic_read_table[i].state = ERTS_MAP_IC_EMPTY;
+
+    /*
+     * Allocate per-scheduler IC tables. erts_no_schedulers is already
+     * set by erts_init_scheduling() which runs before us.
+     */
+    erts_map_ic_sched_tables =
+        erts_alloc(ERTS_ALC_T_MAP_IC,
+                   sizeof(ErtsMapIcPerSchedTable) * erts_no_schedulers);
+    for (s = 0; s < erts_no_schedulers; s++) {
+        for (i = 0; i < ERTS_MAP_IC_READ_TABLE_SIZE; i++) {
+            erts_map_ic_sched_tables[s].table[i].site = NULL;
+            erts_map_ic_sched_tables[s].table[i].state = ERTS_MAP_IC_EMPTY;
+        }
     }
 
     erts_init_trap_export(&hashmap_merge_trap_export,
@@ -191,38 +204,63 @@ erts_map_ic_try_get_flatmap_index(const void *site,
 {
     Uint slot;
     ErtsMapIcReadEntry *entry;
+    ErtsMapIcPerSchedTable *ic_table;
+    ErtsSchedulerData *esdp;
     flatmap_t *mp;
 
     ASSERT(site != NULL);
     ASSERT(is_flatmap(map));
 
-    slot = erts_map_ic_read_slot(site);
+    /*
+     * Only immediate keys are safe for IC comparison. Non-immediate keys
+     * (tuples, binaries, bignums) may reference GC'd or foreign-process
+     * memory since the IC is shared across processes on the same scheduler.
+     */
+    if (!is_immed(key)) {
+        return 0;
+    }
 
-    erts_mtx_lock(&erts_map_ic_lock);
-    entry = &erts_map_ic_read_table[slot];
+    /*
+     * Only normal schedulers have IC tables. Dirty schedulers bypass.
+     */
+    esdp = erts_get_scheduler_data();
+    if (!esdp || ERTS_SCHEDULER_IS_DIRTY(esdp)) {
+        return 0;
+    }
+
+    ASSERT(esdp->no > 0 && esdp->no <= erts_no_schedulers);
+    ic_table = &erts_map_ic_sched_tables[esdp->no - 1];
+
+    slot = erts_map_ic_read_slot(site);
+    entry = &ic_table->table[slot];
 
     if (entry->state == ERTS_MAP_IC_EMPTY || entry->site != site) {
-        erts_mtx_unlock(&erts_map_ic_lock);
         return 0;
     }
 
     if (entry->state == ERTS_MAP_IC_DISABLED) {
         erts_map_ic_note_disabled();
-        erts_mtx_unlock(&erts_map_ic_lock);
         return -1;
     }
 
     mp = (flatmap_t *)flatmap_val(map);
-    if (!EQ(entry->key, key) || entry->shape != mp->keys ||
+
+    /*
+     * Check shape (key tuple pointer) BEFORE comparing the key.
+     * This ensures we never dereference a stale key pointer.
+     * Since we restrict to immediate keys, EQ reduces to == and
+     * is safe regardless, but the shape-first order provides
+     * defense-in-depth.
+     */
+    if (entry->shape != mp->keys ||
+        entry->key != key ||
         entry->index >= flatmap_get_size(mp)) {
         entry->state = ERTS_MAP_IC_DISABLED;
-        erts_mtx_unlock(&erts_map_ic_lock);
         return 0;
     }
 
     *index_out = entry->index;
     erts_map_ic_note_hit();
-    erts_mtx_unlock(&erts_map_ic_lock);
     return 1;
 }
 
@@ -235,18 +273,33 @@ erts_map_ic_update_flatmap_index(const void *site,
 {
     Uint slot;
     ErtsMapIcReadEntry *entry;
+    ErtsMapIcPerSchedTable *ic_table;
+    ErtsSchedulerData *esdp;
 
     ASSERT(site != NULL);
     ASSERT(is_flatmap(map));
 
-    slot = erts_map_ic_read_slot(site);
+    /*
+     * Only fill IC for immediate keys. Non-immediate keys cannot be
+     * safely compared later since they may reference relocated/freed memory.
+     */
+    if (!is_immed(key)) {
+        return;
+    }
 
-    erts_mtx_lock(&erts_map_ic_lock);
-    entry = &erts_map_ic_read_table[slot];
+    esdp = erts_get_scheduler_data();
+    if (!esdp || ERTS_SCHEDULER_IS_DIRTY(esdp)) {
+        return;
+    }
+
+    ASSERT(esdp->no > 0 && esdp->no <= erts_no_schedulers);
+    ic_table = &erts_map_ic_sched_tables[esdp->no - 1];
+
+    slot = erts_map_ic_read_slot(site);
+    entry = &ic_table->table[slot];
 
     if (entry->site == site && entry->state == ERTS_MAP_IC_ACTIVE) {
         entry->state = ERTS_MAP_IC_DISABLED;
-        erts_mtx_unlock(&erts_map_ic_lock);
         return;
     }
 
@@ -261,8 +314,6 @@ erts_map_ic_update_flatmap_index(const void *site,
     } else {
         entry->state = ERTS_MAP_IC_DISABLED;
     }
-
-    erts_mtx_unlock(&erts_map_ic_lock);
 }
 
 

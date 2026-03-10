@@ -940,6 +940,18 @@ int main(int argc, char **argv)
                       add_Eargs(argv[i+1]);
                       i++;
                       break;
+		  case 'm':
+		      if (argv[i][2] == 'i' && argv[i][3] == 'c' &&
+			  argv[i][4] == '\0') {
+			  NEXT_ARG_CHECK();
+			  argv[i][0] = '-';
+			  add_Eargs(argv[i]);
+			  add_Eargs(argv[i+1]);
+			  i++;
+		      } else {
+			  goto the_default;
+		      }
+		      break;
 		  case 'S':
 		      if (argv[i][2] == 'P') {
 			  if (argv[i][3] != '\0')
