@@ -858,3 +858,9 @@ bif records:is_exported/1
 bif records:create/4
 bif records:update/4
 bif records:get_definition/2
+
+#
+# Map inline cache diagnostics.
+#
+bif map_ic:info/0
+bif map_ic:counters/0

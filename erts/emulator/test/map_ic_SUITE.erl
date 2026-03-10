@@ -30,7 +30,8 @@
          t_write_assoc_ic_hits/1,
          t_ic_survives_gc/1,
          t_assoc_shape_change_disables/1,
-         t_multi_key_bypasses_ic/1]).
+         t_multi_key_bypasses_ic/1,
+         t_map_ic_module/1]).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -44,7 +45,8 @@ all() ->
      t_write_assoc_ic_hits,
      t_ic_survives_gc,
      t_assoc_shape_change_disables,
-     t_multi_key_bypasses_ic].
+     t_multi_key_bypasses_ic,
+     t_map_ic_module].
 
 init_per_suite(Config) ->
     case erlang:system_info(emu_flavor) of
@@ -208,3 +210,54 @@ do_multi_update_n(_M, 0) -> ok;
 do_multi_update_n(M, N) ->
     _ = do_multi_update(M, N),
     do_multi_update_n(M, N - 1).
+
+%% Test the map_ic module API: info/0, counters/0, summary/0.
+t_map_ic_module(_Config) ->
+    %% counters/0 returns a proplist
+    Counters = map_ic:counters(),
+    true = is_list(Counters),
+    true = is_integer(proplists:get_value(attempts, Counters)),
+    true = is_integer(proplists:get_value(hits, Counters)),
+
+    %% info/0 returns a list of tuples
+    Entries = map_ic:info(),
+    true = is_list(Entries),
+    lists:foreach(fun({Site, Key, State, Hits, Misses, Sched, ShapeArity}) ->
+        true = (is_tuple(Site) andalso tuple_size(Site) =:= 3)
+               orelse Site =:= undefined,
+        true = is_atom(Key) orelse is_integer(Key) orelse Key =:= undefined,
+        true = lists:member(State, [active, disabled]),
+        true = is_integer(Hits) andalso Hits >= 0,
+        true = is_integer(Misses) andalso Misses >= 0,
+        true = is_integer(Sched) andalso Sched >= 1,
+        true = is_integer(ShapeArity) andalso ShapeArity >= 0
+    end, Entries),
+
+    %% summary/0 returns a list of aggregated maps
+    Summary = map_ic:summary(),
+    true = is_list(Summary),
+    lists:foreach(fun(E) ->
+        true = is_map(E),
+        true = is_map_key(site, E),
+        true = is_map_key(hits, E),
+        true = is_map_key(misses, E),
+        true = is_map_key(state, E),
+        true = is_map_key(schedulers, E)
+    end, Summary),
+
+    %% Prime a known site and verify it appears in info
+    M = #{ic_test_key => 1, other => 2},
+    _ = do_ic_module_read(M),
+    _ = do_ic_module_read(M),
+    _ = do_ic_module_read(M),
+    Entries2 = map_ic:info(),
+    MyEntries = [E || {Site, Key, _, _, _, _, _} = E <- Entries2,
+                      Site =:= {?MODULE, do_ic_module_read, 1},
+                      Key =:= ic_test_key],
+    ct:pal("My IC entries: ~p", [MyEntries]),
+    true = length(MyEntries) >= 1,
+    [{_, _, active, Hits, _, _, _}] = MyEntries,
+    true = Hits >= 2,
+    ok.
+
+do_ic_module_read(#{ic_test_key := V}) -> V.

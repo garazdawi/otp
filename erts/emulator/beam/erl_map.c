@@ -124,6 +124,8 @@ typedef struct {
     Eterm shape;
     Uint index;
     ErtsMapIcState state;
+    Uint hits;
+    Uint misses;
 } ErtsMapIcReadEntry;
 
 /*
@@ -199,6 +201,8 @@ void erts_init_map(void) {
         for (i = 0; i < ERTS_MAP_IC_READ_TABLE_SIZE; i++) {
             erts_map_ic_sched_tables[s].table[i].site = NULL;
             erts_map_ic_sched_tables[s].table[i].state = ERTS_MAP_IC_EMPTY;
+            erts_map_ic_sched_tables[s].table[i].hits = 0;
+            erts_map_ic_sched_tables[s].table[i].misses = 0;
         }
     }
 
@@ -415,11 +419,13 @@ erts_map_ic_try_get_flatmap_index(const void *site,
     if (entry->shape != mp->keys ||
         entry->key != key ||
         entry->index >= flatmap_get_size(mp)) {
+        entry->misses++;
         entry->state = ERTS_MAP_IC_DISABLED;
         return 0;
     }
 
     *index_out = entry->index;
+    entry->hits++;
     erts_map_ic_note_hit();
     return 1;
 }
@@ -464,18 +470,173 @@ erts_map_ic_update_flatmap_index(const void *site,
     }
 
     entry->site = site;
+    entry->key = key;
+    entry->hits = 0;
+    entry->misses = 0;
     if (key_found) {
         flatmap_t *mp = (flatmap_t *)flatmap_val(map);
-        entry->key = key;
         entry->shape = mp->keys;
         entry->index = index;
         entry->state = ERTS_MAP_IC_ACTIVE;
         erts_map_ic_note_fill();
     } else {
+        entry->shape = (Eterm)0;
         entry->state = ERTS_MAP_IC_DISABLED;
     }
 }
 
+
+/*
+ * map_ic:info/0 — Return raw per-site IC entries.
+ *
+ * Returns a list of tuples, one per non-empty IC entry across all schedulers:
+ *   {Site, Key, State, Hits, Misses, Scheduler, ShapeArity}
+ * where Site is {M,F,A} or 'undefined'.
+ *
+ * The Erlang module wraps these into maps and provides aggregation.
+ */
+BIF_RETTYPE map_ic_info_0(BIF_ALIST_0) {
+    Uint s, i;
+    Eterm result = NIL;
+    Eterm *hp;
+    Uint entry_count = 0;
+    Uint heap_needed;
+
+    if (!erts_map_ic_enabled()) {
+        BIF_RET(NIL);
+    }
+
+    /* First pass: count non-empty entries */
+    for (s = 0; s < erts_no_schedulers; s++) {
+        ErtsMapIcPerSchedTable *tab = &erts_map_ic_sched_tables[s];
+        for (i = 0; i < ERTS_MAP_IC_READ_TABLE_SIZE; i++) {
+            ErtsMapIcReadEntry *e = &tab->table[i];
+            if (e->site != NULL && e->state != ERTS_MAP_IC_EMPTY) {
+                entry_count++;
+            }
+        }
+    }
+
+    if (entry_count == 0) {
+        BIF_RET(NIL);
+    }
+
+    /*
+     * Per entry:
+     *   MFA tuple: 4 words (arityval + 3 elements)
+     *   7-element tuple: 8 words (arityval + 7 elements)
+     *   cons cell: 2 words
+     *   Total: 14 words max per entry
+     */
+    heap_needed = entry_count * 14;
+    hp = HAlloc(BIF_P, heap_needed);
+
+    for (s = 0; s < erts_no_schedulers; s++) {
+        ErtsMapIcPerSchedTable *tab = &erts_map_ic_sched_tables[s];
+        for (i = 0; i < ERTS_MAP_IC_READ_TABLE_SIZE; i++) {
+            ErtsMapIcReadEntry *e = &tab->table[i];
+            Eterm mfa_tuple;
+            Eterm state_atom;
+            Eterm shape_arity;
+            Eterm entry_tuple;
+            const ErtsCodeMFA *mfa;
+
+            if (e->site == NULL || e->state == ERTS_MAP_IC_EMPTY)
+                continue;
+
+            /* Resolve site to MFA */
+            mfa = erts_find_function_from_pc((ErtsCodePtr)e->site);
+            if (mfa) {
+                hp[0] = make_arityval(3);
+                hp[1] = mfa->module;
+                hp[2] = mfa->function;
+                hp[3] = make_small(mfa->arity);
+                mfa_tuple = make_tuple(hp);
+                hp += 4;
+            } else {
+                mfa_tuple = am_undefined;
+            }
+
+            switch (e->state) {
+            case ERTS_MAP_IC_ACTIVE:
+                state_atom = ERTS_MAKE_AM("active");
+                break;
+            case ERTS_MAP_IC_DISABLED:
+                state_atom = ERTS_MAKE_AM("disabled");
+                break;
+            default:
+                state_atom = ERTS_MAKE_AM("empty");
+                break;
+            }
+
+            if (e->state == ERTS_MAP_IC_ACTIVE && is_tuple(e->shape)) {
+                shape_arity = make_small(arityval(*tuple_val(e->shape)));
+            } else {
+                shape_arity = make_small(0);
+            }
+
+            /* {Site, Key, State, Hits, Misses, Scheduler, ShapeArity} */
+            hp[0] = make_arityval(7);
+            hp[1] = mfa_tuple;
+            hp[2] = is_immed(e->key) ? e->key : am_undefined;
+            hp[3] = state_atom;
+            hp[4] = make_small(e->hits);
+            hp[5] = make_small(e->misses);
+            hp[6] = make_small(s + 1);
+            hp[7] = shape_arity;
+            entry_tuple = make_tuple(hp);
+            hp += 8;
+
+            result = CONS(hp, entry_tuple, result);
+            hp += 2;
+        }
+    }
+
+    BIF_RET(result);
+}
+
+/*
+ * map_ic:counters/0 — Return global IC counters as a proplist.
+ */
+BIF_RETTYPE map_ic_counters_0(BIF_ALIST_0) {
+    Eterm result;
+    Uint sz = 0;
+    Uint *szp = &sz;
+    Eterm *hp = NULL;
+    Eterm *hpp_storage = NULL;
+    Eterm **hpp = NULL;
+    Eterm tags[5];
+    Sint64 raw[5];
+    int j;
+
+    raw[0] = erts_atomic64_read_nob(&erts_map_ic_counters.attempts);
+    raw[1] = erts_atomic64_read_nob(&erts_map_ic_counters.hits);
+    raw[2] = erts_atomic64_read_nob(&erts_map_ic_counters.misses);
+    raw[3] = erts_atomic64_read_nob(&erts_map_ic_counters.fills);
+    raw[4] = erts_atomic64_read_nob(&erts_map_ic_counters.disabled);
+
+    tags[0] = ERTS_MAKE_AM("attempts");
+    tags[1] = ERTS_MAKE_AM("hits");
+    tags[2] = ERTS_MAKE_AM("misses");
+    tags[3] = ERTS_MAKE_AM("fills");
+    tags[4] = ERTS_MAKE_AM("disabled");
+
+    while (1) {
+        Eterm tuples[5];
+        for (j = 0; j < 5; j++) {
+            tuples[j] = erts_bld_tuple(hpp, szp, 2,
+                                       tags[j],
+                                       erts_bld_sint64(hpp, szp, raw[j]));
+        }
+        result = erts_bld_list(hpp, szp, 5, tuples);
+        if (hpp)
+            break;
+        hpp_storage = HAlloc(BIF_P, sz);
+        hpp = &hpp_storage;
+        szp = NULL;
+    }
+    BIF_RET(result);
+}
 
 /* erlang:map_size/1
  * the corresponding instruction is implemented in:

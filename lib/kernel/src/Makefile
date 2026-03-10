@@ -119,6 +119,7 @@ MODULES = \
 	kernel_refc \
 	local_udp \
 	local_tcp \
+	map_ic \
         logger \
         logger_backend \
         logger_config \

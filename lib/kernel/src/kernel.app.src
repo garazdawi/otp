@@ -68,6 +68,7 @@
 	     kernel_refc,
 	     local_tcp,
 	     local_udp,
+	     map_ic,
              logger,
              logger_backend,
              logger_config,
