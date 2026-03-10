@@ -1893,6 +1893,53 @@ do {						\
     }						\
 } while(0)
 
+/*
+ * IC fast path for shape-preserving single-key map updates.
+ * Used by both update_map_exact and update_map_assoc when
+ * the IC has a cached index for the key being updated.
+ *
+ * Returns the updated map, or the original map if the value
+ * is unchanged.
+ */
+static ERTS_INLINE Eterm
+update_map_ic_hit(Process *p, Eterm *reg, Uint live,
+                  const Eterm *new_p, Eterm map, Uint index)
+{
+    flatmap_t *old_mp = (flatmap_t *)flatmap_val(map);
+    Uint num_old = flatmap_get_size(old_mp);
+    Uint need = num_old + MAP_HEADER_FLATMAP_SZ;
+    Eterm *hp, *old_vals, new_val;
+    flatmap_t *mp;
+    Eterm res;
+    Eterm *E;
+
+    if (HeapWordsLeft(p) < need) {
+        erts_garbage_collect(p, need, reg, live+1);
+        map = reg[live];
+        old_mp = (flatmap_t *)flatmap_val(map);
+    }
+
+    hp = p->htop;
+    E = p->stop;
+
+    res = make_flatmap(hp);
+    mp = (flatmap_t *)hp;
+    hp += MAP_HEADER_FLATMAP_SZ;
+    mp->thing_word = MAP_HEADER_FLATMAP;
+    mp->size = num_old;
+    mp->keys = old_mp->keys;
+
+    old_vals = flatmap_get_values(old_mp);
+    sys_memcpy(hp, old_vals, num_old * sizeof(Eterm));
+
+    GET_TERM(new_p[1], new_val);
+    if (hp[index] == new_val) {
+        return map;  /* Value unchanged */
+    }
+    hp[index] = new_val;
+    p->htop = hp + num_old;
+    return res;
+}
 
 Eterm
 erts_gc_new_map(Process* p, Eterm* reg, Uint live,
@@ -2013,13 +2060,33 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
     Eterm map;
     int changed_values = 0;
     int changed_keys = 0;
+    const Eterm* new_p_orig = new_p;
+    const Uint n_orig = n;
 
     num_updates = n / 2;
     map = reg[live];
 
-    if (erts_map_ic_enabled() && is_flatmap(map)) {
+    /*
+     * IC fast path: single-key shape-preserving assoc update.
+     * Only when n == 2 (one key-value pair) and key already exists.
+     */
+    if (erts_map_ic_enabled() && n == 2 && is_flatmap(map)) {
+        int ic_status;
+        Uint ic_index;
+        Eterm ic_key;
+
         erts_map_ic_note_attempt();
-        erts_map_ic_note_miss();
+
+        E = p->stop;
+        GET_TERM(new_p[0], ic_key);
+        ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, ic_key, &ic_index);
+        if (ic_status > 0) {
+            return update_map_ic_hit(p, reg, live, new_p, map, ic_index);
+        } else if (ic_status < 0) {
+            /* IC disabled — fall through to slow path */
+        } else {
+            erts_map_ic_note_miss();
+        }
     }
 
     if (is_not_flatmap(map)) {
@@ -2183,6 +2250,14 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
          * effectively releasing it.
          */
         ASSERT(n == 0);
+        if (erts_map_ic_enabled() && n_orig == 2) {
+            Eterm fill_key;
+            Uint fill_index;
+            GET_TERM(new_p_orig[0], fill_key);
+            flatmap_get_element(map, fill_key, &fill_index);
+            erts_map_ic_update_flatmap_index(new_p_orig, map, fill_key,
+                                             1, fill_index);
+        }
         return map;
     } else if (!changed_keys) {
         /*
@@ -2196,6 +2271,14 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
             *hp++ = *old_vals++;
         }
         p->htop = hp;
+        if (erts_map_ic_enabled() && n_orig == 2) {
+            Eterm fill_key;
+            Uint fill_index;
+            GET_TERM(new_p_orig[0], fill_key);
+            flatmap_get_element(map, fill_key, &fill_index);
+            erts_map_ic_update_flatmap_index(new_p_orig, map, fill_key,
+                                             1, fill_index);
+        }
         return res;
     } else {
 	/*
@@ -2240,6 +2323,19 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
                                           flatmap_get_values(mp),n);
         erts_factory_close(&factory);
     }
+
+    /*
+     * IC fill for assoc slow path: if shape changed (new key added),
+     * disable the IC for this site. The changed_keys path always
+     * reaches here.
+     */
+    if (erts_map_ic_enabled() && n_orig == 2 && changed_keys) {
+        Eterm fill_key;
+        GET_TERM(new_p_orig[0], fill_key);
+        erts_map_ic_update_flatmap_index(new_p_orig, reg[live], fill_key,
+                                         0, 0);
+    }
+
     return res;
 }
 
@@ -2264,14 +2360,34 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
     Eterm new_key;
     Eterm map;
     int changed = 0;
+    const Eterm* new_p_orig = new_p;
+    const Uint n_orig = n;
 
     n /= 2;		/* Number of values to be updated */
     ASSERT(n > 0);
     map = reg[live];
 
-    if (erts_map_ic_enabled() && is_flatmap(map)) {
+    /*
+     * IC fast path: single-key exact update.
+     * Only when n == 1 (one key-value pair) and key exists.
+     */
+    if (erts_map_ic_enabled() && n == 1 && is_flatmap(map)) {
+        int ic_status;
+        Uint ic_index;
+        Eterm ic_key;
+
         erts_map_ic_note_attempt();
-        erts_map_ic_note_miss();
+
+        E = p->stop;
+        GET_TERM(new_p[0], ic_key);
+        ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, ic_key, &ic_index);
+        if (ic_status > 0) {
+            return update_map_ic_hit(p, reg, live, new_p, map, ic_index);
+        } else if (ic_status < 0) {
+            /* IC disabled — fall through to slow path */
+        } else {
+            erts_map_ic_note_miss();
+        }
     }
 
     if (is_not_flatmap(map)) {
@@ -2367,15 +2483,28 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
                 * All updates done. Copy remaining values
                 * if any changed or return the original one.
                 */
+                Uint matched_i = i;
                 if(changed) {
 		    for (i++, old_vals++; i < num_old; i++) {
 		        *hp++ = *old_vals++;
 		    }
 		    ASSERT(hp == p->htop + need);
 		    p->htop = hp;
+                    if (erts_map_ic_enabled() && n_orig == 2) {
+                        Eterm fill_key;
+                        GET_TERM(new_p_orig[0], fill_key);
+                        erts_map_ic_update_flatmap_index(
+                            new_p_orig, map, fill_key, 1, matched_i);
+                    }
 		    return res;
                 } else {
                     p->htop = old_hp;
+                    if (erts_map_ic_enabled() && n_orig == 2) {
+                        Eterm fill_key;
+                        GET_TERM(new_p_orig[0], fill_key);
+                        erts_map_ic_update_flatmap_index(
+                            new_p_orig, map, fill_key, 1, matched_i);
+                    }
                     return map;
                 }
 	    } else {
@@ -2393,6 +2522,11 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
     ASSERT(hp == p->htop + need);
     p->freason = BADKEY;
     p->fvalue = new_key;
+    if (erts_map_ic_enabled() && n_orig == 2) {
+        Eterm fill_key;
+        GET_TERM(new_p_orig[0], fill_key);
+        erts_map_ic_update_flatmap_index(new_p_orig, map, fill_key, 0, 0);
+    }
     return THE_NON_VALUE;
 }
 #undef GET_TERM
