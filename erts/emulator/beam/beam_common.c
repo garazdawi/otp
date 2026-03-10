@@ -2089,10 +2089,8 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
         ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, ic_key, &ic_index);
         if (ic_status > 0) {
             return update_map_ic_hit(p, reg, live, new_p, map, ic_index);
-        } else if (ic_status == -2) {
-            /* IC confirms key absent — fall through, skip re-fill */
         } else if (ic_status < 0) {
-            /* IC disabled — fall through to slow path */
+            /* IC disabled or key confirmed absent — fall through */
         } else {
             erts_map_ic_note_miss();
         }
@@ -2335,15 +2333,10 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
 
     /*
      * IC fill for assoc slow path: if shape changed (new key added),
-     * disable the IC for this site. The changed_keys path always
-     * reaches here.
+     * do NOT fill the IC. A NOT_FOUND entry wouldn't help here since
+     * the assoc slow path always does its own key scan. Filling would
+     * just waste cache slots that could serve read-path entries.
      */
-    if (erts_map_ic_enabled() && n_orig == 2 && changed_keys) {
-        Eterm fill_key;
-        GET_TERM(new_p_orig[0], fill_key);
-        erts_map_ic_update_flatmap_index(new_p_orig, reg[live], fill_key,
-                                         0, 0);
-    }
 
     return res;
 }
@@ -2533,11 +2526,8 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
     ASSERT(hp == p->htop + need);
     p->freason = BADKEY;
     p->fvalue = new_key;
-    if (erts_map_ic_enabled() && n_orig == 2) {
-        Eterm fill_key;
-        GET_TERM(new_p_orig[0], fill_key);
-        erts_map_ic_update_flatmap_index(new_p_orig, map, fill_key, 0, 0);
-    }
+    /* Don't fill IC for BADKEY error path — key absence is an error,
+     * not a steady-state pattern worth caching. */
     return THE_NON_VALUE;
 }
 #undef GET_TERM
