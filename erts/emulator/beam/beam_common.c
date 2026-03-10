@@ -1952,6 +1952,11 @@ erts_gc_new_map(Process* p, Eterm* reg, Uint live,
 	GET_TERM(*ptr++, *mhp++);
     }
     p->htop = mhp;
+
+    if (erts_map_ic_enabled() && n > 0) {
+        mp->keys = erts_flatmap_intern_keys(mp->keys);
+    }
+
     return make_flatmap(mp);
 }
 
@@ -2222,6 +2227,10 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
     mp->size = n;
     *(boxed_val(mp->keys)) = make_arityval(n);
     p->htop  = kp;
+
+    if (erts_map_ic_enabled() && n > 0 && n <= MAP_SMALL_MAP_LIMIT) {
+        mp->keys = erts_flatmap_intern_keys(mp->keys);
+    }
 
     /* The expensive case, need to build a hashmap */
     if (n > MAP_SMALL_MAP_LIMIT) {

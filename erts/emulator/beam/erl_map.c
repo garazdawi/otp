@@ -158,6 +158,18 @@ int erts_map_inline_cache = 0;
 ErtsMapInlineCacheCounters erts_map_ic_counters;
 static ErtsMapIcPerSchedTable *erts_map_ic_sched_tables; /* [0..erts_no_schedulers-1] */
 
+/*
+ * Shape interning table — canonical key tuples stored in literal memory.
+ * Uses the generic hash table from hash.h with a protecting rwmtx.
+ */
+static Hash shape_table;
+static erts_rwmtx_t shape_table_lock;
+
+static HashValue shape_obj_hash(ErtsFlatmapShape *obj);
+static int shape_obj_cmp(ErtsFlatmapShape *tmpl, ErtsFlatmapShape *obj);
+static ErtsFlatmapShape *shape_obj_alloc(ErtsFlatmapShape *tmpl);
+static void shape_obj_free(ErtsFlatmapShape *obj);
+
 static ERTS_INLINE Uint
 erts_map_ic_read_slot(const void *site)
 {
@@ -190,10 +202,158 @@ void erts_init_map(void) {
         }
     }
 
+    /* Initialize shape interning table */
+    {
+        HashFunctions f;
+        f.hash = (H_FUN) shape_obj_hash;
+        f.cmp = (HCMP_FUN) shape_obj_cmp;
+        f.alloc = (HALLOC_FUN) shape_obj_alloc;
+        f.free = (HFREE_FUN) shape_obj_free;
+        f.meta_alloc = (HMALLOC_FUN) erts_alloc;
+        f.meta_free = (HMFREE_FUN) erts_free;
+        f.meta_print = (HMPRINT_FUN) erts_print;
+        hash_init(ERTS_ALC_T_MAP_SHAPE, &shape_table, "flatmap_shape_table", 64, f);
+    }
+    erts_rwmtx_init(&shape_table_lock, "flatmap_shape_table", NIL,
+                    ERTS_LOCK_FLAGS_PROPERTY_STATIC | ERTS_LOCK_FLAGS_CATEGORY_GENERIC);
+
     erts_init_trap_export(&hashmap_merge_trap_export,
 			  am_maps, am_merge_trap, 1,
 			  &maps_merge_trap_1);
     return;
+}
+
+/*
+ * Shape interning: hash.h callback functions.
+ */
+static HashValue shape_obj_hash(ErtsFlatmapShape *obj) {
+    Eterm *key_array = tuple_val(obj->interned_keys) + 1;
+    HashValue h = obj->arity;
+    Uint i;
+    for (i = 0; i < obj->arity; i++) {
+        h = h * 31 + (HashValue)erts_internal_hash(key_array[i]);
+    }
+    return h;
+}
+
+static int shape_obj_cmp(ErtsFlatmapShape *tmpl, ErtsFlatmapShape *obj) {
+    Uint i;
+    if (tmpl->arity != obj->arity)
+        return 1;
+    {
+        Eterm *a = tuple_val(tmpl->interned_keys) + 1;
+        Eterm *b = tuple_val(obj->interned_keys) + 1;
+        for (i = 0; i < tmpl->arity; i++) {
+            if (!EQ(a[i], b[i]))
+                return 1;
+        }
+    }
+    return 0;
+}
+
+static ErtsFlatmapShape *shape_obj_alloc(ErtsFlatmapShape *tmpl) {
+    /*
+     * Deep-copy the key tuple into a literal area so it survives GC.
+     */
+    Uint sz = size_object(tmpl->interned_keys);
+    ErtsLiteralArea *literal_area;
+    Eterm *hp;
+    Eterm interned_keys;
+    ErtsFlatmapShape *obj;
+
+    literal_area = (ErtsLiteralArea *)
+        erts_alloc(ERTS_ALC_T_LITERAL,
+                   ERTS_LITERAL_AREA_ALLOC_SIZE(sz));
+    literal_area->off_heap = NULL;
+    hp = &literal_area->start[0];
+
+    interned_keys = copy_struct(tmpl->interned_keys, sz, &hp,
+                                &literal_area->off_heap);
+    literal_area->end = hp;
+
+    erts_set_literal_tag(&interned_keys, literal_area->start, sz);
+
+    obj = (ErtsFlatmapShape *)
+        erts_alloc(ERTS_ALC_T_MAP_SHAPE, sizeof(ErtsFlatmapShape));
+    obj->arity = tmpl->arity;
+    obj->interned_keys = interned_keys;
+    obj->literal_area = literal_area;
+    obj->module_next = NULL;
+    erts_refc_init(&obj->refc, 1);
+
+    return obj;
+}
+
+static void shape_obj_free(ErtsFlatmapShape *obj) {
+    erts_queue_release_literals(NULL, obj->literal_area);
+    erts_free(ERTS_ALC_T_MAP_SHAPE, obj);
+}
+
+/*
+ * Look up or create an interned shape for the given key tuple.
+ * The key tuple is deep-copied into a literal area so that it
+ * survives GC.
+ */
+Eterm erts_flatmap_intern_keys(Eterm keys) {
+    Eterm *tp = tuple_val(keys);
+    Uint arity = arityval(*tp);
+    ErtsFlatmapShape tmpl;
+    ErtsFlatmapShape *sp;
+
+    if (arity == 0) {
+        return keys;  /* Empty tuple — use global literal */
+    }
+
+    /*
+     * Build a template on the stack. The interned_keys field points
+     * to the caller's (heap-resident) key tuple for lookup; if hash_put
+     * needs to create a new entry, shape_obj_alloc deep-copies it into
+     * a literal area.
+     */
+    tmpl.interned_keys = keys;
+    tmpl.arity = arity;
+    tmpl.literal_area = NULL;
+
+    erts_rwmtx_rlock(&shape_table_lock);
+    sp = (ErtsFlatmapShape *) hash_get(&shape_table, &tmpl);
+    if (sp) {
+        erts_refc_inc(&sp->refc, 1);
+        erts_rwmtx_runlock(&shape_table_lock);
+        return sp->interned_keys;
+    }
+    erts_rwmtx_runlock(&shape_table_lock);
+
+    erts_rwmtx_rwlock(&shape_table_lock);
+    sp = (ErtsFlatmapShape *) hash_put(&shape_table, &tmpl);
+    if (sp->literal_area != NULL) {
+        /* Already inserted by another thread between our unlock/relock */
+        erts_refc_inc(&sp->refc, 1);
+    }
+    erts_rwmtx_rwunlock(&shape_table_lock);
+
+    return sp->interned_keys;
+}
+
+/*
+ * Release shapes from a per-module linked list (called on module purge).
+ * Shapes whose refcount drops to 0 are removed from the hash table
+ * and their literal areas are queued for release.
+ */
+void erts_flatmap_release_shapes(ErtsFlatmapShape *list) {
+    ErtsFlatmapShape *shape, *next;
+
+    for (shape = list; shape != NULL; shape = next) {
+        next = shape->module_next;
+
+        if (erts_refc_dectest(&shape->refc, 0) == 0) {
+            erts_rwmtx_rwlock(&shape_table_lock);
+            hash_remove(&shape_table, shape);
+            erts_rwmtx_rwunlock(&shape_table_lock);
+            /* shape_obj_free is NOT called by hash_remove,
+             * so we must free manually */
+            shape_obj_free(shape);
+        }
+    }
 }
 
 int
@@ -648,6 +808,11 @@ static Eterm flatmap_from_validated_list(Process *p, Eterm list, Eterm fill_valu
 
     *thp = make_arityval(size);
     mp->size = size;
+
+    if (erts_map_ic_enabled()) {
+        mp->keys = erts_flatmap_intern_keys(mp->keys);
+    }
+
     return res;
 }
 
@@ -764,6 +929,10 @@ static Eterm hashmap_from_validated_list(Process *p,
 	/* it cannot have multiple keys */
 	erts_validate_and_sort_flatmap(mp);
 
+	if (erts_map_ic_enabled()) {
+	    mp->keys = erts_flatmap_intern_keys(mp->keys);
+	}
+
 	DESTROY_WSTACK(wstack);
 	return make_flatmap(mp);
     }
@@ -878,6 +1047,10 @@ from_ks_and_vs(ErtsHeapFactory *factory, Eterm *ks, Eterm *vs,
 	fmp->keys = keys;
 
         sys_memcpy((void *) hp, (void *) vs, n * sizeof(Eterm));
+
+        if (erts_map_ic_enabled() && n > 0) {
+            fmp->keys = erts_flatmap_intern_keys(fmp->keys);
+        }
 
         *fmpp = fmp;
         return THE_NON_VALUE;
@@ -3208,6 +3381,10 @@ unroll:
 
 	/* it cannot have multiple keys */
 	erts_validate_and_sort_flatmap(mp);
+
+	if (erts_map_ic_enabled()) {
+	    mp->keys = erts_flatmap_intern_keys(mp->keys);
+	}
 
 	DESTROY_WSTACK(wstack);
         UnUseTmpHeapNoproc(2);

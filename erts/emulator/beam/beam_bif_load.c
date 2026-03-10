@@ -42,6 +42,7 @@
 #include "erl_proc_sig_queue.h"
 #include "beam_file.h"
 #include "erl_record.h"
+#include "erl_map.h"
 
 #include "jit/beam_asm.h"
 
@@ -2217,6 +2218,10 @@ BIF_RETTYPE erts_internal_purge_module_2(BIF_ALIST_2)
                 if (modp->old.code_hdr->are_nifs) {
                     erts_free(ERTS_ALC_T_PREPARED_CODE,
                               modp->old.code_hdr->are_nifs);
+                }
+
+                if (modp->old.code_hdr->interned_shapes) {
+                    erts_flatmap_release_shapes(modp->old.code_hdr->interned_shapes);
                 }
 
                 beam_load_purge_aux(modp->old.code_hdr);

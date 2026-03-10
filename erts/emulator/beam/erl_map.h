@@ -26,6 +26,8 @@
 
 #include "sys.h"
 #include "erl_term_hashing.h"
+#include "erl_threads.h"
+#include "hash.h"
 
 /* intrinsic wrappers */
 #if ERTS_AT_LEAST_GCC_VSN__(3, 4, 0) || __has_builtin(__builtin_clz)
@@ -303,4 +305,21 @@ typedef struct hashmap_head_s {
 #endif
 #define HASHMAP_ESTIMATED_HEAP_SIZE(KEYS) \
         ((KEYS)*HASHMAP_WORDS_PER_KEY + HASHMAP_ESTIMATED_TOT_NODE_SIZE(KEYS))
+
+/*
+ * Flatmap shape interning — keeps key tuples in literal memory
+ * so mp->keys pointers remain stable across GC.
+ */
+typedef struct erts_flatmap_shape {
+    HashBucket bucket;                     /* MUST BE FIRST — hash.h chain */
+    struct erts_flatmap_shape *module_next; /* Per-module linked list */
+    erts_refc_t refc;                      /* Reference count */
+    Uint arity;                            /* Number of keys */
+    Eterm interned_keys;                   /* Tagged tuple Eterm in literal_area */
+    struct ErtsLiteralArea_ *literal_area; /* Owns the literal memory */
+} ErtsFlatmapShape;
+
+Eterm erts_flatmap_intern_keys(Eterm keys);
+void erts_flatmap_release_shapes(struct erts_flatmap_shape *list);
+
 #endif

@@ -127,6 +127,12 @@ typedef struct beam_code_header {
     byte* are_nifs;
 
     /*
+     * Linked list of interned flatmap shapes used by this module.
+     * Released on module purge.
+     */
+    struct erts_flatmap_shape *interned_shapes;
+
+    /*
      * Start of function pointer table.  This table contains pointers to
      * all functions in the module plus an additional pointer just beyond
      * the end of the last function.

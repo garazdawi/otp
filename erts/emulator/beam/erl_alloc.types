@@ -292,6 +292,7 @@ type    SEQ_YIELD_STATE SHORT_LIVED     SYSTEM          dist_seq_yield_state
 type    PHASH2_TRAP     SHORT_LIVED     PROCESSES       phash2_trap_state
 type    MAP_TRAP        SHORT_LIVED     PROCESSES       map_bif_trap_state
 type    MAP_IC          LONG_LIVED      SYSTEM          map_inline_cache
+type    MAP_SHAPE       LONG_LIVED      SYSTEM          map_shape
 
 type	ENVIRONMENT	SYSTEM		SYSTEM		environment
 
