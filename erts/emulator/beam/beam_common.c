@@ -1839,6 +1839,9 @@ get_map_element_ic(const void *site, Eterm map, Eterm key)
     if (ic_status > 0) {
         const Eterm *vs = flatmap_get_values((flatmap_t *)flatmap_val(map));
         return vs[index];
+    } else if (ic_status == -2) {
+        /* IC confirms key is absent in this shape */
+        return THE_NON_VALUE;
     } else if (ic_status < 0) {
         return get_map_element(map, key);
     }
@@ -2039,6 +2042,10 @@ erts_gc_new_small_map_lit(Process* p, Eterm* reg, Eterm keys_literal,
 
     p->htop = mhp;
 
+    if (erts_map_ic_enabled() && n > 0) {
+        mp->keys = erts_flatmap_intern_keys(mp->keys);
+    }
+
     return make_flatmap(mp);
 }
 
@@ -2082,6 +2089,8 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
         ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, ic_key, &ic_index);
         if (ic_status > 0) {
             return update_map_ic_hit(p, reg, live, new_p, map, ic_index);
+        } else if (ic_status == -2) {
+            /* IC confirms key absent — fall through, skip re-fill */
         } else if (ic_status < 0) {
             /* IC disabled — fall through to slow path */
         } else {
@@ -2383,6 +2392,8 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
         ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, ic_key, &ic_index);
         if (ic_status > 0) {
             return update_map_ic_hit(p, reg, live, new_p, map, ic_index);
+        } else if (ic_status == -2) {
+            /* IC confirms key absent — fall through, skip re-fill */
         } else if (ic_status < 0) {
             /* IC disabled — fall through to slow path */
         } else {

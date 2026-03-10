@@ -72,7 +72,8 @@ snapshot() ->
       hits => get_counter(hits),
       misses => get_counter(misses),
       fills => get_counter(fills),
-      disabled => get_counter(disabled)}.
+      disabled => get_counter(disabled),
+      false_misses => get_counter(false_misses)}.
 
 delta(Before, After) ->
     maps:map(fun(K, V) -> V - maps:get(K, Before) end, After).

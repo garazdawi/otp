@@ -2882,8 +2882,8 @@ BIF_RETTYPE system_info_1(BIF_ALIST_1)
 	BIF_RET(res);
     } else if (ERTS_IS_ATOM_STR("map_ic_counters", BIF_ARG_1)) {
         /* Return [{attempts,N}, {hits,N}, ...] proplist */
-        Eterm tags[5];
-        Sint64 raw[5];
+        Eterm tags[10];
+        Sint64 raw[10];
         Uint sz = 0;
         Uint *szp = &sz;
         Eterm *hpp = NULL;
@@ -2894,22 +2894,32 @@ BIF_RETTYPE system_info_1(BIF_ALIST_1)
         raw[2] = erts_atomic64_read_nob(&erts_map_ic_counters.misses);
         raw[3] = erts_atomic64_read_nob(&erts_map_ic_counters.fills);
         raw[4] = erts_atomic64_read_nob(&erts_map_ic_counters.disabled);
+        raw[5] = erts_atomic64_read_nob(&erts_map_ic_counters.false_misses);
+        raw[6] = erts_atomic64_read_nob(&erts_map_ic_counters.poly_key);
+        raw[7] = erts_atomic64_read_nob(&erts_map_ic_counters.poly_shape);
+        raw[8] = erts_atomic64_read_nob(&erts_map_ic_counters.key_not_found);
+        raw[9] = erts_atomic64_read_nob(&erts_map_ic_counters.evictions);
 
         tags[0] = ERTS_MAKE_AM("attempts");
         tags[1] = ERTS_MAKE_AM("hits");
         tags[2] = ERTS_MAKE_AM("misses");
         tags[3] = ERTS_MAKE_AM("fills");
         tags[4] = ERTS_MAKE_AM("disabled");
+        tags[5] = ERTS_MAKE_AM("false_misses");
+        tags[6] = ERTS_MAKE_AM("poly_key");
+        tags[7] = ERTS_MAKE_AM("poly_shape");
+        tags[8] = ERTS_MAKE_AM("key_not_found");
+        tags[9] = ERTS_MAKE_AM("evictions");
 
         /* Two-pass: first calculate size, then build */
         while (1) {
-            Eterm tuples[5];
-            for (j = 0; j < 5; j++) {
+            Eterm tuples[10];
+            for (j = 0; j < 10; j++) {
                 tuples[j] = erts_bld_tuple(hpp, szp, 2,
                                            tags[j],
                                            erts_bld_sint64(hpp, szp, raw[j]));
             }
-            res = erts_bld_list(hpp, szp, 5, tuples);
+            res = erts_bld_list(hpp, szp, 10, tuples);
             if (hpp)
                 break;
             hp = HAlloc(BIF_P, sz);
