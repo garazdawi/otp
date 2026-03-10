@@ -2077,15 +2077,15 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
      * IC fast path: single-key shape-preserving assoc update.
      * Only when n == 2 (one key-value pair) and key already exists.
      */
-    if (erts_map_ic_enabled() && n == 2 && is_flatmap(map)) {
+    if (erts_map_ic_enabled() && n == 2 && is_flatmap(map)
+        && !_is_loader_x_reg(new_p[0]) && !_is_loader_y_reg(new_p[0])) {
         int ic_status;
         Uint ic_index;
-        Eterm ic_key;
+        Eterm ic_key = new_p[0]; /* literal key, no GET_TERM needed */
 
         erts_map_ic_note_attempt();
 
         E = p->stop;
-        GET_TERM(new_p[0], ic_key);
         ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, ic_key, &ic_index);
         if (ic_status > 0) {
             return update_map_ic_hit(p, reg, live, new_p, map, ic_index);
@@ -2257,10 +2257,10 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
          * effectively releasing it.
          */
         ASSERT(n == 0);
-        if (erts_map_ic_enabled() && n_orig == 2) {
-            Eterm fill_key;
+        if (erts_map_ic_enabled() && n_orig == 2
+            && !_is_loader_x_reg(new_p_orig[0]) && !_is_loader_y_reg(new_p_orig[0])) {
+            Eterm fill_key = new_p_orig[0];
             Uint fill_index;
-            GET_TERM(new_p_orig[0], fill_key);
             flatmap_get_element(map, fill_key, &fill_index);
             erts_map_ic_update_flatmap_index(new_p_orig, map, fill_key,
                                              1, fill_index);
@@ -2278,10 +2278,10 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
             *hp++ = *old_vals++;
         }
         p->htop = hp;
-        if (erts_map_ic_enabled() && n_orig == 2) {
-            Eterm fill_key;
+        if (erts_map_ic_enabled() && n_orig == 2
+            && !_is_loader_x_reg(new_p_orig[0]) && !_is_loader_y_reg(new_p_orig[0])) {
+            Eterm fill_key = new_p_orig[0];
             Uint fill_index;
-            GET_TERM(new_p_orig[0], fill_key);
             flatmap_get_element(map, fill_key, &fill_index);
             erts_map_ic_update_flatmap_index(new_p_orig, map, fill_key,
                                              1, fill_index);
@@ -2373,15 +2373,15 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
      * IC fast path: single-key exact update.
      * Only when n == 1 (one key-value pair) and key exists.
      */
-    if (erts_map_ic_enabled() && n == 1 && is_flatmap(map)) {
+    if (erts_map_ic_enabled() && n == 1 && is_flatmap(map)
+        && !_is_loader_x_reg(new_p[0]) && !_is_loader_y_reg(new_p[0])) {
         int ic_status;
         Uint ic_index;
-        Eterm ic_key;
+        Eterm ic_key = new_p[0]; /* literal key, no GET_TERM needed */
 
         erts_map_ic_note_attempt();
 
         E = p->stop;
-        GET_TERM(new_p[0], ic_key);
         ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, ic_key, &ic_index);
         if (ic_status > 0) {
             return update_map_ic_hit(p, reg, live, new_p, map, ic_index);
@@ -2494,18 +2494,18 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
 		    }
 		    ASSERT(hp == p->htop + need);
 		    p->htop = hp;
-                    if (erts_map_ic_enabled() && n_orig == 2) {
-                        Eterm fill_key;
-                        GET_TERM(new_p_orig[0], fill_key);
+                    if (erts_map_ic_enabled() && n_orig == 2
+                        && !_is_loader_x_reg(new_p_orig[0]) && !_is_loader_y_reg(new_p_orig[0])) {
+                        Eterm fill_key = new_p_orig[0];
                         erts_map_ic_update_flatmap_index(
                             new_p_orig, map, fill_key, 1, matched_i);
                     }
 		    return res;
                 } else {
                     p->htop = old_hp;
-                    if (erts_map_ic_enabled() && n_orig == 2) {
-                        Eterm fill_key;
-                        GET_TERM(new_p_orig[0], fill_key);
+                    if (erts_map_ic_enabled() && n_orig == 2
+                        && !_is_loader_x_reg(new_p_orig[0]) && !_is_loader_y_reg(new_p_orig[0])) {
+                        Eterm fill_key = new_p_orig[0];
                         erts_map_ic_update_flatmap_index(
                             new_p_orig, map, fill_key, 1, matched_i);
                     }

@@ -415,6 +415,7 @@ erts_map_ic_try_get_flatmap_index(const void *site,
             continue;
 
         if (entry->state == ERTS_MAP_IC_DISABLED) {
+            entry->hits++;
             erts_map_ic_note_disabled();
             return -1;
         }
