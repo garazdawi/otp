@@ -1,0 +1,58 @@
+pre {
+  position: relative;
+}
+
+pre:hover .copy-button,
+pre .copy-button:focus {
+  opacity: 1;
+}
+
+.copy-button {
+  display: flex;
+  opacity: 0;
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  padding: 8px;
+  background-color: transparent;
+  backdrop-filter: blur(8px);
+  border-radius: var(--borderRadius-sm);
+  border: 1px solid var(--codeBorder);
+  cursor: pointer;
+  transition: var(--transition-all);
+  font-size: var(--text-sm);
+  line-height: 24px;
+  color: currentColor;
+
+  & svg[aria-live="polite"] {
+    display: none;
+  }
+}
+
+.copy-button svg {
+  opacity: 0.5;
+  transition: var(--transition-all);
+}
+
+pre .copy-button:hover svg,
+pre .copy-button:focus-visible svg {
+  opacity: 1;
+}
+
+.copy-button svg {
+  width: 20px;
+}
+
+.copy-button.clicked {
+  opacity: 1;
+  color: var(--success);
+
+  & svg[aria-live="polite"] {
+    display: block;
+  }
+}
+
+.copy-button.clicked svg {
+  display: none;
+  color: currentColor;
+}

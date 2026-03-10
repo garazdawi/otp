@@ -1,0 +1,119 @@
+.autocomplete {
+  display: none;
+  position: absolute;
+  width: calc(100% - 32px);
+  top: 55px;
+}
+
+.autocomplete .triangle {
+  width: 0;
+  height: 0;
+  border-left: 12px solid transparent;
+  border-right: 12px solid transparent;
+  border-bottom: 12px solid var(--autocompleteBackground);
+  position: absolute;
+  top: 8px;
+  left: 26px;
+  transform: translateX(-50%);
+  z-index: 100;
+  background-color: transparent;
+}
+
+.autocomplete-results {
+  margin: 0;
+  padding: 15px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--autocompleteResults);
+  font-weight: 300;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.autocomplete-results .query {
+  margin-right: auto;
+}
+
+.autocomplete-results .bold {
+  color: var(--autocompleteResultsBold);
+  font-weight: 400;
+}
+
+.autocomplete.shown {
+  display: block;
+}
+
+.autocomplete-container {
+  position: absolute;
+  top: 5px;
+  width: 100%;
+  z-index: 200;
+}
+
+.autocomplete-suggestions {
+  background-color: var(--autocompleteBackground);
+  border-radius: var(--borderRadius-base);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .2);
+  overflow-y: auto;
+  max-height: 450px;
+  white-space: normal;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+}
+
+.autocomplete-suggestion {
+  color: var(--textHeaders) !important;
+  display: block;
+  padding: 12px 20px;
+  text-decoration: none !important;
+  transition: var(--transition-colors);
+  border-top: 1px solid var(--suggestionBorder);
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.autocomplete-suggestion.selected {
+  background-color: var(--autocompleteSelected);
+}
+
+.autocomplete-suggestion:hover {
+  background-color: var(--autocompleteHover);
+}
+
+.autocomplete-suggestion em {
+  font-style: normal;
+  font-weight: bold;
+}
+
+.autocomplete-suggestion .separator {
+  opacity: 0.4;
+  margin: 0 2px;
+}
+
+.autocomplete-suggestion .description {
+  opacity: 0.6;
+}
+
+.autocomplete-suggestion .label {
+  background-color: var(--autocompleteLabelBack);
+  opacity: 0.6;
+  color: var(--autocompleteLabelFont);
+  padding: 4px 8px 4px 8px;
+  border-radius: 4px;
+  margin-left: 5px;
+  text-transform: uppercase;
+  font-family: var(--sansFontFamily);
+  font-size: 0.7rem;
+}
+
+
+@media screen and (hover: none) {
+  .autocomplete-results .press-return {
+    display: none !important;
+  }
+}

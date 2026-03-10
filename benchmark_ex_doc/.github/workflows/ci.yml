@@ -1,0 +1,107 @@
+name: CI
+
+on: [pull_request, push]
+
+env:
+  MIX_ENV: test
+
+jobs:
+  assets:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - elixir: "1.17"
+            otp: "27"
+            node: 18.x
+    steps:
+      - uses: actions/checkout@v3
+
+      # Setup Node
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{matrix.node}}
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('asssets/package-lock.json') }}
+
+      - run: npm ci --prefix assets
+      - run: npm run build --prefix assets
+
+      # Setup Elixir
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+
+      # Generate and upload artifacts
+      - name: Generate docs
+        run: test/prerelease.sh
+
+      - name: Attach docs metadata
+        run: |
+          echo "{\"number\":${{ github.event.number }}}" > test/tmp/contents/doc/gh.json
+
+      - name: Upload docs
+        uses: actions/upload-artifact@v4
+        id: docs-upload
+        with:
+          name: docs
+          path: test/tmp/contents/doc/
+
+      # Test JS
+      - run: npm run lint --prefix assets
+      - run: npm run test --prefix assets
+
+      # Push updated assets if all good
+      - name: Push updated assets
+        if: github.ref_name == 'main'
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: Update assets
+          file_pattern: formatters
+
+  elixir:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Test very old Elixir and Erlang
+          - elixir: "1.15"
+            otp: "25"
+          # Test Erlang without -doc attribute support
+          - elixir: "1.16"
+            otp: "26"
+          # Test with initial Erlang doc attribute support
+          - elixir: "1.17"
+            otp: "27"
+          - elixir: "1.18"
+            otp: "27"
+          # Test with latest Elixir and Erlang versions
+          - elixir: "1.19"
+            otp: "28"
+            lint: true
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+
+      - run: mix deps.get
+
+      - run: mix compile --warnings-as-errors
+        if: ${{ matrix.lint }}
+
+      - run: mix test
+
+      - run: mix deps.unlock --check-unused
+        if: ${{ matrix.lint }}
+
+      - run: mix format --check-formatted
+        if: ${{ matrix.lint }}

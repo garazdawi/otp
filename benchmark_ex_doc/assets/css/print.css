@@ -1,0 +1,59 @@
+@media print {
+  .body-wrapper {
+    display: block;
+  }
+
+  .sidebar,
+  .sidebar-button {
+    display: none;
+  }
+
+  .top-search {
+    display: none;
+  }
+
+  .content {
+    padding-left: 0;
+    overflow: visible;
+    left: 0px;
+    width: 100%;
+  }
+
+  .summary-row {
+    break-inside: avoid;
+  }
+
+  #toast {
+    display: none;
+  }
+
+  .content-inner {
+    padding: 0;
+  }
+
+  .content-inner .section-heading a.hover-link {
+    display: none;
+  }
+
+  .content-inner button.icon-action {
+    display: none;
+  }
+
+  .content-inner a.icon-action {
+    display: none;
+  }
+
+  .content-inner .bottom-actions {
+    display: none;
+  }
+
+  /* Hide On Hex.pm text but keep Built Using ExDoc */
+  .footer p:first-of-type {
+    display: none;
+  }
+
+  .content-inner pre code.makeup {
+    white-space: break-spaces;
+    break-inside: avoid;
+  }
+}

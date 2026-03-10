@@ -1,0 +1,224 @@
+defmodule ExDoc.CLITest do
+  use ExUnit.Case, async: true
+  import ExUnit.CaptureIO
+
+  @ebin "_build/test/lib/ex_doc/ebin"
+  @ebin2 "_build/test/lib/makeup/ebin"
+
+  defp run(args) do
+    with_io(fn -> ExDoc.CLI.main(args, &mock_generator/4) end)
+  end
+
+  defp mock_generator(project, version, source_beam, options) do
+    formatters = options[:formatters] || ["html"]
+
+    for formatter <- formatters do
+      formatter_module = Module.concat([ExDoc.Formatter, String.upcase(formatter)])
+
+      %{
+        entrypoint: {project, version, source_beam, options},
+        warned?: false,
+        formatter: formatter_module
+      }
+    end
+  end
+
+  test "minimum command-line options" do
+    {[html, epub, markdown], _io} = run(["ExDoc", "1.2.3", @ebin])
+
+    assert html ==
+             {"ExDoc", "1.2.3", [@ebin],
+              [
+                formatters: ["html", "markdown", "epub"],
+                apps: [:ex_doc]
+              ]}
+
+    assert epub ==
+             {"ExDoc", "1.2.3", [@ebin],
+              [
+                formatters: ["html", "markdown", "epub"],
+                apps: [:ex_doc]
+              ]}
+
+    assert markdown ==
+             {"ExDoc", "1.2.3", [@ebin],
+              [
+                formatters: ["html", "markdown", "epub"],
+                apps: [:ex_doc]
+              ]}
+  end
+
+  test "formatter option" do
+    {[epub, html], _io} = run(["ExDoc", "1.2.3", @ebin, "-f", "epub", "-f", "html"])
+
+    assert epub ==
+             {"ExDoc", "1.2.3", [@ebin],
+              [
+                formatters: ["epub", "html"],
+                apps: [:ex_doc]
+              ]}
+
+    assert html ==
+             {"ExDoc", "1.2.3", [@ebin],
+              [
+                formatters: ["epub", "html"],
+                apps: [:ex_doc]
+              ]}
+  end
+
+  test "version" do
+    {_, io} = run(["--version"])
+    assert io == "ExDoc v#{ExDoc.version()}\n"
+
+    {_, io} = run(["--version"])
+    assert io == "ExDoc v#{ExDoc.version()}\n"
+  end
+
+  test "too few arguments" do
+    assert catch_exit(run(["ExDoc"])) == {:shutdown, 1}
+  end
+
+  test "multiple apps" do
+    {[{"ExDoc", "1.2.3", _, html}, {"ExDoc", "1.2.3", _, epub}, {"ExDoc", "1.2.3", _, markdown}],
+     _io} =
+      run(["ExDoc", "1.2.3", @ebin, @ebin2])
+
+    assert [:ex_doc, :makeup] = Enum.sort(Keyword.get(html, :apps))
+    assert [:ex_doc, :makeup] = Enum.sort(Keyword.get(epub, :apps))
+    assert [:ex_doc, :makeup] = Enum.sort(Keyword.get(markdown, :apps))
+  end
+
+  test "arguments that are not aliased" do
+    File.write!("not_aliased.exs", ~s([key: "val"]))
+
+    args = ~w(
+      ExDoc 1.2.3 #{@ebin}
+      --config not_aliased.exs
+      --output html
+      --formatter html
+      --source-url http://example.com/username/project
+      --source-ref abcdefg
+      --main Main
+      --homepage-url http://example.com
+      --logo logo.png
+      --canonical http://example.com/project
+    )
+
+    {[{project, version, _source_beam, opts}], _io} = run(args)
+    assert project == "ExDoc"
+    assert version == "1.2.3"
+
+    assert Enum.sort(opts) == [
+             apps: [:ex_doc],
+             canonical: "http://example.com/project",
+             formatters: ["html"],
+             homepage_url: "http://example.com",
+             key: "val",
+             logo: "logo.png",
+             main: "Main",
+             output: "html",
+             source_ref: "abcdefg",
+             source_url: "http://example.com/username/project"
+           ]
+  after
+    File.rm!("not_aliased.exs")
+  end
+
+  test "with --quiet" do
+    {_, io} = run(["ExDoc", "1.2.3", @ebin, "-q"])
+    assert io == ""
+  end
+
+  describe "--config .exs" do
+    test "loading" do
+      File.write!("test.exs", ~s([extras: ["README.md"], formatters: ["html"]]))
+
+      {[{project, version, _source_beam, opts}], _io} =
+        run(["ExDoc", "--extra-section", "Guides", "1.2.3", @ebin, "-c", "test.exs"])
+
+      assert project == "ExDoc"
+      assert version == "1.2.3"
+
+      assert Enum.sort(opts) == [
+               apps: [:ex_doc],
+               extra_section: "Guides",
+               extras: ["README.md"],
+               formatters: ["html"]
+             ]
+    after
+      File.rm!("test.exs")
+    end
+
+    test "switches take precedence over config" do
+      File.write!("test.exs", ~s([logo: "config_logo.png", formatters: ["html"]]))
+
+      {[{project, version, _source_beam, opts}], _io} =
+        run([
+          "ExDoc",
+          "--logo",
+          "opts_logo.png",
+          "1.2.3",
+          @ebin,
+          "-c",
+          "test.exs"
+        ])
+
+      assert project == "ExDoc"
+      assert version == "1.2.3"
+
+      assert Enum.sort(opts) == [
+               apps: [:ex_doc],
+               formatters: ["html"],
+               logo: "opts_logo.png"
+             ]
+    after
+      File.rm!("test.exs")
+    end
+
+    test "missing" do
+      assert_raise File.Error, fn ->
+        run(["ExDoc", "1.2.3", @ebin, "-c", "test.exs"])
+      end
+    end
+
+    test "invalid" do
+      File.write!("test.exs", ~s(%{"extras" => "README.md"}))
+
+      assert_raise RuntimeError, ~S(expected a keyword list from config file: "test.exs"), fn ->
+        run(["ExDoc", "1.2.3", @ebin, "-c", "test.exs"])
+      end
+    after
+      File.rm!("test.exs")
+    end
+  end
+
+  describe "--config .config" do
+    test "loading" do
+      File.write!("test.config", ~s({extras, [<<"README.md">>]}. {formatters, [<<"html">>]}.))
+
+      {[{project, version, _source_beam, opts}], _io} =
+        run(["ExDoc", "1.2.3", @ebin, "-c", "test.config"])
+
+      assert project == "ExDoc"
+      assert version == "1.2.3"
+
+      assert Enum.sort(opts) == [
+               apps: [:ex_doc],
+               extras: ["README.md"],
+               formatters: ["html"]
+             ]
+    after
+      File.rm!("test.config")
+    end
+
+    test "invalid" do
+      File.write!("test.config", "bad")
+
+      assert_raise RuntimeError, ~r/error parsing test.config/, fn ->
+        run(["ExDoc", "1.2.3", @ebin, "-c", "test.config"])
+      end
+    after
+      File.rm!("test.config")
+    end
+  end
+end

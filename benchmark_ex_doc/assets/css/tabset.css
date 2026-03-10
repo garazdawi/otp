@@ -1,0 +1,105 @@
+.tabset {
+  --borderWidth: 1px;
+  --tabsetPadding: var(--baseLineHeight);
+  margin: var(--baseLineHeight) 0;
+  border: var(--borderWidth) solid var(--tabBorder);
+  padding: 0 var(--tabsetPadding);
+  border-radius: var(--borderRadius-lg);
+}
+
+.tabset-tablist {
+  display: flex;
+  overflow: auto;
+  scrollbar-width: thin;
+  border-bottom-width: 1px;
+  border-bottom-style: solid;
+  border-bottom-color: var(--tabBorderTop);
+}
+
+.tabset-tab {
+  padding: 1.1rem var(--tabsetPadding);
+  font-family: var(--sansFontFamily);
+  color: var(--textColor);
+  margin-right: calc(-1 * var(--borderWidth));
+  background-color: transparent;
+  border:0;
+  box-shadow: none;
+  cursor: pointer;
+  border-bottom-width: 2px;
+  border-bottom-style: solid;
+  border-bottom-color: transparent;
+  transition: var(--transition-all);
+}
+
+:hover.tabset-tab {
+  border-bottom-color: var(--tabBorderTop);
+  color: var(--textHeaders);
+}
+
+.tabset-tab[aria-selected=true] {
+  border-bottom-color: var(--mainLight);
+  color: var(--textHeaders);
+}
+
+/* Keyboard navigation focus state (increased contrast) */
+.tabset-tab[aria-selected=true]:focus-visible {
+  background-color: var(--mainLight);
+  border-color: var(--mainLight);
+  color: var(--white); /* light works best for both light and dark themes given background colors */
+}
+
+@media screen and (max-width: 768px) {
+  .tabset {
+    --tabsetPadding: calc(var(--baseLineHeight) / 2);
+  }
+
+  .tabset-panel {
+    padding-top: calc(var(--tabsetPadding) / 2);
+    padding-bottom: calc(var(--tabsetPadding) / 2);
+  }
+
+  .tabset-panel pre,
+  .tabset-panel blockquote,
+  .tabset-panel section.admonition {
+    margin-left: calc(-1 * var(--tabsetPadding)) !important;
+    margin-right: calc(-1 * var(--tabsetPadding)) !important;
+  }
+
+  .tabset-panel > pre code {
+    border-left-width: 0;
+    border-right-width: 0;
+  }
+}
+
+/* tabpanel content: top margin of first and bottom margin of last */
+@media screen and (max-width: 768px) {
+  .tabset-panel > :is(:first-child) {
+    &:is(table) {
+      margin: .5em 0;
+    }
+  }
+}
+@media screen and (min-width: 769px) {
+  .tabset-panel > :is(:first-child) {
+    &:is(blockquote, .admonition) {
+      margin-top: 1.5em;
+    }
+    &:is(p:has(img)) {
+      margin-top: 1.25em;
+    }
+    &:is(table) {
+      margin-top: .75em;
+    }
+  }
+  .tabset-panel > :is(:last-child) {
+    &:is(blockquote, .admonition) {
+      margin-bottom: 1.5em;
+    }
+    &:is(p:not(:has(img)), ul, ol) {
+      margin-bottom: 1.25em;
+    }
+    &:is(table) {
+      margin-bottom: .75em;
+    }
+  }
+}

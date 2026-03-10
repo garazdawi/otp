@@ -1,0 +1,51 @@
+{
+  "name": "ex_doc",
+  "description": "ExDoc produces HTML and EPUB documentation for Elixir projects.",
+  "directories": {
+    "test": "test"
+  },
+  "engines": {
+    "node": ">= 18.0.0",
+    "npm": ">= 9.0.0"
+  },
+  "scripts": {
+    "lint": "eslint './js/**/*.js'",
+    "lint:fix": "eslint --fix './js/**/*.js'",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "build:watch": "npm run build --watch",
+    "build": "node build/build.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elixir-lang/ex_doc.git"
+  },
+  "author": "The Elixir Team",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/elixir-lang/ex_doc/issues"
+  },
+  "homepage": "https://github.com/elixir-lang/ex_doc#readme",
+  "browserslist": "last 2 versions",
+  "devDependencies": {
+    "@fontsource-variable/inconsolata": "^5.1.1",
+    "@fontsource/lato": "^4.5.10",
+    "@swup/a11y-plugin": "^5.0.0",
+    "@swup/progress-plugin": "^3.2.0",
+    "esbuild": "^0.27.2",
+    "eslint": "^8.31.0",
+    "eslint-config-standard": "^17.0.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-n": "^15.6.0",
+    "eslint-plugin-promise": "^6.1.1",
+    "fs-extra": "^11.1.0",
+    "handlebars": "^4.7.7",
+    "jsdom": "^26.0.0",
+    "lodash.throttle": "^4.1.1",
+    "lunr": "^2.3.8",
+    "modern-normalize": "^3.0.1",
+    "swup": "^4.8.1",
+    "@vitest/coverage-v8": "^3.0.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,34 @@
+<div class="triangle"></div>
+<div class="autocomplete-container">
+  <div class="autocomplete-suggestions">
+    <div class="autocomplete-results">
+      <span class="query">
+        {{#if suggestions.length}}
+          Autocompletion results within this project
+        {{else}}
+          No autocompletion results within this project
+        {{/if}}
+      </span>
+      <span class="press-return">
+        Press <span class="bold">RETURN</span> for full-text search
+      </span>
+    </div>
+    <div>
+      {{#each suggestions}}
+      <a href="{{link}}" class="autocomplete-suggestion" data-index="{{@index}}" tabindex="-1">
+        <span class="header" translate="no">{{{title}}}</span>
+        {{#if description}}
+        <span class="separator" aria-hidden="true"> · </span>
+        <span class="description" translate="no">{{{description}}}</span>
+        {{/if}}
+        {{# if deprecated }}
+        <span class="label deprecated">deprecated</span>
+        {{/if}}
+        {{#each labels}}
+        <span class="label">{{this}}</span>
+        {{/each}}
+      </a>
+      {{/each}}
+    </div>
+  </div>
+</div>

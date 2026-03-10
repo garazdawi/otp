@@ -1,0 +1,99 @@
+body.dark {
+  --background:                  var(--gray900);
+  --contrast:                    var(--white);
+  --textBody:                    var(--gray200);
+  --textHeaders:                 var(--gray100);
+  --textDetailAccent:            var(--mainLight);
+  --textDetailBackground:        var(--gray700);
+
+  --iconAction:                  var(--coldGray-lightened-10);
+  --iconActionHover:             var(--white);
+
+  --blockquoteBackground:        var(--coldGray-opacity-10);
+  --blockquoteBorder:            var(--coldGrayDim);
+
+  --tableHeadBorder:             var(--gray600);
+  --tableBodyBorder:             var(--gray700);
+
+  /* Admonition colors: optionally mixed with a particular color in order to create cohesive feel */
+  --warningHue:                  34;
+  --errorHue:                    7;
+  --infoHue:                     206;
+  --neutralHue:                  212;
+  --tipHue:                      142;
+  --admMixCol:                   var(--gray900);
+  --admMixAmt:                   40%;
+  --warningBackground:           color-mix(in xyz, var(--admMixCol) var(--admMixAmt), hsl(var(--warningHue), 40%, 14%) 100%);
+  --warningHeading:              hsl(var(--warningHue), 100%, 50%);
+  --errorBackground:             color-mix(in xyz, var(--admMixCol) var(--admMixAmt), hsl(var(--errorHue), 40%, 14%) 100%);
+  --errorHeading:                hsl(var(--errorHue), 100%, 52%);
+  --infoBackground:              color-mix(in xyz, var(--admMixCol) var(--admMixAmt), hsl(var(--infoHue), 60%, 15%) 100%);
+  --infoHeading:                 hsl(var(--infoHue), 100%, 52%);
+  --neutralBackground:           color-mix(in xyz, var(--admMixCol) var(--admMixAmt), hsl(var(--neutralHue), 40%, 14%) 100%);
+  --neutralHeading:              hsl(var(--neutralHue), 50%, 80%);
+  --tipBackground:               color-mix(in xyz, var(--admMixCol) var(--admMixAmt), hsl(var(--tipHue), 40%, 14%) 100%);
+  --tipHeading:                  hsl(var(--tipHue), 55%, 48%);
+
+  --fnSpecAttr:                  var(--gray400);
+  --fnDeprecated:                var(--yellowDark);
+  --blink:                       var(--gray600);
+
+  --codeBackground:              var(--gray800);
+  --codeBorder:                  var(--gray650);
+  --codeScrollThumb:             var(--gray500);
+  --codeScrollBackground:        var(--codeBorder);
+
+  --admCodeBackground:           var(--black-opacity-30);
+  --admCodeBorder:               var(--white-opacity-10);
+  --admCodeColor:                var(--gray100);
+
+  --tabBorder:                   var(--gray700);
+  --tabBorderTop:                var(--gray700);
+  --tabShadow:                   var(--black);
+
+  --bottomActionsBtnBorder:      var(--white-opacity-10);
+  --bottomActionsBtnTitle:       var(--mainLightest);
+
+  --modalBackground:             var(--gray800);
+
+  --settingsInput:               var(--white);
+  --settingsInputBackground:     var(--gray700);
+  --settingsInputBorder:         var(--gray700);
+  --settingsSectionBorder:       var(--gray700);
+
+  --quickSwitchInput:            var(--gray300);
+  --quickSwitchContour:          var(--gray500);
+
+  --success:                     var(--green-lightened-10);
+  --progressBarColor:            var(--gray300);
+
+  --sidebarAccentMain:           var(--gray50);
+  --sidebarBackground:           var(--gray800);
+  --sidebarHeader:               var(--gray700);
+  --sidebarMuted:                var(--gray300);
+  --sidebarHover:                var(--white);
+  --sidebarStaleVersion:         var(--orangeLight);
+  --sidebarSubheadings:          var(--gray400);
+  --sidebarItem:                 var(--gray200);
+  --sidebarInactiveItemBorder:   var(--gray400);
+  --sidebarInactiveItemMarker:   var(--gray600);
+  --sidebarLanguageAccentBar:    var(--mainLight);
+  --sidebarActiveItem:           var(--mainLightest);
+  --searchBarBorder:             var(--gray500);
+  --searchAccentMain:            var(--gray300);
+  --searchSearch:                var(--gray900);
+  --autocompleteBorder:          rgba(28,42,60,.75);
+  --autocompletePreview:         var(--gray750);
+  --autocompleteSelected:        var(--gray750);
+  --autocompleteHover:           var(--gray700);
+  --autocompleteBackground:      var(--gray800);
+  --suggestionBorder:            var(--gray600);
+  --autocompleteResults:         var(--gray200);
+  --autocompleteResultsBold:     var(--gray100);
+  --autocompleteLabelBack:       var(--gray600);
+  --autocompleteLabelFont:       rgba(255, 255, 255, 0.8);
+}
+
+:root:has(body.dark) {
+  color-scheme: dark;
+}
