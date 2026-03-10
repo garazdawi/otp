@@ -268,7 +268,6 @@ Eterm erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
 Eterm erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
                                Uint n, const Eterm* data);
 Eterm get_map_element(Eterm map, Eterm key);
-Eterm get_map_element_ic(const void *site, Eterm map, Eterm key);
 Eterm get_map_element_hash(Eterm map, Eterm key, erts_ihash_t hx);
 Eterm get_map_element_hash_ic(const void *site,
                               Eterm map,

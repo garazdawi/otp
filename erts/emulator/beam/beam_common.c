@@ -1823,35 +1823,6 @@ Eterm get_map_element(Eterm map, Eterm key)
     return vs ? *vs : THE_NON_VALUE;
 }
 
-Eterm
-get_map_element_ic(const void *site, Eterm map, Eterm key)
-{
-    Eterm res;
-    Uint index;
-    int ic_status;
-
-    if (!(erts_map_ic_enabled() && is_flatmap(map))) {
-        return get_map_element(map, key);
-    }
-
-    erts_map_ic_note_attempt();
-    ic_status = erts_map_ic_try_get_flatmap_index(site, map, key, &index);
-    if (ic_status > 0) {
-        const Eterm *vs = flatmap_get_values((flatmap_t *)flatmap_val(map));
-        return vs[index];
-    } else if (ic_status == -2) {
-        /* IC confirms key is absent in this shape */
-        return THE_NON_VALUE;
-    } else if (ic_status < 0) {
-        return get_map_element(map, key);
-    }
-
-    erts_map_ic_note_miss();
-    res = flatmap_get_element(map, key, &index);
-    erts_map_ic_update_flatmap_index(site, map, key, is_value(res), index);
-    return res;
-}
-
 Eterm get_map_element_hash(Eterm map, Eterm key, erts_ihash_t hx)
 {
     const Eterm *vs;
@@ -1869,15 +1840,29 @@ Eterm get_map_element_hash(Eterm map, Eterm key, erts_ihash_t hx)
 Eterm
 get_map_element_hash_ic(const void *site, Eterm map, Eterm key, erts_ihash_t hx)
 {
+    Eterm res;
+    Uint index;
+    int ic_status;
+
     if (!(erts_map_ic_enabled() && is_flatmap(map))) {
         return get_map_element_hash(map, key, hx);
     }
 
-    /*
-     * Flatmap lookup does not use hashes, so this can share the same
-     * monomorphic IC as get_map_element_ic/3.
-     */
-    return get_map_element_ic(site, map, key);
+    erts_map_ic_note_attempt();
+    ic_status = erts_map_ic_try_get_flatmap_index(site, map, key, &index);
+    if (ic_status > 0) {
+        const Eterm *vs = flatmap_get_values((flatmap_t *)flatmap_val(map));
+        return vs[index];
+    } else if (ic_status == -2) {
+        return THE_NON_VALUE;
+    } else if (ic_status < 0) {
+        return get_map_element_hash(map, key, hx);
+    }
+
+    erts_map_ic_note_miss();
+    res = flatmap_get_element(map, key, &index);
+    erts_map_ic_update_flatmap_index(site, map, key, is_value(res), index);
+    return res;
 }
 
 #define GET_TERM(term, dest)			\
@@ -1895,6 +1880,23 @@ do {						\
 	break;					\
     }						\
 } while(0)
+
+/* Check if an instruction operand is a literal (not a register reference). */
+#define IS_LITERAL_KEY(term) \
+    (!_is_loader_x_reg(term) && !_is_loader_y_reg(term))
+
+/*
+ * Fill the IC for a single-key write operation on the slow path.
+ * Only fills when the key is a literal known at load-time.
+ */
+#define IC_FILL_WRITE(new_p_orig, n_orig, map, index)                   \
+    do {                                                                 \
+        if (erts_map_ic_enabled() && (n_orig) == 2                      \
+            && IS_LITERAL_KEY((new_p_orig)[0])) {                       \
+            erts_map_ic_update_flatmap_index((new_p_orig), (map),       \
+                                            (new_p_orig)[0], 1, (index)); \
+        }                                                               \
+    } while (0)
 
 /*
  * IC fast path for shape-preserving single-key map updates.
@@ -2078,15 +2080,13 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
      * Only when n == 2 (one key-value pair) and key already exists.
      */
     if (erts_map_ic_enabled() && n == 2 && is_flatmap(map)
-        && !_is_loader_x_reg(new_p[0]) && !_is_loader_y_reg(new_p[0])) {
+        && IS_LITERAL_KEY(new_p[0])) {
         int ic_status;
         Uint ic_index;
-        Eterm ic_key = new_p[0]; /* literal key, no GET_TERM needed */
 
         erts_map_ic_note_attempt();
 
-        E = p->stop;
-        ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, ic_key, &ic_index);
+        ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, new_p[0], &ic_index);
         if (ic_status > 0) {
             return update_map_ic_hit(p, reg, live, new_p, map, ic_index);
         } else if (ic_status < 0) {
@@ -2257,13 +2257,10 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
          * effectively releasing it.
          */
         ASSERT(n == 0);
-        if (erts_map_ic_enabled() && n_orig == 2
-            && !_is_loader_x_reg(new_p_orig[0]) && !_is_loader_y_reg(new_p_orig[0])) {
-            Eterm fill_key = new_p_orig[0];
+        {
             Uint fill_index;
-            flatmap_get_element(map, fill_key, &fill_index);
-            erts_map_ic_update_flatmap_index(new_p_orig, map, fill_key,
-                                             1, fill_index);
+            flatmap_get_element(map, new_p_orig[0], &fill_index);
+            IC_FILL_WRITE(new_p_orig, n_orig, map, fill_index);
         }
         return map;
     } else if (!changed_keys) {
@@ -2278,13 +2275,10 @@ erts_gc_update_map_assoc(Process* p, Eterm* reg, Uint live,
             *hp++ = *old_vals++;
         }
         p->htop = hp;
-        if (erts_map_ic_enabled() && n_orig == 2
-            && !_is_loader_x_reg(new_p_orig[0]) && !_is_loader_y_reg(new_p_orig[0])) {
-            Eterm fill_key = new_p_orig[0];
+        {
             Uint fill_index;
-            flatmap_get_element(map, fill_key, &fill_index);
-            erts_map_ic_update_flatmap_index(new_p_orig, map, fill_key,
-                                             1, fill_index);
+            flatmap_get_element(map, new_p_orig[0], &fill_index);
+            IC_FILL_WRITE(new_p_orig, n_orig, map, fill_index);
         }
         return res;
     } else {
@@ -2374,15 +2368,13 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
      * Only when n == 1 (one key-value pair) and key exists.
      */
     if (erts_map_ic_enabled() && n == 1 && is_flatmap(map)
-        && !_is_loader_x_reg(new_p[0]) && !_is_loader_y_reg(new_p[0])) {
+        && IS_LITERAL_KEY(new_p[0])) {
         int ic_status;
         Uint ic_index;
-        Eterm ic_key = new_p[0]; /* literal key, no GET_TERM needed */
 
         erts_map_ic_note_attempt();
 
-        E = p->stop;
-        ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, ic_key, &ic_index);
+        ic_status = erts_map_ic_try_get_flatmap_index(new_p, map, new_p[0], &ic_index);
         if (ic_status > 0) {
             return update_map_ic_hit(p, reg, live, new_p, map, ic_index);
         } else if (ic_status == -2) {
@@ -2494,21 +2486,11 @@ erts_gc_update_map_exact(Process* p, Eterm* reg, Uint live,
 		    }
 		    ASSERT(hp == p->htop + need);
 		    p->htop = hp;
-                    if (erts_map_ic_enabled() && n_orig == 2
-                        && !_is_loader_x_reg(new_p_orig[0]) && !_is_loader_y_reg(new_p_orig[0])) {
-                        Eterm fill_key = new_p_orig[0];
-                        erts_map_ic_update_flatmap_index(
-                            new_p_orig, map, fill_key, 1, matched_i);
-                    }
+                    IC_FILL_WRITE(new_p_orig, n_orig, map, matched_i);
 		    return res;
                 } else {
                     p->htop = old_hp;
-                    if (erts_map_ic_enabled() && n_orig == 2
-                        && !_is_loader_x_reg(new_p_orig[0]) && !_is_loader_y_reg(new_p_orig[0])) {
-                        Eterm fill_key = new_p_orig[0];
-                        erts_map_ic_update_flatmap_index(
-                            new_p_orig, map, fill_key, 1, matched_i);
-                    }
+                    IC_FILL_WRITE(new_p_orig, n_orig, map, matched_i);
                     return map;
                 }
 	    } else {

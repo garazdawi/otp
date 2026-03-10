@@ -227,7 +227,7 @@ t_map_ic_module(_Config) ->
         true = (is_tuple(Site) andalso tuple_size(Site) =:= 3)
                orelse Site =:= undefined,
         true = is_atom(Key) orelse is_integer(Key) orelse Key =:= undefined,
-        true = lists:member(State, [active, disabled]),
+        true = lists:member(State, [active, disabled, not_found]),
         true = is_integer(Hits) andalso Hits >= 0,
         true = is_integer(Misses) andalso Misses >= 0,
         true = is_integer(Sched) andalso Sched >= 1,

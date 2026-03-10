@@ -579,25 +579,23 @@ erts_map_ic_update_flatmap_index(const void *site,
         erts_atomic64_inc_nob(&erts_map_ic_counters.evictions);
     }
 
-    entry->site = site;
-    entry->key = key;
-    entry->hits = 0;
-    entry->misses = 0;
-    if (key_found) {
+    {
         flatmap_t *mp = (flatmap_t *)flatmap_val(map);
+        entry->site = site;
+        entry->key = key;
         entry->shape = mp->keys;
         entry->shape_arity = flatmap_get_size(mp);
-        entry->index = index;
-        entry->state = ERTS_MAP_IC_ACTIVE;
+        entry->hits = 0;
+        entry->misses = 0;
+        if (key_found) {
+            entry->index = index;
+            entry->state = ERTS_MAP_IC_ACTIVE;
+        } else {
+            entry->index = 0;
+            entry->state = ERTS_MAP_IC_NOT_FOUND;
+            erts_atomic64_inc_nob(&erts_map_ic_counters.key_not_found);
+        }
         erts_map_ic_note_fill();
-    } else {
-        flatmap_t *mp = (flatmap_t *)flatmap_val(map);
-        entry->shape = mp->keys;
-        entry->shape_arity = flatmap_get_size(mp);
-        entry->index = 0;
-        entry->state = ERTS_MAP_IC_NOT_FOUND;
-        erts_map_ic_note_fill();
-        erts_atomic64_inc_nob(&erts_map_ic_counters.key_not_found);
     }
 }
 
