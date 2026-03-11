@@ -155,7 +155,11 @@ typedef struct {
     erts_atomic64_t poly_shape;     /* same site+key, different shape */
     erts_atomic64_t key_not_found;  /* key not present in map */
     erts_atomic64_t evictions;      /* fill displaced another site's entry */
+    erts_atomic64_t recaches;       /* shape re-cached instead of disabled */
+    erts_atomic64_t poly_shape_same_idx; /* poly_shape but key at same index */
 } ErtsMapInlineCacheCounters;
+
+#define ERTS_MAP_IC_DISABLE_THRESHOLD 3
 
 extern ErtsMapInlineCacheCounters erts_map_ic_counters;
 
@@ -199,6 +203,12 @@ ERTS_GLB_INLINE void
 erts_map_ic_note_false_miss(void)
 {
     erts_atomic64_inc_nob(&erts_map_ic_counters.false_misses);
+}
+
+ERTS_GLB_INLINE void
+erts_map_ic_note_recache(void)
+{
+    erts_atomic64_inc_nob(&erts_map_ic_counters.recaches);
 }
 
 int erts_map_ic_try_get_flatmap_index(const void *site,

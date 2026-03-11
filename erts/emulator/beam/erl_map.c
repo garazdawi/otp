@@ -202,6 +202,8 @@ void erts_init_map(void) {
     erts_atomic64_init_nob(&erts_map_ic_counters.poly_shape, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.key_not_found, 0);
     erts_atomic64_init_nob(&erts_map_ic_counters.evictions, 0);
+    erts_atomic64_init_nob(&erts_map_ic_counters.recaches, 0);
+    erts_atomic64_init_nob(&erts_map_ic_counters.poly_shape_same_idx, 0);
 
     /*
      * Allocate per-scheduler IC tables. erts_no_schedulers is already
@@ -428,17 +430,23 @@ erts_map_ic_try_get_flatmap_index(const void *site,
         if (entry->state == ERTS_MAP_IC_NOT_FOUND) {
             if (entry->shape == mp->keys && entry->key == key) {
                 entry->hits++;
+                entry->misses = 0;
                 erts_map_ic_note_hit();
                 return -2;  /* key confirmed absent */
             }
-            /* Shape or key changed — disable */
+            /* Shape or key changed */
             if (entry->key != key) {
                 erts_atomic64_inc_nob(&erts_map_ic_counters.poly_key);
+                entry->misses++;
+                entry->state = ERTS_MAP_IC_DISABLED;
             } else {
                 erts_atomic64_inc_nob(&erts_map_ic_counters.poly_shape);
+                if (entry->misses >= ERTS_MAP_IC_DISABLE_THRESHOLD) {
+                    entry->state = ERTS_MAP_IC_DISABLED;
+                } else {
+                    entry->misses++;
+                }
             }
-            entry->misses++;
-            entry->state = ERTS_MAP_IC_DISABLED;
             return 0;
         }
 
@@ -455,6 +463,8 @@ erts_map_ic_try_get_flatmap_index(const void *site,
             entry->index >= flatmap_get_size(mp)) {
             if (entry->key != key) {
                 erts_atomic64_inc_nob(&erts_map_ic_counters.poly_key);
+                entry->misses++;
+                entry->state = ERTS_MAP_IC_DISABLED;
             } else {
                 /* Same key, shape or index changed */
                 erts_atomic64_inc_nob(&erts_map_ic_counters.poly_shape);
@@ -462,14 +472,23 @@ erts_map_ic_try_get_flatmap_index(const void *site,
                     && entry->shape_arity == flatmap_get_size(mp)) {
                     erts_map_ic_note_false_miss();
                 }
+                /* Would index-based check rescue this? */
+                if (entry->index < flatmap_get_size(mp)
+                    && flatmap_get_keys(mp)[entry->index] == key) {
+                    erts_atomic64_inc_nob(&erts_map_ic_counters.poly_shape_same_idx);
+                }
+                if (entry->misses >= ERTS_MAP_IC_DISABLE_THRESHOLD) {
+                    entry->state = ERTS_MAP_IC_DISABLED;
+                } else {
+                    entry->misses++;
+                }
             }
-            entry->misses++;
-            entry->state = ERTS_MAP_IC_DISABLED;
             return 0;
         }
 
         *index_out = entry->index;
         entry->hits++;
+        entry->misses = 0;
         erts_map_ic_note_hit();
         return 1;
     }
@@ -531,22 +550,48 @@ erts_map_ic_update_flatmap_index(const void *site,
                     return;
                 }
             }
-            /* Different key or shape — polymorphic */
+            /* Different key or shape */
             if (set->ways[w].key != key) {
                 erts_atomic64_inc_nob(&erts_map_ic_counters.poly_key);
+                set->ways[w].state = ERTS_MAP_IC_DISABLED;
             } else {
+                /* Same key, different shape — re-cache in place */
+                flatmap_t *mp = (flatmap_t *)flatmap_val(map);
                 erts_atomic64_inc_nob(&erts_map_ic_counters.poly_shape);
+                erts_map_ic_note_recache();
+                set->ways[w].shape = mp->keys;
+                set->ways[w].shape_arity = flatmap_get_size(mp);
+                set->ways[w].hits = 0;
+                if (key_found) {
+                    set->ways[w].index = index;
+                    set->ways[w].state = ERTS_MAP_IC_ACTIVE;
+                } else {
+                    set->ways[w].index = 0;
+                    set->ways[w].state = ERTS_MAP_IC_NOT_FOUND;
+                }
             }
-            set->ways[w].state = ERTS_MAP_IC_DISABLED;
             return;
         }
         if (set->ways[w].state == ERTS_MAP_IC_ACTIVE) {
             if (set->ways[w].key != key) {
                 erts_atomic64_inc_nob(&erts_map_ic_counters.poly_key);
+                set->ways[w].state = ERTS_MAP_IC_DISABLED;
             } else {
+                /* Same key, different shape — re-cache in place */
+                flatmap_t *mp = (flatmap_t *)flatmap_val(map);
                 erts_atomic64_inc_nob(&erts_map_ic_counters.poly_shape);
+                erts_map_ic_note_recache();
+                set->ways[w].shape = mp->keys;
+                set->ways[w].shape_arity = flatmap_get_size(mp);
+                set->ways[w].hits = 0;
+                if (key_found) {
+                    set->ways[w].index = index;
+                    set->ways[w].state = ERTS_MAP_IC_ACTIVE;
+                } else {
+                    set->ways[w].index = 0;
+                    set->ways[w].state = ERTS_MAP_IC_NOT_FOUND;
+                }
             }
-            set->ways[w].state = ERTS_MAP_IC_DISABLED;
             return;
         }
     }
@@ -784,8 +829,8 @@ BIF_RETTYPE map_ic_counters_0(BIF_ALIST_0) {
     Eterm *hp = NULL;
     Eterm *hpp_storage = NULL;
     Eterm **hpp = NULL;
-    Eterm tags[10];
-    Sint64 raw[10];
+    Eterm tags[12];
+    Sint64 raw[12];
     int j;
 
     raw[0] = erts_atomic64_read_nob(&erts_map_ic_counters.attempts);
@@ -798,6 +843,8 @@ BIF_RETTYPE map_ic_counters_0(BIF_ALIST_0) {
     raw[7] = erts_atomic64_read_nob(&erts_map_ic_counters.poly_shape);
     raw[8] = erts_atomic64_read_nob(&erts_map_ic_counters.key_not_found);
     raw[9] = erts_atomic64_read_nob(&erts_map_ic_counters.evictions);
+    raw[10] = erts_atomic64_read_nob(&erts_map_ic_counters.recaches);
+    raw[11] = erts_atomic64_read_nob(&erts_map_ic_counters.poly_shape_same_idx);
 
     tags[0] = ERTS_MAKE_AM("attempts");
     tags[1] = ERTS_MAKE_AM("hits");
@@ -809,15 +856,17 @@ BIF_RETTYPE map_ic_counters_0(BIF_ALIST_0) {
     tags[7] = ERTS_MAKE_AM("poly_shape");
     tags[8] = ERTS_MAKE_AM("key_not_found");
     tags[9] = ERTS_MAKE_AM("evictions");
+    tags[10] = ERTS_MAKE_AM("recaches");
+    tags[11] = ERTS_MAKE_AM("poly_shape_same_idx");
 
     while (1) {
-        Eterm tuples[10];
-        for (j = 0; j < 10; j++) {
+        Eterm tuples[12];
+        for (j = 0; j < 12; j++) {
             tuples[j] = erts_bld_tuple(hpp, szp, 2,
                                        tags[j],
                                        erts_bld_sint64(hpp, szp, raw[j]));
         }
-        result = erts_bld_list(hpp, szp, 10, tuples);
+        result = erts_bld_list(hpp, szp, 12, tuples);
         if (hpp)
             break;
         hpp_storage = HAlloc(BIF_P, sz);
