@@ -25,12 +25,12 @@
 
 -export([suite/0, all/0]).
 -export([basic/1, bad/1, limits/1, indep/1, write_concurrency/1,
-         error_info/1]).
+         error_info/1, doctests/1]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
 all() ->
-    [basic, bad, limits, indep, write_concurrency, error_info].
+    [basic, bad, limits, indep, write_concurrency, error_info, doctests].
 
 basic(Config) when is_list(Config) ->
     Size = 10,
@@ -239,6 +239,9 @@ rand_log64() ->
         1 -> -Uint;
         2 -> Uint
     end.
+
+doctests(_Config) ->
+    ct_doctest:module(counters).
 
 error_info(_Config) ->
     Counters = counters:new(10, [write_concurrency]),
