@@ -39,7 +39,8 @@
          shared_magic_ref/1,
 	 non_message_signal/1,
          get_put_colliding_bucket/1,
-         gc_binary_orig/1]).
+         gc_binary_orig/1,
+         doctests/1]).
 
 %%
 -export([test_init_restart_cmd/1]).
@@ -60,7 +61,8 @@ all() ->
      shared_magic_ref,
      non_message_signal,
      get_put_colliding_bucket,
-     gc_binary_orig].
+     gc_binary_orig,
+     doctests].
 
 init_per_suite(Config) ->
     erts_debug:set_internal_state(available_internal_state, true),
@@ -1266,3 +1268,11 @@ gpcb_updater(CollidesWith) ->
     persistent_term:erase(CollidesWith),
     persistent_term:put(CollidesWith, unexpected),
     gpcb_updater(CollidesWith).
+
+doctests(_Config) ->
+    Keys = [scheduler_ets, my_key, foo, bar, {my_app, config}],
+    try
+        ct_doctest:module(persistent_term)
+    after
+        [persistent_term:erase(K) || K <- Keys]
+    end.
