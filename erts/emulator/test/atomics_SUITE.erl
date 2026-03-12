@@ -22,7 +22,7 @@
 -module(atomics_SUITE).
 -export([suite/0, all/0,
          signed/1, unsigned/1, bad/1, signed_limits/1, unsigned_limits/1,
-         error_info/1]).
+         error_info/1, doctests/1]).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -30,7 +30,7 @@ suite() -> [{ct_hooks,[ts_install_cth]}].
 
 all() ->
     [signed, unsigned, bad, signed_limits, unsigned_limits,
-     error_info].
+     error_info, doctests].
 
 signed(Config) when is_list(Config) ->
     Size = 10,
@@ -156,6 +156,9 @@ max_atomic_sz() ->
                 _ -> 8
             end
     end.
+
+doctests(_Config) ->
+    ct_doctest:module(atomics).
 
 error_info(_Config) ->
     Atomics = atomics:new(10, []),
