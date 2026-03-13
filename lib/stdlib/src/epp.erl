@@ -129,7 +129,8 @@ Module:format_error(ErrorDescriptor)
               features = [] :: [atom()],
               else_reserved = false :: boolean(),
               fname = [] :: function_name_type(),
-              deterministic = false :: boolean()
+              deterministic = false :: boolean(),
+              include_path_open = fun file:path_open/3 :: fun()
 	     }).
 
 %% open(Options)
@@ -190,6 +191,13 @@ The option `location` is forwarded to the Erlang token scanner, see
 
 The `{compiler_internal,term()}` option is forwarded to the Erlang token
 scanner, see [`{compiler_internal,term()}`](`m:erl_scan#compiler_interal`).
+
+The `{include_path_open, Fun}` option allows callers to provide a custom
+function for opening include files. The function has the same signature as
+`file:path_open/3` and is used when resolving `-include`, `-include_lib`,
+and `-doc {file, ...}` directives. This enables fully in-memory
+preprocessing using ram files, where both the main source and all included
+files can be served from memory without touching disk.
 """.
 -doc(#{since => <<"OTP 17.0">>}).
 -spec open(Options) ->
@@ -202,6 +210,12 @@ scanner, see [`{compiler_internal,term()}`](`m:erl_scan#compiler_interal`).
 		  {'name',FileName :: file:name()} |
 		  {'location',StartLocation :: erl_anno:location()} |
 		  {'fd',FileDescriptor :: file:io_device()} |
+		  {'include_path_open', IncludePathOpenFun :: fun((Path :: [file:name()],
+                                                   FileName :: file:name(),
+                                                   Modes :: [mode]) ->
+                                                          {ok, IoDevice :: file:io_device(),
+                                                           FullName :: file:name()} |
+                                                          {error, term()})} |
 		  'extra' |
                   {'compiler_internal', [term()]}],
       Epp :: epp_handle(),
@@ -827,6 +841,8 @@ init_server(Pid, FileName, Options, St0) ->
             AtLocation = proplists:get_value(location, Options, 1),
 
             Deterministic = proplists:get_value(deterministic, Options, false),
+            PathOpen = proplists:get_value(include_path_open, Options,
+                                           fun file:path_open/3),
             St = St0#epp{delta=0, name=SourceName, name2=SourceName,
 			 path=Path, location=AtLocation, macs=Ms1,
 			 default_encoding=DefEncoding,
@@ -839,7 +855,8 @@ init_server(Pid, FileName, Options, St0) ->
                             end,
                          features = Features,
                          else_reserved = ResWordFun('else'),
-                         deterministic = Deterministic},
+                         deterministic = Deterministic,
+                         include_path_open = PathOpen},
             From = wait_request(St),
             Anno = erl_anno:new(AtLocation),
             enter_file_reply(From, file_name(SourceName), Anno,
@@ -993,7 +1010,7 @@ enter_file(_NewName, Inc, From, St)
     epp_reply(From, {error,{loc(Inc),epp,{depth,"include"}}}),
     wait_req_scan(St);
 enter_file(NewName, Inc, From, St) ->
-    case file:path_open(St#epp.path, NewName, [read]) of
+    case (St#epp.include_path_open)(St#epp.path, NewName, [read]) of
 	{ok,NewF,Pname} ->
             Loc = start_loc(St#epp.location),
 	    wait_req_scan(enter_file2(NewF, Pname, From, St, Loc));
@@ -1014,7 +1031,8 @@ enter_file2(NewF, Pname, From, St0, AtLocation) ->
          erl_scan_opts = ScanOpts,
          else_reserved = ElseReserved,
          features = Ftrs,
-         deterministic = Deterministic} = St0,
+         deterministic = Deterministic,
+         include_path_open = PathOpen} = St0,
     Ms = Ms0#{'FILE':={none,[{string,Anno,source_name(St0,Pname)}]}},
     %% update the head of the include path to be the directory of the new
     %% source file, so that an included file can always include other files
@@ -1031,7 +1049,8 @@ enter_file2(NewF, Pname, From, St0, AtLocation) ->
          erl_scan_opts = ScanOpts,
          else_reserved = ElseReserved,
          default_encoding=DefEncoding,
-         deterministic=Deterministic}.
+         deterministic=Deterministic,
+         include_path_open=PathOpen}.
 
 enter_file_reply(From, Name, LocationAnno, AtLocation, Where, Deterministic) ->
     Anno0 = erl_anno:new(AtLocation),
@@ -1214,7 +1233,7 @@ scan_filedoc_content({string, _A, DocFilename}, Dot,
                      {atom,DocLoc,Doc}, From, #epp{name = CurrentFilename} = St) ->
     %% The head of the path is the dir where the current file is
     Cwd = hd(St#epp.path),
-    case file:path_open([Cwd], DocFilename, [read, binary]) of
+    case (St#epp.include_path_open)([Cwd], DocFilename, [read, binary]) of
         {ok, NewF, Pname} ->
             case file:read_file_info(NewF) of
                 {ok, #file_info{ size = Sz }} ->
@@ -1506,14 +1525,15 @@ scan_include_lib1([{'(',_Alp},{string,_Af,NewName0}=N,{')',_Arp},{dot,_Ad}],
                   _Inc, From, St) ->
     NewName = expand_var(NewName0),
     Loc = start_loc(St#epp.location),
-    case file:path_open(St#epp.path, NewName, [read]) of
+    case (St#epp.include_path_open)(St#epp.path, NewName, [read]) of
 	{ok,NewF,Pname} ->
 	    wait_req_scan(enter_file2(NewF, Pname, From, St, Loc));
 	{error,_E1} ->
 	    case expand_lib_dir(NewName) of
 		{ok,Header} ->
-		    case file:open(Header, [read]) of
-			{ok,NewF} ->
+                    {ok, Cwd} = file:get_cwd(),
+                    case (St#epp.include_path_open)([Cwd], Header, [read]) of
+			{ok,NewF,_} ->
 			    wait_req_scan(enter_file2(NewF, Header, From,
                                                       St, Loc));
 			{error,_E2} ->
