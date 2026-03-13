@@ -347,6 +347,14 @@ runtime libraries of most C compilers.
 Returns the filename encoding mode. If it is `latin1`, the system translates no
 filenames. If it is `utf8`, filenames are converted back and forth to the native
 filename encoding (usually UTF-8, but UTF-16 on Windows).
+
+## Examples
+
+```erlang
+1> Enc = file:native_name_encoding().
+2> is_atom(Enc).
+true
+```
 """.
 -doc(#{since => <<"OTP R14B01">>}).
 -spec native_name_encoding() -> latin1 | utf8.
@@ -363,6 +371,17 @@ native_name_encoding() ->
 -doc """
 Given the error reason returned by any function in this module, returns a
 descriptive string of the error in English.
+
+## Examples
+
+```erlang
+1> file:format_error(enoent).
+"no such file or directory"
+2> file:format_error(eacces).
+"permission denied"
+3> file:format_error(eisdir).
+"illegal operation on a directory"
+```
 """.
 -spec format_error(Reason) -> Chars when
       Reason :: posix() | badarg | terminated | system_limit
@@ -405,6 +424,12 @@ A typical error reason:
 
 - **`eacces`** - Missing read permission for one of the parents of the current
   directory.
+
+## Examples
+
+```erlang
+1> {ok, Dir} = file:get_cwd().
+```
 """.
 -spec get_cwd() -> {ok, Dir} | {error, Reason} when
       Dir :: filename(),
@@ -429,6 +454,7 @@ Typical error reasons:
 - **`eacces`** - The drive does not exist.
 
 - **`einval`** - The format of `Drive` is invalid.
+
 """.
 -spec get_cwd(Drive) -> {ok, Dir} | {error, Reason} when
       Drive :: string(),
@@ -466,6 +492,16 @@ Typical error reasons are:
 >
 > In a future release, a bad type for argument `Dir` will probably generate an
 > exception.
+
+## Examples
+
+```erlang
+1> {ok, Original} = file:get_cwd().
+2> ok = file:set_cwd(Dir).
+3> {ok, _} = file:get_cwd().
+4> file:set_cwd(Original).
+ok
+```
 """.
 -spec set_cwd(Dir) -> ok | {error, Reason} when
       Dir :: name() | EncodedBinary,
@@ -507,6 +543,17 @@ Typical error reasons:
 >
 > In a future release, a bad type for argument `Filename` will probably generate
 > an exception.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "delete_example.txt").
+2> ok = file:write_file(File, "temporary data").
+3> file:delete(File).
+ok
+4> file:delete(File).
+{error,enoent}
+```
 """.
 -doc(#{since => <<"OTP 24.0">>}).
 -spec delete(Filename, Opts) -> ok | {error, Reason} when
@@ -560,6 +607,20 @@ Typical error reasons:
 - **`enotdir`** - `Source` is a directory, but `Destination` is not.
 
 - **`exdev`** - `Source` and `Destination` are on different file systems.
+
+## Examples
+
+```erlang
+1> Src = filename:join(Dir, "rename_src.txt").
+2> Dst = filename:join(Dir, "rename_dst.txt").
+3> ok = file:write_file(Src, "data").
+4> file:rename(Src, Dst).
+ok
+5> file:read_file(Dst).
+{ok,<<"data">>}
+6> file:read_file(Src).
+{error,enoent}
+```
 """.
 -spec rename(Source, Destination) -> ok | {error, Reason} when
       Source :: name_all(),
@@ -586,6 +647,16 @@ Typical error reasons:
 
 - **`enotdir`** - A component of `Dir` is not a directory. On some platforms,
   `enoent` is returned instead.
+
+## Examples
+
+```erlang
+1> NewDir = filename:join(Dir, "my_new_dir").
+2> file:make_dir(NewDir).
+ok
+3> file:make_dir(NewDir).
+{error,eexist}
+```
 """.
 -spec make_dir(Dir) -> ok | {error, Reason} when
       Dir :: name_all(),
@@ -612,6 +683,15 @@ Typical error reasons:
 
 - **`einval`** - Attempt to delete the current directory. On some platforms,
   `eacces` is returned instead.
+
+## Examples
+
+```erlang
+1> EmptyDir = filename:join(Dir, "empty_dir").
+2> ok = file:make_dir(EmptyDir).
+3> file:del_dir(EmptyDir).
+ok
+```
 """.
 -spec del_dir(Dir) -> ok | {error, Reason} when
       Dir :: name_all(),
@@ -629,6 +709,18 @@ first recursively deleted. Returns:
 - **`{error, posix()}`** - An error occurred when accessing or deleting `File`.
   If some file or directory under `File` could not be deleted, `File` cannot be
   deleted as it is non-empty, and `{error, eexist}` is returned.
+
+## Examples
+
+```erlang
+1> Parent = filename:join(Dir, "parent").
+2> ok = file:make_dir(Parent).
+3> ok = file:write_file(filename:join(Parent, "a.txt"), "").
+4> ok = file:make_dir(filename:join(Parent, "sub")).
+5> ok = file:write_file(filename:join([Parent, "sub", "b.txt"]), "").
+6> file:del_dir_r(Parent).
+ok
+```
 """.
 -doc(#{since => <<"OTP 23.0">>}).
 -spec del_dir_r(File) -> ok | {error, Reason} when
@@ -775,6 +867,20 @@ Typical error reasons:
 
 - **`enotdir`** - A component of the filename is not a directory. On some
   platforms, `enoent` is returned instead.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "info_example.txt").
+2> ok = file:write_file(File, <<"Hello!">>).
+3> {ok, Info} = file:read_file_info(File).
+4> element(2, Info).
+6
+5> element(3, Info).
+regular
+6> element(4, Info).
+read_write
+```
 """.
 -doc(#{since => <<"OTP R15B">>}).
 -spec read_file_info(File, Opts) -> {ok, FileInfo} | {error, Reason} when
@@ -833,6 +939,7 @@ If `Name` is not a symbolic link, this function returns the same result as
 [`read_file_info/1`](`read_file_info/1`). On platforms that do not support
 symbolic links, this function is always equivalent to
 [`read_file_info/1`](`read_file_info/1`).
+
 """.
 -doc(#{since => <<"OTP R15B">>}).
 -spec read_link_info(Name, Opts) -> {ok, FileInfo} | {error, Reason} when
@@ -870,6 +977,7 @@ Typical error reasons:
 - **`enoent`** - The file does not exist.
 
 - **`enotsup`** - Symbolic links are not supported on this platform.
+
 """.
 -spec read_link(Name) -> {ok, Filename} | {error, Reason} when
       Name :: name_all(),
@@ -893,6 +1001,7 @@ Typical error reasons:
 - **`enoent`** - The file does not exist.
 
 - **`enotsup`** - Symbolic links are not supported on this platform.
+
 """.
 -doc(#{since => <<"OTP R16B">>}).
 -spec read_link_all(Name) -> {ok, Filename} | {error, Reason} when
@@ -994,6 +1103,7 @@ Typical error reasons:
 
 - **`enotdir`** - A component of the filename is not a directory. On some
   platforms, `enoent` is returned instead.
+
 """.
 -doc(#{since => <<"OTP R15B">>}).
 -spec write_file_info(Filename, FileInfo, Opts) -> ok | {error, Reason} when
@@ -1031,6 +1141,18 @@ Typical error reasons:
 
 - **`{no_translation, Filename}`** - `Filename` is a `t:binary/0` with
   characters coded in ISO Latin-1 and the VM was started with parameter `+fnue`.
+
+## Examples
+
+```erlang
+1> SubDir = filename:join(Dir, "listdir_test").
+2> ok = file:make_dir(SubDir).
+3> ok = file:write_file(filename:join(SubDir, "a.txt"), "").
+4> ok = file:write_file(filename:join(SubDir, "b.txt"), "").
+5> {ok, Files} = file:list_dir(SubDir).
+6> lists:sort(Files).
+["a.txt","b.txt"]
+```
 """.
 -spec list_dir(Dir) -> {ok, Filenames} | {error, Reason} when
       Dir :: name_all(),
@@ -1054,6 +1176,17 @@ Typical error reasons:
   parent directories.
 
 - **`enoent`** - The directory does not exist.
+
+## Examples
+
+```erlang
+1> SubDir = filename:join(Dir, "listdirall_test").
+2> ok = file:make_dir(SubDir).
+3> ok = file:write_file(filename:join(SubDir, "a.txt"), "").
+4> {ok, Files} = file:list_dir_all(SubDir).
+5> lists:sort(Files).
+["a.txt"]
+```
 """.
 -doc(#{since => <<"OTP R16B">>}).
 -spec list_dir_all(Dir) -> {ok, Filenames} | {error, Reason} when
@@ -1092,6 +1225,17 @@ Typical error reasons:
   platforms, `enoent` is returned instead.
 
 - **`enomem`** - There is not enough memory for the contents of the file.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "read_example.txt").
+2> ok = file:write_file(File, <<"Hello!">>).
+3> file:read_file(File).
+{ok,<<"Hello!">>}
+4> file:read_file("nonexistent_file").
+{error,enoent}
+```
 """.
 -doc(#{since => <<"OTP 27.0">>}).
 -spec read_file(Filename, Opts) -> {ok, Binary} | {error, Reason} when
@@ -1128,6 +1272,18 @@ Typical error reasons:
 - **`eexist`** - `New` already exists.
 
 - **`enotsup`** - Hard links are not supported on this platform.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "hardlink_example.txt").
+2> ok = file:write_file(File, <<"data">>).
+3> Link = filename:join(Dir, "hardlink").
+4> file:make_link(File, Link).
+ok
+5> file:read_file(Link).
+{ok,<<"data">>}
+```
 """.
 -spec make_link(Existing, New) -> ok | {error, Reason} when
       Existing :: name_all(),
@@ -1155,6 +1311,7 @@ Typical error reasons:
 
 - **`eperm`** - User does not have privileges to create symbolic links
   (`SeCreateSymbolicLinkPrivilege` on Windows).
+
 """.
 -spec make_symlink(Existing, New) -> ok | {error, Reason} when
       Existing :: name_all(),
@@ -1182,6 +1339,20 @@ Typical error reasons:
   parent directories.
 
 - **`eisdir`** - The named file is a directory.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "write_example.txt").
+2> file:write_file(File, "Hello, world!").
+ok
+3> file:read_file(File).
+{ok,<<"Hello, world!">>}
+4> file:write_file(File, [<<"line 1\n">>, <<"line 2\n">>]).
+ok
+5> file:read_file(File).
+{ok,<<"line 1\nline 2\n">>}
+```
 """.
 -spec write_file(Filename, Bytes) -> ok | {error, Reason} when
       Filename :: name_all(),
@@ -1199,6 +1370,18 @@ write_file(Name, Bin) ->
 Same as [`write_file/2`](`write_file/2`), but takes a third argument `Modes`, a
 list of possible modes, see `open/2`. The mode flags `binary` and `write` are
 implicit, so they are not to be used.
+
+## Examples
+
+Append to an existing file:
+
+```erlang
+1> File = filename:join(Dir, "write_file3_example.txt").
+2> ok = file:write_file(File, <<"Hello">>).
+3> ok = file:write_file(File, <<", world!">>, [append]).
+4> file:read_file(File).
+{ok,<<"Hello, world!">>}
+```
 """.
 -spec write_file(Filename, Bytes, Modes) -> ok | {error, Reason} when
       Filename :: name_all(),
@@ -1473,6 +1656,20 @@ Typical error reasons:
 
 - **`enospc`** - There is no space left on the device (if `write` access was
   specified).
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "open_example.txt").
+2> {ok, Fd} = file:open(File, [write]).
+3> ok = file:write(Fd, "Hello, world!").
+4> ok = file:close(Fd).
+5> {ok, Fd2} = file:open(File, [read, binary]).
+6> file:read(Fd2, 13).
+{ok,<<"Hello, world!">>}
+7> file:close(Fd2).
+ok
+```
 """.
 -spec open(File, Modes) -> {ok, IoDevice} | {error, Reason} when
       File :: Filename | iodata(),
@@ -1525,6 +1722,16 @@ some severe errors such as out of memory.
 Notice that if option `delayed_write` was used when opening the file,
 [`close/1`](`close/1`) can return an old write error and not even try to close
 the file. See `open/2`.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "close_example.txt").
+2> {ok, Fd} = file:open(File, [write]).
+3> ok = file:write(Fd, "data").
+4> file:close(Fd).
+ok
+```
 """.
 -spec close(IoDevice) -> ok | {error, Reason} when
       IoDevice :: io_device(),
@@ -1551,6 +1758,18 @@ data in a specific pattern in the future, thus allowing the operating system to
 perform appropriate optimizations.
 
 On some platforms, this function might have no effect.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "advise_example.txt").
+2> ok = file:write_file(File, <<"data">>).
+3> {ok, Fd} = file:open(File, [read]).
+4> file:advise(Fd, 0, 0, sequential).
+ok
+5> file:close(Fd).
+ok
+```
 """.
 -doc(#{since => <<"OTP R14B">>}).
 -spec advise(IoDevice, Offset, Length, Advise) -> ok | {error, Reason} when
@@ -1617,6 +1836,22 @@ Typical error reasons:
 - **`{no_translation, unicode, latin1}`** - The file is opened with another
   `encoding` than `latin1` and the data in the file cannot be translated to the
   byte-oriented data that this function returns.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "read_example2.txt").
+2> ok = file:write_file(File, <<"Hello, world!">>).
+3> {ok, Fd} = file:open(File, [read, binary]).
+4> file:read(Fd, 5).
+{ok,<<"Hello">>}
+5> file:read(Fd, 100).
+{ok,<<", world!">>}
+6> file:read(Fd, 1).
+eof
+7> file:close(Fd).
+ok
+```
 """.
 -spec read(IoDevice, Number) -> {ok, Data} | eof | {error, Reason} when
       IoDevice :: io_device() | io:device(),
@@ -1680,6 +1915,24 @@ Typical error reasons:
 - **`{no_translation, unicode, latin1}`** - The file is opened with another
   `encoding` than `latin1` and the data on the file cannot be translated to the
   byte-oriented data that this function returns.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "readline_example.txt").
+2> ok = file:write_file(File, <<"line 1\nline 2\nline 3">>).
+3> {ok, Fd} = file:open(File, [read, binary]).
+4> file:read_line(Fd).
+{ok,<<"line 1\n">>}
+5> file:read_line(Fd).
+{ok,<<"line 2\n">>}
+6> file:read_line(Fd).
+{ok,<<"line 3">>}
+7> file:read_line(Fd).
+eof
+8> file:close(Fd).
+ok
+```
 """.
 -spec read_line(IoDevice) -> {ok, Data} | eof | {error, Reason} when
       IoDevice :: io_device() | io:device(),
@@ -1711,6 +1964,18 @@ requested position is beyond end of file.
 As the position is specified as a byte-offset, take special caution when working
 with files where `encoding` is set to something else than `latin1`, as not every
 byte position is a valid character boundary on such a file.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "pread2_example.txt").
+2> ok = file:write_file(File, <<"HelloWorld">>).
+3> {ok, Fd} = file:open(File, [read, binary]).
+4> file:pread(Fd, [{0, 5}, {5, 5}]).
+{ok,[<<"Hello">>,<<"World">>]}
+5> file:close(Fd).
+ok
+```
 """.
 -spec pread(IoDevice, LocNums) -> {ok, DataL} | eof | {error, Reason} when
       IoDevice :: io_device(),
@@ -1752,6 +2017,20 @@ and unchanged for `ram` mode.
 As the position is specified as a byte-offset, take special caution when working
 with files where `encoding` is set to something else than `latin1`, as not every
 byte position is a valid character boundary on such a file.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "pread_example.txt").
+2> ok = file:write_file(File, <<"Hello, world!">>).
+3> {ok, Fd} = file:open(File, [read, binary]).
+4> file:pread(Fd, 0, 5).
+{ok,<<"Hello">>}
+5> file:pread(Fd, 7, 5).
+{ok,<<"world">>}
+6> file:close(Fd).
+ok
+```
 """.
 -spec pread(IoDevice, Location, Number) ->
              {ok, Data} | eof | {error, Reason} when
@@ -1785,6 +2064,20 @@ Typical error reasons:
 - **`ebadf`** - The file is not opened for writing.
 
 - **`enospc`** - No space is left on the device.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "write_example2.txt").
+2> {ok, Fd} = file:open(File, [write]).
+3> file:write(Fd, "Hello!").
+ok
+4> file:write(Fd, [<<" More">>, <<" data">>]).
+ok
+5> ok = file:close(Fd).
+6> file:read_file(File).
+{ok,<<"Hello! More data">>}
+```
 """.
 -spec write(IoDevice, Bytes) -> ok | {error, Reason} when
       IoDevice :: io_device() | io:device(),
@@ -1812,6 +2105,20 @@ the failure.
 When positioning in a file with other `encoding` than `latin1`, caution must be
 taken to set the position on a correct character boundary. For details, see
 `position/2`.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "pwrite2_example.txt").
+2> ok = file:write_file(File, <<"HelloWorld">>).
+3> {ok, Fd} = file:open(File, [write, read, binary]).
+4> file:pwrite(Fd, [{0, <<"HELLO">>}, {5, <<"WORLD">>}]).
+ok
+5> file:pread(Fd, 0, 10).
+{ok,<<"HELLOWORLD">>}
+6> file:close(Fd).
+ok
+```
 """.
 -spec pwrite(IoDevice, LocBytes) -> ok | {error, {N, Reason}} when
       IoDevice :: io_device(),
@@ -1850,6 +2157,20 @@ and unchanged for `ram` mode.
 When positioning in a file with other `encoding` than `latin1`, caution must be
 taken to set the position on a correct character boundary. For details, see
 `position/2`.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "pwrite_example.txt").
+2> {ok, Fd} = file:open(File, [write, read, binary]).
+3> ok = file:write(Fd, <<"Hello, world!">>).
+4> file:pwrite(Fd, 7, <<"Erlang!">>).
+ok
+5> file:pread(Fd, 0, 14).
+{ok,<<"Hello, Erlang!">>}
+6> file:close(Fd).
+ok
+```
 """.
 -spec pwrite(IoDevice, Location, Bytes) -> ok | {error, Reason} when
       IoDevice :: io_device(),
@@ -1880,6 +2201,17 @@ newly written data and another one to update the modification time stored in the
 
 Available only in some POSIX systems, this call results in a call to `fsync()`,
 or has no effect in systems not providing the `fdatasync()` syscall.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "datasync_example.txt").
+2> {ok, Fd} = file:open(File, [write]).
+3> ok = file:write(Fd, "important data").
+4> ok = file:datasync(Fd).
+5> file:close(Fd).
+ok
+```
 """.
 -doc(#{since => <<"OTP R14B">>}).
 -spec datasync(IoDevice) -> ok | {error, Reason} when
@@ -1901,6 +2233,17 @@ effect.
 A typical error reason is:
 
 - **`enospc`** - Not enough space left to write the file.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "sync_example.txt").
+2> {ok, Fd} = file:open(File, [write]).
+3> ok = file:write(Fd, "important data").
+4> ok = file:sync(Fd).
+5> file:close(Fd).
+ok
+```
 """.
 -spec sync(IoDevice) -> ok | {error, Reason} when
       IoDevice :: io_device(),
@@ -1941,6 +2284,24 @@ A typical error reason is:
 - **`einval`** - Either `Location` is illegal, or it is evaluated to a negative
   offset in the file. Notice that if the resulting position is a negative value,
   the result is an error, and after the call the file position is undefined.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "position_example.txt").
+2> ok = file:write_file(File, <<"Hello, world!">>).
+3> {ok, Fd} = file:open(File, [read, binary]).
+4> file:position(Fd, {bof, 7}).
+{ok,7}
+5> file:read(Fd, 5).
+{ok,<<"world">>}
+6> file:position(Fd, bof).
+{ok,0}
+7> file:read(Fd, 5).
+{ok,<<"Hello">>}
+8> file:close(Fd).
+ok
+```
 """.
 -spec position(IoDevice, Location) -> {ok, NewPosition} | {error, Reason} when
       IoDevice :: io_device(),
@@ -1958,6 +2319,20 @@ position(_, _) ->
 -doc """
 Truncates the file referenced by `IoDevice` at the current position. Returns
 `ok` if successful, otherwise `{error, Reason}`.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "truncate_example.txt").
+2> ok = file:write_file(File, <<"Hello, world!">>).
+3> {ok, Fd} = file:open(File, [read, write, binary]).
+4> {ok, 5} = file:position(Fd, 5).
+5> file:truncate(Fd).
+ok
+6> ok = file:close(Fd).
+7> file:read_file(File).
+{ok,<<"Hello">>}
+```
 """.
 -spec truncate(IoDevice) -> ok | {error, Reason} when
       IoDevice :: io_device(),
@@ -2006,6 +2381,18 @@ source. If the operation fails, `{error, Reason}` is returned.
 
 Typical error reasons: as for `open/2` if a file had to be opened, and as for
 `read/2` and `write/2`.
+
+## Examples
+
+```erlang
+1> Src = filename:join(Dir, "copy_src.txt").
+2> Dst = filename:join(Dir, "copy_dst.txt").
+3> ok = file:write_file(Src, <<"Hello, world!">>).
+4> file:copy(Src, Dst).
+{ok,13}
+5> file:read_file(Dst).
+{ok,<<"Hello, world!">>}
+```
 """.
 -spec copy(Source, Destination, ByteCount) ->
              {ok, BytesCopied} | {error, Reason} when
@@ -2260,15 +2647,12 @@ following:
   Erlang terms in the file. To convert the three-element tuple to an English
   description of the error, use `format_error/1`.
 
-_Example:_
-
-```text
-f.txt:  {person, "kalle", 25}.
-        {person, "pelle", 30}.
-```
+## Examples
 
 ```erlang
-1> file:consult("f.txt").
+1> File = filename:join(Dir, "terms.txt").
+2> ok = file:write_file(File, "{person, \"kalle\", 25}.\n{person, \"pelle\", 30}.\n").
+3> file:consult(File).
 {ok,[{person,"kalle",25},{person,"pelle",30}]}
 ```
 
@@ -2313,6 +2697,15 @@ Returns one of the following:
 
 The encoding of `Filename` can be set by a comment as described in
 [`epp`](`m:epp#encoding`).
+
+## Examples
+
+```erlang
+1> ok = file:write_file(filename:join(Dir, "config.terms"), "{key, value}.\n").
+2> {ok, Terms, _FullName} = file:path_consult([Dir], "config.terms").
+3> Terms.
+[{key,value}]
+```
 """.
 -spec path_consult(Path, Filename) -> {ok, Terms, FullName} | {error, Reason} when
       Path :: [Dir],
@@ -2357,6 +2750,15 @@ Returns one of the following:
 
 The encoding of `Filename` can be set by a comment, as described in
 [`epp`](`m:epp#encoding`).
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "eval_example.erl").
+2> ok = file:write_file(File, "io:format(\"hello\\n\").\n").
+3> file:eval(File).
+ok
+```
 """.
 -spec eval(Filename) -> ok | {error, Reason} when
       Filename :: name_all(),
@@ -2370,6 +2772,16 @@ eval(File) ->
 The same as [`eval/1`](`eval/1`), but the variable bindings `Bindings` are used
 in the evaluation. For information about the variable bindings, see
 `m:erl_eval`.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "eval2_example.erl").
+2> ok = file:write_file(File, "X + 1.\n").
+3> Bs = erl_eval:add_binding('X', 10, erl_eval:new_bindings()).
+4> file:eval(File, Bs).
+ok
+```
 """.
 -spec eval(Filename, Bindings) -> ok | {error, Reason} when
       Filename :: name_all(),
@@ -2412,6 +2824,13 @@ Returns one of the following:
 
 The encoding of `Filename` can be set by a comment as described in
 [`epp`](`m:epp#encoding`).
+
+## Examples
+
+```erlang
+1> ok = file:write_file(filename:join(Dir, "path_eval.erl"), "1 + 1.\n").
+2> {ok, _FullName} = file:path_eval([Dir], "path_eval.erl").
+```
 """.
 -spec path_eval(Path, Filename) -> {ok, FullName} | {error, Reason} when
       Path :: [Dir :: name_all()],
@@ -2466,6 +2885,15 @@ Returns one of the following:
 
 The encoding of `Filename` can be set by a comment as described in
 [`epp`](`m:epp#encoding`).
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "script_example.erl").
+2> ok = file:write_file(File, "lists:seq(1, 5).\n").
+3> file:script(File).
+{ok,[1,2,3,4,5]}
+```
 """.
 -spec script(Filename) -> {ok, Value} | {error, Reason} when
       Filename :: name_all(),
@@ -2479,6 +2907,16 @@ script(File) ->
 -doc """
 The same as [`script/1`](`script/1`) but the variable bindings `Bindings` are
 used in the evaluation. See `m:erl_eval` about variable bindings.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "script2_example.erl").
+2> ok = file:write_file(File, "X * 2.\n").
+3> Bs = erl_eval:add_binding('X', 21, erl_eval:new_bindings()).
+4> file:script(File, Bs).
+{ok,42}
+```
 """.
 -spec script(Filename, Bindings) -> {ok, Value} | {error, Reason} when
       Filename :: name_all(),
@@ -2520,6 +2958,13 @@ Returns one of the following:
 
 The encoding of `Filename` can be set by a comment as described in
 [`epp`](`m:epp#encoding`).
+
+## Examples
+
+```erlang
+1> ok = file:write_file(filename:join(Dir, "path_script.erl"), "1 + 2.\n").
+2> {ok, 3, _FullName} = file:path_script([Dir], "path_script.erl").
+```
 """.
 -spec path_script(Path, Filename) ->
              {ok, Value, FullName} | {error, Reason} when
@@ -2536,6 +2981,14 @@ path_script(Path, File) ->
 -doc """
 The same as [`path_script/2`](`path_script/2`) but the variable bindings
 `Bindings` are used in the evaluation. See `m:erl_eval` about variable bindings.
+
+## Examples
+
+```erlang
+1> ok = file:write_file(filename:join(Dir, "path_script3.erl"), "X + Y.\n").
+2> Bs = erl_eval:add_binding('Y', 3, erl_eval:add_binding('X', 4, erl_eval:new_bindings())).
+3> {ok, 7, _FullName} = file:path_script([Dir], "path_script3.erl", Bs).
+```
 """.
 -spec path_script(Path, Filename, Bindings) ->
           {ok, Value, FullName} | {error, Reason} when
@@ -2585,6 +3038,17 @@ Returns one of the following:
   `Path`.
 
 - **`{error, atom()}`** - The file cannot be opened.
+
+## Examples
+
+```erlang
+1> ok = file:write_file(filename:join(Dir, "path_open.txt"), <<"data">>).
+2> {ok, Fd, _FullName} = file:path_open([Dir], "path_open.txt", [read]).
+3> file:close(Fd).
+ok
+4> file:path_open([Dir], "nonexistent.txt", [read]).
+{error,enoent}
+```
 """.
 -spec path_open(Path, Filename, Modes) ->
              {ok, IoDevice, FullName} | {error, Reason} when
@@ -2613,7 +3077,18 @@ path_open(PathList, Name, Mode) ->
 	    end
     end.
 
--doc "Changes permissions of a file. See `write_file_info/2`.".
+-doc """
+Changes permissions of a file. See `write_file_info/2`.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "chmod_example.txt").
+2> ok = file:write_file(File, <<"data">>).
+3> file:change_mode(File, 8#00644).
+ok
+```
+""".
 -doc(#{since => <<"OTP R14B">>}).
 -spec change_mode(Filename, Mode) -> ok | {error, Reason} when
       Filename :: name_all(),
@@ -2655,7 +3130,21 @@ change_group(Name, GroupId)
   when is_integer(GroupId) ->
     write_file_info(Name, #file_info{gid=GroupId}).
 
--doc "Changes the modification and access times of a file. See `write_file_info/2`.".
+-doc """
+Changes the modification and access times of a file. See `write_file_info/2`.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "ctime_example.txt").
+2> ok = file:write_file(File, <<"data">>).
+3> file:change_time(File, {{2024, 1, 1}, {0, 0, 0}}).
+ok
+4> {ok, Info} = file:read_file_info(File).
+5> element(6, Info).
+{{2024,1,1},{0,0,0}}
+```
+""".
 -spec change_time(Filename, Mtime) -> ok | {error, Reason} when
       Filename :: name_all(),
       Mtime :: date_time(),
@@ -2669,6 +3158,17 @@ change_time(Name, {{Y, M, D}, {H, Min, Sec}}=Time)
 -doc """
 Changes the modification and last access times of a file. See
 `write_file_info/2`.
+
+## Examples
+
+```erlang
+1> File = filename:join(Dir, "ctime3_example.txt").
+2> ok = file:write_file(File, <<"data">>).
+3> Atime = {{2024, 6, 15}, {12, 0, 0}}.
+4> Mtime = {{2024, 6, 15}, {13, 0, 0}}.
+5> file:change_time(File, Atime, Mtime).
+ok
+```
 """.
 -spec change_time(Filename, Atime, Mtime) -> ok | {error, Reason} when
       Filename :: name_all(),

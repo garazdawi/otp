@@ -45,10 +45,11 @@
 
 -module(?FILE_SUITE).
 
--export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
+-export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1,
 	 init_per_group/2,end_per_group/2,
 	 init_per_testcase/2, end_per_testcase/2,
-	 read_write_file/1, names/1]).
+	 read_write_file/1, names/1,
+	 doctests/1]).
 -export([cur_dir_0/1, cur_dir_1/1, make_del_dir/1, make_del_dir_r/1,
 	 list_dir/1,list_dir_error/1,
 	 untranslatable_names/1, untranslatable_names_error/1,
@@ -141,7 +142,8 @@ all() ->
      ipread, interleaved_read_write, otp_5814, otp_10852,
      large_file, large_write, read_line_1, read_line_2, read_line_3,
      read_line_4, standard_io, old_io_protocol,
-     unicode_mode, {group, bench}
+     unicode_mode, {group, bench},
+     doctests
     ].
 
 groups() -> 
@@ -4967,3 +4969,53 @@ memsize() ->
         Available ->
             Available
     end.
+
+doctests(Config) ->
+    Dir = filename:join(proplists:get_value(priv_dir, Config), "doctests"),
+    ok = file:make_dir(Dir),
+    Bindings = #{'Dir' => Dir},
+    FunsNeedingDir =
+        [{function, delete, 2},
+         {function, rename, 2},
+         {function, set_cwd, 1},
+         {function, make_dir, 1},
+         {function, del_dir, 1},
+         {function, del_dir_r, 1},
+         {function, list_dir, 1},
+         {function, list_dir_all, 1},
+         {function, read_file, 2},
+         {function, read_file_info, 2},
+         {function, write_file, 2},
+         {function, write_file, 3},
+         {function, make_link, 2},
+         {function, open, 2},
+         {function, close, 1},
+         {function, advise, 4},
+         {function, read, 2},
+         {function, write, 2},
+         {function, read_line, 1},
+         {function, pread, 2},
+         {function, pread, 3},
+         {function, pwrite, 2},
+         {function, pwrite, 3},
+         {function, datasync, 1},
+         {function, sync, 1},
+         {function, position, 2},
+         {function, truncate, 1},
+         {function, consult, 1},
+         {function, path_consult, 2},
+         {function, eval, 1},
+         {function, eval, 2},
+         {function, path_eval, 2},
+         {function, script, 1},
+         {function, script, 2},
+         {function, path_script, 2},
+         {function, path_script, 3},
+         {function, path_open, 3},
+         {function, change_mode, 2},
+         {function, change_time, 2},
+         {function, change_time, 3},
+         {function, copy, 3}],
+    ct_doctest:module(file,
+                      [{KFA, Bindings} || KFA <- FunsNeedingDir],
+                      []).
