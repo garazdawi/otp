@@ -416,7 +416,7 @@ common reasons.
 -export_type([load_error_rsn/0, load_ret/0]).
 -export_type([prepared_code/0]).
 -export_type([module_status/0]).
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -export_type([coverage_mode/0]).
 -type coverage_mode() :: 'none' | 'function' | 'function_counters' |

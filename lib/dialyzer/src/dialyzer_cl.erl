@@ -38,7 +38,7 @@
          start_report_modules_changed_and_analyzed/1]).
 
 -include("dialyzer.hrl").
--include_lib("kernel/include/file.hrl").  % needed for #file_info{}
+-include("file.hrl").  % needed for #file_info{}
 
 -record(cl_state,
 	{backend_pid                      :: pid() | 'undefined',

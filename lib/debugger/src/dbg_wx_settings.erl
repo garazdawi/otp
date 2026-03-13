@@ -24,7 +24,7 @@
 -module(dbg_wx_settings).
 -moduledoc false.
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include_lib("wx/include/wx.hrl").
 
 %% External exports

@@ -34,7 +34,7 @@ file transfer service available for SSH.
 
 -behaviour(ssh_client_channel).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include("ssh.hrl").
 -include("ssh_xfer.hrl").
 

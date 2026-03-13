@@ -37,7 +37,7 @@
         ]).
 
 -include("reltool.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Hardcoded internals about the kernel application

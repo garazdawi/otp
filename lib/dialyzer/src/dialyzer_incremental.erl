@@ -26,7 +26,7 @@
 -export([start/1, start_report_modules_analyzed/1, start_report_modules_changed_and_analyzed/1]).
 
 -include("dialyzer.hrl").
--include_lib("kernel/include/file.hrl").  % needed for #file_info{}
+-include("file.hrl").  % needed for #file_info{}
 
 -record(incremental_state,
     {backend_pid                      :: pid() | 'undefined',

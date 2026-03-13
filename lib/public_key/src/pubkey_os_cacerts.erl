@@ -26,7 +26,7 @@
 -moduledoc false.
 
 -include("public_key.hrl").
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 -include_lib("kernel/include/logger.hrl").
 -export([load/0, load/1, get/0, clear/0, format_error/2]).
 

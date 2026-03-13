@@ -122,7 +122,7 @@
 
 -export([init/1, upgrade/4, cleanup/1, get_app_vsns/2, get_appup/2]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 %%-----------------------------------------------------------------
 -define(testnode, 'ct_release_test-upgrade').

@@ -220,13 +220,13 @@ opt: $(EBIN)/erl_id_trans.beam
 $(BOOTSTRAP_COMPILER)/ebin/erl_parse.beam: erl_parse.yrl
 	$(gen_verbose)
 	$(V_at)$(ERLC) -o $(BOOTSTRAP_COMPILER)/egen $(DETERMINISM_FLAG) erl_parse.yrl
-	$(V_at)$(ERLC) -o $(BOOTSTRAP_COMPILER)/ebin $(DETERMINISM_FLAG) $(BOOTSTRAP_COMPILER)/egen/erl_parse.erl
+	$(V_at)$(ERLC) -o $(BOOTSTRAP_COMPILER)/ebin $(ERL_COMPILE_FLAGS) $(DETERMINISM_FLAG) $(BOOTSTRAP_COMPILER)/egen/erl_parse.erl
 
 $(BOOTSTRAP_TOP)/lib/stdlib/egen/erl_parse.erl: erl_parse.yrl
 	$(yecc_verbose)$(ERLC) $(YRL_FLAGS) -o$(BOOTSTRAP_TOP)/lib/stdlib/egen erl_parse.yrl
 
 $(BOOTSTRAP_COMPILER)/ebin/%.beam: %.erl
-	$(V_ERLC) -o $(BOOTSTRAP_COMPILER)/ebin $(DETERMINISM_FLAG) $<
+	$(V_ERLC) -o $(BOOTSTRAP_COMPILER)/ebin $(ERL_COMPILE_FLAGS) $(DETERMINISM_FLAG) $<
 
 $(EBIN)/erl_id_trans.beam: ../examples/erl_id_trans.erl
 	$(V_ERLC) $(ERL_COMPILE_FLAGS) -o $(EBIN) $<

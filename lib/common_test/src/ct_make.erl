@@ -34,7 +34,7 @@
 
 -export([all/0,all/1,files/1,files/2]).
 
--include_lib("kernel/include/file.hrl").
+-include("file.hrl").
 
 -define(MakeOpts,[noexec,load,netload,noload]).
 
