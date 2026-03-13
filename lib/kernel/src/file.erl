@@ -1411,6 +1411,12 @@ more of the following options:
 - **`ram`** - `File` must be `t:iodata/0`. Returns an `t:fd/0`, which lets
   module `file` operate on the data in-memory as if it is a file.
 
+- **`cooked`** - Only meaningful together with `ram`. When specified, the
+  ram file is wrapped in a pid-based I/O server, making it compatible with
+  the `m:io` module (for example, `io:get_line/2`, `io:scan_erl_form/3`).
+  Without `cooked`, ram files return a raw file descriptor that cannot be
+  used with `m:io` functions.
+
 - **`sync`** - On platforms supporting it, enables the POSIX `O_SYNC`
   synchronous I/O flag or its platform-dependent equivalent (for example,
   `FILE_FLAG_WRITE_THROUGH` on Windows) so that writes to the file block until
@@ -1490,7 +1496,15 @@ open(Item, ModeList) when is_list(ModeList) ->
         {true, false} ->
             raw_file_io:open(file_name(Item), ModeList);
         {false, true} ->
-            ram_file:open(Item, ModeList);
+            case lists:member(cooked, ModeList) of
+                true ->
+                    file_io_server:start_handle(
+                      self(),
+                      fun(_, _) -> ram_file:open(Item, [binary | ModeList -- [cooked]]) end,
+                      ModeList -- [ram, cooked]);
+                false ->
+                    ram_file:open(Item, ModeList)
+            end;
         {true, true} ->
             erlang:error(badarg, [Item, ModeList])
     end;

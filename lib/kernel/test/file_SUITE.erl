@@ -56,7 +56,8 @@
 -export([close/1, consult1/1, path_consult/1, delete/1]).
 -export([ eval1/1, path_eval/1, script1/1, path_script/1,
 	  open1/1,
-	  old_modes/1, new_modes/1, path_open/1, open_errors/1]).
+	  old_modes/1, new_modes/1, path_open/1, open_errors/1,
+	  cooked_ram/1]).
 -export([ file_info_basic_file/1, file_info_basic_directory/1,
 	  file_info_bad/1, file_info_times/1, file_write_file_info/1,
           file_wfi_helpers/1]).
@@ -154,7 +155,7 @@ groups() ->
      {open, [],
       [open1, old_modes, new_modes, path_open, close, access,
        read_write, pread_write, append, open_errors,
-       exclusive]},
+       exclusive, cooked_ram]},
      {pos, [], [pos1, pos2, pos3]},
      {file_info, [],
       [file_info_basic_file, file_info_basic_directory,
@@ -1316,6 +1317,51 @@ exclusive(Config) when is_list(Config) ->
     {ok, Fd} = ?FILE_MODULE:open(Name, [write, exclusive]),
     {error, eexist} = ?FILE_MODULE:open(Name, [write, exclusive]),
     ok = ?FILE_MODULE:close(Fd),
+    ok.
+
+%% Test cooked option for ram files.
+%% The cooked option wraps a ram file in a pid-based I/O server,
+%% making it usable with the io module (unlike a plain ram file
+%% which returns a raw file descriptor).
+cooked_ram(_Config) ->
+    Data = <<"hello, world\nline two\n">>,
+
+    %% Basic read via io module.
+    {ok, Fd1} = ?FILE_MODULE:open(Data, [ram, read, binary, cooked]),
+    true = is_pid(Fd1),
+    <<"hello, world\n">> = io:get_line(Fd1, ''),
+    <<"line two\n">> = io:get_line(Fd1, ''),
+    eof = io:get_line(Fd1, ''),
+    ok = ?FILE_MODULE:close(Fd1),
+
+    %% Write and read back.
+    {ok, Fd2} = ?FILE_MODULE:open(<<>>, [ram, write, read, binary, cooked]),
+    true = is_pid(Fd2),
+    ok = io:put_chars(Fd2, "test data"),
+    {ok, 0} = ?FILE_MODULE:position(Fd2, bof),
+    {ok, <<"test data">>} = ?FILE_MODULE:read(Fd2, 100),
+    ok = ?FILE_MODULE:close(Fd2),
+
+    %% io:scan_erl_form works (needed for epp).
+    ErlData = <<"-module(test).\n">>,
+    {ok, Fd3} = ?FILE_MODULE:open(ErlData, [ram, read, binary, cooked]),
+    true = is_pid(Fd3),
+    {ok, Tokens, _} = io:scan_erl_form(Fd3, '', 1),
+    true = is_list(Tokens),
+    ok = ?FILE_MODULE:close(Fd3),
+
+    %% Without cooked, ram files return a raw fd (not a pid).
+    {ok, RawFd} = ?FILE_MODULE:open(Data, [ram, read, binary]),
+    false = is_pid(RawFd),
+    ok = ?FILE_MODULE:close(RawFd),
+
+    %% io:setopts and io:getopts work on cooked ram files.
+    {ok, Fd4} = ?FILE_MODULE:open(Data, [ram, read, binary, cooked]),
+    Opts = io:getopts(Fd4),
+    true = is_list(Opts),
+    ok = ?FILE_MODULE:close(Fd4),
+
+    [] = flush(),
     ok.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
