@@ -321,12 +321,14 @@ Options for doctest execution.
 """.
 -type options() :: [{parser, fun((unicode:unicode_binary()) -> [unicode:unicode_binary()] | {error, term()}) } |
                     {skipped_blocks, non_neg_integer() | false} |
-                    {verbose, boolean()}].
+                    {verbose, boolean()} |
+                    {compile_options, [compile:option()]}].
 
 -record(options,
         { parser = fun parse_markdown_builtin/1 :: fun((unicode:unicode_binary()) -> term()),
           skipped_blocks = false :: non_neg_integer() | false,
-          verbose = false :: boolean() }).
+          verbose = false :: boolean(),
+          compile_options = [] :: [compile:option()] }).
 
 -doc #{equiv => module(Module, [])}.
 -spec module(module()) ->
@@ -590,6 +592,8 @@ options(OptionsList) ->
                             Acc#options{ skipped_blocks = proplists:get_value(skipped_blocks, OptionsList) };
                         (verbose, Acc) ->
                             Acc#options{ verbose = proplists:get_value(verbose, OptionsList) };
+                        (compile_options, Acc) ->
+                            Acc#options{ compile_options = proplists:get_value(compile_options, OptionsList) };
                         (_Key, Acc) ->
                             Acc
                 end, #options{}, proplists:get_keys(OptionsList)).
@@ -648,15 +652,15 @@ run_test(Code, InitialBindings, Options) ->
                     [ok];
                 {match, [_Line_Number, _Prefix = <<"-module(">>, ModContent]} ->
                     [ModName | _] = binary:split(ModContent, [<<")">>]),
-                    [compile_string(Code, ModName)];
+                    [compile_string(Code, ModName, Options#options.compile_options)];
                 _ ->
                     []
             end
     end.
 
-compile_string(Code, ModName) ->
+compile_string(Code, ModName, CompileOptions) ->
     FileName = unicode:characters_to_list(ModName) ++ ".erl",
-    case compile:string(Code, [binary, return_errors, {source, FileName}]) of
+    case compile:string(Code, [binary, return_errors, {source, FileName} | CompileOptions]) of
         {ok, Module, Binary} ->
             {module, Module} = code:load_binary(Module, FileName, Binary),
             ok;
