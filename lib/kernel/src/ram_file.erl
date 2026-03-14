@@ -162,7 +162,7 @@ read_line(Fd, Acc) ->
                     %% Seek back the unread portion after the \n.
                     case byte_size(After) of
                         0 -> ok;
-                        N -> {ok, _} = position(Fd, {cur, -N})
+                        N -> {ok, _} = position(Fd, {cur, -N}), ok
                     end,
                     {ok, iolist_to_binary(lists:reverse(Acc, [Before, <<"\n">>]))};
                 nomatch ->

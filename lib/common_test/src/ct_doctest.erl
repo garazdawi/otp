@@ -317,7 +317,7 @@ Options for doctest execution.
                     {compile_options, [compile:option()]}].
 
 -record(options,
-        { parser = fun parse_markdown_builtin/1 :: fun((unicode:unicode_binary()) -> [unicode:unicode_binary()] | {error, term()}),
+        { parser = fun parse_markdown_builtin/1, %:: fun((unicode:unicode_binary()) -> [unicode:unicode_binary()] | {error, term()}),
           skipped_blocks = false :: non_neg_integer() | false,
           verbose = false :: boolean(),
           compile_options = [] :: [compile:option()] }).
