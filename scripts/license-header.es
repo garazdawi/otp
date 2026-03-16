@@ -313,7 +313,7 @@ check_file_header(File, LicenseFile, Data, {Start, StartEnd}, Prefix, Templates,
                           length(string:split(DataAfterHeader,"\n",all)),
                           File, not string:equal(File, LicenseFile), Opts),
             case maps:get(update, Opts, false) andalso not is_vendored(File, VendorPaths) of
-                true -> update_copyright(LicenseFile, Start + StartEnd, End, Prefix, LineEnding, Spdx, Copyrights, License);
+                true -> update_copyright(File, LicenseFile, Start + StartEnd, End, Prefix, LineEnding, Spdx, Copyrights, License);
                 false -> ok
             end;
         nomatch when map_get(verbose, Opts) ->
@@ -322,15 +322,15 @@ check_file_header(File, LicenseFile, Data, {Start, StartEnd}, Prefix, Templates,
             throw({warn, "Could not find '~ts %CopyrightEnd%'", [Prefix]})
     end.
 
-update_copyright(File, Begin, End, Prefix, LineEnding, Spdx, Copyrights, License) ->
+update_copyright(File, LicenseFile, Begin, End, Prefix, LineEnding, Spdx, Copyrights, License) ->
     case update_copyright(File, Copyrights) of
         Copyrights -> ok;
         NewCopyrights ->
-            {ok, Data} = file:read_file(File),
+            {ok, Data} = file:read_file(LicenseFile),
             Before = binary:part(Data, 0, Begin),
             After = binary:part(Data, End, byte_size(Data) - End),
             ok = file:write_file(
-                   File,
+                   LicenseFile,
                    [Before,
                     string:trim(Prefix, trailing), LineEnding,
                     Prefix, "SPDX-License-Identifier: ", Spdx, LineEnding,
