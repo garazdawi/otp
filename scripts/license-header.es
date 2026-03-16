@@ -268,12 +268,12 @@ check_file(File, LargestLicense, Templates, VendorPaths, Opts) ->
         Data = read(File, LargestLicense*3),
         case re:run(Data, "(.* )?%CopyrightBegin%(?:\r\n|\n)",[]) of
             {match, [StartPos | PrefixPos]} ->
-                check_file_header(File, File, Data, StartPos, PrefixPos, Templates, Opts);
+                check_file_header(File, File, Data, StartPos, PrefixPos, Templates, VendorPaths, Opts);
             nomatch ->
                 maybe
                     {ok, LicData} ?= file:read_file(File++".license"),
                     {match, [StartPos | PrefixPos]} ?= re:run(LicData, "(.* )?%CopyrightBegin%(?:\r\n|\n)",[]),
-                    check_file_header(File, File++".license", LicData, StartPos, PrefixPos, Templates, Opts)
+                    check_file_header(File, File++".license", LicData, StartPos, PrefixPos, Templates, VendorPaths, Opts)
                 else
                     _ ->
                         ReportMissing = not is_ignored(File) andalso
@@ -297,11 +297,11 @@ check_file(File, LargestLicense, Templates, VendorPaths, Opts) ->
             erlang:raise(E,R,ST)
     end.
 
-check_file_header(File, LicenseFile, Data, StartPos, [], Templates, Opts) ->
-    check_file_header(File, LicenseFile, Data, StartPos, <<>>, Templates, Opts);
-check_file_header(File, LicenseFile, Data, StartPos, [PrefixPos], Templates, Opts) ->
-    check_file_header(File, LicenseFile, Data, StartPos, binary:part(Data, PrefixPos), Templates, Opts);
-check_file_header(File, LicenseFile, Data, {Start, StartEnd}, Prefix, Templates, Opts) ->
+check_file_header(File, LicenseFile, Data, StartPos, [], Templates, VendorPaths, Opts) ->
+    check_file_header(File, LicenseFile, Data, StartPos, <<>>, Templates, VendorPaths, Opts);
+check_file_header(File, LicenseFile, Data, StartPos, [PrefixPos], Templates, VendorPaths, Opts) ->
+    check_file_header(File, LicenseFile, Data, StartPos, binary:part(Data, PrefixPos), Templates, VendorPaths, Opts);
+check_file_header(File, LicenseFile, Data, {Start, StartEnd}, Prefix, Templates, VendorPaths, Opts) ->
     case re:run(Data, ["\\Q", Prefix, "\\E%CopyrightEnd%(\r\n|\n)"],[]) of
         {match, [{End, EndPos},{_,NlSize}]} ->
             DataAfterHeader = binary:part(Data, End+EndPos, byte_size(Data) - (End+EndPos)),
@@ -312,7 +312,7 @@ check_file_header(File, LicenseFile, Data, {Start, StartEnd}, Prefix, Templates,
             check_license(License, Spdx, Templates,
                           length(string:split(DataAfterHeader,"\n",all)),
                           File, not string:equal(File, LicenseFile), Opts),
-            case maps:get(update, Opts, false) of
+            case maps:get(update, Opts, false) andalso not is_vendored(File, VendorPaths) of
                 true -> update_copyright(LicenseFile, Start + StartEnd, End, Prefix, LineEnding, Spdx, Copyrights, License);
                 false -> ok
             end;
@@ -351,7 +351,10 @@ update_copyright(File, [C | T]) ->
                     [C | T];
                 false ->
                     LastUpdatedYear = last_updated_year(File,
-                    fun() -> throw({warn,"Could not get copyright year using git log. You need to update it manually.", []}) end),
+                    fun() -> 
+                        [throw(skip) || is_ignored(File)],
+                        throw({warn,"Could not get copyright year using git log. You need to update it manually.", []})
+                    end),
                     case string:equal(LastUpdatedYear, EndYear) of
                         true ->
                             [C | T];
@@ -574,6 +577,7 @@ is_ignored(Filename) ->
                "^.mailmap$",
                "^OTP_VERSION$",
                "^make/otp_patch_solve_forward_merge_version$",
+               "^make/otp_version_tickets_in_merge$",
                "^make/otp_version_tickets$",
                "/configure$",
                "/config\\.h\\.in",
