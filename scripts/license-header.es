@@ -390,17 +390,58 @@ first_updated_year(File, Missing) ->
     commit_year(File, Missing, first).
 
 commit_year(File, Missing, When) when When =:= first; When =:= last, is_function(Missing)->
-    RFC3339Date =
-        cmd(["git log --format=format:%aI",
+
+    Files = follow_renames(File),
+
+    %% We use a as in author when looking for the first copyright
+    %% and we use c as in committer when looking for the last.
+    %% This is because with an --amend workflow the author date
+    %% can be a long time in the past, but the committer is when
+    %% the last change was done.
+    Modifier = if When =:= first -> "a"; When =:= last -> "c" end,
+
+    Cmd = ["git log --format=format:%",Modifier,"I",
              [" --reverse" || When =:= first],
              " --author='@erlang.org' --author='@ericsson.com'",
-             " --no-merges HEAD -- ", File, " | head -1"]),
+             " --no-merges HEAD -- ", [[" '",F,"'"] || F <- Files], " | head -1"],
+
+    RFC3339Date = cmd(Cmd),
+
     try calendar:rfc3339_to_system_time(RFC3339Date) of
         SystemTime ->
             {{YY, _, _}, _} = calendar:system_time_to_local_time(SystemTime,second),
             integer_to_list(YY)
     catch _:_ ->
         Missing()
+    end.
+
+
+%% Because of problems with git log --follow we implement out own. An example
+%% where --follow has issues is for erts/emulator/test/erl_debugger_SUITE_data/gc_test.erl
+%% The reason why --follow fails is because gc_test.erl is identified as a copy of
+%% another file  which is not true.
+%% 
+%% This is all heuristic based so it might make mistakes...
+follow_renames(File) ->
+    follow_renames(File, "HEAD").
+follow_renames(File, Sha) ->
+
+    maybe
+
+        LastCommit = cmd(["git log '--format=format:%H' --no-merges ", Sha, " -- '", File, "' | tail -1"]),
+
+        true ?= LastCommit =/= "",
+
+        RenameCmd = ["git diff-tree -r -M --name-status \"",LastCommit,"\" | grep '^R[0-9]\\+.*",File,"$' | awk '{ print $2 }'"],
+
+        Rename = cmd(RenameCmd),
+
+        true ?= Rename =/= "",
+
+        [File | follow_renames(Rename, LastCommit)]
+    else
+        _ ->
+            [File]
     end.
 
 check_prefix(Prefix, Bin) when is_binary(Bin) ->
