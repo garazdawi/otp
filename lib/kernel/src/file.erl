@@ -1591,14 +1591,15 @@ more of the following options:
 
   This option is not allowed on `raw` files.
 
-- **`ram`** - `File` must be `t:iodata/0`. Returns an `t:fd/0`, which lets
-  module `file` operate on the data in-memory as if it is a file.
+- **`ram`** - `File` must be `t:iodata/0`. Returns an `t:fd/0` (or a `t:io_server/0`
+  if combined with `cooked`), which lets module `file` operate on the data in-memory
+  as if it is a file.
 
 - **`cooked`** - Only meaningful together with `ram`. When specified, the
-  ram file is wrapped in a pid-based I/O server, making it compatible with
-  the `m:io` module (for example, `io:get_line/2`, `io:scan_erl_form/3`).
-  Without `cooked`, ram files return a raw file descriptor that cannot be
-  used with `m:io` functions.
+  ram file is wrapped in a pid-based I/O server, making it compatible with the
+  `m:io` module (for example, `io:get_line/2`, `io:scan_erl_form/3`).
+
+  Since OTP @OTP-123456789@
 
 - **`sync`** - On platforms supporting it, enables the POSIX `O_SYNC`
   synchronous I/O flag or its platform-dependent equivalent (for example,
