@@ -1029,6 +1029,7 @@ noenv_forms(Forms, Opt) when is_atom(Opt) ->
     noenv_forms(Forms, [Opt|?DEFAULT_OPTIONS]).
 
 -doc #{ equiv => string(String, ?DEFAULT_OPTIONS) }.
+-doc #{ since => <<"OTP @OTP-1234567@">> }.
 -spec string(String :: unicode:chardata()) -> CompRet :: comp_ret().
 string(String) -> string(String, ?DEFAULT_OPTIONS).
 
@@ -1060,6 +1061,7 @@ entirely in memory without touching the file system.
 ok
 ```
 """.
+-doc #{ since => <<"OTP @OTP-1234567@">> }.
 -spec string(String :: unicode:chardata(), Options :: [option()] | option()) ->
           CompRet :: comp_ret().
 string(String, Opts) when is_list(Opts) ->
@@ -1068,6 +1070,7 @@ string(String, Opt) when is_atom(Opt) ->
     string(String, [Opt|?DEFAULT_OPTIONS]).
 
 -doc #{ equiv => noenv_string(String, []) }.
+-doc #{ since => <<"OTP @OTP-1234567@">> }.
 -spec noenv_string(String :: unicode:chardata(), Options :: [option()] | option()) ->
           comp_ret().
 
