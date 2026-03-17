@@ -37,7 +37,8 @@
          moduledoc_include/1,
          stringify/1,
          fun_type_arg/1,
-         include_path_open/1
+         include_path_open/1,
+         doctests/1
         ]).
 
 -export([epp_parse_erl_form/2]).
@@ -86,7 +87,8 @@ all() ->
      moduledoc_include,
      stringify,
      fun_type_arg,
-     include_path_open].
+     include_path_open,
+     doctests].
 
 groups() ->
     [{upcase_mac, [], [upcase_mac_1, upcase_mac_2]},
@@ -2445,6 +2447,15 @@ ram_include_path_open_try([Candidate | Rest], Files, Modes) ->
             {ok, Fd, Candidate};
         error ->
             ram_include_path_open_try(Rest, Files, Modes)
+    end.
+
+doctests(Config) ->
+    {ok, Cwd} = file:get_cwd(),
+    try
+        ok = file:set_cwd(proplists:get_value(data_dir, Config)),
+        ct_doctest:module(epp)
+    after
+        file:set_cwd(Cwd)
     end.
 
 fail() ->
