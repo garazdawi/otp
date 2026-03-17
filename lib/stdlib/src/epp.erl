@@ -92,26 +92,26 @@ Module:format_error(ErrorDescriptor)
 -doc """
 The `t:option/0` are the options that can be used to customize the preprocessing.
 
-* `{default_encoding, DefEncoding}` - sets the default encoding of the file. The default encoding is
+* **`{default_encoding, DefEncoding}`** - sets the default encoding of the file. The default encoding is
   used if no valid encoding is found in the file. The valid encodings are `latin1` and `utf8`,
   where the case of the characters can be chosen freely. If unset, it defaults to `utf8`.
 
-* `{includes, IncludePath}` - sets the include path for the file. The include path is used to resolve
+* **`{includes, IncludePath}`** - sets the include path for the file. The include path is used to resolve
   `-include`, `-include_lib` directives.
 
-* `{source_name, SourceName}` - sets the file name of the implicit -file() attributes inserted
+* **`{source_name, SourceName}`** - sets the file name of the implicit -file() attributes inserted
   during preprocessing. If unset it will default to the name of the opened file.
 
-* `{macros, PredefMacros}` - sets the predefined `t:macros/0` for the file. `PredefMacros` is a list of
+* **`{macros, PredefMacros}`** - sets the predefined `t:macros/0` for the file. `PredefMacros` is a list of
   macros that are defined before preprocessing starts.
 
-* `{deterministic, Enabled}` - if set to `true`, will reduce the file name of the
+* **`{deterministic, Enabled}`** - if set to `true`, will reduce the file name of the
   implicit -file() attributes inserted during preprocessing to only the basename of the path. 
 
-* `{extra, Enabled}` - if set to `true`, the return value is `{ok, Epp, Extra}` instead of `{ok, Epp}`,
+* **`{extra, Enabled}`** - if set to `true`, the return value is `{ok, Epp, Extra}` instead of `{ok, Epp}`,
   where `Extra` contains which encoding was detected from the file.
 
-* `{location, StartLocation}` - sets the initial location of the file. The option `location` is forwarded
+* **`{location, StartLocation}`** - sets the initial location of the file. The option `location` is forwarded
   to the Erlang token scanner, see [`erl_scan:tokens/3,4`](`erl_scan:tokens/3`). For example:
 
   ```erlang
@@ -127,14 +127,14 @@ The `t:option/0` are the options that can be used to customize the preprocessing
        {eof,{28,1}}]}
   ```
 
-* `{fd, FileDescriptor}` -  use an already opened file descriptor to read from instead of a file name.
+* **`{fd, FileDescriptor}`** -  use an already opened file descriptor to read from instead of a file name.
   The file descriptor is expected to be an `t:file:io_server/0`. This enables in-memory preprocessing
   using [ram files](`m:file#ram`), where the main source file can be served from memory without touching
   disk. For example:
 
   See `parse_file/2` for an example of how to use this option.
 
-* `{include_path_open, Fun}` - provide a custom function for opening include files. The function has the
+* **`{include_path_open, Fun}`** - provide a custom function for opening include files. The function has the
   same signature as `file:path_open/3` and is used when resolving `-include`, `-include_lib`, and
   `-doc {file, ...}` directives. This enables fully in-memory preprocessing using [ram files](`m:file#ram`).
   For example:
@@ -162,7 +162,7 @@ The `t:option/0` are the options that can be used to customize the preprocessing
   ```
 
   Since OTP @OTP-12345678@
-* `{compiler_internal,term()}` - forwarded to the Erlang token
+* **`{compiler_internal,term()}`** - forwarded to the Erlang token
   scanner, see [`{compiler_internal,term()}`](`m:erl_scan#compiler_interal`) in `erl_scan:string/3`.
 """.
 -type option() ::

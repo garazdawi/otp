@@ -1591,7 +1591,7 @@ more of the following options:
 
   This option is not allowed on `raw` files.
 
-- **`ram`** - `File` must be `t:iodata/0`. Returns an `t:fd/0` (or a `t:io_server/0`
+- **`ram`**{: #ram } - `File` must be `t:iodata/0`. Returns an `t:fd/0` (or a `t:io_server/0`
   if combined with `cooked`), which lets module `file` operate on the data in-memory
   as if it is a file.
 
