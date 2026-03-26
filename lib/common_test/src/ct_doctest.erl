@@ -328,7 +328,14 @@ Options for doctest execution.
 """.
 -type options() :: [{parser, fun((unicode:unicode_binary()) -> [unicode:unicode_binary()] | {error, term()}) } |
                     {skipped_blocks, non_neg_integer() | false} |
-                    {verbose, boolean()}].
+                    {verbose, boolean()} |
+                    {compile_options, [compile:option()]}].
+
+-record(options,
+        { parser = fun parse_markdown_builtin/1, %:: fun((unicode:unicode_binary()) -> [unicode:unicode_binary()] | {error, term()}),
+          skipped_blocks = false :: non_neg_integer() | false,
+          verbose = false :: boolean(),
+          compile_options = [] :: [compile:option()] }).
 
 -doc #{equiv => module(Module, [])}.
 -spec module(module()) ->
@@ -359,21 +366,19 @@ Use `Bindings` to provide prebound variables for a specific doc entry. Use
 
 See `t:options/0` for available options.
 """.
--spec module(module(), Bindings, options()) ->
+-spec module(Module :: module(), Bindings, Options :: options()) ->
           ok | {comment, string()} | {error, term()} | no_return()
           when 
             KFA :: {Kind :: function | type | callback, atom(), arity()},
             Bindings :: [{KFA | moduledoc, erl_eval:binding_struct()}].
-module(Module, Bindings, Options) ->
-    HasParserKey = proplists:is_defined(parser, Options),
-    ParserFun = options_parser(Options),
-    ExpectedSkipped = options_skipped_blocks(Options),
-    Verbose = options_verbose(Options),
+module(Module, Bindings, OptionsList) ->
+    Options = options(OptionsList),
+    HasParserKey = proplists:is_defined(parser, OptionsList),
     case code:get_doc(Module) of
         {ok, #docs_v1{ format = ~"text/markdown" } = Docs} when not HasParserKey ->
-            run_module_docs(Docs, Bindings, ParserFun, ExpectedSkipped, Verbose);
+            run_module_docs(Docs, Bindings, Options);
         {ok, #docs_v1{} = Docs} when HasParserKey ->
-            run_module_docs(Docs, Bindings, ParserFun, ExpectedSkipped, Verbose);
+            run_module_docs(Docs, Bindings, Options);
         {ok, _} ->
             {error, unsupported_format};
         Else ->
@@ -407,19 +412,17 @@ code blocks to be tested.
 
 See `t:options/0` for available options.
 """.
--spec file(file:filename(), Bindings :: [{atom(), term()}], options()) ->
+-spec file(File :: file:filename(), Bindings :: [{atom(), term()}], Options :: options()) ->
           ok | {comment, string()} | {error, term()} | no_return().
-file(File, Bindings, Options) ->
-    ParserFun = options_parser(Options),
-    ExpectedSkipped = options_skipped_blocks(Options),
-    Verbose = options_verbose(Options),
+file(File, Bindings, OptionsList) ->
+    Options = options(OptionsList),
     case file:read_file(File) of
         {ok, Content} ->
             try
-                Blocks = inspect(parse(Content, ParserFun)),
+                Blocks = inspect(parse(Content, Options#options.parser)),
                 {_RunResult, Skipped} = run_blocks(Blocks, Bindings,
-                                {file, File}, Verbose),
-                ensure_skipped_blocks(ExpectedSkipped, Skipped),
+                                {file, File}, Options),
+                ensure_skipped_blocks(Options#options.skipped_blocks, Skipped),
                 ok
             catch
                 throw:{error, Error} ->
@@ -434,11 +437,11 @@ file(File, Bindings, Options) ->
     end.
 
 run_module_docs(#docs_v1{ docs = Docs, module_doc = MD },
-                Bindings, ParserFun, ExpectedSkipped, Verbose) ->
-    MDRes = parse_and_run(moduledoc, MD, Bindings, ParserFun, Verbose),
+                Bindings, Options) ->
+    MDRes = parse_and_run(moduledoc, MD, Bindings, Options),
     Res =
         lists:append(
-          [parse_and_run(KFA, EntryDocs, Bindings, ParserFun, Verbose) ||
+          [parse_and_run(KFA, EntryDocs, Bindings, Options) ||
               {KFA, _Anno, _Sig, EntryDocs, _Meta} <- Docs,
               is_map(EntryDocs)]),
     Errors =
@@ -448,10 +451,10 @@ run_module_docs(#docs_v1{ docs = Docs, module_doc = MD },
     case length(Errors) of
         0 ->
             Skipped = lists:sum([Count || {_, _, Count} <- MDRes ++ Res]),
-            verbose_log(Verbose,
+            verbose_log(Options,
                         "module complete; total skipped blocks: ~p (expected ~p)",
-                        [Skipped, ExpectedSkipped]),
-            ensure_skipped_blocks(ExpectedSkipped, Skipped),
+                        [Skipped, Options#options.skipped_blocks]),
+            ensure_skipped_blocks(Options#options.skipped_blocks, Skipped),
             NoTests = lists:sort([io_lib:format("  ~p/~p\n", [F,A]) ||
                                      {{function,F,A},[],_} <- Res]),
             case length(NoTests) of
@@ -490,17 +493,17 @@ format_error_context(#{ message := Message, context := Context }) ->
 format_error_context(#{ message := Message }) ->
     io_lib:format("~ts~n", [string:trim(Message)]).
 
-parse_and_run(_, hidden, _, _, _) -> [];
-parse_and_run(_, none, _, _, _) -> [];
-parse_and_run(KFA, #{} = Ds, Bindings, ParserFun, Verbose) ->
-    [do_parse_and_run(KFA, D, Bindings, ParserFun, Verbose) || _ := D <- Ds].
+parse_and_run(_, hidden, _, _) -> [];
+parse_and_run(_, none, _, _) -> [];
+parse_and_run(KFA, #{} = Ds, Bindings, Options) ->
+    [do_parse_and_run(KFA, D, Bindings, Options) || _ := D <- Ds].
 
-do_parse_and_run(KFA, Docs, Bindings, ParserFun, Verbose) ->
+do_parse_and_run(KFA, Docs, Bindings, Options) ->
     try
         InitialBindings = proplists:get_value(KFA, Bindings, []),
-        Blocks = inspect(parse(Docs, ParserFun)),
+        Blocks = inspect(parse(Docs, Options#options.parser)),
         {RunResult, Skipped} = run_blocks(Blocks, InitialBindings,
-                                          {module, KFA}, Verbose),
+                                          {module, KFA}, Options),
         {KFA, RunResult, Skipped}
     catch
         throw:{error,_}=Error ->
@@ -510,42 +513,42 @@ do_parse_and_run(KFA, Docs, Bindings, ParserFun, Verbose) ->
             erlang:raise(C, R, ST)
     end.
 
-run_blocks(Blocks, Bindings, Context, Verbose) ->
+run_blocks(Blocks, Bindings, Context, Options) ->
     {_Index, Result} =
         lists:foldl(fun(Test, {Index, {Acc, Skipped}}) ->
                             {Result0, NewSkipped} = test_block(Test, Bindings,
-                                                               Context, Index, Skipped, Verbose),
+                                                               Context, Index, Skipped, Options),
                             {Index + 1, {Acc ++ Result0, NewSkipped}}
                     end, {1, {[], 0}}, Blocks),
     Result.
 
-test_block(Code, Bindings, Context, Index, Skipped, Verbose) when is_binary(Code) ->
+test_block(Code, Bindings, Context, Index, Skipped, Options) when is_binary(Code) ->
     ContextLabel = context_label(Context),
     FirstLines = first_lines(Code),
-    verbose_log(Verbose, "running block ~p in ~ts:~n~ts",
+    verbose_log(Options, "running block ~p in ~ts:~n~ts",
                 [Index, ContextLabel, Code]),
-    try run_test(Code, Bindings, Verbose) of
+    try run_test(Code, Bindings, Options) of
         [] ->
-            verbose_log(Verbose, "skipped block ~p in ~ts (no runnable prompt, ~p skipped): ~ts",
+            verbose_log(Options, "skipped block ~p in ~ts (no runnable prompt, ~p skipped): ~ts",
                         [Index, ContextLabel, Skipped + 1, FirstLines]),
             {[], Skipped + 1};
         Result ->
-            verbose_log(Verbose, "passed block ~p in ~ts", [Index, ContextLabel]),
+            verbose_log(Options, "passed block ~p in ~ts", [Index, ContextLabel]),
             {Result, Skipped}
     catch
         throw:{error, ErrorContext} = Error ->
-            verbose_log(Verbose,
+            verbose_log(Options,
                         "failed block ~p in ~ts:~n~ts~n",
                         [Index, ContextLabel,
                          format_error_context(ErrorContext)]),
             throw(Error);
         C:R:ST ->
-            verbose_log(Verbose,
+            verbose_log(Options,
                         "failed block ~p in ~ts with ~p:~tp~nblock snippet:~n~ts",
                         [Index, ContextLabel, C, R, Code]),
             erlang:raise(C, R, ST)
     end;
-test_block(Other, _Bindings, _Context, _Index, _Skipped, _Verbose) ->
+test_block(Other, _Bindings, _Context, _Index, _Skipped, _Options) ->
     throw({error, {invalid_code_block, Other}}).
 
 context_label({module, moduledoc}) ->
@@ -561,12 +564,12 @@ first_lines(Code) ->
     Lines = string:split(Code, "\n", all),
     lists:join($\n, lists:sublist(Lines, 5)).
 
-verbose_log(false, _Fmt, _Args) ->
-    ok;
-verbose_log(true, Fmt, Args) ->
+verbose_log(#options{ verbose = true }, Fmt, Args) ->
     Str = io_lib:format("ct_doctest(verbose): " ++ Fmt, Args),
     [First | Rest] = string:split(string:trim(Str), "\n", all),
-    io:put_chars([First, [["\n    ", Line] || Line <- Rest], "\n"]).
+    io:put_chars([First, [["\n    ", Line] || Line <- Rest], "\n"]);
+verbose_log(_, _, _) ->
+    ok.
 
 parse(Content, ParserFun) ->
     validate_code_blocks(run_parser(ParserFun, Content)).
@@ -591,9 +594,19 @@ validate_code_block(Block) when is_binary(Block) ->
 validate_code_block(Other) ->
     throw({error, #{ message => io_lib:format("Invalid code block: ~p.", [Other]) }}).
 
-options_parser(Options) ->
-    proplists:get_value(parser, Options,
-                        fun parse_markdown_builtin/1).
+options(OptionsList) ->
+    lists:foldl(fun
+                        (parser, Acc) ->
+                            Acc#options{ parser = proplists:get_value(parser, OptionsList) };
+                        (skipped_blocks, Acc)  ->
+                            Acc#options{ skipped_blocks = proplists:get_value(skipped_blocks, OptionsList) };
+                        (verbose, Acc) ->
+                            Acc#options{ verbose = proplists:get_value(verbose, OptionsList) };
+                        (compile_options, Acc) ->
+                            Acc#options{ compile_options = proplists:get_value(compile_options, OptionsList) };
+                        (_Key, Acc) ->
+                            Acc
+                end, #options{}, proplists:get_keys(OptionsList)).
 
 parse_markdown_builtin(Markdown) ->
     extract_erlang_code_blocks(inspect(shell_docs_markdown:parse_md(Markdown))).
@@ -614,12 +627,6 @@ extract_erlang_code_blocks({_Tag, _Attrs, Content}) ->
 extract_erlang_code_blocks(_Other) ->
     [].
 
-options_skipped_blocks(Options) ->
-    proplists:get_value(skipped_blocks, Options, false).
-
-options_verbose(Options) ->
-    proplists:get_value(verbose, Options, false) =:= true.
-
 ensure_skipped_blocks(false, _Actual) ->
     ok;
 ensure_skipped_blocks(Expected, Actual) when is_integer(Expected), Expected >= 0 ->
@@ -633,7 +640,7 @@ ensure_skipped_blocks(Expected, Actual) when is_integer(Expected), Expected >= 0
 -define(RE_CAPTURE, ~B"(?:(?'line_number'[0-9]+)(?'prefix'>\s)|(?'prefix'\-module\())?(?'content'.*)").
 -define(RE_OPTIONS, [{capture, [line_number, prefix, content], binary}, dupnames, unicode]).
 
-run_test(Code, InitialBindings, Verbose) ->
+run_test(Code, InitialBindings, Options) ->
     Lines = string:split(Code, "\n", all),
     case lists:dropwhile(fun(Line) ->
                            re:run(Line, ~B"^\s*(%.*)?$", [unicode]) =/= nomatch
@@ -647,58 +654,29 @@ run_test(Code, InitialBindings, Verbose) ->
                     Tests = inspect(parse_tests(ReLines, [], 1)),
                     check_prompt_numbers(Tests),
                     _ = lists:foldl(fun(Test, Bindings) ->
-                                            try run_tests(Test, Bindings, Verbose)
+                                            try run_tests(Test, Bindings, Options)
                                             catch throw:{error, Error} ->
                                                     throw({error, Error#{ test => Test}})
                                             end
                                     end, InitialBindings, Tests),
                     [ok];
-                {match, [_Line_Number, _Prefix = <<"-module(">>, _Code]} ->
-                    [compile_string(Code)];
+                {match, [_Line_Number, _Prefix = <<"-module(">>, ModContent]} ->
+                    [ModName | _] = binary:split(ModContent, [<<")">>]),
+                    [compile_string(Code, ModName, Options#options.compile_options)];
                 _ ->
                     []
             end
     end.
 
-compile_string(Code) ->
-
-    Toks =
-        case erl_scan:string(unicode:characters_to_list(Code),
-                             0,
-                             [text]) of
-            {ok, T, _} ->
-                T;
-            {error, {Line,Mod,Reason}, _} ->
-                Message = io_lib:format("unknown:~p: ~ts",[Line, Mod:format_error(Reason)]),
-                throw({error,#{ message => Message, context => Code}})
-        end,
-
-    Forms = parse_tokens(Code, Toks),
-
-    {attribute,_,module,ModuleName} = lists:keyfind(module, 3, Forms),
-
-    case compile:forms(Forms, [binary, return_errors, {source, atom_to_list(ModuleName) ++ ".erl"}]) of
+compile_string(Code, ModName, CompileOptions) ->
+    FileName = unicode:characters_to_list(ModName) ++ ".erl",
+    case compile:string(Code, [binary, return_errors, {source, FileName} | CompileOptions]) of
         {ok, Module, Binary} ->
-            {module, Module} = code:load_binary(Module, "nofile", Binary),
+            {module, Module} = code:load_binary(Module, FileName, Binary),
             ok;
         {error, Errors, Warnings} ->
             Messages = [begin [{_, M}] = sys_messages:format_messages(File, "", Msgs, []), M end || {File, Msgs} <- Errors ++ Warnings],
             throw({error,#{ message => Messages, context => Code}})
-    end.
-
-parse_tokens(_Code, []) -> [];
-parse_tokens(Code, Toks) ->
-    case lists:splitwith(fun(T) ->
-            element(1, T) =/= dot
-        end, Toks) of
-        {Ts, [{dot, _} = Dot | Rest]} ->
-            case erl_parse:parse_form(Ts ++ [Dot]) of
-                {ok, Forms} ->
-                    [Forms | parse_tokens(Code, Rest)];
-                {error, {Line, Mod, Reason}} ->
-                    Message = io_lib:format("unknown:~p: ~ts",[Line, Mod:format_error(Reason)]),
-                    throw({error,#{ message => Message, context => Code}})
-            end
     end.
 
 check_prompt_numbers(Tests) ->
@@ -743,19 +721,19 @@ parse_match([{match, [<<>>, <<>>, More]} | T], Acc) ->
 parse_match(Rest, Acc) ->
     {Acc, Rest}.
 
-run_tests({test, _Index, Test0, Match0}, Bindings, Verbose) ->
+run_tests({test, _Index, Test0, Match0}, Bindings, Options) ->
     Test1 = unicode:characters_to_list(Test0),
     Test = string:trim(Test1),
     case Match0 of
         [<<"** ", _/binary>> | _] ->
             Match = unicode:characters_to_list(Match0),
-            run_failing(Test, Match, Bindings, Verbose);
+            run_failing(Test, Match, Bindings, Options);
         _ ->
-            run_successful(Test, Match0, Bindings, Verbose)
+            run_successful(Test, Match0, Bindings, Options)
     end.
 
-run_successful(Test, Match, Bindings, Verbose) ->
-    verbose_log(Verbose, "Running: ~ts = ~ts", [Match, Test]),
+run_successful(Test, Match, Bindings, Options) ->
+    verbose_log(Options, "Running: ~ts = ~ts", [Match, Test]),
     Ast = parse_exprs(Test, Match),
     try
         {value, _Res, NewBindings} = inspect(erl_eval:exprs(Ast, Bindings)),
@@ -764,8 +742,8 @@ run_successful(Test, Match, Bindings, Verbose) ->
             throw({error,#{ message => format_exception(C, R, ST) }})
     end.
 
-run_failing(Test, Match, Bindings, Verbose) ->
-    verbose_log(Verbose, "Running: ~ts", [Test]),
+run_failing(Test, Match, Bindings, Options) ->
+    verbose_log(Options, "Running: ~ts", [Test]),
     Ast = parse_exprs(Test, "_"),
     try inspect(erl_eval:exprs(Ast, Bindings)) of
         {value, Res, _} ->

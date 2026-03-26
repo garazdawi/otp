@@ -45,10 +45,11 @@
 
 -module(?FILE_SUITE).
 
--export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
+-export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1,
 	 init_per_group/2,end_per_group/2,
 	 init_per_testcase/2, end_per_testcase/2,
-	 read_write_file/1, names/1]).
+	 read_write_file/1, names/1,
+	 doctests/1]).
 -export([cur_dir_0/1, cur_dir_1/1, make_del_dir/1, make_del_dir_r/1,
 	 list_dir/1,list_dir_error/1,
 	 untranslatable_names/1, untranslatable_names_error/1,
@@ -56,7 +57,8 @@
 -export([close/1, consult1/1, path_consult/1, delete/1]).
 -export([ eval1/1, path_eval/1, script1/1, path_script/1,
 	  open1/1,
-	  old_modes/1, new_modes/1, path_open/1, open_errors/1]).
+	  old_modes/1, new_modes/1, path_open/1, open_errors/1,
+	  cooked_ram/1]).
 -export([ file_info_basic_file/1, file_info_basic_directory/1,
 	  file_info_bad/1, file_info_times/1, file_write_file_info/1,
           file_wfi_helpers/1]).
@@ -140,7 +142,8 @@ all() ->
      ipread, interleaved_read_write, otp_5814, otp_10852,
      large_file, large_write, read_line_1, read_line_2, read_line_3,
      read_line_4, standard_io, old_io_protocol,
-     unicode_mode, {group, bench}
+     unicode_mode, {group, bench},
+     doctests
     ].
 
 groups() -> 
@@ -154,7 +157,7 @@ groups() ->
      {open, [],
       [open1, old_modes, new_modes, path_open, close, access,
        read_write, pread_write, append, open_errors,
-       exclusive]},
+       exclusive, cooked_ram]},
      {pos, [], [pos1, pos2, pos3]},
      {file_info, [],
       [file_info_basic_file, file_info_basic_directory,
@@ -1316,6 +1319,51 @@ exclusive(Config) when is_list(Config) ->
     {ok, Fd} = ?FILE_MODULE:open(Name, [write, exclusive]),
     {error, eexist} = ?FILE_MODULE:open(Name, [write, exclusive]),
     ok = ?FILE_MODULE:close(Fd),
+    ok.
+
+%% Test cooked option for ram files.
+%% The cooked option wraps a ram file in a pid-based I/O server,
+%% making it usable with the io module (unlike a plain ram file
+%% which returns a raw file descriptor).
+cooked_ram(_Config) ->
+    Data = <<"hello, world\nline two\n">>,
+
+    %% Basic read via io module.
+    {ok, Fd1} = ?FILE_MODULE:open(Data, [ram, read, binary, cooked]),
+    true = is_pid(Fd1),
+    <<"hello, world\n">> = io:get_line(Fd1, ''),
+    <<"line two\n">> = io:get_line(Fd1, ''),
+    eof = io:get_line(Fd1, ''),
+    ok = ?FILE_MODULE:close(Fd1),
+
+    %% Write and read back.
+    {ok, Fd2} = ?FILE_MODULE:open(<<>>, [ram, write, read, binary, cooked]),
+    true = is_pid(Fd2),
+    ok = io:put_chars(Fd2, "test data"),
+    {ok, 0} = ?FILE_MODULE:position(Fd2, bof),
+    {ok, <<"test data">>} = ?FILE_MODULE:read(Fd2, 100),
+    ok = ?FILE_MODULE:close(Fd2),
+
+    %% io:scan_erl_form works (needed for epp).
+    ErlData = <<"-module(test).\n">>,
+    {ok, Fd3} = ?FILE_MODULE:open(ErlData, [ram, read, binary, cooked]),
+    true = is_pid(Fd3),
+    {ok, Tokens, _} = io:scan_erl_form(Fd3, '', 1),
+    true = is_list(Tokens),
+    ok = ?FILE_MODULE:close(Fd3),
+
+    %% Without cooked, ram files return a raw fd (not a pid).
+    {ok, RawFd} = ?FILE_MODULE:open(Data, [ram, read, binary]),
+    false = is_pid(RawFd),
+    ok = ?FILE_MODULE:close(RawFd),
+
+    %% io:setopts and io:getopts work on cooked ram files.
+    {ok, Fd4} = ?FILE_MODULE:open(Data, [ram, read, binary, cooked]),
+    Opts = io:getopts(Fd4),
+    true = is_list(Opts),
+    ok = ?FILE_MODULE:close(Fd4),
+
+    [] = flush(),
     ok.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -4921,3 +4969,53 @@ memsize() ->
         Available ->
             Available
     end.
+
+doctests(Config) ->
+    Dir = filename:join(proplists:get_value(priv_dir, Config), "doctests"),
+    ok = file:make_dir(Dir),
+    Bindings = #{'Dir' => Dir},
+    FunsNeedingDir =
+        [{function, delete, 2},
+         {function, rename, 2},
+         {function, set_cwd, 1},
+         {function, make_dir, 1},
+         {function, del_dir, 1},
+         {function, del_dir_r, 1},
+         {function, list_dir, 1},
+         {function, list_dir_all, 1},
+         {function, read_file, 2},
+         {function, read_file_info, 2},
+         {function, write_file, 2},
+         {function, write_file, 3},
+         {function, make_link, 2},
+         {function, open, 2},
+         {function, close, 1},
+         {function, advise, 4},
+         {function, read, 2},
+         {function, write, 2},
+         {function, read_line, 1},
+         {function, pread, 2},
+         {function, pread, 3},
+         {function, pwrite, 2},
+         {function, pwrite, 3},
+         {function, datasync, 1},
+         {function, sync, 1},
+         {function, position, 2},
+         {function, truncate, 1},
+         {function, consult, 1},
+         {function, path_consult, 2},
+         {function, eval, 1},
+         {function, eval, 2},
+         {function, path_eval, 2},
+         {function, script, 1},
+         {function, script, 2},
+         {function, path_script, 2},
+         {function, path_script, 3},
+         {function, path_open, 3},
+         {function, change_mode, 2},
+         {function, change_time, 2},
+         {function, change_time, 3},
+         {function, copy, 3}],
+    ct_doctest:module(file,
+                      [{KFA, Bindings} || KFA <- FunsNeedingDir],
+                      []).

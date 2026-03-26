@@ -41,6 +41,41 @@ access. The atomics are organized into arrays with the following semantics:
   can read the new value of B and then read the old value of A.
 - Indexes into atomic arrays are one-based. An atomic array of arity N contains
   N atomics with index from 1 to N.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(3, [{signed, true}]).
+2> atomics:put(Ref, 1, 10).
+ok
+3> atomics:get(Ref, 1).
+10
+4> atomics:add(Ref, 1, 5).
+ok
+5> atomics:get(Ref, 1).
+15
+6> atomics:exchange(Ref, 1, 42).
+15
+7> atomics:compare_exchange(Ref, 1, 42, 100).
+ok
+8> atomics:get(Ref, 1).
+100
+9> atomics:info(Ref).
+#{size => 3, max => ..., min => ..., memory => ...}
+```
+
+Atomics can be updated concurrently from multiple processes:
+
+```erlang
+1> Ref = atomics:new(1, []).
+2> Self = self().
+3> N = 1000.
+1000
+4> Pids = [spawn(fun() -> atomics:add(Ref, 1, 1), Self ! self() end) || _ <- lists:seq(1, N)].
+5> [receive Pid -> ok end || Pid <- Pids].
+6> atomics:get(Ref, 1).
+1000
+```
 """.
 -moduledoc(#{since => "OTP 21.2"}).
 
@@ -77,6 +112,14 @@ Argument `Opts` is a list of the following possible options:
 
 Atomics are not tied to the current process and are automatically garbage
 collected when they are no longer referenced.
+
+## Examples
+
+```erlang
+1> atomics:new(5, []).
+2> atomics:new(5, [{signed, false}]).
+3> atomics:new(5, [{signed, true}]).
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec new(Arity, Opts) -> atomics_ref() when
@@ -105,7 +148,23 @@ encode_opts([], Acc) ->
 encode_opts(_, _) ->
     throw(badopt).
 
--doc "Set atomic to `Value`.".
+-doc """
+Set atomic to `Value`.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(1, []).
+2> atomics:put(Ref, 1, 42).
+ok
+3> atomics:get(Ref, 1).
+42
+4> atomics:put(Ref, 1, -10).
+ok
+5> atomics:get(Ref, 1).
+-10
+```
+""".
 -doc(#{since => <<"OTP 21.2">>}).
 -spec put(Ref, Ix, Value) -> ok when
       Ref  :: atomics_ref(),
@@ -114,7 +173,21 @@ encode_opts(_, _) ->
 put(_Ref, _Ix, _Value) ->
     erlang:nif_error(undef).
 
--doc "Read atomic value.".
+-doc """
+Read atomic value.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(2, []).
+2> atomics:get(Ref, 1).
+0
+3> atomics:put(Ref, 1, 100).
+ok
+4> atomics:get(Ref, 1).
+100
+```
+""".
 -doc(#{since => <<"OTP 21.2">>}).
 -spec get(Ref, Ix) -> integer() when
       Ref  :: atomics_ref(),
@@ -122,7 +195,25 @@ put(_Ref, _Ix, _Value) ->
 get(_Ref, _Ix) ->
     erlang:nif_error(undef).
 
--doc "Add `Incr` to atomic.".
+-doc """
+Add `Incr` to atomic.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(1, []).
+2> atomics:add(Ref, 1, 5).
+ok
+3> atomics:add(Ref, 1, 3).
+ok
+4> atomics:get(Ref, 1).
+8
+5> atomics:add(Ref, 1, -2).
+ok
+6> atomics:get(Ref, 1).
+6
+```
+""".
 -doc(#{since => <<"OTP 21.2">>}).
 -spec add(Ref, Ix, Incr) -> ok when
       Ref  :: atomics_ref(),
@@ -131,7 +222,21 @@ get(_Ref, _Ix) ->
 add(_Ref, _Ix, _Incr) ->
     erlang:nif_error(undef).
 
--doc "Atomically add `Incr` to atomic and return the result.".
+-doc """
+Atomically add `Incr` to atomic and return the result.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(1, []).
+2> atomics:add_get(Ref, 1, 5).
+5
+3> atomics:add_get(Ref, 1, 10).
+15
+4> atomics:add_get(Ref, 1, -3).
+12
+```
+""".
 -doc(#{since => <<"OTP 21.2">>}).
 -spec add_get(Ref, Ix, Incr) -> integer() when
       Ref  :: atomics_ref(),
@@ -140,7 +245,21 @@ add(_Ref, _Ix, _Incr) ->
 add_get(_Ref, _Ix, _Incr) ->
     erlang:nif_error(undef).
 
--doc "Subtract `Decr` from atomic.".
+-doc """
+Subtract `Decr` from atomic.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(1, []).
+2> atomics:put(Ref, 1, 10).
+ok
+3> atomics:sub(Ref, 1, 3).
+ok
+4> atomics:get(Ref, 1).
+7
+```
+""".
 -doc(#{since => <<"OTP 21.2">>}).
 -spec sub(Ref, Ix, Decr) -> ok when
       Ref  :: atomics_ref(),
@@ -154,7 +273,21 @@ sub(Ref, Ix, Decr) ->
             error_with_info(Error, [Ref, Ix, Decr])
     end.
 
--doc "Atomically subtract `Decr` from atomic and return the result.".
+-doc """
+Atomically subtract `Decr` from atomic and return the result.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(1, []).
+2> atomics:put(Ref, 1, 20).
+ok
+3> atomics:sub_get(Ref, 1, 5).
+15
+4> atomics:sub_get(Ref, 1, 10).
+5
+```
+""".
 -doc(#{since => <<"OTP 21.2">>}).
 -spec sub_get(Ref, Ix, Decr) -> integer() when
       Ref  :: atomics_ref(),
@@ -170,6 +303,18 @@ sub_get(Ref, Ix, Decr) ->
 
 -doc """
 Atomically replace the value of the atomic with `Desired` and return the previous value.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(1, []).
+2> atomics:put(Ref, 1, 42).
+ok
+3> atomics:exchange(Ref, 1, 100).
+42
+4> atomics:get(Ref, 1).
+100
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec exchange(Ref, Ix, Desired) -> integer() when
@@ -185,6 +330,22 @@ atomic to `Desired`.
 
 Return `ok` if `Desired` was written. Return the actual atomic value if
 not equal to `Expected`.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(1, []).
+2> atomics:put(Ref, 1, 42).
+ok
+3> atomics:compare_exchange(Ref, 1, 42, 100).
+ok
+4> atomics:get(Ref, 1).
+100
+5> atomics:compare_exchange(Ref, 1, 42, 200).
+100
+6> atomics:get(Ref, 1).
+100
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec compare_exchange(Ref, Ix, Expected, Desired) -> ok | integer() when
@@ -204,6 +365,14 @@ The map has the following keys:
 - **`max`** - The highest possible value an atomic in this array can hold.
 - **`min`** - The lowest possible value an atomic in this array can hold.
 - **`memory`** - Approximate memory consumption for the array in bytes.
+
+## Examples
+
+```erlang
+1> Ref = atomics:new(10, []).
+2> atomics:info(Ref).
+#{size => 10, max => ..., min => ..., memory => ...}
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec info(Ref) -> Info when
