@@ -25,7 +25,7 @@ the user's inline review:
   items the inline comments on G–L exposed (tier-up target selection,
   GC + pre-emption inside inlined regions, hibernation interaction,
   `erlang:memory()` reporting, call-frequency signal extensions,
-  in-flight compile generation check).
+  in-flight compile generation check, branchy-Erlang plan-rebalancing).
 
 Each item has a **Suggested resolution** that's a starting point — edit
 or replace if you disagree. Where the user already wrote an inline
@@ -1451,6 +1451,94 @@ concrete in §14.2:
 > retrip later under the new module). The generation counter
 > is incremented atomically by the code loader before the
 > module reload commits.
+
+### M7. Branchy-Erlang reality and what it changes
+- [ ] Erlang code is branchy by nature. Pattern matching is the
+      primary control-flow primitive; every gen_server callback is
+      a dispatch tree; every protocol handler is a state machine.
+      Code that *isn't* branchy in production Erlang has typically
+      been pushed into NIFs (crypto, codecs, numeric kernels)
+      because Erlang isn't a great fit for it. What's left in BEAM
+      is overwhelmingly decision-tree-shaped.
+- [ ] External evidence matches: PyPy's Bolz-Tereick explicitly
+      calls branchy code the worst case for tracing JITs
+      (`research/pypy.md`); HiPErJiT (L5) shows the same pattern
+      empirically — wins on numeric `smith`, losses on the heavily-
+      branchy Dialyzer (1.46× vs HiPE's 1.78×).
+- [ ] The current plan under-weights this in five places:
+      1. **§10.6 loop unrolling** lists four wins (test_heap
+         coalescing, spine traversal, term creation, back-edge
+         overhead). With branchy bodies *only* `test_heap`
+         coalescing is robust. The other three depend on
+         iteration-to-iteration predictability that branchy bodies
+         lack.
+      2. **§7.7 branch-frequency counters** are scoped v2 with
+         the rationale "ssa_opt_dead already covers most of it".
+         That reasoning fails for branchy code: AOT prunes
+         *unreachable* branches; only profile data prunes *cold*
+         branches. With most of the code being branches, this is
+         the bigger profile signal.
+      3. **§10.3 inlining heuristics** are size-and-depth-only.
+         They should be branch-aware: inline only the hot arms
+         of the callee with a deopt-to-T1 for the cold arms,
+         instead of inlining the whole clause set. JSC and
+         Maglev both do this.
+      4. **§10.7 DOMJIT guard BIFs** become *more* important: the
+         branchier the surrounding code, the more `is_*/1`
+         predicates appear in guards, and the bigger the aggregate
+         elimination win.
+      5. **Tier-up target selection (M1)** matters more: with
+         branchy callers and shared library callees, the value
+         lives in the caller's branch context, not in the
+         standalone-compiled library function.
+
+**Suggested resolution.** Three concrete plan edits plus a
+Phase 0 measurement task:
+
+1. **§10.6 unrolling rationale.** Demote the spine-traversal /
+   term-creation / back-edge bullets; promote `test_heap`
+   coalescing as the *primary* (and in most cases only) win.
+   State explicitly: "unrolling factor 4 is the default; bodies
+   with high branch density may not benefit from unrolling at
+   all and should be skipped".
+
+2. **§7.7 branch-frequency counters.** Move from "v2" to "v1
+   Phase 2", alongside type narrowing. Same shape (16-bit
+   taken/not-taken pair per branch site, scheduler-1-only) so
+   no new mechanism. Used by §10.3 (cold-arm pruning during
+   inlining) and §15 (recompile heuristics).
+
+3. **§10.3 inlining heuristics.** Add a branch-density bullet:
+
+   > - **Cold-arm pruning during inlining.** When inlining a
+   >   callee with N clause heads or branches, consult the
+   >   branch-frequency counters (§7.7). Inline only arms with
+   >   ≥ 5% observed frequency; replace cold arms with a deopt
+   >   to T1's call site. Reduces inlined code size proportionally
+   >   to how skewed the callee's branch distribution is — typical
+   >   for Erlang dispatch patterns.
+
+4. **Phase 0 audit: branch-density bucketing.** Add to the F2
+   corpus measurement (already in Phase 0 audits):
+
+   > **Branch density.** Bucket the F2 corpus's hot-path BEAM
+   > ops by ratio of branch ops (`is_*`, `select_val`,
+   > `select_arity`, `branch`) to total ops. Measure T2 wins
+   > separately on the high-branch and low-branch buckets. If
+   > the wins are very different (predicted: yes, with the
+   > low-branch bucket capturing most of the upside), the plan
+   > must explicitly state that v1's wins are concentrated on
+   > the lower-branch-density tail of real Erlang code, and
+   > stakeholder expectations are set accordingly.
+
+The honest framing this leads to (worth adding to §1's hard
+floor or §2's "Why T2"): **the optimization wins T2 produces are
+concentrated on the small fraction of Erlang code that's loop-
+heavy or arithmetic-heavy. The bulk of typical Erlang code is
+branchy state-machine logic where T2's gains come from cold-arm
+pruning and DOMJIT-style guard elimination, not from inlining or
+loop optimisation.** Setting that expectation up front avoids
+the ZJIT-style "shipped at slower than the baseline" surprise.
 
 1. Walk top to bottom.
 2. For each `[ ]`, edit the **Suggested resolution** if you disagree
