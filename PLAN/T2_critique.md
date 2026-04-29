@@ -8,7 +8,8 @@ commits `ed325311f6` (initial), `7808eee6bb` (sharper points),
 (C-series), `29c6cb5916` (D-series), `473c8e7e99` (E-series),
 `d10f1a55f3` (F-series).
 
-This pass found 51 new items, organised into:
+This pass found 51 items in G–L, plus 6 follow-ups in M after
+the user's inline review:
 
 - **G. New contradictions introduced by recent edits.** Stale text the
   resolutions left behind.
@@ -20,9 +21,16 @@ This pass found 51 new items, organised into:
 - **K. Editorial cleanup.** Small fixes; many cross-reference G/H/I.
 - **L. Strategic concerns.** Higher-level questions raised by the
   current state.
+- **M. Architectural concerns surfaced in second-pass review.** Larger
+  items the inline comments on G–L exposed (tier-up target selection,
+  GC + pre-emption inside inlined regions, hibernation interaction,
+  `erlang:memory()` reporting, call-frequency signal extensions,
+  in-flight compile generation check).
 
 Each item has a **Suggested resolution** that's a starting point — edit
-or replace if you disagree.
+or replace if you disagree. Where the user already wrote an inline
+reply, the file shows the original suggestion, the user comment, and
+a **Revised suggested resolution** that incorporates the comment.
 
 ---
 
@@ -184,19 +192,39 @@ metadata (§9.2)".
 - [ ] The plan's flush rule ("inliner emits flush sequences at
       each potential GC site") doesn't say *where* the flush goes.
 
-**Suggested resolution.** Add to §12.3:
+**Original suggested resolution.** Spill tagged values to fresh
+scratch Y slots reserved for the inlined region's lifetime; the
+GC walker picks them up via the existing Y-register scan.
 
-> **Tagged values across GC inside inlined regions.** Live tagged
-> SSA values inside an inlined region that span a GC site are
-> spilled to fresh **scratch Y slots** reserved at codegen for the
-> region's lifetime. The reserved Y slots are allocated above the
-> outer function's BEAM-mandated Y slots and are part of the
-> inlined region's frame layout. The standard GC walker picks
-> them up via the existing Y-register scan (`c_p->stop` to
-> `c_p->stack_end`); the GC sees them as ordinary tagged terms.
-> The inliner's lowering pass annotates each potential-GC op with
-> the spill list and emits the spill before / reload after the
-> GC-capable site.
+If a GC needs to be done, should we not restore the frame state?
+The GC could mean that we are pre-empted, so it may have to be done
+anyway.
+
+**Revised suggested resolution: eager deopt on GC inside inlined
+regions.** Agreed with the user comment. Treat any GC site inside
+an inlined region as a synchronous deopt:
+
+> **GC inside an inlined region triggers eager deopt.** GC sites
+> inside an inlined region behave as deopt points. The deopt stub
+> at the inlined call site C runs first (X/Y restore from
+> codegen-time framestate metadata, §9.2); the runtime then enters
+> GC at the outer-function state at C; if GC schedules the process
+> out, it yields from outer-function state — which has a T1 PC and
+> resumes naturally in T1 (§12.4 item 3). After GC, we're in T1;
+> the function may re-tier-up later via the normal call-counter
+> path.
+>
+> This trades the per-GC inlining win for architectural
+> simplicity: no need to spill tagged values to scratch Y slots,
+> no GC stackmap for inlined regions, no in-inlined yield path.
+> GC inside inlined loops is the slow path; it pays an extra
+> deopt-and-recompile cost. Phase 1 measurement quantifies how
+> often GC fires mid-inlined-region in practice. If frequent
+> enough to matter, v2 can introduce stackmap-based GC for
+> inlined regions.
+
+The original spill-to-Y-slots resolution remains as a v2 fallback
+if eager-deopt-on-GC turns out to throw away too much performance.
 
 ### H2. Inlined-region register pressure on T1-pinned regs
 - [ ] §12.1: x25–x28 hold XREG0..XREG3, x15–x17 hold XREG4..5.
@@ -245,13 +273,23 @@ metadata (§9.2)".
 - [ ] §13.3: "active execution counter (incremented in the T2
       prologue ...)". Multiple schedulers can call concurrently.
 
-**Suggested resolution.** Add to §13.3:
+**Original suggested resolution.** Per-scheduler-sharded counter,
+non-atomic store, eviction reads union.
 
-> The active execution counter is **per-scheduler-sharded**
-> (matching the C8 profile counters). Each call increments only
-> the local scheduler's shard via a single non-atomic store. The
-> eviction code (§13.2) reads the union of shards. Per-shard cost
-> is one cache-line-resident store per call; no contention.
+If we have many schedulers, we might have to make some schedulers share
+counters in order to not explode in memory.
+
+**Revised suggested resolution: bounded shard count.** The shard
+count is `min(erts_no_schedulers, MAX_SHARDS)` where
+`MAX_SHARDS` is a tunable upper bound (default 8). Schedulers map
+to shards by `scheduler_id mod num_shards`. With 64 schedulers
+and `MAX_SHARDS=8`, eight schedulers share each shard — non-atomic
+stores from those eight schedulers may lose increments under
+contention, but the loss is bounded and the eviction policy is
+robust to small undercounts. This caps memory at
+`MAX_SHARDS × num_slots × sizeof(slot)` per blob regardless of
+machine size. Apply the same bound to the C8 profile-counter
+shards.
 
 ### H5. §15.3 queue-drop policy: counter reset on drop
 - [ ] §15.3: "If the queue exceeds a high-water mark, further
@@ -344,6 +382,45 @@ metadata (§9.2)".
 > function annotation (§10.4). Modules without explicit opt-in
 > are not inlined.
 
+Can we make the AOT compiler automatically mark things as inlineable?
+So that we don't have to do it manually? We of course need to do it
+manually for BIFs, as there we would have to have a T2 ops implementation
+that we can inline, but for Erlang code it would be better if the AOT
+compiler can do that analysis.
+
+**Revised suggested resolution: AOT auto-inferred inlineability
+for Erlang code.** Yes — replace the user-opt-in attribute with
+an AOT analysis pass:
+
+> **Manifest sources, in v1**:
+>
+> 1. **BIF allow-list** (manual): the §10.7 guard BIFs plus the
+>    `sys_core_fold_lists.erl` set, plus the curated additions
+>    listed above. These need T2-side IR-op implementations and
+>    can't be auto-inferred.
+>
+> 2. **AOT-inferred Erlang code**: a new compiler pass walks
+>    each module's SSA and marks every local function whose body
+>    is "T2-inlineable" with `jit_inline => #{...}` on
+>    `b_function.anno`. Eligibility:
+>    - All BEAM ops in the function are in the supported phase
+>      set (§17 Phase A in v1).
+>    - No process-dictionary access, no message ops, no traps.
+>    - Bounded recursion depth (or self-tail-recursion → loop
+>      recovery, §10.5).
+>    - Body size below the §10.3 threshold.
+>
+>    The AOT pass is purely additive — modules compiled without
+>    the new pass still load fine; their functions just don't
+>    auto-inline.
+>
+> User-module opt-in via `-jit_inline` attribute remains for the
+> rare case where the auto-inference is too conservative.
+
+Phase 0's inlining-thesis sizing (F2 corpus) measures how often
+auto-inference catches user code; if the hit rate is high, we
+can drop the manual-opt-in path entirely.
+
 ### H10. Per-callee deopt-skip rule too coarse
 - [ ] §10.3: "Skip inlining if the callee deopt'd in a previous
       T2 compile" — too coarse; should be per call site.
@@ -377,6 +454,42 @@ metadata (§9.2)".
 > Phase 0's inlining-thesis sizing measurement (§17 audits)
 > quantifies how much of the corpus this affects.
 
+In the example `fun_handler(Items, F) -> lists:map(F, Items)`,
+I would have expected the call to `fun_handler/2` to be inlined
+into its caller, which could have F as a literal and then
+the inlining should work.
+
+This brings up an important point, how do we make sure that the
+best place to inline is chosen as the starting point to JIT?
+Most likely things such as `lists:map/2` will trigger the JIT
+counter very early, but there is very little gain in compiling
+that, we want to compile its caller, or quite possible its callers
+caller.
+
+**Revised suggested resolution.** Two pieces:
+
+1. **The fun_handler example** does work in v1 *if* the caller
+   tier-ups before fun_handler does — in which case T2 inlines
+   `fun_handler/2` (chained with `lists:map/2`) into the caller,
+   sees `F` as a literal at the caller's site, and the
+   constant-fun precondition holds. The text in the original H11
+   resolution was too pessimistic; it assumed `fun_handler/2`
+   tier-ups standalone. Reword §10.2's bullet:
+
+   > **Higher-order helpers called with a non-literal fun at
+   > *this* compile unit's boundaries.** If T2 compiles
+   > `fun_handler/2` standalone (no caller inlining), the inner
+   > `lists:map(F, Items)` has `F` as a parameter — non-literal
+   > from this compile unit's perspective — and is not inlined.
+   > **The fix is in M1's tier-up target selection**: don't
+   > tier-up annotated higher-order wrappers standalone; let the
+   > caller's tier-up pull them in. With the caller as the
+   > compile unit, `F` is often a literal, and the inlining
+   > chain `caller → fun_handler → lists:map → user_fun` works.
+
+2. **Tier-up target selection** is a new architectural concern
+   raised by the user comment — broken out into **M1** below.
+
 ---
 
 ## I. Wrong numbers / engineering bugs
@@ -405,16 +518,23 @@ natural.
       BIF. BIF traps after ~4000 cells; inlining 4000 cells per
       site is massive.
 
-**Suggested resolution.** Add to §10.7:
+**Original suggested resolution.** Inline a 16-cell fast-path;
+tail-call BIF for longer lists.
 
-> The `length/1` inline fast-path traverses up to **16 cons
-> cells**. If the list is longer (cell #17 reached without
-> hitting nil), the inline path tail-calls into the existing
-> BIF, which handles trap-out for long lists. The 16-cell bound
-> keeps the inline code under ~80 instructions per site; lists
-> length 1–16 pay no BIF call; lists length 17+ pay one tail
-> call into the existing BIF. Phase 0 may revisit the bound if
-> measurements show a different sweet spot.
+Why do we even bother with length? Can't we just use the BIF as T1 does?
+
+**Revised suggested resolution: drop length/1 from the manifest
+of inlined guard BIFs.** Agreed. T2 lowers `length/1` as a
+regular `call_ext` to the existing BIF, exactly as T1 does. No
+inline fast path; no special trap-out machinery; no
+fast-and-slow-paths-inseparable invariant (C5 can drop
+length/1 from the example).
+
+Update §10.7 manifest: remove `length/1` from the list. Add a
+note: "`length/1` is treated as an opaque BIF call in v1 — the
+existing T1 BIF implementation handles trap-out and is fast
+enough that inline lowering doesn't pay the complexity. v2 may
+revisit if profile data shows length/1 dominates a hot path."
 
 ### I3. Profile sharding not reflected in §7.2 struct
 - [ ] §7.2 struct shows a single `slots[]` array; C8 introduced
@@ -522,6 +642,40 @@ Document in §6.3:
 > tracking; failures block merge until a maintainer overrides
 > with a justification.
 
+When developing T1, we created a SUITE that was specifically
+made to emit all instructions. We should do something similar here,
+that is create testcases that excerize the specific parts so
+that we get a shorter feedback loop.
+
+**Additional resolution: per-feature exerciser suite (§16A.7).**
+Modeled on BeamAsm's per-instruction exerciser:
+
+> ### 16A.7 T2 feature exerciser suite (Phase 1 onwards)
+>
+> A targeted Common Test suite (`t2_SUITE`) with a separate
+> testcase per T2 IR op kind, per speculation kind, per inlining
+> shape, per loop-recovery shape, etc. Each testcase constructs
+> the smallest possible Erlang fragment that hits the feature,
+> compiles it under T2, and checks observable behaviour and the
+> emitted IR.
+>
+> Examples:
+> - `speculate_type_smallint_outer/0`: a function with one
+>   integer parameter, one speculate_type, one add, one return.
+>   Verify: T2 emits the one-untag form, deopt jumps to T1 PC.
+> - `speculate_type_smallint_inlined/0`: same, but inside an
+>   inlined `lists:foldl/3` body.
+> - `inline_constant_fun_lists_map/0`: `lists:map(fun(X) -> X*2 end, L)`.
+>   Verify: closure is inlined, no `make_fun` allocation, loop
+>   recovery fires.
+> - `unroll_lists_filter/0`: factor-4 unrolling on
+>   `lists:filter/2` body. Verify: combined `test_heap`, single
+>   back-edge per 4 iterations.
+>
+> Targeted suite gives a sub-second feedback loop per feature.
+> Failures point at a single op or pass, not a whole-application
+> regression.
+
 ### J2. No "profile data quality" metric
 - [ ] If profile observations get stuck on the wrong type, T2
       speculates wrong and constantly deopts. No metric surfaces
@@ -557,24 +711,86 @@ should trigger an alert in production observability."
 > and `truncated_scan_count` in `erlang:t2_stats/0` for
 > production tuning.
 
+Can we do it like this, if we find such a process, then we scan
+first 1024 slots and then replace a return address with one
+to some special code that resumes the checking. So that if we
+get to that point while the process is running we continue scanning
+1024 more.
+
+We would of course need to store the original data somewhere,
+but that could be done in the scheduler_data structs and then it is restored
+when the process is scheduled out.
+
+As an optimization we could store in the process how far it has scanned
+so that at next schedule in, it knows where to continue. This would
+cost a work in the process struct though... unless we store it
+on the stack somewhere?
+
+**Revised suggested resolution: continuation-trampoline scan.**
+Adopt the user's proposal:
+
+> **Bounded incremental scan with continuation trampolines.**
+> The schedule-in scan walks at most `+JT2lazy_scan_max_depth N`
+> stack frames (default 1024) per visit. If unscanned frames
+> remain below the bound:
+>
+> 1. The scan finds the deepest in-bound CP that pointed into
+>    a tombstoned blob and patches it normally (CP-to-T1-PC
+>    metadata lookup).
+> 2. The scan replaces the *next* CP (the first one that would
+>    have been scanned but exceeded the bound) with the address
+>    of a per-process **scan-continuation trampoline**.
+> 3. The original CP value is preserved in the slot immediately
+>    above the patched one — the trampoline reads it on entry.
+>    No new per-process heap fields needed; we use the stack we
+>    were already walking.
+> 4. The process resumes. When unwinding eventually pops back
+>    to the patched return address, the trampoline runs:
+>    - Restore the original CP from its preserved location.
+>    - Walk the next 1024 frames using the same procedure
+>      (patch tombstone hits in place; install another
+>      trampoline if necessary).
+>    - Branch to the (now-patched) original CP.
+>
+> Cost: O(N) work per stack-unwind to depth N; deferred until
+> the process actually unwinds that far. Pays nothing for
+> processes that never unwind past their current depth.
+>
+> Tombstoned blobs can be freed only when *no* trampoline still
+> references them. Add a per-blob "trampoline reference count"
+> incremented when a trampoline is installed pointing at one of
+> the blob's CPs and decremented when the trampoline runs. Free
+> the blob (Phase B per §14.2) when both the per-process
+> generation watermark advances *and* the trampoline refcount
+> hits zero.
+
+This replaces the truncate-and-deopt fallback. Track
+`scan_trampoline_count` and `max_unwind_completion_lag` in
+`erlang:t2_stats/0`.
+
 ### J4. No discussion of dist (cross-arch nodes)
 - [ ] Mixed aarch64+x86_64 cluster: SSA chunk wasted on x86; how
       do cross-node code-upgrades interact?
 
-**Suggested resolution.** Add to §19 (out of scope):
+**Original suggested resolution.** Distributed-Erlang
+considerations + SSA-chunk wasted on x86 nodes.
 
-> **Distributed Erlang.** T2 reasons only about *local* code
-> state. Cross-node calls go through `Export.addressv`
-> indirection and are not specialised by T2; remote-node module
-> reloads do not affect local T2 blobs (T2 watchpoints track
-> local module state only).
->
-> The SSA chunk and `jit_inline` annotations are present in
-> BEAM files regardless of the architecture loading them; on
-> x86_64 nodes (where T2 is not enabled in v1), the chunk is
-> wasted disk and load-time bytes. This is acceptable for v1;
-> when x86_64 T2 lands (Phase 10), the chunk is paid for on
-> both archs.
+Uhm, I think you have missunderstood something. code is always local,
+there is nothing to take into consideration for cross-node things.
+
+**Revised suggested resolution.** Agreed — code is always local.
+The only real concern is the wasted bytes on x86_64 nodes that
+load BEAM files compiled with the SSA chunk (in v1, before x86_64
+T2 lands). Add to §19 (out of scope):
+
+> **SSA chunk on non-T2 architectures (v1 only).** BEAM files
+> compiled with the SSA chunk and `jit_inline` annotations carry
+> those bytes even when loaded on x86_64 nodes (where T2 is not
+> enabled in v1). This is acceptable for v1; when x86_64 T2 lands
+> (Phase 10), the chunk is paid for on both arches. Phase 0 chunk-
+> size measurement (§17 audits) sets the absolute size; if it's
+> unacceptable, the SSA chunk can be made arch-conditional at
+> load time (skip loading on architectures without T2).
 
 ### J5. No discussion of profile emission overhead on cold code
 - [ ] Eligible-but-never-tier-up functions still pay profile
@@ -620,6 +836,29 @@ should trigger an alert in production observability."
 > Default-false makes development bugs maximally visible; long-
 > running production deployments opt into safe-mode via emulator
 > flag or `ERL_FLAGS`.
+
+No, just abort. No need to make things this complicated. There
+should not be any such bugs at all. Possibly we can add something
+to deal with T2 IR validation assertion, but the others are
+not things that should happen.
+
+**Revised suggested resolution.** Drop the production safe-mode.
+§8.4 stays as-is for asmjit reject, watchpoint race, and other
+invariant violations: they abort the BEAM (those genuinely
+shouldn't happen, and silent degradation hides the bug).
+
+The one possible exception is **T2 IR validation assertion** —
+which is closer to "we don't yet know all the patterns the AOT
+SSA can produce" than to "memory corruption". Add to §8.4:
+
+> **T2 IR validation failure** (the C++ assertion in the IR
+> builder, e.g. an unexpected SSA shape, a malformed phi, an
+> unbound value). Disable T2 globally for the lifetime of this
+> module (per-`{Mod,Fun,Arity}` blacklist applied to the whole
+> module on first failure); log via `logger:error/2` with the
+> failing case; increment `t2_ir_validation_failures` in
+> `erlang:t2_stats/0`. Module reload clears the per-module
+> blacklist. **All other failure modes still abort the BEAM.**
 
 ### J7. Active execution counter decay implementation
 - [ ] Decay "tied to the GC interval" — but GCs are per-process,
@@ -784,14 +1023,40 @@ Phase 0 audits — add bullet:
    > with strict SLAs must measure and decide whether T2 is
    > viable for their workload.
 
-2. **Add a per-process opt-out** (roadmap, not v1):
+2. ~~Add a per-process opt-out~~ rejected by user — every-call
+   check is too expensive.
 
-   > **Roadmap (post-v1):** add a process flag
-   > `process_flag(t2_jit, false)` that prevents the process
-   > from ever entering T2 code (and thus from ever needing a
-   > stack scan). Latency-sensitive processes can opt out at
-   > spawn time. Out of scope for v1; revisited if production
-   > deployments report SLA violations.
+No, this would mean that we have to check a flag everytime a
+T2 call is made, and we don't want to have that overhead for
+a call. We can allow the user to trade memory for latency if
+they want to.
+
+**Revised suggested resolution: memory-for-latency knobs.**
+Drop the per-process flag. Provide cache-sizing knobs that let
+operators trade memory for predictable latency by reducing
+jettison frequency:
+
+> **Latency-tuning knobs** for hard-RT operators. Increasing
+> these spends memory to reduce stack-scan frequency:
+>
+> - `+JT2cache N` — total T2 code-cache budget (§13.1, default
+>   64 MB). Larger cache → fewer evictions → fewer tombstones
+>   → fewer scans.
+> - `+JT2tombstone_grace_seconds N` — minimum time a tombstoned
+>   blob remains alive before Phase B frees it (default 0; pure
+>   schedule-in-driven). Larger value → more memory held but
+>   less proactive sweeping.
+> - `+JT2decay_interval N` — active-execution-counter decay
+>   period (J7). Larger value → eviction policy biases against
+>   evicting any blob → less churn.
+> - `+JT2lazy_scan_max_depth N` — bounded scan; combined with
+>   the J3 trampoline mechanism, lets operators cap per-
+>   schedule-in latency at a known cost.
+>
+> Operators with strict SLAs run with a large `+JT2cache` and
+> tuned scan depth; in practice T2 jettisons are rare in
+> long-running steady state, so the latency exposure is small.
+> Acknowledge in §18 risks that hard-RT viability needs measurement.
 
 ### L3. T2 carries an irreducible stake in BeamAsm internals
 - [ ] T2 depends on the T1 PC table, calling convention, global
@@ -862,28 +1127,330 @@ KLOC" with an enumerated breakdown:
       (numeric workloads only). T2 hasn't proven inlining wins
       are broad.
 
-**Suggested resolution.** Add to §18 risks:
+**Original suggested resolution.** Add an inlining-wins risk
+with a 30%-coverage descope condition.
 
-> **Inlining wins are smaller than projected.** HiPE shipped
-> real but narrow optimizations and lost on the breadth-of-
-> applicability test. T2's thesis is that inlining-driven wins
-> are broad across Erlang workloads, but this is unproven until
-> Phase 0's inlining-thesis sizing measurement (§17 audits) and
-> the prototype (§17 sequencing).
+IIRC there was a HiPE paper that did run-time profiling of types
+using Erlang tracing and then used that profiling to guide
+HiPE optimizations. Can you find that paper and see what conclusions
+where made there?
+
+**HiPErJiT (Kallas & Sagonas, IFL 2018).** Found and read the
+paper in full. The relevant takeaways for T2:
+
+**What HiPErJiT did:**
+- Profile-driven JIT on top of HiPE. Used ERTS's existing
+  `erlang:trace/3` infrastructure for profiling — call/return_to
+  /sched_in/sched_out events into a profiler process.
+- Profiled three things: (a) per-function execution time, (b)
+  call frequencies *between function pairs*, (c) argument types
+  via depth-k type abstraction.
+- For massive concurrency, used "genealogy-based statistical
+  profiling": maintained a process tree by spawn site, profiled
+  only a 10% sample of leaf processes per spawn-MFA group.
+- Two profile-driven optimizations on top of standard HiPE:
+  **optimistic type compilation** (duplicate function into
+  `f$opt` and `f$std`; header function dispatches by type test;
+  `f$opt` is type-specialised by HiPE's existing type-analysis
+  pass given the profiled types) and **profile-driven inlining**
+  (greedy: inline the most-called callee into each function up
+  to a 1.6× code-size cap).
+
+**Performance results (paper's Tables 1, 2, 3):**
+- Average ~2× speedup over BEAM, similar to HiPE.
+- Beat HiPE on 5 small benchmarks (nrev, qsort, fib, smith, tak)
+  via profile-driven inlining decisions HiPE's static heuristic
+  missed. The smith case is canonical: HiPErJiT inlined
+  `alpha_beta_penalty/2` and `max/2` into `match_entry/5` based
+  on call frequency; HiPE's static heuristic skipped these.
+- **Lost to HiPE on Dialyzer (real workload, ~30 KLOC):**
+  HiPE 1.78× vs HiPErJiT 1.46× on PLT building, 1.73× vs 1.42×
+  on analysis. The paper attributes this to (1) profiling
+  overhead, (2) not all modules JIT-compiled from start.
+- **Lost to BEAM on the ring benchmark** (heavy message-passing,
+  ~1.5 M messages/sec). Paper: "the majority of the execution
+  time is spent on message passing, which is handled by BEAM's
+  run-time system. Finally, there are a lot of process spawns
+  and exits ... which leads to considerable profiling overhead".
+
+**Profiling overhead measurements (Section 5.1):**
+- Sequential benchmarks: 5–19% overhead.
+- Concurrent benchmarks: 19% average; up to 40% on heavily-
+  concurrent programs.
+- Genealogy-based sampling helped (without it: 13% additional
+  overhead on concurrent benchmarks).
+
+**Implications for T2:**
+
+1. **Profile-driven inlining beats static inlining on the
+   right workloads** — validates our inlining thesis in the
+   right direction. The smith / nrev / qsort wins are exactly
+   the cross-procedural-context-needs-profile pattern T2 targets.
+
+2. **But profile-driven approaches lose on real workloads**
+   (Dialyzer 1.46× vs 1.78× HiPE) primarily because of
+   *profiling overhead*. This is the L1 concern made concrete:
+   even when the optimizer is otherwise good, the profiling
+   tax can swamp the win on programs that don't have enough
+   pure compute to amortise it.
+
+3. **Heavy-message-passing workloads are hostile to
+   profile-driven JITs.** HiPErJiT lost to BEAM on the ring
+   benchmark. Erlang services that are predominantly
+   message-passing (most gen_servers, supervisors, distributed
+   systems) won't benefit unless the profiling overhead is
+   pushed below the per-message-cycle cost.
+
+4. **HiPErJiT used full erlang:trace/3 for profiling.** That's
+   the heavyweight option. T2 uses lightweight per-function
+   counters embedded in BeamAsm code (§7). Our approach should
+   be much cheaper than HiPErJiT's, but L1 / J5 / phase-0-audit
+   still need to verify this on similar message-heavy workloads.
+
+5. **HiPErJiT's call-frequency-driven inlining is the key
+   profile signal** — not just types. Their main inlining
+   heuristic is "F_a calls F_b more than F_a calls anyone else
+   ⇒ inline F_b into F_a". Our plan (§7.5 per-call-site
+   monomorphic-target slot) collects this data but only uses it
+   for *target identification* (to inline the right monomorphic
+   callee). We should also use the call-frequency for **tier-up
+   target selection** (M1) and **inlining priority**.
+
+6. **The "f$opt / f$std with type-test header" pattern** is
+   essentially what BeamAsm already does for arithmetic fast
+   paths. T2's `speculate_type` + jump-to-T1-on-fail is a
+   slightly different shape (one optimised version, deopt to
+   the original) but achieves the same effect with less code
+   duplication.
+
+**Revised suggested resolution.** Add to §18 risks:
+
+> **Profile-driven JIT on Erlang historically loses on
+> message-heavy real workloads** (HiPErJiT, IFL 2018: HiPE
+> 1.78× vs HiPErJiT 1.46× on Dialyzer; HiPErJiT slower than
+> BEAM on the ring benchmark, primarily because of profiling
+> overhead). The historical evidence is that profile-driven
+> *static-style optimization* over Erlang traces struggles to
+> beat AOT on real applications even when the optimizer is
+> sound; the bottleneck is the profile-collection cost.
 >
-> **Mitigation**: if the corpus measurement shows inlining wins
-> covering less than (say) **30%** of hot-path BEAM ops on the
-> F2 corpus, descope to ship just the type-narrowing speculation
-> tier (Phase 2 wins) without the inlining MVP (Phase 3). The
-> descoped product delivers Phase 2's ~10–20% wins on type-
-> narrowable hot paths and avoids Phase 3's largest maintenance
-> cost. The threshold is set in Phase 0 based on the prototype
-> measurement; ship-vs-descope is a decision point at the end
-> of Phase 0.
+> **What's different for T2:** profile collection is
+> per-function (eligible-only), per-scheduler-sharded (C8),
+> single-writer scheduler-1-only by default. HiPErJiT used full
+> `erlang:trace/3`; T2 uses inline counters cheaper by an order
+> of magnitude.
+>
+> **What's the same risk:** if the profile overhead exceeds the
+> compilation benefit on real Erlang workloads (which are
+> typically message-heavy), v1 ships at "comparable to BEAM"
+> rather than "faster than BEAM" on the workloads users care
+> about.
+>
+> **Mitigation**: Phase 0 measurement against the F2 corpus
+> (RabbitMQ, Dialyzer, Elixir compiler) verifies the per-call
+> profile cost is within the L1 3% steady-state budget.
+> HiPErJiT's ring benchmark is a useful failure-mode test —
+> include a similar message-passing-dominated benchmark in the
+> corpus. **If profile overhead exceeds budget on real
+> workloads, descope** to:
+>
+> - Trigger profiling on a function only after its call counter
+>   crosses a "warm" threshold (drop profile-emission for
+>   lukewarm functions).
+> - Or: ship just the type-narrowing speculation tier (Phase 2)
+>   without the inlining MVP (Phase 3) if inlining wins are too
+>   narrow to justify the profile tax.
+>
+> The decision point is end of Phase 0 based on the prototype
+> measurement.
+
+The HiPErJiT lesson also reinforces M1 (tier-up target
+selection): their call-frequency-driven inlining was the win on
+the small benchmarks where they beat HiPE. Static call counters
+don't capture this; we should use the per-call-site target slots
+(§7.5) as a call-frequency signal too, not just for monomorphic-
+target identification.
 
 ---
 
-## How to use this document
+## M. Architectural concerns surfaced in second-pass review
+
+These items came out of the user's inline comments on H-L; large
+enough to deserve their own entries.
+
+### M1. Tier-up target selection — compile the *right* function
+- [ ] The current tier-up trigger is a per-function call counter
+      (§7.4). Hot library functions (`lists:map/2`, `lists:foldl/3`,
+      `maps:get/2`, …) trip first because they're called from
+      everywhere. But the *inlining win* lives in their callers —
+      compiling `lists:map/2` standalone doesn't see the
+      `fun(X) -> X * 2 end` literal at the caller's site, so the
+      higher-order helper inlines into nothing meaningful.
+- [ ] HiPErJiT's data (L5) is the warning: their best wins came
+      from inlining the *right* callee into a *specific* caller
+      (smith: `alpha_beta_penalty/2` into `match_entry/5`),
+      driven by call-frequency observations. Static call-count-
+      only tier-up doesn't encode this.
+
+**Suggested resolution.** Three pieces:
+
+1. **Annotated higher-order helpers don't tier up standalone.**
+   Functions carrying `jit_inline => #{fun_arg_pos => N}` (§10.4)
+   are *not* compiled in isolation; they're inlined from a hot
+   caller's compile unit. The annotation doubles as a
+   "tier-up-suppress" flag for the standalone form.
+
+2. **Compile up the call chain, not down.** When a function F
+   trips its call counter, the JIT server consults the per-
+   call-site target slots (§7.5) for F to discover *who calls
+   F*. If F's dominant caller (>50% of incoming calls per
+   profile) is itself tier-2-eligible, compile the *caller*
+   instead of F (with F as an inlining candidate). One step up
+   per tier-up trip; if the caller has a dominant caller of its
+   own, the *next* tier-up trip rolls one more step up.
+
+   This requires reverse call-frequency tracking. The §7.5
+   slots already record outgoing target frequency; we need the
+   incoming side. Cheap addition: a `Uint32 inbound_call_count`
+   per function, incremented at each call entry alongside the
+   §7.4 call counter.
+
+3. **Heuristic cap.** Don't roll up forever — bound at 2 levels
+   (caller-of-caller). Above that, just compile the function
+   that tripped. The bound prevents pathological cases (the
+   whole call chain is mutually recursive; no stable
+   "dominant caller").
+
+**Test**: smith-style benchmark must show T2 inlining a
+non-trivial helper into the caller (not just `lists:map`-style
+patterns). Phase 3's Phase-3-bench includes this.
+
+### M2. GC + pre-emption inside inlined regions
+- [ ] If GC fires inside an inlined region, the GC may decide to
+      pre-empt (yield) the process. On yield, `c_p->i` saves a
+      *T1* PC for resume; the in-inlined-region state has no T1
+      equivalent.
+- [ ] Without explicit handling, this is a correctness hole:
+      yield resumes in T1 from the wrong PC, or the inlined-
+      region's spilled-tagged-values (H1) become unreachable
+      because the resume side doesn't know where they live.
+
+**Suggested resolution: eager deopt on GC inside inlined
+regions** (also in H1's revised resolution; broken out here for
+visibility):
+
+> When T2 emits an inlined region containing one or more
+> potential GC sites, the inliner emits an *eager deopt* at
+> each GC site:
+>
+> 1. Run the per-region deopt stub (X/Y restore from codegen-
+>    time framestate metadata, §9.2).
+> 2. Branch to T1's PC for the inlined call site C.
+> 3. T1 then performs the GC at outer-function state (where it
+>    expects to be); if GC pre-empts, the yield happens from
+>    valid T1 state.
+>
+> After GC the process is in T1 mid-call. The function may
+> re-tier-up later via the normal call-counter path.
+>
+> Cost: every GC inside an inlined loop pays the deopt cost
+> (~5–10 X/Y-restore moves + branch). Inlining is throttled at
+> GC events. Acceptable for v1; v2 may add stackmap-based GC
+> for inlined regions if Phase 1 measurement shows GC events
+> dominate inlined-loop performance.
+
+This subsumes H1 — there's no need for the "spill tagged values
+to scratch Y slots" mechanism if GC always deopts. Simplifies
+§12.3 (inlined regions don't need GC-aware spill metadata) and
+the inliner (no flush sequences at GC sites — the deopt stub
+already restores the correct state).
+
+### M3. Hibernation interaction with per-process T2 fields
+- [ ] B6 added `p->t2_scan_gen`, `p->seen_t2`. Hibernation
+      compacts the process's heap and stack but the per-process
+      flags must survive. They're plain integer / bool fields
+      on the process struct, so survival is trivial — but
+      worth verifying in the implementation.
+- [ ] Stronger concern: a hibernated process's stack is
+      typically empty (only a continuation MFA), so the
+      tombstone scan finds nothing to patch. But `seen_t2` is
+      set; a future call back into T2 from the hibernation
+      resumption is fine. The interaction is benign — just
+      worth confirming no per-process T2 metadata lives on the
+      heap (which gets compacted).
+
+**Suggested resolution.** Add to the implementation checklist
+(§17 Phase 0 audits):
+
+> **Hibernation audit.** Verify that all per-process T2 metadata
+> (`t2_scan_gen`, `seen_t2`, `last_scheduled_gen`, any future
+> additions) live on the process struct directly, not on the
+> heap. Hibernation compacts the heap; metadata on the heap
+> would be lost or corrupted.
+
+### M4. T2 code cache in `erlang:memory()` reporting
+- [ ] T2 code lives in a separate `JitAllocator` (§13.1), 64 MB
+      default. Operators using `erlang:memory()` to track VM
+      memory consumption don't see it accounted for.
+
+**Suggested resolution.** Add to §16:
+
+> Extend `erlang:memory/0,1` with a new key `jit_t2_code` that
+> reports the bytes currently allocated to T2 blobs (active +
+> tombstoned). Existing `code` key continues to report
+> BeamAsm-allocated T1 code unchanged. Tools that introspect
+> `erlang:memory()` need updating to know about the new key;
+> the addition is backwards-compatible (no removed keys).
+
+### M5. Call-frequency signal beyond monomorphic-target identification
+- [ ] §7.5 per-call-site monomorphic-target slot records *which*
+      target a call site reaches. It doesn't record *how often*.
+      HiPErJiT (L5) shows that call-frequency between specific
+      function pairs is the strongest profile-driven inlining
+      signal — stronger than monomorphic-target alone.
+
+**Suggested resolution.** Extend §7.5:
+
+> **Per-call-site monomorphic-target slot, with frequency.**
+> Each slot records target identity *and* call count from this
+> site:
+>
+> ```c
+> typedef struct {
+>     Export*  target;       // or POLY
+>     Uint32   call_count;   // incoming calls observed at this site
+> } T2CallSiteSlot;
+> ```
+>
+> The inliner consumes both: monomorphic + high-frequency at
+> this site → strong inline candidate (top priority); monomorphic
+> + low-frequency → low priority (skip if size budget tight);
+> polymorphic → not inlined in v1.
+>
+> The frequency signal also feeds tier-up target selection (M1):
+> when a function trips its call counter, the JIT server
+> aggregates the inbound-call-frequency from the per-site slots
+> of all known callers to pick the right *compile unit*.
+
+### M6. Hot module reload during compile (in-flight blob installation)
+- [ ] B3 partially addresses this (sub-race (a)): in-flight T2
+      compile reads stale SSA, installs blob *after* the
+      watchpoint already fired. The fix mentioned a "generation
+      counter checked at install time" but the plan doesn't
+      describe how it's implemented.
+
+**Suggested resolution.** Make the generation-counter mechanism
+concrete in §14.2:
+
+> **In-flight compile generation check.** When the JIT server
+> dispatches a compile job for `{M,F,A}`, it captures the
+> current `module_load_gen[M]` and stores it with the job. At
+> blob-install time, the server re-reads `module_load_gen[M]`;
+> if it has changed, the compile is discarded (the blob is
+> never installed; counters are reset; the function may
+> retrip later under the new module). The generation counter
+> is incremented atomically by the code loader before the
+> module reload commits.
 
 1. Walk top to bottom.
 2. For each `[ ]`, edit the **Suggested resolution** if you disagree
