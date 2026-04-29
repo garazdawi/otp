@@ -23,23 +23,36 @@ Organised into six categories:
 ## A. Internal contradictions
 
 ### A1. Strict-vs-relaxed state-preservation model
-- [ ] §1 (line 54–57) commits to "**The outer function preserves T1's
-      abstract machine state at every BEAM instruction boundary**".
-      §6.1 (line 442–446) and §6.4 (line 525–540) reverse this to
+- [ ] §1 goals (line 54–57): "outer function preserves T1's abstract
+      machine state **at every BEAM instruction boundary**".
+- [ ] §3 architecture summary (~line 193): "interchangeable with T1
+      code at every BEAM instruction boundary".
+- [ ] §4 Choices table (line 208): "Outer function = identical T1 X/Y
+      layout at instruction boundaries".
+- [ ] §6.1 (line 442–446) and §6.4 (line 525–540) reverse this to
       "matches T1's **at every point where T2 could exit or yield** —
-      and only at those points". §3 (the architecture diagram block,
-      ~line 130–170) and §4 (Choices, line 199–225) inherit the strict
+      and only at those points".
+- [ ] §6.2 item 4 (line 495–501) calls the strict version "the v1
+      default", relaxed for later phases.
+- [ ] §11.2 (line 1217–1221) reiterates the v1-strict / relax-later
       framing.
-- [ ] §17 "Decisions resolved during planning" (line 1761–1762) restates
-      the strict version: "Outer function = identical T1 layout;
-      framestates only in inlined regions." — contradicting §6.4.
-- [ ] §6.2 item 4 (line 495–501) tries to reconcile by calling the
-      strict version "the v1 default" and the relaxed one "later
-      phases", but that policy isn't reflected anywhere else in the
-      plan (the goals, choices, phases, and risks).
-- [ ] **Concrete fix**: pick one and propagate. If the v1-strict /
-      relaxed-later phasing is the real policy, add it explicitly to
-      §1, §4, §17, and the Phase 1/Phase 4 deliverables in §17.
+- [ ] §17 Phase 1 (line 1595–1596) says "output matches T1 at every
+      BEAM instruction boundary" — strict.
+- [ ] §17 Decisions Resolved (line 1761–1762) restates the strict
+      version: "Outer function = identical T1 layout; framestates
+      only in inlined regions."
+- [ ] Three readings are tenable, all undermined by other parts of
+      the document:
+      1. **Strict in v1, relaxed later** → §1/§3/§4 are correct; §6
+         is roadmap. But §6 reads as if the relaxation *is* the design.
+      2. **Relaxed is the design; strict is a v1 implementation
+         simplification** → §1/§3/§4 are wrong as stated.
+      3. **Relaxed at sync points = strict at boundaries because most
+         boundaries are sync points anyway** → maybe true but never
+         argued.
+- [ ] **Concrete fix**: pick one and propagate. If reading 1 is the
+      real policy, add it explicitly to §1, §4, §17, and the Phase
+      1/Phase 4 deliverables in §17 (today they're disjoint).
 
 ### A2. §6.4 duplicate heading
 - [ ] Two `### 6.4` headings:
@@ -48,22 +61,37 @@ Organised into six categories:
       and the existing `6.5 Worked example` (line 568) shifted to
       `6.6`.
 
-### A3. §17 "Decisions resolved" no longer matches the plan body
-- [ ] Row 4 (state-preservation model, line 1761–1762) — see A1.
-- [ ] The "Decisions resolved" and "Still open" sections have drifted
-      into mixed status (e.g. several "Still open" items are tagged
-      "**Decided:**" inline). Consolidate: every item that has a
-      decision should live under "Decisions resolved"; items lacking
-      one stay under "Still open".
+### A3. §17 Decisions Resolved row 1 contradicts §4 / §17 Still-Open
+- [ ] §17 row 1 (line 1755–1757) says: "T2 manager supervision tree.
+      Background thread, not a process under `kernel/code` (changed
+      from earlier draft — matches HotSpot CompilerThread)."
+- [ ] But §4 Choices (line 222) says "**Erlang JIT server process
+      under `kernel/code`** + dirty CPU scheduler", and §17 Still-Open
+      (line 1790–1797) tags the same item "**Decided: dirty CPU
+      scheduler + JIT server process** ... A JIT server Erlang process
+      under `kernel/code` co-ordinates compile requests".
+- [ ] So row 1 is stale text from the earlier "background thread"
+      revision. The current decision is the *opposite* of what row 1
+      says. Delete or rewrite row 1.
 
-### A4. §15.4 cross-reference to §9
+### A4. §17 "Decisions resolved" / "Still open" sections have merged
+- [ ] Most entries under "Still open" now begin with "**Decided:**"
+      inline (line 1784, 1790, 1798, 1803, 1806, 1813, 1819, 1825).
+      The two-section split is broken — every "Still open" item has
+      already been resolved.
+- [ ] Consolidate: every item with a decision moves to "Decisions
+      resolved"; the "Still open" header keeps only items genuinely
+      lacking a decision (currently: "Trace audit specifics",
+      "Watchpoint granularity").
+
+### A5. §15.4 cross-reference to §9
 - [ ] §15.4 (line 1518–1520) cites "tracing (§12.5), watchpoint
       invalidation (§14), and recompilation backoff" as users of
       OSR-exit. The recompilation backoff machinery is described in
       §9.5, not anywhere in §14 or §15. Add the §9.5 cross-reference
       or move §9.5 under §15.
 
-### A5. "Inlined-region" wording in §1 vs §6
+### A6. "Inlined-region" wording in §1 vs §6
 - [ ] §1 says deopt in the outer function uses "no framestate
       machinery". §6.1 says the outer function still emits sync-point
       "live X-reg maps" — which *is* a framestate, just narrower than
@@ -90,6 +118,15 @@ Organised into six categories:
       the stub get for, say, 4-deep inlining?
 - [ ] A bound on the size of the deopt stubs across realistic inlining
       depth (call it 3–4 deep) needs to be in §13.1's memory budget.
+- [ ] §9.5 ("100 deopts before jettison") presumes deopts are *cheap*,
+      so a healthy steady-state can absorb dozens of them per blob.
+      But the inlined-region deopt is much more expensive than the
+      outer-function "single jcc" path: §10.3 permits inlining depth
+      3, so a single deopt may reconstruct 3 CP frames =
+      ~20–40 instructions of frame plumbing per fire. The "single
+      jcc" mental model the plan promotes (§6.2 item 1, §9.1) and the
+      "100 deopts is fine" recompile policy are talking about
+      different deopt paths and need to be reconciled.
 
 ### B2. Sync-point identification underspecified
 - [ ] §6.1 (line 451–460) lists eight categories of sync point
@@ -102,6 +139,15 @@ Organised into six categories:
       ops carries the sync constraint? Only the ones that map to the
       original BEAM-op boundary? Then the constraint moves with
       lowering — that's a real design constraint on the lowering pipeline.
+- [ ] Several BEAM op kinds *conditionally* yield/GC/raise depending on
+      runtime values: `bs_match`, NIFs that may trap, BIFs whose
+      trapping is data-dependent (e.g. `length/1` on long lists,
+      arithmetic that overflows into bignum). §6.1's list categorises
+      these under "function call sites" / "BIF call boundaries", which
+      papers over the conditional case. Is the constraint static
+      ("always treat them as sync points") or dynamic ("only on the
+      branch that traps")? Static is simpler but pays a sync at sites
+      that almost never trap. Pick.
 - [ ] Required: a definition of "sync point" expressed in T2 IR terms,
       not BEAM-op terms. Specifically: which T2 ops are sync points,
       and which are guaranteed to be inserted at *original* BEAM-op
@@ -109,19 +155,34 @@ Organised into six categories:
 
 ### B3. Inlining vs hot-code-upgrade race
 - [ ] §14.3 "Hot code upgrade" (line 1470–1476) says the watchpoint
-      table revokes blobs that inlined the now-old code. But the race
-      window — between when a process running inside an inlined region
-      starts and when the upgrade lands — needs explicit handling.
-- [ ] Suppose process P is mid-execution in T2 blob B that inlined
-      `lists:foldl/3`. `code:purge(lists)` fires. Two outcomes:
-      (a) P finishes the inlined region — fine, the next call hits
-      the revoked address. (b) P is *inside* the inlined region when
-      the watchpoint fires.
-- [ ] What's the policy for (b)? Possibilities: deopt at the next
-      sync point (latency unbounded if we're in a tight loop); patch
-      the blob to deopt now (requires concurrent code modification);
-      keep the old blob alive until P leaves it (ref-counted; needs
-      design). Pick one.
+      table revokes blobs that inlined the now-old code. But three
+      distinct races aren't addressed:
+
+      **(a) In-flight T2 compile started before reload.** Compile
+      reads the now-old SSA chunk for `lists:foldl/3`, optimisation
+      pass runs, blob installation tries to commit *after* the
+      watchpoint already fired (because the watchpoint walks the
+      table of installed blobs, not the queue of in-flight compiles).
+      Required: a generation counter checked at install time, or
+      re-validation of all watched dependencies before installing.
+
+      **(b) Process executing inside an inlined-but-now-stale
+      region.** P is mid-execution in T2 blob B which inlined
+      `lists:foldl/3`. `code:purge(lists)` fires. P is *inside* the
+      inlined region. Possibilities: deopt at the next sync point
+      (latency unbounded if we're in a tight unrolled loop); patch
+      the blob to deopt now (requires concurrent code modification on
+      a running scheduler); keep the old blob alive until P leaves it
+      (ref-counted; needs design). Pick one.
+
+      **(c) Jettison-while-Export-already-swung.** When a watchpoint
+      jettisons a T2 blob *because* of a reload, the new module's
+      `Export.addressv` has already been pointed at the new code. The
+      P-in-blob-B case from (b) ends up returning to T1 — but T1
+      reaches the new code, not the version P entered with. This is
+      the same hazard `code:purge/1` already manages with literal-area
+      refcounting; T2 jettison needs the same care. Spell out the
+      ordering.
 
 ### B4. Reductions through inlined calls
 - [ ] §12.4 item 1 (line 1308–1311) says "*each inlined call still
@@ -132,10 +193,16 @@ Organised into six categories:
       still costing a reduction? At T1 it does (each iteration has a
       `call_only` decrement). The straightforward T2 lowering of a
       flat loop *would* skip this, because there's no longer a "call".
+- [ ] Related: the inlined callee's prologue had `i_test_yield`
+      (§12.4 item 2). Do we replicate that at the inlined entry? At
+      every loop-recovered back-edge? If we replicate it, every
+      inlined call site in a hot loop has its own yield site;
+      if we collapse them, we change observable scheduling. Pick.
 - [ ] Either the lowering needs to inject FCALLS decrements at loop
       back-edges or per-K-iterations after unrolling, or this rule
       needs an exception for inlined recursive helpers. Resolve
-      explicitly.
+      explicitly. §5.2 has `reduction_check cost` as an IR op but
+      never says where the inliner inserts it.
 
 ### B5. Watchpoint indexing for invalidation
 - [ ] §14.1 (line 1441–1458) registers watchpoints with `{Mod,Fun,Arity}`,
@@ -202,13 +269,18 @@ Organised into six categories:
       experiment on representative functions) or document the chosen
       number as a guess to be calibrated.
 
-### C3. "Active execution count" for eviction not specified
+### C3. "Active execution count" for eviction is not actually defined
 - [ ] §13.2 step 1 (line 1419–1420) selects the blob with lowest
       "useful work / bytes" using "recent execution count / blob size".
-- [ ] How is "recent execution count" measured? Sampled? Decayed
-      counter? Window? An absolute counter biases against
-      newly-promoted blobs unfairly. Pick a decay model (JSC uses
-      exponential decay with a half-life tied to GC interval).
+- [ ] But the only counter the plan defines is the **tier-up call
+      counter** in §7.4, which gets reset to a "pending compile"
+      sentinel after T2 install (line 685). After install, the slot
+      isn't being incremented per T2 invocation — so the eviction
+      policy is reading stale data, or zero, or the sentinel.
+- [ ] Required: a separate per-T2-blob execution counter,
+      incremented inside the T2 prologue (cheap), with a documented
+      decay model (JSC uses exponential decay with a half-life tied
+      to GC interval). Cost goes into §13.3's per-blob metadata.
 
 ### C4. `binary_part/2,3` listed as Phase A guard BIFs but binary
       is Phase D
@@ -231,20 +303,29 @@ Organised into six categories:
       budget" — isn't written. What threshold does T2 use? T1's
       `length/1` traps after a fixed number of cells; what's that
       number, and does T2 honour the same one?
+- [ ] Stronger: the IR-level invariant **"the fast and slow paths
+      are inseparable; neither pass may eliminate the slow tail
+      call"** is what makes the open-coding safe across optimisation.
+      DCE that "knows" the fast path always succeeds would happily
+      delete the slow tail and break trap-out semantics. Write this
+      down as a constraint on every T2 pass, not a property of the
+      lowering.
 
 ### C6. Deopt stub example understates aarch64 register handling
 - [ ] §9.2 (line 890–894) shows the stub as moves into the X-reg
-      array. On aarch64 (current target), X registers in BeamAsm
-      live in physical registers (x0–x10 at least), with overflow on
-      the in-process-X-array. The stub needs to handle both: spilling
-      from physical regs that hold *current scratch values* into
-      either the physical x0–x10 ABI registers or into the in-process
-      array, depending on which X slots are live.
+      array. On aarch64 BeamAsm, the first few X registers live in
+      physical CPU registers (XREG0..XREG3 → x25–x28 in the existing
+      ABI; see `arm/beam_asm.hpp`), and only overflow Xs hit the
+      in-process X-array.
+- [ ] The real stub has to mix `mov x25, scratch_reg` for
+      register-resident X slots with `mov [x_reg_array+offset],
+      scratch_reg` for overflow slots, plus retag for any untagged
+      scratch values still pending. The two-line example does only
+      the array-flush case.
 - [ ] Concretely: deopt stub at C must (a) flush untagged scratch
-      back to tagged form, (b) ensure ABI-register X regs hold the
-      values §6's sync constraint says they should, (c) flush
-      overflow Xs (≥ x11 say) into the array. The two-line example
-      does only (c).
+      back to tagged form, (b) ensure ABI-register X regs (x25–x28)
+      hold the values §6's sync constraint says they should, (c)
+      flush overflow Xs (≥ x11 say) into the array.
 
 ### C7. Phase effort breakdown skewed
 - [ ] Appendix B (line 1917–1925) gives 8 weeks for Phase 0, 4 weeks
@@ -254,11 +335,20 @@ Organised into six categories:
       C API, T2 manager process, eligibility checks, profiling
       infrastructure, build-system integration for the dirty
       scheduler. Likely 12+ weeks.
+- [ ] Alternate framing: Phase 0 already delivers the IR builder, so
+      Phase 1 (4w) is just integrating it. Phase 1 then looks too
+      *small* relative to whatever residual Phase 0 work overflowed
+      — i.e., the boundary between Phase 0 and Phase 1 is fuzzy
+      and the 8w/4w split may not match where the work actually
+      lives.
 - [ ] Phase 3 (inlining MVP + loop recovery + intrinsics) at 10
       weeks for 4 KLOC C++ + 0.5 KLOC Erlang seems light given that
-      the entire deopt machinery for inlined regions is implemented
-      here, plus loop recovery, plus annotation-driven intrinsics
-      reuse from `sys_core_fold_lists.erl`. Likely 14–16 weeks.
+      the entire inlined-region framestate / deopt machinery is
+      implemented here, plus per-region deopt stubs, plus the
+      linear-scan allocator inside inlined regions, plus loop
+      recovery, plus annotation-driven intrinsics reuse from
+      `sys_core_fold_lists.erl`. Seven+ items in one phase. Likely
+      14–16 weeks.
 - [ ] Phase 4 (production polish) at 8 weeks for 1.5 KLOC + docs
       seems heavy in lines/weeks but may be light in actual work
       (rollout, regression hunting, incident response don't fit a
@@ -267,13 +357,19 @@ Organised into six categories:
 ### C8. ~2 ns per profile site claim is optimistic
 - [ ] §7.3 (line 666) and §7.5 (line 701) both estimate "~2 ns per
       site" for the type-bitmask and per-call-site profile updates.
-- [ ] On Apple Silicon, a load + or + store is ~3 cycles minimum
-      (memory store latency + dependency chain), or ~1 ns at 3 GHz.
-      But these are emitted in the hot-path inline; cache pressure
-      and store-buffer effects on real workloads typically push the
-      observed cost to 4–6 ns per site. With 4 profile sites per
-      function entry × 10⁹ function calls/s = 40 ns/call extra =
-      measurable.
+- [ ] The aarch64 sequence in §7.3 (lines 668–678) is six
+      instructions including two loads and two stores. Hot in cache
+      it's ~3 cycles, ~1 ns at 3 GHz. Under cache miss a single
+      profile point can hit ~50 ns. With store-buffer effects on
+      real workloads the observed cost is typically 4–6 ns. With 4
+      profile sites per function entry × 10⁹ function calls/s =
+      40 ns/call extra = measurable.
+- [ ] **Cross-scheduler cache-line contention is not analysed.** The
+      profile feedback vector lives per-function (§7.1), so multiple
+      schedulers running the same function concurrently all write to
+      the same cache line. Even with relaxed atomics, false sharing
+      between adjacent slots will move that line through the L1s
+      repeatedly. On a 32-core box this can dominate the cost.
 - [ ] Required: actually measure on representative workloads in
       Phase 0; budget the realistic number. The cheap claim makes
       "T1 stays the default; profiling is cheap" look stronger than
@@ -316,13 +412,26 @@ Organised into six categories:
 - [ ] Possible failures: assertion in T2 IR validation, asmjit
       backend rejects some sequence, watchpoint registration fails
       because the literal table changed mid-compile, OOM in compile
-      thread. Each needs a defined fallback (assume "leave on T1"
-      everywhere — but say so, and define what's logged).
+      thread, encountering a Phase A op that's actually unsupported.
+      Each needs a defined fallback (assume "leave on T1" everywhere
+      — but say so, and define what's logged).
+- [ ] On repeated compile failure for the same `{M,F,A}`: does the
+      function get permanently blacklisted, or does the call counter
+      keep retripping forever? Is the failure logged in
+      `t2_stats` (§16 has `t2_compile_failures` but no per-function
+      reason)? Spell out.
 
 ### D3. JIT server concurrency model
 - [ ] §17 "Decisions resolved" (line 1790–1797) decides on "JIT
       server process under `kernel/code` + dirty CPU scheduler".
       That's the queueing layer. But:
+- [ ] **An Erlang process is single-threaded by construction.**
+      Multiple compile requests come in concurrently — does the
+      server serialise them all through itself before dispatching?
+      That's a bottleneck. Or does it dispatch directly to dirty
+      schedulers and only co-ordinate completion (which avoids the
+      bottleneck but makes dedup, eligibility, and queue-length
+      tracking harder)? Pick one.
 - [ ] Multiple compiles in flight on different dirty schedulers —
       can they touch the same shared state (T2 metadata, watchpoint
       table)? The plan doesn't say.
@@ -340,17 +449,35 @@ Organised into six categories:
 - [ ] Required: explicit memory ordering when installing a T2 blob.
       Is `Export.addressv` updated under a barrier? Do callers see a
       consistent view? aarch64's weak ordering means this matters.
+- [ ] If compiles can run in parallel on different dirty CPU
+      schedulers, the T2 code-cache allocator needs to be
+      thread-safe. §13.1 says "separate JitAllocator instance from
+      BeamAsm's" but doesn't say *thread-safe*. **Per-scheduler
+      arenas** are the standard fix (asmjit-friendly, no contention
+      at allocation time). Decide and document.
 
 ### D5. ARM64 memory ordering not addressed
 - [ ] On weakly-ordered aarch64, every cross-thread write needs
       explicit synchronisation. The plan mentions atomic export-table
       flips, profile-counter writes, watchpoint registration —
       collectively a lot of inter-thread state.
+- [ ] §7.3 line 674 says "racy increments are tolerable". This
+      conflates two very different races:
+
+      **Semantically-tolerable races** (lost OR-bits in the type
+      bitmask, an under-counted call counter). These are fine — the
+      worst case is a slightly delayed tier-up.
+
+      **Observation races** (the JIT manager reads a stale slot at
+      compile time and makes a wrong inlining decision based on it,
+      or sees a partially-updated `Export*` for the per-call-site
+      monomorphic-target slot — §7.5). These are *not* tolerable;
+      they produce wrong specialisation and unnecessary deopts.
 - [ ] Required: a §X subsection enumerating the cross-thread
       writes and their barrier requirements (acquire/release, full
-      `dmb`, etc.). Concrete: profile counter writes — do they need
-      release semantics so the T2 manager observes consistent counts?
-      My guess is yes. Spell it out.
+      `dmb`, etc.). For the observation race, the JIT manager needs
+      acquire-load when reading profile slots and release-store at
+      the update site.
 
 ### D6. Coverage methodology for percentages
 - [ ] Multiple places quote coverage:
@@ -385,12 +512,20 @@ Organised into six categories:
       sparse compilation (some BEAM ops don't emit a PC entry), T2's
       deopt model breaks. Add an explicit Phase 0 audit task.
 
-### D9. Tracing event matrix beyond §12.5
+### D9. Tracing / system-event matrix beyond §12.5
 - [ ] §12.5 enumerates trace primitives at a high level. But
       `erlang:trace/3` flags are richer: `arity`, `running_procs`,
       `procs`, `set_on_first_link`, `garbage_collection`, `send`,
       `receive`, `call`, `return_to`, plus all the match-spec
       actions (`message`, `set_seq_token`, `enable_trace`, …).
+- [ ] Equally relevant: `erlang:system_monitor` events (`long_gc`,
+      `large_heap`, `long_schedule`) — these fire from the runtime
+      based on observed process state. T2's deferred-X-flush /
+      register-allocator divergence may break the runtime's view of
+      "process state" at the moment a system_monitor sample lands.
+- [ ] And: `erlang:trace_pattern(_, true, [global])` — enabling
+      tracing on every export of a module wholesale. Does T2 have to
+      jettison every blob that called into that module?
 - [ ] §17 Phase 0 (line 1567–1577) mentions "trace audit" as a
       deliverable. Move (or copy) the full matrix into §12.5 once
       the audit completes — but at minimum the plan should commit to
@@ -415,18 +550,22 @@ Organised into six categories:
 - [ ] See A2.
 
 ### E2. §17 "Decisions resolved" mixed with "Still open"
-- [ ] See A3.
+- [ ] See A4.
 
 ### E3. §15.4 cross-reference
-- [ ] See A4.
+- [ ] See A5.
 
 ### E4. "T1 blob backpointer" misdescribed
 - [ ] §13.3 (line 1433) says "Backpointer to the T1 blob (for fast
-      revert)". Revert to T1 doesn't actually need a backpointer —
-      it just resets `Export.addressv[active_code_ix]` to the T1
-      address (always known via the export table). The metadata that
-      *is* useful is the T1 PC table reference (used for outer-
-      function deopt — §9.1). Rename for accuracy.
+      revert)". But T1 blobs aren't separately allocated for
+      tier-2-eligible functions — they're part of the module's
+      BeamAsm code allocation. "Revert to T1" is just an
+      `Export.addressv` store; the T1 address is always known via
+      the export table. The "backpointer" is implicit, not a new
+      field.
+- [ ] What *is* worth recording per-blob is the **T1 PC table
+      reference** (used for outer-function deopt resolution per
+      §9.1). Rename the §13.3 entry to that, or delete it.
 
 ### E5. §9.6 vs §10.2 cross-reference confusing
 - [ ] §9.6 (line 968–978) discusses speculative-fun deopt, then
@@ -450,7 +589,25 @@ Organised into six categories:
 - [ ] Phase 3's effort estimate likely doesn't reflect this either
       (see C7).
 
-### E7. Three "v1" definitions
+### E7. §10.4 "ported vs generated" is two very different impls
+- [ ] §10.4 (line 1052–1055) says the SSA expansion shapes for the
+      lists BIFs "should be derived from `sys_core_fold_lists.erl`
+      directly — either ported to T2 IR construction at JIT-init
+      time, or generated through the `core_to_ssa` pipeline once and
+      cached". These are *very* different implementations:
+
+      - **Ported.** T2 hand-translates the Core Erlang expansion
+        templates into C++ IR-builder calls. Static, fast, no
+        Erlang runtime dependency at JIT-init.
+      - **Generated.** T2 invokes `core_to_ssa` at JIT-init to
+        compile the templates into SSA, then caches the result.
+        Dynamic, depends on the Erlang AOT pipeline being usable
+        from inside the runtime, but stays in sync with
+        `sys_core_fold_lists.erl` automatically.
+- [ ] The "should" hides a real implementation choice. Pick one and
+      remove the alternative, or flag the decision as open.
+
+### E8. Three "v1" definitions
 - [ ] §1 defines v1 as "first version covering the goal set". Phase
       breakdown in §17 calls Phases 0–4 "v1 total". Some sub-sections
       refer to "v1 default" (e.g. §6.2 item 4) for the strict-state-
@@ -458,7 +615,7 @@ Organised into six categories:
       has to triangulate. Make Section 1 say
       "v1 = Phases 0 through 4 (≈40 weeks)" once explicitly.
 
-### E8. Cross-references to non-existent sections
+### E9. Cross-references to non-existent sections
 - [ ] §6.5 (line 568) → "Worked example" is currently labelled 6.5,
       but if 6.4 dedups (see A2), all subsequent §6.x references
       shift. Verify all references to §6.5 throughout the document.
@@ -467,7 +624,7 @@ Organised into six categories:
 
 ## F. Strategic concerns
 
-### F1. 40-week / 18-month calendar feasibility
+### F1. 40-week / 18-month calendar feasibility + branch hazard
 - [ ] Appendix B says 40 weeks single-engineer with "Multiply ~2×
       for total calendar time" — so ~80 weeks calendar = ~18 months
       from start to v1. For a feature this central, that's a long
@@ -475,6 +632,18 @@ Organised into six categories:
       shipped its first version in something like 9 months (V8 had
       more engineers; LinearScan rewrite was deferred — ZJIT's
       pattern).
+- [ ] **Branch-vs-master integration hazard.** §17 says "each phase
+      ships something measurable" but doesn't say which phases land
+      in master vs which stay on a branch. Without intermediate
+      merges, an 18-month branch is its own project-management
+      hazard — the merge surface area accumulates the entire delta
+      against a fast-moving runtime.
+- [ ] **The AOT-side change has to land first.** The BEAM SSA
+      emission in the AOT compiler (Phase 0) needs to land in master
+      well before T2 v1 ships, otherwise every master-merge is a
+      giant integration. Plan should commit explicitly to "Phase 0
+      AOT changes ship to master before Phase 1 starts" as a
+      sequencing rule.
 - [ ] Possible mitigations: parallelise more (e.g. AOT changes in
       Phase 0 can run concurrently with IR-builder work), or descope
       v1 to skip Phase 3.5 (LICM + unrolling) and ship the inlining
