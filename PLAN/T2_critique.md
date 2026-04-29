@@ -1051,3 +1051,611 @@ cannot be slower than T1 as then it is dead in the water.
 3. When all are addressed, the surviving fixes feed back into
    `T2.md` and this critique file gets archived (or deleted —
    it's superseded by the plan it improved).
+
+---
+
+# Second-pass review
+
+After applying the resolutions for sections A–F, several new issues
+surface — partly because the resolutions changed enough text that
+old text is now stale, partly because the resolutions exposed
+architectural questions that weren't visible before. Sections
+G–L below.
+
+## G. New contradictions introduced by recent edits
+
+### G1. Phase 3 effort: §17 says 10 weeks, Appendix B says 14–16
+- [ ] §17 line 2128: "Phase 3 — Inlining MVP + loop recovery +
+      intrinsics (≈10 weeks)". Appendix B was updated to
+      14–16 weeks (C7 resolution); §17's title wasn't. Sync the two.
+
+### G2. Phase 0–2 calendar arithmetic stale
+- [ ] §17 "Sequencing rationale" (line 2218): "Phases 0–2
+      (~18 weeks) validate or invalidate the entire approach".
+      With Phase 0 grown to 12w and Phase 1 4w, Phase 2 6w, the
+      total is **22 weeks**, not 18. Update the calendar claim.
+
+### G3. Phase 3 task list still lists "Multi-frame deopt dispatch"
+      as the hard part
+- [ ] §17 Phase 3 (line 2141): "Multi-frame deopt dispatch (the
+      hard part)". With B1's eager-CP-push resolution, deopt is
+      uniform regardless of nesting depth — there *is* no
+      "multi-frame deopt dispatch" task anymore. Replace with
+      "Inlined-region deopt stub emission" or remove.
+
+### G4. §18 Risk #1 fallback (a) names a model we rejected
+- [ ] §18 risk #1 (line 2229): "(a) the strictest 'identical at
+      every BEAM instruction boundary' rule from earlier drafts —
+      correct but constrains the allocator unnecessarily". A1
+      resolved the relaxed sync-point model as **the design**, not
+      a roadmap. The risk should be re-phrased: the failure mode
+      is not "we didn't relax fast enough" but "the sync-point
+      identification or the constrained allocator turned out to be
+      complex enough to threaten the compile-time budget".
+- [ ] Same risk's mitigation: "Phase 1's identity transform ships
+      option (a) by default; relaxation to the sync-point model
+      happens when measurements show it's worth the engineering
+      cost." But Phase 1 was rewritten to ship the relaxed model
+      directly. Mitigation text is stale.
+
+### G5. §18 Risk #2 says "measure in Phase 1"
+- [ ] §18 risk #2: "Compile-time overhead too high. ~1 ms target
+      may slip, especially with inlining. **Mitigation**: ...
+      measure in Phase 1 and tune." But Phase 1 explicitly runs
+      no optimization passes (it's the identity transform). The
+      compile time in Phase 1 is the absolute floor and isn't
+      representative of v1 cost. Move the measurement target to
+      Phase 2 (when speculation+type narrowing land) and Phase 3
+      (when inlining lands).
+
+### G6. §3 architecture diagram: stale "BeamAsm blob retained for
+      jettison fallback"
+- [ ] §3 line 244: "BeamAsm blob retained for jettison fallback".
+      Per E4 resolution, T1 blobs aren't separately allocated —
+      they're part of the module's BeamAsm code. "Revert to T1"
+      is just an `Export.addressv` store. The diagram still
+      implies a separate "T1 blob" object retained alongside.
+      Reword: "Export.addressv flips between T1 and T2 entries;
+      no separate retention".
+
+### G7. §3 architecture diagram: "inlined regions register
+      framestates" misleading
+- [ ] §3 line 231: "inlined regions register framestates". With
+      B1's resolution, framestates are **codegen-only metadata**
+      consumed at stub emission. They aren't "registered" against
+      anything at runtime. The diagram still implies runtime
+      framestate state. Reword: "inlined regions emit deopt stubs
+      using codegen-time framestate metadata".
+
+### G8. §6.5 still describes lazy CP materialisation
+- [ ] §6.5 line 644: "Nested inlining: each inlined region adds
+      one more frame to the framestate chain. Deopt unwinds
+      through `parent_fs` references to **materialise N CP frames
+      on the Erlang stack** and resume in T1 at the outermost
+      call." This is the lazy-CP wording B1 explicitly replaced.
+      With eager-CP, CPs are pushed at inlined-region *entry*,
+      not materialised at deopt. §6.5 needs rewriting to match
+      §9.2.
+
+### G9. §6.6 worked example: `framestate` shown as IR op
+- [ ] §6.6 example shows
+      `framestate [%list→x0], ip: double_all/1+0` as an IR op in
+      the function body. With B1's resolution, framestates are
+      compile-time metadata, not IR ops. The example reads like
+      `framestate` is generated code. Either prefix the line with
+      a comment ("`// codegen-only marker`") or drop it from the
+      example body and show the deopt stub instead.
+- [ ] §6.6 example also uses `%result = lists_reverse(%acc)` as
+      if `lists_reverse` were an IR op or known intrinsic. Should
+      be `%result = call_ext lists:reverse/1, [%acc]` (or marked
+      `// sketch`).
+
+### G10. §9.3 says deopt is "only legal at BEAM instruction
+       boundaries" — contradicts §6
+- [ ] §9.3 line 1046: "Deopt is only legal at points where a
+      valid BEAM-machine state can be reconstructed — which means
+      at **BEAM instruction boundaries** in the original code."
+- [ ] §6 (the resolved A1 model) says deopt is legal at **sync
+      points only** — function entry, calls, returns, GC, BIF
+      boundaries, speculation guards, tracing-relevant sites,
+      receive safe points. That's a strict subset of "every BEAM
+      instruction boundary". The two phrasings disagree.
+- [ ] Reword §9.3: deopt is legal at sync points (where the live-
+      X-reg map is recorded). The mid-arithmetic-unsafe case
+      (between `untag_int` and `add_small`) follows from this:
+      those are between sync points by construction.
+
+### G11. §15.4 still talks about "deopt via framestate"
+- [ ] §15.4 line 1888: "In inlined regions, deopt via framestate
+      (§9.2)." With B1, the framestate is consumed at codegen;
+      the runtime mechanism is the deopt stub. Reword: "In
+      inlined regions, deopt via the per-region deopt stub,
+      whose moves were emitted from codegen-time framestate
+      metadata".
+
+---
+
+## H. Architectural under-specification (new)
+
+### H1. Tagged values across GC inside inlined regions
+- [ ] §12.3 says "T2 v1 keeps untagged values out of the X
+      register array — they'd confuse the GC scanner. Untagged
+      values live only in scratch CPU regs, never spilled to X
+      slots." But what about **tagged** SSA values inside an
+      inlined region that are live across a GC point (e.g. a
+      tagged accumulator threaded through a `lists:map` body that
+      allocates)? They have to be reachable from a GC root —
+      either spilled to a Y slot (which then needs to be marked
+      live in the BEAM stack frame), or referenced via a stackmap
+      the GC walker consults.
+- [ ] The plan's flush rule ("inliner emits flush sequences at
+      each potential GC site within an inlined region") doesn't
+      say *where* the flush goes. To Y? Which Y slots? Tracked
+      how? Required: an explicit invariant for "live tagged values
+      at GC points inside inlined regions go to Y slots N..M; the
+      flush is part of the lowering of any op that may GC".
+
+### H2. Inlined-region register pressure on the T1-pinned regs
+- [ ] §12.1: x25–x28 = XREG0..XREG3, x15–x17 = XREG4..XREG5.
+      These are the outer function's pinned X regs at sync points.
+      Inside an inlined region, the allocator can use whatever
+      scratch registers are available — but x25–x28 still hold
+      the *outer* X0..X3 at the inlined-region's entry sync
+      point. If the inlined region needs more registers than the
+      ABI scratch set provides (x0–x14), can it use x25–x28?
+- [ ] If yes: the outer X0..X3 are clobbered. They must be re-
+      established at the next sync point (which is fine, but the
+      moves cost something).
+- [ ] If no: the inlined region has fewer registers than the
+      outer function. Inlining a complex callee may not have
+      enough working registers to avoid spills.
+- [ ] Pick a discipline. The eager-CP model already pushes the
+      parent CP at inlined entry, so a single sync point is
+      formally entered there; the allocator policy can clobber
+      x25–x28 within the region as long as it restores at sync
+      points. But this is unstated.
+
+### H3. Sync-constraint conflict: same SSA value, different X
+       regs at different sync points
+- [ ] §11.2 says "values pinned by an active sync constraint
+      cannot be displaced; values that need to live across a sync
+      point either sit in the X reg the constraint pins, or get
+      spilled and reloaded."
+- [ ] But what if SSA value V must live across two sync points
+      S1 and S2, and the T1-mandated X-reg for V at S1 is x0
+      while at S2 it's x2 (because T1's register allocator put
+      it differently)? V can't be in two places. The allocator
+      either spills to Y between S1 and S2 then reloads to x2 at
+      S2, or moves V from x0 to x2 between sync points. **Both
+      are extra code that the "free between sync points" model
+      doesn't visibly account for.**
+- [ ] Required: either (a) demonstrate this conflict is rare in
+      practice, (b) document the spill-and-reload strategy
+      explicitly, or (c) constrain the allocator's freedom to
+      avoid creating multi-X-reg-bound live ranges.
+
+### H4. Active execution counter atomicity
+- [ ] §13.3: "active execution counter (incremented in the T2
+      prologue ...)". Multiple schedulers can call the same T2
+      blob concurrently. Per-scheduler shards (matching the
+      profile counters from C8) is the standard fix; without
+      sharding, the counter is either non-atomic (lost
+      increments, biased eviction policy) or atomic (per-call
+      cost in the prologue is now an `ldaxr/stxr` loop).
+- [ ] Required: state explicitly that active execution counters
+      are per-scheduler-sharded, with the eviction code reading
+      the union.
+
+### H5. §15.3 queue-drop policy: counter reset on drop
+- [ ] §15.3: "If the queue exceeds a high-water mark, further
+      requests are dropped (function continues in T1; counter
+      retrips later)."
+- [ ] But §7.4 says "counter resets to a 'pending compile'
+      sentinel to suppress duplicate enqueues". On drop, the
+      counter is at sentinel; if we don't reset it, the counter
+      never retrips — the function never compiles. We need to
+      explicitly reset the counter back to a non-sentinel value
+      on drop.
+
+### H6. Stable speculation-site IDs across recompiles
+- [ ] §9.5 / B7 resolution: per-blob exit-reason buffer indexed
+      by *speculation-site ID*. The site ID is presumably a
+      sequential integer assigned at codegen.
+- [ ] On recompile, the IR may be different — different
+      speculations may be inserted, dropped, reordered. A
+      sequential index from compile N doesn't correspond to a
+      site in compile N+1. The recompile heuristic ("any site
+      with `fail_count > T` gets its speculation widened") needs
+      a *stable* site identifier — e.g. `{source BEAM PC,
+      speculation kind, narrowed type}` triple — not a sequential
+      index.
+- [ ] Required: spell out the stable-ID scheme.
+
+### H7. Profile-feedback conflict resolution
+- [ ] §5.4 lists three sources of types: AOT-emitted, profile
+      feedback, forward dataflow. Priority order is given but
+      conflict semantics aren't. Cases:
+
+      **Profile narrows AOT.** AOT says `integer`, profile says
+      `[1, 2, 3]` (set of small atoms). Profile narrows, fine.
+
+      **Profile contradicts AOT.** AOT says `integer`, profile
+      says `atom`. Either AOT is wrong (compiler bug?) or profile
+      saw a transient anomaly (a process that called the function
+      before tier-2-eligibility was checked, with a corrupted
+      register?). What's the policy?
+- [ ] Required: explicit conflict-resolution policy. Probable
+      answer: AOT is ground truth; profile is filtered against
+      AOT — observations outside the AOT type are dropped.
+
+### H8. Speculation-range auto-selection
+- [ ] §9.4 picks ±2^58 as the example range. But how does the
+      optimizer *choose* the range automatically?
+- [ ] If the profile saw integers in [-1000, 1000], speculating
+      to ±2^58 is fine — wider than needed but safe, no overflow
+      check needed. If the profile saw integers in [-1, 2^60],
+      speculating to ±2^58 fails on most observations. The
+      narrower the speculation, the more deopts; the wider, the
+      more we have to fall back on overflow checking.
+- [ ] Required: an algorithm. Probable answer: take the
+      observed range from the profile, snap to the nearest
+      "leaves-headroom-for-add" range, with a cap.
+
+### H9. Audit list for "audited-pure-or-semi-pure" callees
+- [ ] §10.1: "monomorphic + size ≤ threshold + audited-pure-or-
+      semi-pure ⇒ inline". What's the audit list?
+- [ ] If it's a fixed manifest of OTP-stdlib functions, that's
+      one thing. If it includes arbitrary user-module functions
+      based on per-function attributes, that's another.
+- [ ] Required: define the manifest. Initial set probably =
+      `sys_core_fold_lists.erl` set + a curated small set of
+      common pure functions (lists:reverse/1, lists:append/1,2,
+      maps:get/2, maps:put/3, etc.). User-module functions opt
+      in via a `-jit_inline` attribute or annotation.
+
+### H10. Per-callee deopt-skip rule too coarse
+- [ ] §10.3: "Skip inlining if the callee deopt'd in a previous
+      T2 compile". This skips the callee globally, even if the
+      deopt was at a specific site that may not exist in this
+      caller's context.
+- [ ] Better rule: skip inlining at a *specific call site* if a
+      prior compile saw a deopt traced to inlining the callee at
+      that site. Per-site, not per-callee.
+- [ ] Combined with H6: this needs a stable identifier for "this
+      call site, this callee" that survives recompiles.
+
+### H11. `lists:foldl(MyFun, ...)` where MyFun is non-literal
+- [ ] §10.5: loop recovery during inlining of `lists:foldl/3`
+      requires the fun argument to be a constant-known fun (per
+      §10.1). What about
+      `lists:foldl(MyFun, 0, L)` where `MyFun` is bound from
+      elsewhere — passed in as a parameter, returned from a
+      function call, looked up in a record?
+- [ ] In v1, this case **falls back to a regular `call_ext` to
+      `lists:foldl/3`** — the higher-order helper isn't inlined
+      because the constant-fun precondition fails. That means
+      most user code patterns
+      (`fun_handler(Items, F) -> lists:map(F, Items)`) get no T2
+      win at all. Worth stating explicitly so expectations are
+      set.
+
+---
+
+## I. Wrong numbers / engineering bugs (new)
+
+### I1. Phase 1 emitter LOC short of §11.1's estimate
+- [ ] Appendix B Phase 1 = "C++ ~2 KLOC". §11.1 line 1397:
+      "Estimated emitter LOC: ~1.5 KLOC ARM64 + ~1 KLOC shared"
+      = ~2.5 KLOC just for emitters. Plus the IR builder, sync-
+      point pass, jettison plumbing — which are also Phase 1.
+      Likely 3–4 KLOC for Phase 1 in reality.
+
+### I2. `length/1` fast-path threshold not specified
+- [ ] §10.7 / C5: `length/1` lowers to "an inline fast-path with
+      a slow-path tail call to the existing BIF implementation".
+      But the BIF traps after ~4000 cells (CONTEXT_REDS-bounded).
+      An inline fast-path traversing 4000 cells is *massive* —
+      4000 cons-cell loads + branches inline = thousands of
+      instructions per call site. That's not a fast path.
+- [ ] Alternative: the inline fast-path traverses up to a small
+      bound (say, 16 cells); if the list is longer, tail-call
+      the BIF unconditionally. Loses some inline win on lists
+      length 16–4000 but keeps code-size bounded.
+- [ ] Pick a bound and document it.
+
+### I3. Profile sharding not reflected in §7.2 struct
+- [ ] §7.2 (line 717–728) shows `T2FunctionProfile` with a
+      single `slots[]` array. C8 resolution introduced per-
+      scheduler sharding. The struct should be:
+
+      ```c
+      typedef struct {
+          Uint32         call_count;       // global
+          Uint16         num_slots;
+          T2ProfileSlot  slots[NUM_SCHEDULERS][num_slots];
+      } T2FunctionProfile;
+      ```
+
+      Or equivalent. Update §7.2 accordingly.
+
+### I4. §7.5 "CAS to POLY" mislabelled
+- [ ] §7.5 line 794: "Update sequence per call: load slot;
+      compare; conditional-store ... CAS to POLY". A load + cmp +
+      conditional-store is not a CAS; it's three separate
+      operations with no atomicity. With scheduler-1-only
+      profiling (C8), atomicity isn't needed because only one
+      scheduler writes — but the wording confuses the reader.
+      Reword: "single-writer non-atomic load-compare-store
+      sequence".
+
+### I5. §15.2 saturation budget too short
+- [ ] §15.2: "max 5 retries" with N=64 ticks per retry =
+      5×64 = 320 ticks before giving up. JSC's actual rule
+      involves much larger windows (thousands of ticks). For
+      Erlang code with sparse profile observations (e.g. a
+      gen_server that takes one type for the first 100 calls then
+      stabilises), 320 ticks may not be enough.
+- [ ] Either bump to N=256 with 8 retries (= 2048 ticks), or
+      mark the value as "starting point, calibrated in Phase 0"
+      like the size threshold.
+
+### I6. §8.1 pass-list ordering: speculative-arith lowering after
+       unrolling
+- [ ] §8.1 has unrolling at step 12, speculative arithmetic
+      lowering at step 14. After unrolling K iterations, the
+      generic add/sub/mul ops are duplicated K times. Lowering
+      to `add_small`/`mul_raw` at step 14 then generates K copies
+      of the speculative form. If lowering happened *before*
+      unrolling (between steps 9 and 10), unrolling would
+      duplicate the already-lowered code, which is a smaller IR
+      to walk in passes 11–13.
+- [ ] Probably negligible perf-wise; matters mainly for compile
+      time. Worth thinking about whether step 14 can move to
+      step 9.5.
+
+### I7. Allocation-sinking (step 13) before lowering (step 14)
+- [ ] Allocation sinking moves allocations across IR. Many
+      allocations in T2 are inside inlined regions (cons-cell
+      construction during inlined `lists:map`). Sinking an
+      allocation across a sync point would violate sync
+      constraints — but the sync point is a property the lowering
+      pass marks. If sinking runs *before* lowering, the marker
+      isn't set yet; the sinker has to re-derive the sync points
+      itself.
+- [ ] Required: state which passes care about sync-point markers
+      and where in the pipeline the markers become authoritative.
+
+---
+
+## J. Missing content (new)
+
+### J1. No regression detection / CI gating
+- [ ] §16A.5 mentions a "regression bench suite" but doesn't say
+      *who runs it* or *when*. Required: a CI gate that runs
+      the benchmark suite on every PR touching `erts/emulator/
+      beam/jit/t2/`, with a hard-fail threshold (T2 must not
+      regress against T1 by more than ε). Without this, the
+      hard-floor commitment from §1 is aspirational.
+
+### J2. No "profile data quality" metric
+- [ ] If profile observations get stuck on the wrong type (e.g.
+      due to scheduler-1-only profiling missing types that hit
+      other schedulers), T2 speculates wrong and constantly
+      deopts. The exit-reason buffer (B7) records *what* failed,
+      not *why* the profile was wrong.
+- [ ] Required: a `t2_profile_quality` counter — ratio of "T2
+      speculations that fired correctly" / "T2 speculations
+      total". Sustained low values indicate profile-collection
+      bugs, not workload pathology.
+
+### J3. No "stack-scan latency on schedule-in" risk
+- [ ] B6's lazy stack scan does an O(stack-depth) walk on the
+      first schedule-in after a jettison. For a process with a
+      deep stack (telecom-style state-machine processes can have
+      stacks thousands of frames deep), this is non-trivial work
+      under the schedule-in hot path. Latency-sensitive
+      applications may not tolerate the spike.
+- [ ] Add to §18 risks and to §16 observability: a metric for
+      "longest schedule-in scan" (max walk depth).
+
+### J4. No discussion of dist (cross-arch nodes)
+- [ ] In a cluster of mixed aarch64 + x86_64 nodes, the same
+      module is loaded on both. The SSA chunk and `jit_inline`
+      annotations are present in both BEAM files. On x86_64
+      nodes (which don't have T2 in v1), the SSA chunk is wasted
+      space.
+- [ ] Bigger concern: hot-code upgrade in a distributed system.
+      Node A (aarch64, T2 active) calls Node B (x86_64, T1
+      only). The export-table indirection abstracts this — fine.
+      But module reload on Node B affects only Node B's T1
+      blobs; Node A's T2 blobs depend on local state, so cross-
+      node dependencies are out of scope. **Worth stating
+      explicitly that T2 reasons only about local state.**
+
+### J5. No discussion of profile emission overhead on cold code
+- [ ] Eligibility check (§7.1) emits profile-recording for
+      every tier-2-eligible function. If 60% of functions are
+      eligible (per §17 Phase 5 estimates) but only ~5% actually
+      tier up, the other 55% pay the profile overhead for
+      nothing. With ~2 ns per slot × 4 slots/entry × N calls/sec
+      across all eligible-but-cold functions, this is a real tax
+      on T1 baseline performance.
+- [ ] Required: Phase 0 measurement task quantifying the
+      "profile overhead on never-tier-up code" cost; compare to
+      baseline T1 performance.
+
+### J6. No "T2 disabled globally on first abort" mode
+- [ ] §8.4 says compile bugs (IR validation, asmjit reject,
+      watchpoint race) **abort the BEAM**. In production this is
+      catastrophic — users running OTP in 24/7 systems can't
+      tolerate a JIT bug crashing the VM.
+- [ ] Required: a graceful-degradation mode (`+JT2safe_mode true`)
+      where the same conditions instead disable T2 globally and
+      log an error. Default: abort (development-friendly);
+      production deployments opt into safe-mode.
+
+### J7. Active execution counter not in §13.3 metadata struct
+- [ ] §13.3 lists per-blob metadata including "active execution
+      counter ... decayed exponentially". But §7 / §13.3 don't
+      say *where* the decay happens or *how often*. Half-life
+      "tied to the GC interval" — but GCs are per-process, not
+      global. Does the runtime decay all blob counters every N
+      GCs? Every N seconds via a system timer? Unspecified.
+- [ ] Required: concrete decay implementation (probably a
+      periodic timer in the JIT server that visits all blobs
+      every K seconds and applies the decay).
+
+### J8. No discussion of `apply/3` and dynamic dispatch
+- [ ] §10.2 says "`apply/3` with non-constant arguments. Can't
+      predict target." But Erlang code commonly uses
+      `apply(M, F, Args)` with M/F coming from configuration or
+      runtime data. Such call sites get the per-call-site
+      monomorphic-target slot (§7.5) — even if the args are
+      dynamic, the *target* the slot observes may be monomorphic
+      in practice. Can T2 inline based on the slot, with a guard
+      checking `M=ObservedM, F=ObservedF`?
+- [ ] Probably v2 (it's "speculative-target" inlining, similar
+      to speculative-fun). But §10.2 should be explicit: even
+      monomorphic-by-observation `apply/3` is v2, not v1.
+
+---
+
+## K. Editorial cleanup (new)
+
+### K1. §3 diagram references "framestates"
+- [ ] See G7. Reword for codegen-only.
+
+### K2. §6.5 lazy-CP wording
+- [ ] See G8. Rewrite for eager-CP.
+
+### K3. §6.6 example uses non-existent `lists_reverse` op
+- [ ] See G9. Use `call_ext` form or mark as sketch.
+
+### K4. §9.3 BEAM-instruction-boundary wording
+- [ ] See G10. Realign with §6 sync points.
+
+### K5. §10.4 references "the AOT compiler today has
+       sys_core_fold_lists.erl (~400 lines)"
+- [ ] The line count is incidental and will rot. Drop it or
+      pin it to a commit.
+
+### K6. §15.4 "deopt via framestate"
+- [ ] See G11. Reword.
+
+### K7. §17 Phase 4 doesn't mention the M/(M-U) re-tuning task
+- [ ] §15.1 says "Phase 4 includes a measurement task to re-
+      evaluate the formula against representative workloads",
+      but Phase 4's task list doesn't include it. Add to §17.
+
+### K8. §19 "Optimizations targeting message passing, ETS, GC,
+       or NIFs" — overbroad
+- [ ] §10.6's `test_heap` re-coalescing is technically a "GC
+      optimization" (changes when GC fires). The blanket
+      "T2 will never make these optimizations" is wrong as
+      stated. Reword: "T2 doesn't optimize the *implementation*
+      of message passing, ETS, GC, or NIFs — those wins live in
+      the runtime. T2 may re-batch, hoist, or eliminate the
+      *triggers* for them (e.g. coalesce `test_heap` calls)
+      where the SSA structure permits."
+
+### K9. Appendix A: `instr_t2.cpp` location vs §11.1 layout
+- [ ] Appendix A places ARM64 T2 emitters at
+      `arm/instr_t2.cpp`. §11.1 talks about "emitters" without
+      specifying the directory. Reconcile: the ARM-specific
+      emitters live in `arm/`; the architecture-agnostic glue
+      lives in `t2/t2_codegen.cpp`. Make Appendix A reflect the
+      split.
+
+---
+
+## L. Strategic concerns (new)
+
+### L1. Cumulative steady-state tax on T1 baseline
+- [ ] T1 baseline was previously zero-overhead. With T2 active,
+      every tier-2-eligible function pays:
+      - profile-emit cost (~2–50 ns × 4 slots/entry — per C8 bound
+        to scheduler 1, so 1/Nschedulers of the tax overall)
+      - per-call-site monomorphic-target slot writes (§7.5)
+      - patchable-prologue overhead from the eligibility check
+      - call counter decrement
+- [ ] Per-call cost may add up to 5–10 ns extra per function
+      entry. On a 10⁹-calls/sec workload that's 5–10% slowdown of
+      *T1 code* even when no T2 compilation has happened.
+- [ ] Required: §1's hard floor needs an explicit qualifier —
+      "T2 enabled with v1 must not slow down *aggregate workload
+      performance* by more than X%". Phase 0's profile-cost
+      micro-benchmark and J5's tier-up-eligible-but-never-tiered
+      measurement together quantify this.
+
+### L2. Lazy stack-scan is incompatible with hard real-time SLAs
+- [ ] B6's lazy stack scan does an O(stack-depth) walk on first
+      schedule-in after a jettison. The high-water sweep
+      (§14.2) compounds it: under memory pressure, every
+      process gets walked even if it's not currently scheduled.
+      For Erlang systems with hard latency requirements (Erlang
+      Solutions's telecom customers, financial systems), this
+      may be unacceptable.
+- [ ] Mitigation strategies that preserve lazy semantics:
+      bound the scan length (give up after N stack frames; force
+      a synchronous deopt instead); rate-limit the high-water
+      sweep; skip the sweep on processes with an "RT-bounded"
+      flag.
+- [ ] Required: explicit acknowledgement in §18 risks; a
+      runtime knob to disable jettison (force always-recompile)
+      for RT-critical processes.
+
+### L3. T2 carries an irreducible stake in BeamAsm internals
+- [ ] T2 reads BeamAsm's per-instruction PC table (§9.1), uses
+      BeamAsm's calling convention (§12.1), reuses BeamAsm's
+      global runtime fragments (§11.1), inherits BeamAsm's
+      memory-ordering patterns (§3 memory note). Every change
+      to BeamAsm is a potential source of T2 bugs.
+- [ ] Maintenance reality check: an OTP team member modifying
+      `arm/instr_*.cpp` can't tell from the diff whether T2
+      depends on the structure they're changing.
+- [ ] Required: a documented *contract* between T2 and BeamAsm
+      — what BeamAsm-internal interfaces T2 depends on, with
+      assertions in the BeamAsm code that fail if the contract
+      breaks. Otherwise T2 silently rots.
+
+### L4. The "1 KLOC Erlang" budget is aspirational
+- [ ] Appendix B says Phase 0 has "Erlang ~1 KLOC" and Phase 3
+      has "Erlang ~0.5 KLOC". Total Erlang code = 1.5 KLOC for
+      v1.
+- [ ] What goes into that?
+      - JIT server process (§3) — gen_server: ~300 LOC.
+      - SSA chunk emit in `beam_asm.erl` — ~200 LOC.
+      - `jit_inline` annotation propagation in
+        `sys_core_fold_lists.erl` — ~100 LOC.
+      - `code_server.erl` invalidation hook — ~150 LOC.
+      - Test helpers (§16A force-deopt BIFs, lifecycle drivers)
+        — ~300 LOC.
+      - Observability (`erlang:t2_stats/0`,
+        `erlang:t2_info/3`) — ~200 LOC.
+      Total: ~1.25 KLOC. Tight but feasible.
+- [ ] What's *not* in that count: changes to the AOT compiler
+      type-information chunk emission, integration of profile
+      data into compile decisions, anything that touches
+      `lib/compiler/`. If the AOT side balloons, the Erlang
+      budget breaks. Worth flagging.
+
+### L5. The HiPE failure mode wasn't just maintainership
+- [ ] §17 maintainership commitment ("OTP team owns it") and
+      Appendix B's "comfortably under HiPE's footprint"
+      argument both lean on the size argument. But HiPE also
+      lost because:
+      - The optimization wins were narrow (numeric workloads
+        only; nothing for typical Erlang services).
+      - The integration cost (mode-switching overhead, calling-
+        convention divergence) ate the wins on mixed workloads.
+- [ ] T2 addresses (b) by sharing calling convention with T1.
+      It *doesn't* yet have evidence that (a) doesn't apply —
+      the inlining-thesis sizing (Phase 0 / F2 corpus) is the
+      gate. If inlining wins are also narrow (only the small set
+      of `lists:foldl`-shaped patterns benefit), T2 could end up
+      with the HiPE problem of "real but small wins, not
+      enough to justify the maintenance".
+- [ ] §18 risks should add: "Phase 0 measurement shows
+      inlining-driven wins are smaller than projected".
+      Mitigation: descope to ship just the type-narrowing
+      speculation (Phase 2 wins) without the inlining tier.
