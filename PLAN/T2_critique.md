@@ -54,12 +54,20 @@ Organised into six categories:
       real policy, add it explicitly to §1, §4, §17, and the Phase
       1/Phase 4 deliverables in §17 (today they're disjoint).
 
+We don't need them at every boundary, only at places where we might
+exit to T1 or be pre-empted. There will be a lot of places where that
+can happen, but lets give the register allocator as much space as we can.
+
+Update the plan to be consistent with this in mind.
+
 ### A2. §6.4 duplicate heading
 - [ ] Two `### 6.4` headings:
       `6.4 Why the relaxation matters` (line 525) and
       `6.4 Inlined regions` (line 542). The second should be `6.5`,
       and the existing `6.5 Worked example` (line 568) shifted to
       `6.6`.
+
+Fix.
 
 ### A3. §17 Decisions Resolved row 1 contradicts §4 / §17 Still-Open
 - [ ] §17 row 1 (line 1755–1757) says: "T2 manager supervision tree.
@@ -74,6 +82,9 @@ Organised into six categories:
       revision. The current decision is the *opposite* of what row 1
       says. Delete or rewrite row 1.
 
+We willo use a server running in erts that handles it. Similar to the
+literal purger.
+
 ### A4. §17 "Decisions resolved" / "Still open" sections have merged
 - [ ] Most entries under "Still open" now begin with "**Decided:**"
       inline (line 1784, 1790, 1798, 1803, 1806, 1813, 1819, 1825).
@@ -84,12 +95,16 @@ Organised into six categories:
       lacking a decision (currently: "Trace audit specifics",
       "Watchpoint granularity").
 
+fix
+
 ### A5. §15.4 cross-reference to §9
 - [ ] §15.4 (line 1518–1520) cites "tracing (§12.5), watchpoint
       invalidation (§14), and recompilation backoff" as users of
       OSR-exit. The recompilation backoff machinery is described in
       §9.5, not anywhere in §14 or §15. Add the §9.5 cross-reference
       or move §9.5 under §15.
+
+fix
 
 ### A6. "Inlined-region" wording in §1 vs §6
 - [ ] §1 says deopt in the outer function uses "no framestate
@@ -99,6 +114,8 @@ Organised into six categories:
       than "framestate" (it currently shares the name with the inlined-
       region full framestate), or acknowledge in §1 that the outer
       function carries lightweight stackmap-style metadata.
+
+acknowledge in §1 that the outer function carries lightweight stackmap-style metadata.
 
 ---
 
@@ -128,6 +145,54 @@ Organised into six categories:
       "100 deopts is fine" recompile policy are talking about
       different deopt paths and need to be reconciled.
 
+**Resolution: eager-CP-push.** At inlined-region entry, push the
+parent CP onto the Erlang stack as if the call had really happened.
+Erlang's CP is 1 word (2 with frame pointers), so the steady-state
+cost is ~1–2 instructions per inlined call — in the noise.
+
+What deopt at site C must reconstruct:
+
+1. **Outer X/Y state at C** — recorded in framestate metadata at
+   codegen, consumed at codegen to emit X/Y-restore moves in the
+   stub.
+2. **HTOP / FCALLS at C** — comes for free from the sync-point
+   invariant (§6): C is a sync point, HTOP is consistent at every
+   sync point, FCALLS ticks per inlined call (§12.4).
+3. **CP frames** — already on the Erlang stack from eager push at
+   inlined entry; nothing for the stub to do.
+4. **Jump target** — T1 PC for C, resolved at codegen from the T1
+   PC table (§9.1).
+
+Resulting stub at any nesting depth:
+
+```
+.deopt_stub_C:
+  ; X/Y restore (codegen-emitted moves, ~5–10 insns)
+  mov  x25, scratch_for_x0
+  mov  x26, scratch_for_x1
+  str  scratch_for_x4, [x_reg_array+32]
+  ...
+  b    .t1_pc_for_C        ; T1 re-executes original call_ext
+```
+
+Framestate becomes a **codegen-only data structure** — flat array
+of `{t1_pc, live_entries[], parent_fs_id}` consumed during deopt-
+stub emission, then thrown away (or kept as a debug record). It
+doesn't compete for runtime blob memory; ~no cost in §13.1.
+
+§9.5 stays as-is, with one refinement worth recording: distinguish
+in-loop-inlined exits from in-loop-outer exits in the recompile
+heuristic — inlined-in-loop exits should drop the inlining for
+that site on recompile, not just widen the speculation. Captured
+via the per-site exit-reason buffer (B7).
+
+Plan edits required:
+- §9.2: rewrite to describe eager-CP; remove "walks the framestate
+  chain and materialises the parent CP frames" wording.
+- §9.5: add the "in-loop-inlined → drop the inline on recompile"
+  refinement.
+- §13.1: clarify framestate is codegen-only, no runtime memory cost.
+
 ### B2. Sync-point identification underspecified
 - [ ] §6.1 (line 451–460) lists eight categories of sync point
       ("function entry", "calls", etc.). §6.3 (line 504–510) says the
@@ -148,10 +213,20 @@ Organised into six categories:
       ("always treat them as sync points") or dynamic ("only on the
       branch that traps")? Static is simpler but pays a sync at sites
       that almost never trap. Pick.
+
+For most of these functions it is not possible to know beforehand if
+they will yield or not, so it should be a static decision. Unless of course
+their arguments are literals (because of inlining), but then they are not called
+at all.
+
 - [ ] Required: a definition of "sync point" expressed in T2 IR terms,
       not BEAM-op terms. Specifically: which T2 ops are sync points,
       and which are guaranteed to be inserted at *original* BEAM-op
       boundaries vs. injected by lowering.
+
+When creating the T2 ops, we walk the original beam SSA for a functions and
+from there we can emit specific T2 ops that are syncpoints. Or we embed
+it as metadata to instructions.
 
 ### B3. Inlining vs hot-code-upgrade race
 - [ ] §14.3 "Hot code upgrade" (line 1470–1476) says the watchpoint
@@ -184,6 +259,33 @@ Organised into six categories:
       refcounting; T2 jettison needs the same care. Spell out the
       ordering.
 
+We need to sync the JIT and code loader. That is when starting to initiate
+a code reload we should first tell the JIT server what we are about to do
+so that it can blacklist any compilations of that module and also invalidate
+the T2 code fragments that are about to be updated.
+
+For example if we have this code:
+
+```erlang
+example(L) ->
+   lists:foldl(fun ?MODULE:sum/2, 0, L).
+
+sum(_, A) -> A + 1.
+```
+
+and it gets upgraded to
+
+```erlang
+example(L) ->
+   lists:foldl(fun ?MODULE:sum/2, 0, L).
+
+sum(_, A) -> A + 2.
+```
+
+just as we are running that code and all of it is T2 compiled with inliner.
+Then the T2 code needs to recognize that sum/2 has changed and exit back to T1
+when called.
+
 ### B4. Reductions through inlined calls
 - [ ] §12.4 item 1 (line 1308–1311) says "*each inlined call still
       costs a reduction*" and "we do not amortise reductions across
@@ -204,6 +306,10 @@ Organised into six categories:
       explicitly. §5.2 has `reduction_check cost` as an IR op but
       never says where the inliner inserts it.
 
+Yes, it still needs to cost, and it should be possible to yield in the loop.
+This probably means that when yielding in such a loop we need to have some
+extra code to restore the frame state.
+
 ### B5. Watchpoint indexing for invalidation
 - [ ] §14.1 (line 1441–1458) registers watchpoints with `{Mod,Fun,Arity}`,
       `{literal_table_idx}`, `{export_entry}`. §14.2 says invalidation
@@ -214,6 +320,8 @@ Organised into six categories:
       A reverse index keyed by Module is required; specify the
       structure (hashmap of Module → Vector<BlobRef>), and put the
       memory cost into §13.1.
+
+fix
 
 ### B6. No quiescence/thread-progress story
 - [ ] §13.2 item 3 (line 1422–1423) mentions "a quiescence wait (in
@@ -230,6 +338,82 @@ Organised into six categories:
       `lists:foldl`" — does T2 jettison first, or is T1 quiesced past
       all T2 deopt-stub references? What's the guarantee?
 
+When purging code we need to kill processes lingering in T1 and T2 PCs
+for that generation of code. When deleting a T2 code fragment because of
+too many exits, we need to do a OSR on each process changing the return
+pointer to the T1 address. We need to be very careful here as there can
+be millions of processes and walking all their stacks will be very expensive.
+
+**Resolution: lazy stack scan on schedule-in, with bounded tombstone
+set.**
+
+Five pieces:
+
+1. **Generation counter.** `t2_global_gen` in the runtime, bumped on
+   every blob jettison. Per process: `p->t2_scan_gen`, last value
+   scanned at. Schedule-in compares; on equal, skip. 99%+ of
+   schedule-ins are one int-compare plus a branch.
+
+2. **Pre-filter.** `p->seen_t2` flag, set the first time control
+   enters a T2 blob (cheap T2 prologue check). Pure-T1 processes
+   pay nothing — the flag never clears.
+
+3. **Tombstone set.** Jettisoned-but-not-yet-freed blobs in an
+   address-range-keyed structure. Binary search per CP at scan time.
+
+4. **CP-to-T1-PC metadata per blob.** At T2 codegen, every CP-
+   pushing site records `{t2_return_addr → equivalent_t1_pc}` into
+   a side table. ~16 B per site; negligible.
+
+5. **Scan procedure.** On schedule-in, if pre-filter passes and
+   generations differ:
+
+   ```
+   for cp_slot in walk_erlang_stack(p):
+       if cp_slot.value in tombstone_set:
+           cp_slot.value = blob.cp_metadata.lookup(cp_slot.value)
+   p->t2_scan_gen = t2_global_gen
+   ```
+
+   In-place CP patching. CPs become T1 PCs; when the corresponding
+   `return` fires, control lands in T1 normally. No deopt at scan.
+
+**Freeing tombstoned blobs.**
+
+- **Phase A**: thread-progress sync; no new entries to the blob.
+- **Phase B**: free the blob when an epoch ticks past "every
+  currently-existing process has been scheduled at least once since
+  jettison" — tracked via a `last_scheduled_gen` watermark.
+- **Long-tail process** (suspended, hibernating, stuck in `receive`
+  for hours): blob memory waits on the process's lifetime.
+
+**Tombstone-set high-water sweep.** When the tombstone set reaches
+a threshold size (in entries or in retained code memory), trigger a
+proactive sweep:
+
+- Iterate the process table, find processes whose
+  `p->t2_scan_gen` lags the global gen significantly.
+- For each, run the same scan procedure — but from the sweep
+  context, not from a scheduler-in path. The process need not be
+  scheduled in for this; its stack is walked under the standard
+  process-suspend lock.
+- Once swept, processes' generations advance and the corresponding
+  blobs become eligible for freeing under Phase B's rule.
+
+This bounds the tombstone-set's worst case: instead of waiting on
+every long-suspended process to eventually run, we proactively
+clear the long tail when memory pressure justifies the walk cost.
+The threshold is tunable (`+JT2tombstone_high_water`).
+
+Plan edits required:
+- §13.2: replace "quiescence wait" with the lazy-scan + tombstone
+  protocol; add the high-water sweep.
+- §14.2: same; clarify that watchpoint invalidation triggers the
+  jettison-and-tombstone flow, not an immediate stack walk.
+- §14.3: hot-code-upgrade reload reuses the same machinery.
+- New per-process fields documented (`t2_scan_gen`, `seen_t2`,
+  `last_scheduled_gen`).
+
 ### B7. Speculation-failure → exit-reason buffer
 - [ ] §9.5 (line 962–963) says deopt records "which speculation
       killed it (stored in a per-function exit-reason buffer)". §13.3
@@ -239,15 +423,30 @@ Organised into six categories:
       Required for §9.5's "this time with knowledge of which
       speculation killed it" to be actionable on recompile.
 
+**Resolution.** Per-blob array indexed by *speculation-site ID* (one
+entry per `speculate_*` op in the IR), each entry being
+`{Uint16 fail_count, Uint16 last_seen_type_mask}`. ~4 bytes ×
+<100 speculation sites/blob ≈ ~400 B/blob. On recompile, the
+optimizer reads the array: any site with `fail_count > T` gets its
+speculation widened to the union of `last_seen_type_mask`, or
+dropped entirely. Cheap, fixed-size, indexable, no ring buffer
+needed. The §9.5 "weighted per loop-vs-non-loop" rule falls out of
+indexing site_id into a static metadata table that records
+is-in-loop per site.
+
 ### B8. Profile saturation criterion
 - [ ] §15.2 says "≥75% of profile slots have observations and the
       function has been running long enough that its argument-type
       buckets have converged". "Converged" is undefined. JSC uses a
       stable-bucket-for-N-iterations rule; pick a concrete one.
 
+Follow JSC.
+
 ---
 
 ## C. Wrong numbers and engineering bugs
+
+Fix all of the below.
 
 ### C1. SmallInt range is wrong
 - [ ] §9.4 (line 934–935) writes
@@ -370,10 +569,27 @@ Organised into six categories:
       the same cache line. Even with relaxed atomics, false sharing
       between adjacent slots will move that line through the L1s
       repeatedly. On a 32-core box this can dominate the cost.
+
+We need to have per scheduler counters here, we cannot update them
+from all schedulers. In another JIT experiment I did, we made it
+so that only scheduler 1 did profiling, this because load is normally
+compacted to schedulers 1 and given enough time all the hot code will
+run on that scheduler.
+
 - [ ] Required: actually measure on representative workloads in
       Phase 0; budget the realistic number. The cheap claim makes
       "T1 stays the default; profiling is cheap" look stronger than
       it really is.
+
+**Resolution: per-scheduler counters + scheduler-1-only profiling
++ measure in Phase 0.** Profile slots are sharded per scheduler
+to eliminate cross-scheduler false sharing. Only scheduler 1 emits
+profile updates by default, relying on the OTP scheduler's load-
+compaction behaviour to put hot code on scheduler 1 over time.
+Phase 0 deliverable: micro-benchmark the profile-update cost on
+aarch64 (Apple Silicon + Linux ARM64) on representative workloads
+(F2 corpus); budget the realistic number into §7.3 and the
+tier-up overhead estimate.
 
 ### C9. M/(M-U) formula is borrowed without justification
 - [ ] §15.1 (line 1492) uses JSC's threshold scaling
@@ -384,6 +600,8 @@ Organised into six categories:
       pressure (one big code cache for a long-running VM). The
       formula may be wrong for our shape. State why we're keeping it
       or pick a different scaling.
+
+We use this scaling as a starting point.
 
 ---
 
@@ -405,6 +623,9 @@ Organised into six categories:
       - Concurrency stress (T2 compile while target function is
         executing in T1 on another scheduler).
 
+We need to write specific testcases that stress these points in the
+code with special BIFs that allows us to reliable trigger them.
+
 ### D2. No compile-error path
 - [ ] §8 (line 763–767) says compiles have "a hard cap at ~10 ms
       (compile abort + leave function on T1)". §8.3 mentions
@@ -415,11 +636,31 @@ Organised into six categories:
       thread, encountering a Phase A op that's actually unsupported.
       Each needs a defined fallback (assume "leave on T1" everywhere
       — but say so, and define what's logged).
+
+Any of these that indicate a bug in the JIT should abort the beam. The
+only that is a valid abort is encountering an unknown op which should result
+in a direct blacklist of that function.
+
 - [ ] On repeated compile failure for the same `{M,F,A}`: does the
       function get permanently blacklisted, or does the call counter
       keep retripping forever? Is the failure logged in
       `t2_stats` (§16 has `t2_compile_failures` but no per-function
       reason)? Spell out.
+
+**Resolution.** Compile failure → blacklist that `{M,F,A}` for
+the lifetime of the loaded module; cleared on module reload. §16
+extends with a per-function failure log:
+
+```
+t2_compile_failures_by_function => #{
+    {M,F,A} => #{ reason => atom(),
+                  count  => N,
+                  last_failed_at => Timestamp }
+}
+```
+
+Plan edit: extend §16's `erlang:t2_stats/0` schema; add
+`erlang:t2_compile_failures/0` and per-`{M,F,A}` query.
 
 ### D3. JIT server concurrency model
 - [ ] §17 "Decisions resolved" (line 1790–1797) decides on "JIT
@@ -432,14 +673,23 @@ Organised into six categories:
       schedulers and only co-ordinate completion (which avoids the
       bottleneck but makes dedup, eligibility, and queue-length
       tracking harder)? Pick one.
+
+We don't do multiple parallel compilations, so it should serialize.
+
 - [ ] Multiple compiles in flight on different dirty schedulers —
       can they touch the same shared state (T2 metadata, watchpoint
       table)? The plan doesn't say.
 - [ ] Is there a single shared T2 IR allocator/arena, or one per
       compile? Memory accounting?
+
+For the T2 IR (that is thrown away after compilation to assembly),
+it just allocates the memory and then removes it.
+
 - [ ] Worker threads writing into the JitAllocator (§13.1) —
       asmjit's JitAllocator isn't documented as thread-safe; do we
       need a mutex, or one allocator per scheduler?
+
+There is only one worker thread, so no mutex needed.
 
 ### D4. Multi-scheduler compile thread safety
 - [ ] Even with the JIT server serialising requests, the compile
@@ -473,6 +723,10 @@ Organised into six categories:
       or sees a partially-updated `Export*` for the per-call-site
       monomorphic-target slot — §7.5). These are *not* tolerable;
       they produce wrong specialisation and unnecessary deopts.
+
+The same mechanisms that we use today with T1 and code upgrades should
+suffice here.
+
 - [ ] Required: a §X subsection enumerating the cross-thread
       writes and their barrier requirements (acquire/release, full
       `dmb`, etc.). For the observation race, the JIT manager needs
@@ -491,6 +745,17 @@ Organised into six categories:
       (counting BEAM ops in OTP + a representative app code) would
       replace these placeholders with real numbers.
 
+I think these numbers come from the instructions in the Erlang/OTP
+code base.
+
+**Resolution: re-measure in Phase 0.** Add a Phase 0 deliverable
+to the §17 task list: count BEAM ops in OTP + a representative
+application corpus (RabbitMQ / dialyzer / elixir compiler — same
+benchmarks as F2) and bucket by phase coverage (A / B / C / D /
+E). Replace the placeholders in §17 Phase 5 / Phase 7 / Phase 8
+with the measured numbers. Keep the methodology in the plan so
+later updates can re-run it.
+
 ### D7. Branchy allocation under loop unrolling
 - [ ] §10.6 (line 1110–1129) shows unrolling with combined
       `test_heap` for a fixed K-iteration batch. Works when every
@@ -502,6 +767,10 @@ Organised into six categories:
       makes GC accounting harder; (b) per-iteration `test_heap`
       survives, defeating the point. Pick one and document.
 
+What we can do is that we make a single test heap to make sure we
+have enough space for the worse case scenario, but only update
+the heap pointer when we actually use the heap.
+
 ### D8. T1 PC table existence assertion needs verification
 - [ ] §9.1 (line 866–871) relies on "the T1 blob's per-instruction
       PC table (which BeamAsm already maintains for line-number
@@ -511,6 +780,8 @@ Organised into six categories:
 - [ ] If the table is only maintained for DWARF/line-info and gets
       sparse compilation (some BEAM ops don't emit a PC entry), T2's
       deopt model breaks. Add an explicit Phase 0 audit task.
+
+fix
 
 ### D9. Tracing / system-event matrix beyond §12.5
 - [ ] §12.5 enumerates trace primitives at a high level. But
@@ -526,6 +797,10 @@ Organised into six categories:
 - [ ] And: `erlang:trace_pattern(_, true, [global])` — enabling
       tracing on every export of a module wholesale. Does T2 have to
       jettison every blob that called into that module?
+
+Yes, most likely it will have to. We can make the jettison temporary
+as most likely the trace will dissapear after a while.
+
 - [ ] §17 Phase 0 (line 1567–1577) mentions "trace audit" as a
       deliverable. Move (or copy) the full matrix into §12.5 once
       the audit completes — but at minimum the plan should commit to
@@ -533,18 +808,46 @@ Organised into six categories:
       scope. Currently §12.5 has only "examples", and §17 mentions
       it once.
 
+**Resolution: ship the matrix in §12.5.** Phase 0 deliverable
+becomes a complete table covering:
+
+- Every `erlang:trace/3` flag (`call`, `return_to`,
+  `running_procs`, `procs`, `garbage_collection`, `send`,
+  `receive`, `arity`, `set_on_first_link`, `set_on_link`,
+  `set_on_first_spawn`, `set_on_spawn`, `silent`, `timestamp`,
+  `cpu_timestamp`, `monotonic_timestamp`,
+  `strict_monotonic_timestamp`).
+- Every match-spec action (`message`, `set_seq_token`,
+  `enable_trace`, `disable_trace`, `display`, `caller`, `silent`,
+  `trace`, `process_dump`, `exception_trace`, `return_trace`).
+- Every `erlang:system_monitor` event (`long_gc`, `large_heap`,
+  `long_schedule`, `long_message_queue`, `busy_dist_port`,
+  `busy_port`).
+- `erlang:trace_pattern(_, true, [global])` wholesale enable.
+- `save_calls`.
+
+For each, classify: **inline-preserved** / **Export-indirection-
+preserved** / **requires jettison** / **requires temporary
+jettison-and-recompile**. The matrix lands as a table in §12.5.
+
 ### D10. Compile-pipeline observability format
 - [ ] §16 (line 1529–1558) lists ETS counters. What about logs?
       JSC has a JIT logger (`-d` flag) that prints per-compile
       decisions: which functions were compiled, why a speculation
       was inserted, why a recompile happened. Erlang's analogue
       would be `logger:debug` integration or a dedicated trace event.
+
+Yes, we need debug tools like this. There is +Jdump today that should
+enable T2 dumping as well.
+
 - [ ] Include in §16: a per-compile event log (configurable,
       default off, costs nothing when off). Same for deopts.
 
 ---
 
 ## E. Editorial cleanup
+
+fix all these.
 
 ### E1. Duplicate `### 6.4` heading
 - [ ] See A2.
@@ -651,6 +954,14 @@ Organised into six categories:
       being underwhelming on the canonical `lists:foldl` case (which
       is the headline win — see F2).
 
+1. We will have to have some small prototype quickly that shows that
+   the concepts will deliver real value, but if they do, then 18 months
+   is ok.
+2. All the phases are on a branch until we are done. If the early
+   prototype shows promise, we will have to co-ordinate with upstream.
+3. It will not ship separately, we'll co-ordinate with master to keep
+   merge conflicts at a minimum.
+
 ### F2. Inlining thesis not sized against real workloads
 - [ ] §2 asserts "inlining is the core value" — but the plan never
       quantifies the upside on representative code. How much of an
@@ -664,6 +975,9 @@ Organised into six categories:
       candidates by category. If 60% of hot inline candidates are
       polymorphic remote calls, v1 (monomorphic-only) misses most
       of the wins.
+
+Yeah, we need some good benchmarks. RabbitMQ have been good in the
+past. Also dialyzer + the elixir compiler are good candidates.
 
 ### F3. No comparison with simpler alternatives
 - [ ] Plausible alternatives the plan doesn't discuss:
@@ -686,6 +1000,8 @@ Organised into six categories:
       "alternatives-considered" section would strengthen the case
       for choosing T2 specifically.
 
+Ok, add such sections.
+
 ### F4. HiPE lesson incompletely applied
 - [ ] §14 invokes the HiPE lesson ("This is where HiPE lost") for
       mode-mixing. But HiPE's failure modes were broader: code-size
@@ -699,6 +1015,8 @@ Organised into six categories:
       also not zero-effort to keep working as the AOT compiler and
       runtime evolve. If the maintainership story is "OTP team owns
       it", that's a real ongoing commitment that should be named.
+
+It is owned by OTP team.
 
 ### F5. Asymmetric tier sequencing
 - [ ] Most reviewed JITs (JSC, V8, ZJIT, HotSpot) are "warm tiers
@@ -714,6 +1032,10 @@ Organised into six categories:
       already won most of the wins. This is mentioned obliquely in
       §17 risks; should be a headline expectation in §1 (Goals) so
       stakeholders aren't surprised.
+
+We need to start by analyzing the code of benchmark projects and
+see which patterns a T2 could help with there. The first T2 implementation
+cannot be slower than T1 as then it is dead in the water.
 
 ---
 
