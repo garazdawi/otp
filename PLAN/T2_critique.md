@@ -1518,27 +1518,57 @@ Phase 0 measurement task:
    >   to how skewed the callee's branch distribution is — typical
    >   for Erlang dispatch patterns.
 
-4. **Phase 0 audit: branch-density bucketing.** Add to the F2
-   corpus measurement (already in Phase 0 audits):
+4. **Phase 0 audit: branch-density bucketing + numeric corpus.**
+   Add to the Phase 0 corpus measurement:
 
    > **Branch density.** Bucket the F2 corpus's hot-path BEAM
    > ops by ratio of branch ops (`is_*`, `select_val`,
    > `select_arity`, `branch`) to total ops. Measure T2 wins
-   > separately on the high-branch and low-branch buckets. If
-   > the wins are very different (predicted: yes, with the
-   > low-branch bucket capturing most of the upside), the plan
-   > must explicitly state that v1's wins are concentrated on
-   > the lower-branch-density tail of real Erlang code, and
-   > stakeholder expectations are set accordingly.
+   > separately on the high-branch and low-branch buckets.
+   >
+   > **Numeric corpus.** Alongside the application corpus
+   > (RabbitMQ / dialyzer / Elixir compiler — the F2 set), use
+   > the **Computer Language Benchmarks Game** Erlang programs
+   > as a dedicated numeric/non-branchy corpus. HiPErJiT
+   > evaluated against the CLBG set in their Table 2; their best
+   > wins (1.77× average) were here. This corpus is small,
+   > stable, and well-understood across language implementations,
+   > so it's both a reasonable numeric-code benchmark and a
+   > comparison point with HiPE / HiPErJiT / Pyrlang.
+   >
+   > Phase 0 reports T2 measurements on **both** corpora,
+   > separately. Wins on the application corpus tell us about
+   > today's Erlang workloads; wins on the numeric corpus tell
+   > us about the *expanded* workloads T2 may unlock.
 
-The honest framing this leads to (worth adding to §1's hard
-floor or §2's "Why T2"): **the optimization wins T2 produces are
-concentrated on the small fraction of Erlang code that's loop-
-heavy or arithmetic-heavy. The bulk of typical Erlang code is
-branchy state-machine logic where T2's gains come from cold-arm
-pruning and DOMJIT-style guard elimination, not from inlining or
-loop optimisation.** Setting that expectation up front avoids
-the ZJIT-style "shipped at slower than the baseline" surprise.
+**On the endogenous-workload-shape point.** Today's Erlang code
+is branchy partly *because* BeamAsm doesn't optimise numeric
+code well; performance-sensitive numeric work gets pushed to
+NIFs, and those use cases never accumulate as Erlang code in the
+first place. If T2 makes numeric Erlang code competitive with
+hand-written NIFs (or close), users may start writing more of
+it — and the "branchy-Erlang reality" assumption shifts.
+
+This means M7's framing shouldn't be fatalistic. Two takeaways:
+
+- **Honest framing for §1's hard floor**: T2's measurable wins on
+  *today's* Erlang workloads come predominantly from cold-arm
+  pruning and DOMJIT-style guard elimination on branchy code.
+  The numeric/loop wins are real but currently apply to a
+  smaller fraction of production code.
+- **Aspiration for §2's "Why T2"**: numeric and loop-heavy code
+  is the *expansion target*. If T2 closes the gap to NIF-level
+  performance on the CLBG corpus, code that today lives outside
+  Erlang (in NIFs, in C ports, or in different languages
+  entirely) becomes plausible Erlang. This is the longer-term
+  payoff that justifies the inlining + speculation infrastructure
+  even when the immediate application-corpus wins look modest.
+
+So: keep the inlining and loop work in v1 (don't descope based
+on branchy-corpus measurements alone); just don't *promise*
+application-corpus wins that match HiPE's CLBG numbers. The two
+corpora measure two different things and the plan should report
+both honestly.
 
 1. Walk top to bottom.
 2. For each `[ ]`, edit the **Suggested resolution** if you disagree
