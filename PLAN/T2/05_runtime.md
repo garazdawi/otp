@@ -228,7 +228,10 @@ When the budget is full and a new T2 compile is requested:
 
 1. Find the T2 blob with the lowest "useful work / bytes" score
    (active execution counter from §13.3 / blob size).
-2. Revert its `Export.addressv` to the T1 blob.
+2. Revert the function's prologue patch (`b <reach target>` →
+   `b next`) so future entries fall through to T1, and free the
+   trampoline slot if one was used. See
+   `06_dispatch_and_sideexit.md` §5.
 3. Move the blob into the tombstone set; do not free yet.
 4. Lazy stack scan (§14.2) drains references over time.
 5. Compile the new function.
@@ -291,9 +294,11 @@ code loader notifies the JIT server. The server:
    commits — sub-race (a) from the critique B3).
 2. Identifies all T2 blobs depending on the affected modules
    via the reverse index (§14.1).
-3. For each such blob: revert `Export.addressv` to T1, move the
-   blob into the tombstone set (§13.1), bump
-   `t2_global_gen`. Memory stays mapped.
+3. For each such blob: revert the function's prologue patch so
+   future entries fall through to T1, free any trampoline slot,
+   move the blob into the tombstone set (§13.1), bump
+   `t2_global_gen`. Memory stays mapped. Full sequence in
+   `06_dispatch_and_sideexit.md` §5.
 
 **Generation counter.** Two new per-process fields:
 
@@ -370,9 +375,10 @@ What happens:
 1. Loader notifies JIT server of upcoming reload of this module.
 2. JIT server reverse-indexes blobs depending on this module —
    `example/1`'s T2 blob is one of them.
-3. JIT server reverts `Export.addressv` for `example/1` to T1,
-   moves the T2 blob into the tombstone set, bumps
-   `t2_global_gen`.
+3. JIT server reverts `example/1`'s prologue patch (so future
+   entries flow through to the existing T1 body), frees the
+   trampoline slot if one was used, moves the T2 blob into the
+   tombstone set, bumps `t2_global_gen`.
 4. New module commits. Future `example/1` calls go to T1, which
    calls the *new* `sum/2`.
 5. Existing processes mid-execution in `example/1`'s T2 blob:
@@ -445,7 +451,8 @@ Required for tracing (§12.5), watchpoint invalidation (§14), and
 recompilation backoff (§9.5). In the outer function the mechanism
 is trivial: jump to T1's compiled code at the same instruction. In
 inlined regions, deopt via the per-region deopt stub emitted from
-codegen-time framestate metadata (§9.2 in `02_pipeline.md`).
+codegen-time framestate metadata (§9.2 in
+`03_compilation_and_speculation.md`).
 
 **OSR-entry (deferred).** Mid-execution transition from T1 up to
 T2. Hot loops that don't span a tier-up-triggering function call

@@ -585,18 +585,18 @@ that hold the resulting prose. The critique itself is archived as
   uniform regardless of nesting depth. Codegen-time framestate
   metadata records the live-X-reg map; no runtime CP materialisation,
   no chain walk, no multi-frame deopt dispatch.
-  (`02_pipeline.md` §9.2.)
+  (`03_compilation_and_speculation.md` §9.2.)
 - **Deopt is legal at sync points only** (G10), which include
   function entry, calls/returns, GC sites, BIF boundaries,
   speculation guards, tracing-relevant points, and receive safe
   points. Mid-arithmetic deopt is impossible by construction.
-  (`02_pipeline.md` §9.3.)
+  (`03_compilation_and_speculation.md` §9.3.)
 - **Eager deopt on GC inside inlined regions** (H1, M2). GC sites
   inside an inlined region behave as deopt points — restore X/Y
   from framestate metadata, branch to T1's PC, T1 handles the GC.
   Trades the per-GC inlining win for architectural simplicity (no
   inlined-region GC stackmap, no spill-tagged-to-Y machinery).
-  (`02_pipeline.md` §9.2; `04_runtime.md` §12.3.)
+  (`03_compilation_and_speculation.md` §9.2; `05_runtime.md` §12.3.)
 
 ### Profile feedback and speculation
 
@@ -607,19 +607,19 @@ that hold the resulting prose. The critique itself is archived as
 - **Stable speculation-site IDs across recompiles** (H6). IDs are
   hashes of `{source_BEAM_PC, speculation_kind, narrowed_type}`,
   stable until the underlying BEAM SSA changes; module reload
-  resets. (`02_pipeline.md` §9.5.)
+  resets. (`03_compilation_and_speculation.md` §9.5.)
 - **Speculation-range auto-selection** (H8). Range = `clamp(observed
   × 1.5, ±2^58)`. If observed range exceeds the cap, no
   `speculate_range` is emitted; arithmetic falls back to generic
-  with overflow check. (`02_pipeline.md` §9.4.)
+  with overflow check. (`03_compilation_and_speculation.md` §9.4.)
 - **Per-call-site monomorphic-target slot, with frequency** (M5).
   Each slot records target identity *and* incoming call count.
   Frequency drives both inlining priority and tier-up target
-  selection. (`02_pipeline.md` §7.5.)
+  selection. (`02_profiling.md` §7.5.)
 - **Branch-frequency counters in v1, not v2** (M7). Move from "v2"
   to "v1 Phase 2", alongside type narrowing. Branchy Erlang code is
   the primary corpus; cold-arm pruning is one of the largest wins
-  T2 can extract. (`02_pipeline.md` §7.7.)
+  T2 can extract. (`02_profiling.md` §7.7.)
 
 ### Inlining and code generation
 
@@ -628,7 +628,7 @@ that hold the resulting prose. The critique itself is archived as
   `jit_inline => #{...}` on `b_function.anno`. Manual `-jit_inline`
   attributes remain for the rare auto-conservative case. The BIF
   manifest stays manual (those need T2-side IR-op implementations).
-  (`03_optimization.md` §10.1.)
+  (`04_optimization.md` §10.1.)
 - **`length/1` is not inlined** (I2). Treated as an opaque BIF call
   in v1 — the existing T1 BIF implementation handles trap-out and
   is fast enough that inline lowering doesn't pay the complexity.
@@ -637,22 +637,22 @@ that hold the resulting prose. The critique itself is archived as
   call site if a prior compile saw a deopt traced to inlining the
   callee at that site. Other call sites of the same callee remain
   eligible. Keyed by `{caller_BEAM_PC, callee_MFA}` via the H6
-  hash. (`03_optimization.md` §10.3.)
+  hash. (`04_optimization.md` §10.3.)
 - **Cold-arm pruning during inlining** (M7). When inlining a callee
   with N clause heads, consult the §7.7 branch-frequency counters
   and inline only arms with ≥ 5% observed frequency; replace cold
-  arms with a deopt to T1. (`03_optimization.md` §10.3.)
+  arms with a deopt to T1. (`04_optimization.md` §10.3.)
 - **Tier-up target selection** (M1). The function that trips its
   call counter is not necessarily the right compile unit. The JIT
   server consults reverse call-frequency to identify a dominant
   caller and compile *up* the call chain (≤ 2 levels). Annotated
   higher-order helpers (`jit_inline => #{fun_arg_pos => N}`) don't
-  tier up standalone. (`02_pipeline.md` §7.5; `04_runtime.md`
+  tier up standalone. (`02_profiling.md` §7.5; `05_runtime.md`
   §15.1.)
 - **Pass-list ordering** (I6). Speculative-arithmetic lowering moves
   before loop-info analysis (now step 9.5, was 14), so unrolling
   duplicates the already-lowered (smaller) form.
-  (`02_pipeline.md` §8.1.)
+  (`03_compilation_and_speculation.md` §8.1.)
 - **Sync-point markers are authoritative from IR construction** (I7).
   Marked at step 1 of the pipeline; subsequent passes may not move
   work across a sync-point op in a way that violates the
@@ -661,29 +661,29 @@ that hold the resulting prose. The critique itself is archived as
   live across two sync points with different T1-mandated X-reg
   constraints, the allocator emits a move (or spill+reload) between
   them. Phase 1 measures conflict frequency.
-  (`03_optimization.md` §11.2.)
+  (`04_optimization.md` §11.2.)
 - **Use of T1-pinned X-regs inside inlined regions** (H2). The
   allocator may freely use x25–x28 / x15–x17 as scratch *inside* an
   inlined region; outer values they held at entry are spilled
   alongside H1/M2's eager-deopt mechanism.
-  (`03_optimization.md` §11.3.)
+  (`04_optimization.md` §11.3.)
 
 ### Reductions, scheduling, and the cache
 
 - **Active-execution-counter sharding bound** (H4). Per-scheduler-
   sharded counter, capped at `MAX_SHARDS = 8` (default). Schedulers
   beyond the cap share shards. Same bound applies to C8 profile
-  counters. (`04_runtime.md` §13.3.)
+  counters. (`05_runtime.md` §13.3.)
 - **Counter-decay implementation** (J7). Periodic timer in the JIT
   server visits all blob counters every K seconds (default 60),
   applies `counter := counter / 2`. Tunable via
-  `+JT2decay_interval`. (`04_runtime.md` §13.3.)
+  `+JT2decay_interval`. (`05_runtime.md` §13.3.)
 - **Queue-drop counter reset** (H5). On compile-queue drop, the
   function's call counter is reset to `threshold − probe_value`
   (default `probe_value = threshold / 4`) so it retrips after a
-  small number of additional calls. (`04_runtime.md` §15.3.)
+  small number of additional calls. (`05_runtime.md` §15.3.)
 - **Saturation budget** (I5). `N = 256, max_retries = 8` (2048
-  ticks total). Calibrated in Phase 0. (`04_runtime.md` §15.2.)
+  ticks total). Calibrated in Phase 0. (`05_runtime.md` §15.2.)
 
 ### Lifecycle and observability
 
@@ -693,11 +693,11 @@ that hold the resulting prose. The critique itself is archived as
   on the stack at the next CP; subsequent unwind to that depth
   triggers another bounded scan. Memory-for-latency knobs allow
   hard-RT operators to cap per-schedule-in latency.
-  (`04_runtime.md` §14.2.)
+  (`05_runtime.md` §14.2.)
 - **In-flight compile generation check** (M6). Each compile job
   captures `module_load_gen[M]` at dispatch; install-time re-reads
   it and discards the job if it has changed.
-  (`04_runtime.md` §14.2.)
+  (`05_runtime.md` §14.2.)
 - **Hibernation audit** (M3). Verify all per-process T2 metadata
   lives on the process struct directly, not on the heap. Phase 0
   audit task.
@@ -744,7 +744,7 @@ that hold the resulting prose. The critique itself is archived as
 - **T2 ⇄ BeamAsm contract** (L3). The four invariants
   (per-instruction PC table; calling-convention register
   assignments; global runtime fragments; patchable function
-  prologue) are documented in `04_runtime.md` §12.1, and
+  prologue) are documented in `05_runtime.md` §12.1, and
   `beam_jit_t2.h` enforces them via `static_assert`. CI fails the
   build on drift.
 - **Branchy-Erlang plan rebalancing** (M7). The framing change is

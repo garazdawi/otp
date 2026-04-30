@@ -48,7 +48,7 @@
   under T2-enabled mode must not regress more than **3%** vs T1-only
   mode on any tracked benchmark — that's the budget for the
   profiling, eligibility-check, and counter overhead taken
-  together. Phase 0 measurement (see `05_delivery.md` §17 audits)
+  together. Phase 0 measurement (see `07_delivery.md` §17 audits)
   sets the production target.
 
   The honest framing on what kind of code T2 wins on: **today's
@@ -56,7 +56,7 @@
   (pattern-matched dispatch trees, gen_server callbacks, protocol
   handlers). T2's measurable wins on that corpus come predominantly
   from cold-arm pruning and DOMJIT-style guard elimination
-  (`03_optimization.md` §10.7) — not from inlining or loop
+  (`04_optimization.md` §10.7) — not from inlining or loop
   optimization, which are real but apply to a smaller fraction of
   production code. The numeric/loop wins are an *expansion target*
   (see §2 below): if T2 closes the gap to NIF-level performance on
@@ -198,7 +198,8 @@ they're complementary, not competing.
         │   - receives tier-up requests from BeamAsm               │
         │   - deduplicates, queues, applies eligibility rules      │
         │   - dispatches compile job to a dirty CPU scheduler      │
-        │   - installs resulting blob, updates Export.addressv     │
+        │   - installs resulting blob, patches the function        │
+        │     prologue (NIF-style) to redirect into T2             │
         └──────────────────────┬───────────────────────────────────┘
                                │ dispatch
                                ▼
@@ -230,11 +231,16 @@ they're complementary, not competing.
         ┌──────────────────────────────────────────────────────────┐
         │  T2 blob installed                                       │
         │   - separate code cache from BeamAsm                     │
-        │   - Export.addressv patched to T2 entry                  │
+        │   - function prologue at L_f+4 patched (single 4-byte    │
+        │     store, NIF-style) to redirect into the T2 entry stub │
         │   - watchpoints registered for inlined dependencies      │
-        │   - `Export.addressv` flips between T1 and T2 entries    │
-        │     (T1 code lives in the module's BeamAsm allocation; no │
-        │     separate retention)                                   │
+        │   - T1 body left intact: it's both the side-exit landing │
+        │     zone and the in-flight-caller "finish naturally"     │
+        │     fallback. Uninstall = revert the patched `b`.        │
+        │   - intra-module calls (direct relative branches baked   │
+        │     at AOT time) hit the prologue too, so they redirect  │
+        │     into T2 with no code-gen-side change. See            │
+        │     `06_dispatch_and_sideexit.md` §2 for details.        │
         └──────────────────────────────────────────────────────────┘
 ```
 
@@ -248,12 +254,13 @@ boundary. *Between* sync points the register allocator has freedom;
 this is the central optimization opportunity (§6). No mode-switch.
 
 **Memory-ordering note.** Cross-thread state shared between T2,
-T1, the JIT server, and the schedulers (the `Export.addressv`
-flip on blob install, the watchpoint table, the per-call-site
-profile slots, and the per-process tombstone scan) reuses the
-same release/acquire and thread-progress patterns BeamAsm and
-the existing code loader already employ for atomic module
-upgrade. There is no T2-specific memory-ordering protocol —
+T1, the JIT server, and the schedulers (the prologue patch on
+blob install, the watchpoint table, the per-call-site profile
+slots, and the per-process tombstone scan) reuses the same
+release/acquire and thread-progress patterns BeamAsm and the
+existing code loader already employ for atomic module upgrade
+(this is the same machinery NIF loading uses to patch the
+prologue). There is no T2-specific memory-ordering protocol —
 inheriting T1's approach is a hard architectural commitment.
 Phase 0 audits the points and confirms the pattern reuse is
 mechanical.

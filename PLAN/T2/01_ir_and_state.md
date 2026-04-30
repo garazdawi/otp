@@ -356,7 +356,7 @@ When the inlined region completes normally:
   is now valid again, and execution continues in T2 outer code.
 
 Nested inlining: each inlined region pushes its parent CP at region
-entry (eager-CP — see §9.2 in `02_pipeline.md`). Codegen-time
+entry (eager-CP — see §9.2 in `03_compilation_and_speculation.md`). Codegen-time
 framestate metadata chains via `parent_fs` to record the live-X-reg
 map at each outer level, but no runtime CP materialisation is needed
 — the CP frames are already on the Erlang stack from the eager
