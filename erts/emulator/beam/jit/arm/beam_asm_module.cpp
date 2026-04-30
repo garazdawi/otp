@@ -626,6 +626,11 @@ void BeamModuleAssembler::bind_veneer_target(const Label &target) {
 }
 
 void BeamModuleAssembler::emit_int_code_end() {
+    /* MVP T2: emit specialized bodies for every function the hook
+     * registered. Must happen *before* code_end because the dispatch
+     * table that follows assumes everything past it is unreachable. */
+    emit_t2_specializations();
+
     /* This label is used to figure out the end of the last function */
     code_end = a.new_label();
     a.bind(code_end);
@@ -660,6 +665,192 @@ void BeamModuleAssembler::emit_line(const ArgWord &Loc) {
      * comparisons. */
 
     flush_last_error();
+}
+
+/* ============================================================
+ * MVP T2 specialized codegen.
+ *
+ * For each function the hook in emit_i_test_yield registered, we
+ * emit a hand-coded specialized body here. Functions that don't have
+ * a specialization fall back to T1 immediately (b side_exit).
+ *
+ * The specialized bodies live between the last function's body and
+ * the dispatch table at code_end. Callers reach them via
+ *   public_label -> prologue -> i_test_yield -> b t2_entry
+ * and side-exit back via
+ *   t2_entry -> ... guard fail ... -> b side_exit
+ * where side_exit is bound immediately after the hook's branch, so
+ * the existing T1 body emitted by the JIT becomes the fallback.
+ * ============================================================ */
+
+void BeamModuleAssembler::emit_t2_specializations() {
+    if (t2_entries.empty()) {
+        return;
+    }
+
+    comment("===== MVP T2 specialized bodies =====");
+
+    for (const auto &entry : t2_entries) {
+        comment("T2 body for %T:%T/%d", mod, entry.function, entry.arity);
+        a.bind(entry.t2_entry);
+
+        if (erts_is_atom_str("total", entry.function, 0) && entry.arity == 2) {
+            emit_t2_total_2(entry);
+        } else {
+            /* No specialization for this function (yet). Fall back to T1. */
+            comment("(no specialization — fall back to T1)");
+            a.b(entry.side_exit);
+        }
+    }
+}
+
+void BeamModuleAssembler::emit_t2_total_2(const T2FunctionEntry &entry) {
+    /* Specialized body for `total/2`:
+     *   total([], Net) -> Net;
+     *   total([{A, F} | Rest], Net) -> total(Rest, Net + diff(A, F)).
+     *
+     * Entry contract (matches T1's body entry — i.e. immediately
+     * after i_test_yield's reduction decrement):
+     *   XREG0 = list (tagged)
+     *   XREG1 = Net  (tagged smallint)
+     *   x30   = LR
+     *   CP already on E stack
+     *   FCALLS already decremented
+     *
+     * On any guard failure: restore iter-start XREG0/XREG1 and branch
+     * to entry.side_exit (T1 body), which re-runs the iteration the
+     * normal way.
+     *
+     * Step 3 keeps the call to diff/2 (no inlining yet); step 4 will
+     * replace it with an inlined `A - F`. */
+    Label loop_top = a.new_label();
+    Label nil_check = a.new_label();
+    Label side_exit_restore = a.new_label();
+
+    /* Find diff/2's public entry — we call it with a direct bl. */
+    Label diff_entry;
+    bool diff_found = false;
+    for (const auto &e : t2_entries) {
+        if (erts_is_atom_str("diff", e.function, 0) && e.arity == 2) {
+            diff_entry = e.fn_entry;
+            diff_found = true;
+            break;
+        }
+    }
+    ERTS_ASSERT(diff_found && "diff/2 must be on the T2 target list");
+
+    a.bind(loop_top);
+
+    /* List shape: non-empty cons (LIST primary tag = 0b01). tbnz bit
+     * 1 → not a cons cell (NIL/boxed/immed all have bit 1 set
+     * relative to LIST's 0b01). XREG0 untouched, so a side-exit here
+     * doesn't need any restore. */
+    a.tbnz(XREG0, imm(1), nil_check);
+
+    /* Untag list pointer, load head/tail. */
+    a.and_(TMP1, XREG0, imm(~Uint64{0x7}));
+    a.ldp(TMP2, TMP3, a64::Mem(TMP1)); /* head -> TMP2, tail -> TMP3 */
+
+    /* Head must be boxed (BOXED primary tag = 0b10). tbnz bit 0 → not
+     * boxed. Side-exit goes directly to T1 body (no restore needed —
+     * we haven't mutated XREG0 or XREG1 yet). */
+    a.tbnz(TMP2, imm(0), entry.side_exit);
+
+    /* Untag tuple, load + check arity-2 header. */
+    a.and_(TMP1, TMP2, imm(~Uint64{0x7}));
+    a.ldr(TMP4, a64::Mem(TMP1));
+    a.cmp(TMP4, imm(make_arityval(2)));
+    a.b_ne(entry.side_exit);
+
+    /* Load A (TMP4) and F (TMP5) from the tuple. */
+    a.ldp(TMP4, TMP5, a64::Mem(TMP1, sizeof(Eterm)));
+
+    /* Combined fixnum check on (A | F). Side-exit goes direct (no
+     * restore). */
+    a.orr(SUPER_TMP, TMP4, TMP5);
+    a.and_(SUPER_TMP, SUPER_TMP, imm(_TAG_IMMED1_MASK));
+    a.cmp(SUPER_TMP, imm(_TAG_IMMED1_SMALL));
+    a.b_ne(entry.side_exit);
+
+    /* Save iter-start XREG0 (the list) to XREG2 — we're about to
+     * clobber XREG0 with A. XREG2 is dead for total/2 (arity 2), so
+     * it's free scratch. Iter-start XREG1 (Net) is saved on the
+     * stack below as part of the call setup, so it doesn't need a
+     * separate copy here. */
+    a.mov(XREG2, XREG0);
+
+    /* Save tail and Net across the call. (We can't keep them in TMP
+     * regs because diff/2 may clobber them.) */
+    a.sub(E, E, imm(16));
+    a.stp(TMP3, XREG1, a64::Mem(E));
+
+    /* Set up diff/2 args: XREG0 = A, XREG1 = F. */
+    a.mov(XREG0, TMP4);
+    a.mov(XREG1, TMP5);
+
+    /* bl diff/2 — lands at the public entry, runs prologue + yield +
+     * (degenerate T2 hook for diff/2) + T1 body. Returns with XREG0
+     * holding the result. */
+    erlang_call(diff_entry);
+
+    /* Reload tail and Net. */
+    a.ldp(TMP3, XREG1, a64::Mem(E));
+    a.add(E, E, imm(16));
+
+    /* Net + result with combined fixnum/overflow check. Same trick T1
+     * uses for `gc_bif2 +`:
+     *   1. Strip tag bits from one operand (`and -16`).
+     *   2. Add the raw to the still-tagged other operand (so the tag
+     *      bits flow through to the result).
+     *   3. AND the originals' tag bits and check both are smallint
+     *      tags (1111).
+     *   4. ccmp the tag check conditional on no signed overflow (LS
+     *      = C=0 || Z=1, which subsumes V=0 for our case).
+     *   5. b.ne to side-exit if either condition fails.
+     * Total: 7 insns vs 10 for the explicit asr/adds/b.vs/lsl/orr
+     * pattern. */
+    a.and_(TMP1, XREG0, imm(~_TAG_IMMED1_MASK)); /* result raw */
+    a.adds(TMP2, XREG1, TMP1);                   /* Net (tagged) + raw */
+    a.and_(TMP1, XREG0, XREG1);                  /* AND tags */
+    a.and_(TMP1, TMP1, imm(_TAG_IMMED1_MASK));
+    a.ccmp(TMP1,
+           imm(_TAG_IMMED1_SMALL),
+           imm(NZCV::kNone),
+           imm(arm::CondCode::kVC));
+    a.b_ne(side_exit_restore);
+
+    /* Commit: XREG1 = new Net. */
+    a.mov(XREG1, TMP2);
+
+    /* X[0] = tail. */
+    a.mov(XREG0, TMP3);
+
+    /* Tail-call: pop CP, branch to public function entry (which
+     * re-pushes CP, decrements FCALLS, hits the hook again, and lands
+     * back here). */
+    a.ldr(a64::x30, a64::Mem(E).post(8));
+    a.b(entry.fn_entry);
+
+    /* === NIL check (X[0] is nil → empty list, return Net) === */
+    a.bind(nil_check);
+    a.cmp(XREG0, imm(NIL));
+    a.b_ne(entry.side_exit);
+
+    /* Result = Net. Move and return like T1 does. */
+    a.mov(XREG0, XREG1);
+    a.ldr(a64::x30, a64::Mem(E).post(8));
+    a.subs(FCALLS, FCALLS, imm(1));
+    a.b_mi(resolve_fragment(ga->get_dispatch_return(), disp1MB));
+    a.ret(a64::x30);
+
+    /* === Post-call side-exit: XREG0 was clobbered with the diff
+     * result; restore the iter-start list from XREG2 and jump to T1
+     * body. (Net is still in XREG1 from the post-call ldp above —
+     * it's iter-start.) === */
+    a.bind(side_exit_restore);
+    comment("T2 side-exit (post-call): restore iter-start list, b T1 body");
+    a.mov(XREG0, XREG2);
+    a.b(entry.side_exit);
 }
 
 void BeamModuleAssembler::emit_func_line(const ArgWord &Loc) {

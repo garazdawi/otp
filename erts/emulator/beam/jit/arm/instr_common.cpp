@@ -3115,34 +3115,27 @@ void BeamModuleAssembler::emit_i_test_yield() {
     ASSERT((a.offset() - code.label_offset_from_base(current_label)) ==
            TEST_YIELD_RETURN_OFFSET);
 
-    /* MVP T2 hook: for T2-targeted functions, emit a degenerate
-     * "side-exit" — a `b` to the immediately-following instruction.
-     * This proves that:
-     *   1. The hook fires for the right MFAs and only those (verified
-     *      by `+JDdump`).
-     *   2. The prologue-and-yield layout invariant is preserved
-     *      (TEST_YIELD_RETURN_OFFSET assertion above).
-     *   3. The function body still executes correctly when the side-
-     *      exit branch lands one instruction later (round-trip
-     *      correctness — verified end-to-end by running run(N)).
-     * The branch is statically predicted not-taken-but-fall-through
-     * by aarch64 frontends, so the cost is at most one issue slot per
-     * iteration; in practice timing is indistinguishable from the
-     * baseline.
-     *
-     * Subsequent steps will replace this with: (a) a forward branch
-     * to a real T2 code region, and (b) a real side-exit stub that
-     * re-tags any raw fixnums and jumps to a separate T1-entry label
-     * with the X-register save area populated. */
+    /* MVP T2 hook: for T2-targeted functions, register a T2 entry
+     * (emitted later by emit_t2_specializations) and branch to it.
+     * The side_exit label is bound here, so anything emitted next —
+     * the existing T1 function body — becomes the T1 fallback that
+     * T2 returns to on guard failure. */
     if (code_header.is_valid() && t2_mvp_is_target()) {
-        Label t1_entry = a.new_label();
-        comment("MVP T2 hook for %T:%T/%d — degenerate side-exit "
-                "(b to next insn)",
+        Label t2_entry = a.new_label();
+        Label side_exit = a.new_label();
+
+        t2_entries.push_back({current_function,
+                              current_arity,
+                              current_label,
+                              t2_entry,
+                              side_exit});
+
+        comment("MVP T2 hook for %T:%T/%d — branch to T2 region",
                 mod,
                 current_function,
                 current_arity);
-        a.b(t1_entry);
-        a.bind(t1_entry);
+        a.b(t2_entry);
+        a.bind(side_exit);
     }
 }
 

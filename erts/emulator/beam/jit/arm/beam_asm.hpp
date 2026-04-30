@@ -1112,6 +1112,25 @@ public:
      * Defined in beam_asm_module.cpp. */
     bool t2_mvp_is_target() const;
 
+    /* MVP T2 step 3: per-function record of the labels needed to wire
+     * up T2-specialized code. Populated by the hook in emit_i_test_yield;
+     * consumed by emit_t2_specializations during emit_int_code_end. */
+    struct T2FunctionEntry {
+        Eterm function;
+        unsigned arity;
+        Label fn_entry;     /* public function entry (where callers land) */
+        Label t2_entry;     /* start of T2 specialized code for this fn  */
+        Label side_exit;    /* T1 fallback (T1 body emits right after)   */
+    };
+    std::vector<T2FunctionEntry> t2_entries;
+
+    /* Emit specialized T2 bodies for every function registered in
+     * t2_entries. Called once, near the end of module codegen. */
+    void emit_t2_specializations();
+
+    /* Per-MFA hand-coded specializations. */
+    void emit_t2_total_2(const T2FunctionEntry &entry);
+
     void codegen(JitAllocator *allocator,
                  const void **executable_ptr,
                  void **writable_ptr,

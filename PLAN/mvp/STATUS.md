@@ -1,6 +1,6 @@
 # T2 MVP Implementation Status
 
-Last updated: 2026-04-30 (step 2 landed).
+Last updated: 2026-04-30 (step 3 landed).
 
 ## Steps from `T2_mvp.md`
 
@@ -8,9 +8,84 @@ Last updated: 2026-04-30 (step 2 landed).
 |------|--------|----------|
 | 1. Benchmark + T1 baseline | ✅ done | `t2_mvp.erl`, `t1_baseline.asm`, `baseline.md` |
 | 2. Side-exit round-trip (infrastructure) | ✅ done | hook in `arm/instr_common.cpp`, `t2_step2.asm` |
-| 3. SSA → asmjit codegen | ⏳ next | — |
-| 4. Inlining of `diff/2` | ⏳ blocked on 3 | — |
+| 3. SSA → asmjit codegen | ✅ done | T2 region in `arm/beam_asm_module.cpp`, `t2_step3.asm` |
+| 4. Inlining of `diff/2` | ⏳ next | — |
 | 5. Measurement + writeup | ⏳ blocked on 4 | — |
+
+## Step 3 (done)
+
+**Goal**: emit a real T2 code region with specialized `total/2`, side-
+exit to T1 on guard failure. `diff/2` is on the T2 list with a
+degenerate hook (no inlining yet — that's step 4).
+
+### What landed
+
+- `T2FunctionEntry` struct + `t2_entries` vector on
+  `BeamModuleAssembler` (`arm/beam_asm.hpp:1110-1120`).
+- The hook in `emit_i_test_yield` registers an entry per T2-targeted
+  function and emits `b t2_entry`; the immediately-following label is
+  `side_exit`, which the existing T1 body uses as its label.
+- New `emit_t2_specializations()` runs at the start of
+  `emit_int_code_end`, emitting one specialized body per registered
+  entry. For unrecognised MFAs (currently `diff/2`) it falls back to
+  `b side_exit`.
+- New `emit_t2_total_2()`: hand-coded specialized `total/2` that
+  performs cons + tuple destructuring + `diff/2` call + `i_plus`,
+  using:
+  - One `tbnz` for non-empty-cons check (skip on NIL/improper).
+  - One `tbnz` for boxed check on the head.
+  - Single `cmp` against `make_arityval(2)` for tuple shape.
+  - Combined `(A | F)` fixnum check (one `orr/and/cmp/b.ne`).
+  - T1's own combined `adds + ccmp(VC)` pattern for the `Net + diff`
+    accumulate (saves 3 insns vs a naive untag/add/retag sequence).
+  - Side-exit restores the iter-start list (saved to `XREG2` only at
+    the moment of mutation) and branches to the T1 body label, where
+    T1 takes over for the remainder of the iteration.
+
+### Verification
+
+- **Correctness**: `run(N)` for N ∈ {100, 1k, 10k, 100k, 1M}
+  produces the same net total as the T1 baseline.
+- **Side-exit on shape mismatch**: `total([{1,1}, {2,2}, {3,3,3},
+  {4,4}], 0)` raises `function_clause` with the 3-tuple slice as the
+  failing arg in the stack trace — T1 took over at exactly the
+  failing iteration.
+- **Side-exit on bignum**: `total([{1 bsl 60, 0}, {1 bsl 60, 0}], 0)`
+  produces `2^61` correctly via T1 fallback.
+- **Hook fires for the right MFAs only**: `t2_step3.asm` shows
+  specialized body for `total/2`, degenerate fallback for `diff/2`,
+  and nothing for `run/1`, `mk_txns/2`, etc.
+
+### Timing
+
+| version | median | min | ns/iter |
+|---------|--------|-----|---------|
+| T1 baseline (step 1) | 1.85 ms | 1.77 ms | 1.85 |
+| T2 step 2 (degenerate hook) | 1.73 ms | 1.70 ms | 1.73 |
+| T2 step 3 (specialised body) | **1.74 ms** | 1.68 ms | 1.74 |
+
+A modest improvement, as expected for this step. Per-iteration
+instruction counts:
+
+| version | T2 body | diff/2 call | total |
+|---------|---------|-------------|-------|
+| T1 (no T2) | n/a | inline (16 ovh) | ~48 |
+| T2 step 3 | 31 | ~16 ovh | ~47 |
+| T2 step 4 (predicted) | ~15 | inlined (0 ovh) | ~15–18 |
+
+The big win is in step 4 when the `bl diff/2` call frame and its
+prologue/yield/epilogue go away — that's the headline 2–5× the plan
+asks for. Step 3 is the foundation the inlining slots into.
+
+### Files changed
+
+- `erts/emulator/beam/jit/arm/beam_asm.hpp` (T2FunctionEntry struct,
+  member declarations).
+- `erts/emulator/beam/jit/arm/beam_asm_module.cpp`
+  (`emit_t2_specializations`, `emit_t2_total_2`, hook into
+  `emit_int_code_end`).
+- `erts/emulator/beam/jit/arm/instr_common.cpp` (hook now registers
+  `t2_entries` rows instead of emitting a degenerate branch).
 
 ## Step 1 (done)
 

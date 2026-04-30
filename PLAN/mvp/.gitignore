@@ -1,2 +1,3 @@
 *.beam
 *.asm.tmp
+erl_crash.dump

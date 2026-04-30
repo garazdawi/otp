@@ -1,0 +1,891 @@
+L22:
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# i_flush_stubs
+# i_func_label_L
+label_1:
+# func_line_I
+# i_func_info_IaaI
+# t2_mvp:run/1
+    bl L24
+.word 0x00000000
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.byte 0x8B, 0xDD, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8B, 0xF1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# aligned_label_Lt
+run/1:
+# i_breakpoint_trampoline
+    str x30, [x20, -8]!
+    b L25
+    bl L27
+L25:
+# i_test_yield
+    adr x2, run/1
+    subs w22, w22, 1
+    b.le L29
+# allocate_tt
+    add x2, x23, 32
+    cmp x2, x20
+    b.ls L30
+    mov x3, 1
+    bl L32
+L30:
+# i_move_sd
+    mov x26, 59
+# line_I
+# i_call_f
+    bl @mk_txns/2-0
+# i_move_sd
+    mov x26, 15
+# i_call_last_ft
+    ldr x30, [x20], 8
+    b @total/2-1
+# i_flush_stubs
+# i_func_label_L
+label_3:
+# func_line_I
+# i_func_info_IaaI
+# t2_mvp:mk_txns/2
+    bl L24
+.word 0x00000000
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.byte 0x8B, 0xDD, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, 0x07, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# aligned_label_Lt
+@mk_txns/2-0:
+mk_txns/2:
+# i_breakpoint_trampoline
+    str x30, [x20, -8]!
+    b L35
+    bl L27
+L35:
+# i_test_yield
+    adr x2, mk_txns/2
+    subs w22, w22, 1
+    b.le L29
+# is_eq_exact_fss
+    cmp x25, 15
+    b.ne @label_5-2
+# i_move_sd
+    mov x25, x26
+# return
+    ldr x30, [x20], 8
+    subs w22, w22, 1
+    b.mi L38
+    ret x30
+# label_L
+@label_5-2:
+label_5:
+# line_I
+# i_minus_jIssd
+    mov x2, 31
+    subs x0, x25, 16
+    and x8, x25, 15
+# test for not overflow and small operands
+    ccmp x8, 15, 0, 9
+    b.eq L39
+    mov x1, x25
+    bl L41
+L39:
+    mov x27, x0
+# i_rem_jIssd
+    mov x2, 127
+    and x13, x25, 15
+    cmp x13, 15
+    b.ne L42
+    asr x8, x25, 4
+    mov x9, 7
+    sdiv x0, x8, x9
+    msub x1, x0, x9, x8
+    orr x1, x13, x1, 4
+    b L43
+L42:
+    mov x1, x25
+    mov x3, 4343810688
+    bl L45
+L43:
+    mov x28, x1
+# test_heap_It
+    add x2, x23, 72
+    cmp x2, x20
+    b.ls L46
+    mov x3, 4
+    bl L32
+L46:
+# put_tuple2_SA
+    mov x9, 128
+    stp x9, x25, [x23], 16
+    str x28, [x23], 8
+    sub x25, x23, 22
+# put_list_ssd
+    stp x25, x26, [x23], 16
+    sub x26, x23, 15
+# i_move_sd
+    mov x25, x27
+# i_call_only_f
+    ldr x30, [x20], 8
+    b mk_txns/2
+# i_flush_stubs
+# i_func_label_L
+    align 8
+label_6:
+# func_line_I
+# i_func_info_IaaI
+# t2_mvp:total/2
+    bl L24
+.word 0x00000000
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.byte 0x8B, 0xDD, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8B, 0xAF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# aligned_label_Lt
+@total/2-1:
+total/2:
+# i_breakpoint_trampoline
+    str x30, [x20, -8]!
+    b L47
+    bl L27
+L47:
+# i_test_yield
+    adr x2, total/2
+    subs w22, w22, 1
+    b.le L29
+# MVP T2 hook for t2_mvp:total/2 — branch to T2 region
+    b L48
+L49:
+# is_nonempty_list_fS
+    tbnz x25, 1, @label_8-3
+# get_list_Sdd
+    and x8, x25, -8
+    ldp x27, x28, [x8]
+# i_is_tuple_of_arity_fsA
+    tbnz x27, 0, label_6
+    and x0, x27, -8
+    ldr x8, [x0]
+    cmp x8, 128
+    b.ne label_6
+# allocate_tt
+    add x2, x23, 48
+    cmp x2, x20
+    b.ls L51
+    mov x3, 4
+    bl L32
+L51:
+    sub x20, x20, 16
+# store_two_values_sdsd
+    stp x28, x26, [x20]
+# load_tuple_ptr_s
+    and x0, x27, -8
+# get_two_tuple_elements_sPSS
+    ldp x25, x26, [x0, 8]
+# line_I
+# i_call_f
+    bl @diff/2-4
+# i_plus_jIssd
+    ldr x1, [x20, 8]
+    and x8, x25, -16
+    adds x0, x1, x8
+    and x8, x1, x25
+    and x8, x8, 15
+# test for not overflow and small operands
+    ccmp x8, 15, 0, 9
+    b.eq L53
+    mov x2, x25
+    bl L55
+L53:
+    mov x26, x0
+# move_call_last_ydft
+    ldr x25, [x20], 16
+    ldr x30, [x20], 8
+    b total/2
+# label_L
+@label_8-3:
+label_8:
+# is_nil_fS
+    cmp x25, 59
+    b.ne label_6
+# i_move_sd
+    mov x25, x26
+# return
+    ldr x30, [x20], 8
+    subs w22, w22, 1
+    b.mi L38
+    ret x30
+# i_flush_stubs
+# i_func_label_L
+    align 8
+label_9:
+# func_line_I
+# i_func_info_IaaI
+# t2_mvp:diff/2
+    bl L24
+.word 0x00000000
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.byte 0x8B, 0xDD, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4B, 0x07, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# aligned_label_Lt
+@diff/2-4:
+diff/2:
+# i_breakpoint_trampoline
+    str x30, [x20, -8]!
+    b L56
+    bl L27
+L56:
+# i_test_yield
+    adr x2, diff/2
+    subs w22, w22, 1
+    b.le L29
+# MVP T2 hook for t2_mvp:diff/2 — branch to T2 region
+    b L57
+L58:
+# i_minus_jIssd
+    and x8, x26, -16
+    subs x0, x25, x8
+    and x8, x25, x26
+    and x8, x8, 15
+# test for not overflow and small operands
+    ccmp x8, 15, 0, 9
+    b.eq L59
+    mov x1, x25
+    mov x2, x26
+    bl L41
+L59:
+    mov x25, x0
+# return
+    ldr x30, [x20], 8
+    subs w22, w22, 1
+    b.mi L38
+    ret x30
+# i_flush_stubs
+# i_func_label_L
+    align 8
+label_11:
+# func_line_I
+# i_func_info_IaaI
+# t2_mvp:time_run/1
+    bl L24
+.word 0x00000000
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.byte 0x8B, 0xDD, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x07, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# aligned_label_Lt
+time_run/1:
+# i_breakpoint_trampoline
+    str x30, [x20, -8]!
+    b L60
+    bl L27
+L60:
+# i_test_yield
+    adr x2, time_run/1
+    subs w22, w22, 1
+    b.le L29
+# i_move_sd
+    mov x26, 1615
+# i_call_only_f
+    ldr x30, [x20], 8
+    b @time_run/2-5
+# i_flush_stubs
+# i_func_label_L
+    align 8
+label_13:
+# func_line_I
+# i_func_info_IaaI
+# t2_mvp:time_run/2
+    bl L24
+.word 0x00000000
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.byte 0x8B, 0xDD, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8B, 0x07, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# aligned_label_Lt
+@time_run/2-5:
+time_run/2:
+# i_breakpoint_trampoline
+    str x30, [x20, -8]!
+    b L62
+    bl L27
+L62:
+# i_test_yield
+    adr x2, time_run/2
+    subs w22, w22, 1
+    b.le L29
+# allocate_tt
+    add x2, x23, 72
+    cmp x2, x20
+    b.ls L63
+    mov x3, 2
+    bl L32
+L63:
+    sub x20, x20, 40
+# init_yregs_I
+    mov x8, 59
+    stp x8, x8, [x20]
+    str x8, [x20, 16]
+# store_two_values_sdsd
+    stp x26, x25, [x20, 24]
+# i_move_sd
+    mov x26, 59
+# line_I
+# i_call_f
+    bl mk_txns/2
+# i_move_sd
+    str x25, [x20, 16]
+# i_move_sd
+    ldr x26, [x20, 24]
+# i_move_sd
+    mov x25, 31
+# line_I
+# i_call_ext_e
+    ldr x0, [L64]
+    ldr x8, [x0, x24 lsl 3]
+    blr x8
+# i_move_sd
+    ldr x26, [x20, 16]
+# i_move_sd
+    mov x14, 59
+    str x14, [x20, 16]
+# i_call_f
+    bl @'-time_run/2-lc$^0/1-0-'/2-6
+# line_I
+# i_call_ext_e
+    ldr x0, [L66]
+    ldr x8, [x0, x24 lsl 3]
+    blr x8
+# line_I
+# i_int_div_jIssd
+    ldr x1, [x20, 24]
+    mov x2, 47
+    and x13, x1, 15
+    cmp x13, 15
+    b.ne L67
+# optimized div by replacing with right shift
+    add x10, x1, x1, lsr 63
+    orr x0, x13, x10, asr 1
+    b L68
+L67:
+    mov x3, 4343810664
+    bl L45
+L68:
+    mov x26, x0
+# i_move_sd
+    str x25, [x20, 16]
+# swap_dd
+    mov x8, x26
+    mov x26, x25
+    mov x25, x8
+# i_call_ext_e
+    ldr x0, [L69]
+    ldr x8, [x0, x24 lsl 3]
+    blr x8
+# line_I
+# bif_hd_sd
+    ldr x8, [x20, 16]
+    tbz x8, 1, L70
+    mov x25, x8
+    bl L72
+L70:
+    ldur x9, [x8, -1]
+    str x9, [x20, 8]
+# i_move_sd
+    str x25, [x20]
+# i_move_sd
+    ldr x25, [x20, 16]
+# line_I
+# i_call_ext_e
+    ldr x0, [L73]
+    ldr x8, [x0, x24 lsl 3]
+    blr x8
+# line_I
+# i_int_div_jIssd
+    ldr x1, [x20, 24]
+    mov x2, 47
+    and x13, x1, 15
+    cmp x13, 15
+    b.ne L74
+# optimized div by replacing with right shift
+    add x10, x1, x1, lsr 63
+    orr x0, x13, x10, asr 1
+    b L75
+L74:
+    mov x3, 4343810664
+    bl L45
+L75:
+    mov x26, x0
+# i_move_sd
+    ldr x27, [x20, 16]
+# i_move_sd
+    str x25, [x20, 16]
+# i_move_sd
+    mov x25, x26
+# i_move_sd
+    mov x26, x27
+# i_call_ext_e
+    ldr x0, [L69]
+    ldr x8, [x0, x24 lsl 3]
+    blr x8
+# fconv_sl
+    and x8, x25, 15
+    cmp x8, 15
+    b.ne L77
+    asr x8, x25, 4
+    scvtf d8, x8
+    b L76
+L77:
+    tbnz x25, 0, L78
+    and x8, x25, -8
+    ldr d8, [x8, 8]
+    ldr x8, [x8]
+    cmp x8, 88
+    b.eq L76
+L78:
+    mov x0, x25
+    bl L80
+    mov d8, d0
+L76:
+# fconv_sl
+    ldr x0, [x20, 32]
+    and x8, x0, 15
+    cmp x8, 15
+    b.ne L82
+    asr x8, x0, 4
+    scvtf d0, x8
+    b L81
+L82:
+    tbnz x0, 0, L83
+    and x8, x0, -8
+    ldr d0, [x8, 8]
+    ldr x8, [x8]
+    cmp x8, 88
+    b.eq L81
+L83:
+    bl L80
+L81:
+    str d0, [x19, 8384]
+# i_fdiv_lll
+    ldr d1, [x19, 8384]
+    fdiv d0, d8, d1
+    bl L85
+    mov d8, d0
+# test_heap_It
+    add x2, x23, 48
+    cmp x2, x20
+    b.ls L86
+    mov x3, xzr
+    bl L32
+L86:
+# fstore_ld
+    add x25, x23, 2
+    mov x9, 88
+    str x9, [x23], 8
+    str d8, [x23], 8
+# i_new_small_map_lit_dtqI
+    add x2, x23, 112
+    cmp x2, x20
+    b.ls L87
+    mov x3, 1
+    bl L32
+L87:
+    add x8, x23, 2
+    mov x9, 300
+    mov x10, 6
+    stp x9, x10, [x23], 16
+    ldr x9, [L88]
+    ldr x10, [x20, 16]
+    stp x9, x10, [x23], 16
+    ldr x9, [x20, 8]
+    ldr x10, [x20, 24]
+    stp x9, x10, [x23], 16
+    ldr x9, [x20]
+    ldr x10, [x20, 32]
+    stp x9, x10, [x23], 16
+    str x25, [x23], 8
+    mov x25, x8
+# deallocate_t
+    add x20, x20, 40
+# return
+    ldr x30, [x20], 8
+    subs w22, w22, 1
+    b.mi L38
+    ret x30
+# i_flush_stubs
+# i_func_label_L
+label_15:
+# func_line_I
+# i_func_info_IaaI
+# t2_mvp:module_info/0
+    bl L24
+.word 0x00000000
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.byte 0x8B, 0xDD, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, 0x6D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# aligned_label_Lt
+module_info/0:
+# i_breakpoint_trampoline
+    str x30, [x20, -8]!
+    b L89
+    bl L27
+L89:
+# i_test_yield
+    adr x2, module_info/0
+    subs w22, w22, 1
+    b.le L29
+# i_move_sd
+    mov x25, 646539
+# allocate_tt
+    add x2, x23, 32
+    cmp x2, x20
+    b.ls L90
+    mov x3, 1
+    bl L32
+L90:
+# call_light_bif_be
+L91:
+    ldr x3, [L92]
+    ldr x7, [L93]
+    adr x2, L91
+# BIF: erlang:get_module_info/1
+    bl L95
+# deallocate_t
+# return
+    ldr x30, [x20], 8
+    subs w22, w22, 1
+    b.mi L38
+    ret x30
+# i_flush_stubs
+# i_func_label_L
+    align 8
+label_17:
+# func_line_I
+# i_func_info_IaaI
+# t2_mvp:module_info/1
+    bl L24
+.word 0x00000000
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.byte 0x8B, 0xDD, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0B, 0x6D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# aligned_label_Lt
+module_info/1:
+# i_breakpoint_trampoline
+    str x30, [x20, -8]!
+    b L96
+    bl L27
+L96:
+# i_test_yield
+    adr x2, module_info/1
+    subs w22, w22, 1
+    b.le L29
+# i_move_sd
+    mov x26, x25
+# i_move_sd
+    mov x25, 646539
+# allocate_tt
+    add x2, x23, 32
+    cmp x2, x20
+    b.ls L97
+    mov x3, 2
+    bl L32
+L97:
+# call_light_bif_be
+L98:
+    ldr x3, [L99]
+    ldr x7, [L100]
+    adr x2, L98
+# BIF: erlang:get_module_info/2
+    bl L95
+# deallocate_t
+# return
+    ldr x30, [x20], 8
+    subs w22, w22, 1
+    b.mi L38
+    ret x30
+# i_flush_stubs
+# i_func_label_L
+label_19:
+# func_line_I
+# i_func_info_IaaI
+# t2_mvp:'-time_run/2-lc$^0/1-0-'/2
+    bl L24
+.word 0x00000000
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.byte 0x8B, 0xDD, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0xCB, 0x08, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+# aligned_label_Lt
+@'-time_run/2-lc$^0/1-0-'/2-6:
+'-time_run/2-lc$^0/1-0-'/2:
+# i_breakpoint_trampoline
+    str x30, [x20, -8]!
+    b L101
+    bl L27
+L101:
+# i_test_yield
+    adr x2, '-time_run/2-lc$^0/1-0-'/2
+    subs w22, w22, 1
+    b.le L29
+# is_nonempty_list_fS
+    tbnz x25, 1, @label_21-7
+# allocate_tt
+    add x2, x23, 56
+    cmp x2, x20
+    b.ls L103
+    mov x3, 2
+    bl L32
+L103:
+    sub x20, x20, 24
+# i_move_sd
+    mov x14, 59
+    str x14, [x20]
+# i_move_sd
+    str x26, [x20, 16]
+# get_tl_Sd
+    ldur x9, [x25, 7]
+    str x9, [x20, 8]
+# i_move_sd
+    mov x25, 28619
+# line_I
+# call_light_bif_be
+L104:
+    ldr x3, [L105]
+    ldr x7, [L106]
+    adr x2, L104
+# BIF: erlang:monotonic_time/1
+    bl L95
+# i_move_sd
+    str x25, [x20]
+# i_move_sd
+    ldr x25, [x20, 16]
+# i_move_sd
+    mov x26, 15
+# line_I
+# i_call_f
+    bl total/2
+# i_move_sd
+    mov x25, 28619
+# line_I
+# call_light_bif_be
+L107:
+    ldr x3, [L105]
+    ldr x7, [L106]
+    adr x2, L107
+# BIF: erlang:monotonic_time/1
+    bl L95
+# line_I
+# i_minus_jIssd
+    ldr x2, [x20]
+    and x8, x2, -16
+    subs x0, x25, x8
+    and x8, x25, x2
+    and x8, x8, 15
+# test for not overflow and small operands
+    ccmp x8, 15, 0, 9
+    b.eq L108
+    mov x1, x25
+    bl L41
+L108:
+    str x0, [x20]
+# load_two_xregs_dxdx
+    ldp x25, x26, [x20, 8]
+# move_trim_sdt
+    ldr x8, [x20], 16
+    str x8, [x20]
+# line_I
+# i_call_f
+    bl '-time_run/2-lc$^0/1-0-'/2
+# test_heap_It
+    add x2, x23, 48
+    cmp x2, x20
+    b.ls L109
+    mov x3, 1
+    bl L32
+L109:
+# put_list_deallocate_ssdt
+    ldr x8, [x20], 8
+    stp x8, x25, [x23], 16
+    sub x25, x23, 15
+# return
+    ldr x30, [x20], 8
+    subs w22, w22, 1
+    b.mi L38
+    ret x30
+# label_L
+@label_21-7:
+label_21:
+# is_nil_fS
+    cmp x25, 59
+    b.ne @label_22-8
+# return
+    ldr x30, [x20], 8
+    subs w22, w22, 1
+    b.mi L38
+    ret x30
+# label_L
+@label_22-8:
+label_22:
+# test_heap_It
+    add x2, x23, 56
+    cmp x2, x20
+    b.ls L111
+    mov x3, 1
+    bl L32
+L111:
+# put_tuple2_SA
+    mov x9, 128
+    mov x10, 95691
+    stp x9, x10, [x23], 16
+    str x25, [x23], 8
+    sub x25, x23, 22
+# allocate_tt
+    add x2, x23, 32
+    cmp x2, x20
+    b.ls L112
+    mov x3, 1
+    bl L32
+L112:
+# call_light_bif_be
+L113:
+    ldr x3, [L114]
+    ldr x7, [L115]
+    adr x2, L113
+# BIF: erlang:error/1
+    bl L95
+# mark_unreachable
+# int_code_end
+# ===== MVP T2 specialized bodies =====
+# T2 body for t2_mvp:total/2
+L48:
+L116:
+    tbnz x25, 1, L117
+    and x8, x25, -8
+    ldp x9, x10, [x8]
+    tbnz x9, 0, L49
+    and x8, x9, -8
+    ldr x11, [x8]
+    cmp x11, 128
+    b.ne L49
+    ldp x11, x12, [x8, 8]
+    orr x14, x11, x12
+    and x14, x14, 15
+    cmp x14, 15
+    b.ne L49
+    mov x27, x25
+    sub x20, x20, 16
+    stp x10, x26, [x20]
+    mov x25, x11
+    mov x26, x12
+    bl diff/2
+    ldp x10, x26, [x20]
+    add x20, x20, 16
+    and x8, x25, -16
+    adds x9, x26, x8
+    and x8, x25, x26
+    and x8, x8, 15
+    ccmp x8, 15, 0, 9
+    b.ne L118
+    mov x26, x9
+    mov x25, x10
+    ldr x30, [x20], 8
+    b total/2
+L117:
+    cmp x25, 59
+    b.ne L49
+    mov x25, x26
+    ldr x30, [x20], 8
+    subs w22, w22, 1
+    b.mi L38
+    ret x30
+L118:
+# T2 side-exit (post-call): restore iter-start list, b T1 body
+    mov x25, x27
+    b L49
+# T2 body for t2_mvp:diff/2
+L57:
+# (no specialization — fall back to T1)
+    b L58
+L119:
+    mov x0, 4344034391
+    bl L121
+L121:
+L120:
+    mov x14, 4340422212
+    br x14
+L95:
+L94:
+    mov x14, 4457105296
+    br x14
+L41:
+L40:
+    mov x14, 4457110512
+    br x14
+L80:
+L79:
+    mov x14, 4457106672
+    br x14
+L55:
+L54:
+    mov x14, 4457110928
+    br x14
+L24:
+L23:
+    mov x14, 4457108208
+    br x14
+L85:
+L84:
+    mov x14, 4457106064
+    br x14
+L72:
+L71:
+    mov x14, 4457107056
+    br x14
+L38:
+L37:
+    mov x14, 4457106384
+    br x14
+L32:
+L31:
+    mov x14, 4457107264
+    br x14
+L29:
+L28:
+    mov x14, 4457109592
+    br x14
+L27:
+L26:
+    mov x14, 4457107992
+    br x14
+L45:
+L44:
+    mov x14, 4457109768
+    br x14
+# Begin stub section
+    align 8
+L64:
+.xword 0x7FFFFFFFFFFFFFFF
+L66:
+.xword 0x7FFFFFFFFFFFFFFF
+L69:
+.xword 0x7FFFFFFFFFFFFFFF
+L73:
+.xword 0x7FFFFFFFFFFFFFFF
+L88:
+.xword 0x7FFFFFFFFFFFFFFF
+L92:
+.xword 0x7FFFFFFFFFFFFFFF
+L93:
+.xword 0x0000000102C1A494
+L99:
+.xword 0x7FFFFFFFFFFFFFFF
+L100:
+.xword 0x0000000102C1A7CC
+L105:
+.xword 0x7FFFFFFFFFFFFFFF
+L106:
+.xword 0x0000000102C80C0C
+L114:
+.xword 0x7FFFFFFFFFFFFFFF
+L115:
+.xword 0x0000000102C42B38
+# End stub section
+L122:
+.section .rodata {#1}
+line:
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+.section .text {#0}
+.section .rodata {#1}
+attr:
+.byte 0x83, 0x6C, 0x00, 0x00, 0x00, 0x01, 0x68, 0x02, 0x77, 0x03, 0x76, 0x73, 0x6E, 0x6C, 0x00, 0x00, 0x00, 0x01, 0x6E, 0x10, 0x00, 0x87, 0x69, 0x1D, 0xEF, 0x39, 0xC4, 0x2A, 0x35, 0xE7, 0x8E, 0xB3, 0xAB, 0x06, 0x75, 0xA0, 0x33, 0x6A, 0x6A
+.section .text {#0}
+.section .rodata {#1}
+compile:
+.byte 0x83, 0x6C, 0x00, 0x00, 0x00, 0x03, 0x68, 0x02, 0x77, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6F, 0x6E, 0x6B, 0x00, 0x05, 0x39, 0x2E, 0x30, 0x2E, 0x34, 0x68, 0x02, 0x77, 0x07, 0x6F, 0x70, 0x74, 0x69, 0x6F, 0x6E, 0x73, 0x6A, 0x68, 0x02, 0x77, 0x06, 0x73, 0x6F, 0x75, 0x72, 0x63, 0x65, 0x6B, 0x00, 0x32, 0x2F, 0x55, 0x73, 0x65, 0x72, 0x73, 0x2F, 0x6C, 0x75, 0x6B, 0x61, 0x73, 0x2F, 0x63, 0x6F, 0x64, 0x65, 0x2F, 0x6F, 0x74, 0x70, 0x2D, 0x62, 0x65, 0x61, 0x6D, 0x6A, 0x69, 0x74, 0x32, 0x2F, 0x50, 0x4C, 0x41, 0x4E, 0x2F, 0x6D, 0x76, 0x70, 0x2F, 0x74, 0x32, 0x5F, 0x6D, 0x76, 0x70, 0x2E, 0x65, 0x72, 0x6C, 0x6A
+.section .text {#0}
+.section .rodata {#1}
+md5:
+.byte 0x33, 0xA0, 0x75, 0x06, 0xAB, 0xB3, 0x8E, 0xE7, 0x35, 0x2A, 0xC4, 0x39, 0xEF, 0x1D, 0x69, 0x87
+.section .text {#0}
