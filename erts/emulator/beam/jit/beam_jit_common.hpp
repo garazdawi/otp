@@ -192,6 +192,14 @@ struct BeamModuleAssemblerCommon {
      * and veneers may follow. */
     Label code_end;
 
+    /* MVP T2 hook: name and arity of the function whose code is currently
+     * being emitted. Set by emit_i_func_info, consumed by per-architecture
+     * hooks (e.g. emit_i_breakpoint_trampoline) to decide whether to inject
+     * T2 dispatch code. Hardcoded to false for everything outside the MVP
+     * target list. */
+    Eterm current_function = THE_NON_VALUE;
+    unsigned current_arity = 0;
+
     BeamModuleAssemblerCommon(const BeamFile *beam_, Eterm mod_)
             : beam(beam_), mod(mod_) {
     }

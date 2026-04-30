@@ -1107,6 +1107,11 @@ public:
 
     void emit_coverage(void *coverage, Uint index, Uint size);
 
+    /* MVP T2 hook: returns true iff the function whose code is
+     * currently being emitted is on the hardcoded T2 target list.
+     * Defined in beam_asm_module.cpp. */
+    bool t2_mvp_is_target() const;
+
     void codegen(JitAllocator *allocator,
                  const void **executable_ptr,
                  void **writable_ptr,

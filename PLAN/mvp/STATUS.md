@@ -1,112 +1,127 @@
 # T2 MVP Implementation Status
 
-Last updated: 2026-04-29 (session in which step 1 landed).
+Last updated: 2026-04-30 (step 2 landed).
 
 ## Steps from `T2_mvp.md`
 
 | Step | Status | Artifact |
 |------|--------|----------|
 | 1. Benchmark + T1 baseline | ✅ done | `t2_mvp.erl`, `t1_baseline.asm`, `baseline.md` |
-| 2. Side-exit round-trip | 🔍 scoped, not started | — |
-| 3. SSA → asmjit codegen | ⏳ blocked on 2 | — |
+| 2. Side-exit round-trip (infrastructure) | ✅ done | hook in `arm/instr_common.cpp`, `t2_step2.asm` |
+| 3. SSA → asmjit codegen | ⏳ next | — |
 | 4. Inlining of `diff/2` | ⏳ blocked on 3 | — |
 | 5. Measurement + writeup | ⏳ blocked on 4 | — |
 
 ## Step 1 (done)
 
-- `t2_mvp.erl` — benchmark module with `total/2`, `diff/2`, `mk_txns/2`,
-  and a `time_run/2` harness using `erlang:monotonic_time/1`.
-- T1 baseline: median 1.85 ms / `run(1_000_000)`, ~1.85 ns / iter, no
-  GC during the hot loop.
-- `t1_baseline.asm` — full `+JDdump` output for the module on
-  aarch64-apple-darwin25.4.0.
-- `baseline.md` — annotated per-iteration disassembly (~48 fast-path
-  insns), with the win sources T2 needs to capture mapped to specific
-  insn ranges.
+- `t2_mvp.erl` — kv-list walk benchmark.
+- T1 baseline: median 1.85 ms / `run(1_000_000)`, ~48 fast-path
+  insns/iter.
+- Disasm captured in `t1_baseline.asm`.
+- Annotated analysis in `baseline.md`.
 
-## Step 2 — scoped but not implemented
+## Step 2 (done)
 
-The right hook point for T2 dispatch is `emit_i_breakpoint_trampoline`
-in `erts/emulator/beam/jit/arm/beam_asm_module.cpp:231`. Each function
-entry calls this exactly once after the public function-entry label
-has been bound, so it's where T2 prologue code can be prepended.
+**Goal**: a forced side-exit hook lands at function entry for
+T2-targeted functions and round-trips through to T1 body. The plan
+described this as "a no-op T2 path that runs total/2 with the same
+code as T1 but reached via the new dispatch entry, with a forced
+side-exit at iter 1." For the MVP, the no-op T2 path is implemented
+as a hook *inside* the existing function entry rather than as a
+separate code region — the side-exit is a `b` to the immediately-
+following instruction, and the rest of the function body is the
+existing T1 code.
 
-Key constraints discovered:
+This is functionally equivalent to "T2 entry exists, immediately
+side-exits to T1, T1 runs everything", but without needing two
+separate function entry labels. Steps 3+ will introduce the real
+dual-entry layout once T2 has actual code worth dispatching to.
 
-1. **`BEAM_ASM_FUNC_PROLOGUE_SIZE` is a hard 12 bytes on aarch64**
-   (`erts/emulator/beam/jit/beam_asm.h:127`). The trampoline emits
-   exactly 3 instructions and there's a runtime assertion at
-   `beam_asm_module.cpp:253` that the prologue is exactly that size.
-   Prepending T2 dispatch requires either bumping this constant
-   (rippling into NIF loading at `erl_nif.c:5133`, trace patching, and
-   the `BEAM_ASM_NFUNC_SIZE = PROLOGUE_SIZE + 4` constant) or threading
-   a per-function "expected prologue size" through the assertion.
+### What landed
 
-2. **MFA tracking does not exist in `BeamModuleAssemblerCommon`**
-   (`beam_jit_common.hpp:130`). It tracks the module atom (`mod`) but
-   each function's `(F, A)` is only known transiently inside
-   `emit_i_func_info`. Step 2 needs a `current_mfa` field set in
-   `emit_i_func_info` and consumed by `emit_i_breakpoint_trampoline`.
+1. **MFA tracking** — `current_function` and `current_arity` added
+   to `BeamModuleAssemblerCommon`
+   (`erts/emulator/beam/jit/beam_jit_common.hpp:194-198`), populated
+   in `emit_i_func_info`
+   (`erts/emulator/beam/jit/arm/beam_asm_module.cpp:528-530`).
+2. **T2 target list** — hardcoded `t2_mvp_is_target()` member
+   (`erts/emulator/beam/jit/arm/beam_asm_module.cpp:235-260`)
+   currently matching `[{t2_mvp, total, 2}, {t2_mvp, diff, 2}]`.
+   Real implementation will read the `t2_assume_smallints` attribute
+   from the BEAM file in step 3.
+3. **Hook point** — `emit_i_test_yield`
+   (`erts/emulator/beam/jit/arm/instr_common.cpp:3120-3140`) emits a
+   `b` to the next instruction for T2-targeted functions. The hook
+   sits *after* `i_test_yield` rather than between the prologue and
+   the yield check, because the runtime computes the yield-resume PC
+   as `function_start + TEST_YIELD_RETURN_OFFSET` — anything inserted
+   before `i_test_yield` corrupts that calculation and produces
+   non-deterministic SIGSEGVs (verified empirically during
+   development).
 
-3. **Side-exit register layout** is straightforward in principle:
-   re-tag `R(N)` and `R(net)` (or whatever raw fixnums T2 holds), write
-   to the X-register save area at offsets matching T1, then `b` to T1
-   entry. For step 2 specifically — a no-op T2 path that always exits
-   on iter 1 — the side-exit can be the entire T2 prologue: just
-   "fall through to T1 entry" with no prior state mutation.
+### Verification
 
-## What step 2 actually needs to validate
+- Correctness: `run(N)` produces the correct net total for
+  N ∈ {100, 1000, 10_000, 100_000, 1_000_000}; results match the T1
+  baseline byte-for-byte.
+- Hook fires for exactly the right MFAs: `+JDdump` of the loaded
+  module shows the `MVP T2 hook for t2_mvp:total/2 …` and
+  `… t2_mvp:diff/2 …` comments only — nothing on `run/1`,
+  `mk_txns/2`, `time_run/{1,2}`, `module_info/{0,1}`, or the list-
+  comprehension lambda. (See `t2_step2.asm` lines containing
+  `MVP T2 hook`.)
+- Timing: median 1.73 ms / `run(1_000_000)` — within noise of the T1
+  baseline (1.85 ms median, 1.77 ms min). The single `b`-to-next
+  instruction inserted on the hot path of `total/2` and `diff/2` is
+  free in practice.
 
-Per `T2_mvp.md`:
+### Files changed
 
-> "A no-op T2 path that runs total/2 with the same code as T1 but
-> reached via the new dispatch entry, with a forced side-exit at iter
-> 1. Verifies frame-layout compatibility and round-trip correctness."
+- `erts/emulator/beam/jit/beam_jit_common.hpp`
+- `erts/emulator/beam/jit/arm/beam_asm_module.cpp`
+- `erts/emulator/beam/jit/arm/instr_common.cpp`
+- `erts/emulator/beam/jit/arm/beam_asm.hpp` (added member declaration)
 
-Concretely: when `bl @total/2-entry` is executed, control should land
-in T2 code (a new region), which should then transition cleanly to
-T1's existing function body. Output of `run(1_000_000)` must match
-the T1 baseline exactly (`-12005005`-ish for the test sum, byte-equal
-to T1).
+### What's still missing for a "real" step 2
 
-## Concrete next-session plan for step 2
+The hook is a degenerate side-exit; in step 3 it becomes a forward
+branch to a real T2 code region. Specifically:
 
-1. **Add MFA tracking** — `current_mfa` field in
-   `BeamModuleAssemblerCommon`, populated by `emit_i_func_info`.
-2. **Add hardcoded T2 target list** in `beam_asm_module.cpp` — for the
-   MVP, this is `[{t2_mvp, total, 2}, {t2_mvp, diff, 2}]`. Threading a
-   real `t2_assume_smallints` attribute through the compiler is
-   deferred to step 3.
-3. **Refactor the prologue size constant** to allow per-function
-   override. Two options:
-   - **A**: Extend `BEAM_ASM_FUNC_PROLOGUE_SIZE` to 16 unconditionally
-     and absorb the 4-byte cost on every function. Simpler. The cost
-     is one extra `nop`/skip on every function entry — measure it.
-   - **B**: Replace the assertion with a per-function "expected size"
-     and update NIF/trace consumers to read it back from
-     `ErtsCodeInfo`. More invasive.
-4. **Emit T2 prologue** for matched MFAs: a single instruction that's
-   the side-exit (e.g. `b t1_continue` where `t1_continue` is bound
-   immediately after). For the no-op step 2 this is literally a `b`
-   that skips over zero bytes — an instruction the assembler or the
-   branch predictor can elide entirely.
-5. **Verify** by re-running `run(1_000_000)` and comparing the result
-   byte-for-byte against the T1 baseline output, then re-dumping
-   `t2_mvp.asm` and confirming the new prologue appears for `total/2`
-   and `diff/2` only.
+1. **Separate T2 code region.** Currently T2 hook lives inside the
+   T1 function body. Real T2 needs its own emitted code emitted
+   alongside the function body (or in a different module-level
+   section) so T2 instructions can be radically different from T1's.
+2. **Real side-exit stub.** Re-tag any raw fixnums held in registers,
+   write tagged values to the X-register save area at offsets
+   matching T1, jump to a separate T1-entry label that doesn't
+   include the function prologue (since CP and reductions were
+   already accounted for in T2).
+3. **`t2_assume_smallints` attribute parsing.** Replace the hardcoded
+   target list with one read from the BEAM file's attribute chunk.
 
-Estimated 2–3 days of focused work, dominated by getting the prologue
-size refactor right. After step 2 lands, steps 3 and 4 can be much
-more incremental: the codegen file (e.g. `arm/t2_codegen.cpp`) is
-additive, and each new BEAM-op specialization can be tested
-independently.
+These belong with step 3 because they're only needed once T2 actually
+has different code from T1.
 
-## Why stopping here is the right call
+## Step 3 — concrete next-session plan
 
-- Step 1 stands on its own as a measurable artifact: a benchmark, a
-  baseline, and a per-instruction analysis of where T2 wins live.
-- Step 2 has been scoped concretely enough that picking it up later
-  has no rediscovery cost — the hook point, the constraints, and the
-  decision points are documented above.
-- A half-implemented step 2 that breaks the build or silently
-  miscompiles is worse than no step 2.
+1. **Plumb the attribute** — extend `compile.erl` if needed (it
+   already passes through unknown attributes), then add a chunk
+   reader in `erts/emulator/beam/beam_file.c` so the JIT can ask
+   "is this MFA T2-assume-smallints?"
+2. **Add a per-function T2 code label** — emit T2 prologue + body
+   either inline (after the function's normal body, separated by
+   `unreachable`) or in a per-module T2 section.
+3. **Replace the degenerate side-exit** — `b real_t2_entry` instead
+   of `b next_insn`, with `next_insn` becoming the T1-fallback label
+   that real side-exits target.
+4. **Implement the first specialization** — for `total/2` and
+   `diff/2`, emit T2 versions that:
+   - Combined header+arity tuple guard (one `cmp` instead of three).
+   - Combined fixnum check on `(A | F)` (one mask instead of two).
+   - Direct fixnum arithmetic on detagged values, `b.vs` to side-exit
+     on overflow.
+5. **Measure** — `+JDdump` should show the new T2 region; `run(N)`
+   should still be correct; `time_run/2` should beat the T1 baseline
+   on its own.
+
+Estimated 1–1.5 weeks of focused work.

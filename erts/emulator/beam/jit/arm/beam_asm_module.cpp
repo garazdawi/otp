@@ -228,6 +228,39 @@ void BeamGlobalAssembler::emit_i_breakpoint_trampoline_shared() {
     }
 }
 
+/* MVP T2 hook: hardcoded list of (Mod, Fun, Arity) tuples that get T2
+ * dispatch injected at function entry. Real implementation will read
+ * the t2_assume_smallints attribute from the BEAM file; for the MVP we
+ * recognise only the demo benchmark functions.
+ *
+ * Defined as a member function so per-arch hooks (currently
+ * emit_i_test_yield in arm/instr_common.cpp) can reach it via the
+ * usual `this->` lookup. */
+bool BeamModuleAssembler::t2_mvp_is_target() const {
+    static const struct {
+        const char *mod;
+        const char *fun;
+        unsigned arity;
+    } targets[] = {
+            {"t2_mvp", "total", 2},
+            {"t2_mvp", "diff", 2},
+    };
+
+    if (!is_atom(mod) || !is_atom(current_function)) {
+        return false;
+    }
+
+    for (const auto &t : targets) {
+        if (erts_is_atom_str(t.mod, mod, 0) &&
+            erts_is_atom_str(t.fun, current_function, 0) &&
+            t.arity == current_arity) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void BeamModuleAssembler::emit_i_breakpoint_trampoline() {
     /* This little prologue is used by nif loading and tracing to insert
      * alternative instructions. */
@@ -252,6 +285,13 @@ void BeamModuleAssembler::emit_i_breakpoint_trampoline() {
 
     ASSERT((a.offset() - code.label_offset_from_base(current_label)) ==
            BEAM_ASM_FUNC_PROLOGUE_SIZE);
+
+    /* MVP T2 hook is emitted in emit_i_test_yield (which follows the
+     * prologue) rather than here, because the runtime yield-resume
+     * code (i_test_yield_shared) computes the resume PC as
+     * `current_label + PROLOGUE_SIZE + 12`, hardcoding the assumption
+     * that i_test_yield immediately follows the prologue. Any code
+     * emitted here would shift that offset and corrupt yield resume. */
 }
 
 void BeamGlobalAssembler::emit_i_line_breakpoint_trampoline_shared() {
@@ -510,6 +550,11 @@ void BeamModuleAssembler::emit_i_func_info(const ArgWord &Label,
     info.mfa.module = Module.get();
     info.mfa.function = Function.get();
     info.mfa.arity = Arity.get();
+
+    /* MVP T2 hook: stash MFA so emit_i_breakpoint_trampoline can decide
+     * whether the function is T2-targeted. */
+    current_function = info.mfa.function;
+    current_arity = info.mfa.arity;
 
     comment("%T:%T/%d", info.mfa.module, info.mfa.function, info.mfa.arity);
 
