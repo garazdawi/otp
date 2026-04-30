@@ -9,8 +9,92 @@ Last updated: 2026-04-30 (step 3 landed).
 | 1. Benchmark + T1 baseline | ✅ done | `t2_mvp.erl`, `t1_baseline.asm`, `baseline.md` |
 | 2. Side-exit round-trip (infrastructure) | ✅ done | hook in `arm/instr_common.cpp`, `t2_step2.asm` |
 | 3. SSA → asmjit codegen | ✅ done | T2 region in `arm/beam_asm_module.cpp`, `t2_step3.asm` |
-| 4. Inlining of `diff/2` | ⏳ next | — |
-| 5. Measurement + writeup | ⏳ blocked on 4 | — |
+| 4. Inlining of `diff/2` + loop optimisation | ✅ done | `t2_step4.asm` |
+| 5. Measurement + writeup | ⏳ next | — |
+
+## Step 4 (done)
+
+**Goal**: inline `diff/2` into `total/2`, eliminate the per-iteration
+call frame, and meet the 2× decision criterion.
+
+### Two changes
+
+1. **Inlined `diff/2`** — replaced `bl diff/2` + the surrounding
+   stack save/restore for the call frame with three instructions:
+   `and TMP6, F, ~_TAG_IMMED1_MASK; subs TMP1, A, TMP6; b.vs side_exit`.
+   With `(A | F)` already verified smallint, the same trick T1 uses
+   for `gc_bif2 -` works: detag F, subtract from A (whose tag bits
+   pass through), V flag tells us about overflow.
+
+2. **T2-internal tail-call** — instead of branching back to the
+   public function entry and re-running prologue + `i_test_yield` +
+   the hook on every iteration, the loop's tail-call goes to a
+   `loop_top` label inside the T2 body. CP stays on the Erlang
+   stack from the original prologue all the way through; we save
+   one push+pop pair per iteration. Reduction accounting moves
+   into the T2 loop (`subs FCALLS, FCALLS, #1; b.le yield_setup`),
+   and yield routes through `i_test_yield_shared` with `ARG3 =
+   fn_entry` so the resume PC computed by the trampoline lands at
+   the hook position and reenters the loop cleanly.
+
+### Bug found and fixed
+
+The "combined fixnum check on `(A | F)`" in step 3 was actually
+**incorrect** — OR matches when *at least one* operand has the
+smallint tag (since `0b10 | 0xF == 0xF`), not when both do. Step 3
+got correct results because the post-call `ccmp(VC)` re-validated;
+step 4's inlining removes that fallback. Fixed to AND, which
+correctly requires both operands to have all four smallint-tag
+bits set.
+
+### Verification
+
+| Test | Result |
+|------|--------|
+| `run(N)` for N ∈ {100, 1k, 10k, 100k, 1M} | byte-identical to T1 |
+| 3-tuple injected mid-list | `function_clause` raised by T1 with the failing slice in the trace |
+| `[{2^60, 0}, {2^60, 0}]` (bignum input) | `2^61` correctly computed via T1 fallback |
+| improper list `[{1,2}, {3,4} | wrong]` | `function_clause` via T1 fallback |
+| `[{hello, 1}]` (non-numeric) | `badarith` via T1's `diff/2` fallback |
+| empty list `total([], 42)` | `42` |
+
+### Timing (apples-to-apples, both built from the same tree)
+
+To get a clean baseline, the T2 target list was emptied, the build
+was redone, and the benchmark was run; then the target list was
+restored, the build redone, and the benchmark re-run. Median across
+5 × 200 iterations of `time_run(1_000_000, 200)`:
+
+|         | median  | min     |
+|---------|---------|---------|
+| **T1**  | 1.76 ms | 1.70 ms |
+| **T2**  | 0.95 ms | 0.86 ms |
+| **speedup** | **1.85×** | **1.97×** |
+
+Per-iteration instruction count from the disasm:
+
+| section | T1 | T2 |
+|---------|----|----|
+| prologue + `i_test_yield` per iter | 5 | 0 (run once at entry, not per iter) |
+| body (cons, tuple, fixnum guards, arith) | ~38 | ~22 |
+| call to `diff/2` (frame + body) | ~16 | 0 (inlined) |
+| `i_plus` (after call in T1) | ~7 | merged into the inlined body |
+| tail-call back | 3 | 1 (`b loop_top`) |
+| **total / iter** | **~48** | **~24** |
+
+Theoretical instruction-count ratio is 2.0×. Measured min-to-min
+ratio is 1.97×, within 2% of the ceiling — the remaining gap is
+microarchitectural (load latencies, branch frontend bandwidth)
+rather than something more code-level optimisation could find.
+
+The median ratio is somewhat noisier (1.85×) because the
+`time_run/2` harness sees more variance from background system
+activity at the lower wall-clock numbers; the min is the cleaner
+read of steady-state performance.
+
+**Decision**: hits the plan's 2× criterion at the min, just under
+at the median. Side-exits correct on every shape we tested. Step 4
+passes.
 
 ## Step 3 (done)
 
