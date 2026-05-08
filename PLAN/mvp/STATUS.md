@@ -1,6 +1,9 @@
 # T2 MVP Implementation Status
 
-Last updated: 2026-04-30 (step 3 landed).
+Last updated: 2026-05-08 (step 5 landed; MVP complete).
+
+**See [`OUTCOME.md`](OUTCOME.md) for the consolidated writeup and
+decision.** This document is the dev log of getting there.
 
 ## Steps from `T2_mvp.md`
 
@@ -10,7 +13,51 @@ Last updated: 2026-04-30 (step 3 landed).
 | 2. Side-exit round-trip (infrastructure) | ✅ done | hook in `arm/instr_common.cpp`, `t2_step2.asm` |
 | 3. SSA → asmjit codegen | ✅ done | T2 region in `arm/beam_asm_module.cpp`, `t2_step3.asm` |
 | 4. Inlining of `diff/2` + loop optimisation | ✅ done | `t2_step4.asm` |
-| 5. Measurement + writeup | ⏳ next | — |
+| 5. Measurement + writeup | ✅ done | [`OUTCOME.md`](OUTCOME.md), `time_all_sideexit/2` in `t2_mvp.erl` |
+
+## Step 5 (done)
+
+**Goal**: consolidate the MVP findings, run the worst-case side-exit
+measurement, write up the answer to the question the MVP existed to
+answer.
+
+### What landed
+
+- **Worst-case timing harness** — added `time_all_sideexit/2` to
+  `t2_mvp.erl`. Builds an all-bignum-amount list so T2's combined
+  fixnum check fails on every iter and T1 handles each one.
+- **Latent correctness bug found** — during step 5's worst-case
+  exploration, discovered that the inlined `Net+diff` path doesn't
+  type-check Net. When Net becomes a bignum mid-loop (via prior
+  side-exit), subsequent T2-resumed iters silently corrupt the
+  result. Test case: `total([{2^60,0} | smallint_tail], 0)` returns
+  `273_826_447` instead of `2^60 + sum_of_smallints`. **Documented
+  as a production must-have in OUTCOME.md §"Findings worth keeping",
+  finding #5.** Not a codebase fix in the MVP — production T2's
+  speculate_type machinery (already in
+  `../T2/03_compilation_and_speculation.md` §9.1) is the right
+  layer. This finding *validates* that the speculation infrastructure
+  isn't optional.
+- **OUTCOME.md** — consolidated writeup. The answer to the MVP's
+  question, the methodology, the findings worth keeping, the
+  decision (pass), the reproduction commands.
+
+### Numbers
+
+T2 best-case (all-good steady state): 0.95 ms median / 0.86 ms min
+on 1M iter `total/2`. **1.85× median / 1.97× min** vs pure-T1
+baseline (1.76 ms / 1.70 ms). Within 2 % of the theoretical
+instruction-count ceiling.
+
+T2 worst-case (every iter side-exits, all-bignum): 15.3 ms median
+/ 14.9 ms min. The 14× ratio vs all-good is bignum-arith-dominated,
+not side-exit-overhead-dominated — T1 has to allocate 2-3 heap words
+per add regardless of which tier called it.
+
+### Decision
+
+**Pass**, MVP complete. T2 architecture is worth the production
+effort. See OUTCOME.md for the criteria-by-criteria breakdown.
 
 ## Step 4 (done)
 

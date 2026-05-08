@@ -10,7 +10,8 @@
 %% The t2_assume_smallints attribute is added in step 3 of the
 %% sequencing; without it this is the pure T1 baseline.
 -module(t2_mvp).
--export([run/1, total/2, diff/2, mk_txns/2, time_run/1, time_run/2]).
+-export([run/1, total/2, diff/2, mk_txns/2, time_run/1, time_run/2,
+         time_all_sideexit/2]).
 
 run(N) ->
     Txns = mk_txns(N, []),
@@ -35,6 +36,31 @@ time_run(N, Iters) ->
     Times = [ begin
                   T0 = erlang:monotonic_time(nanosecond),
                   _  = total(Txns, 0),
+                  T1 = erlang:monotonic_time(nanosecond),
+                  T1 - T0
+              end || _ <- lists:seq(1, Iters) ],
+    Sorted = lists:sort(Times),
+    #{
+        n        => N,
+        iters    => Iters,
+        median   => lists:nth(Iters div 2, Sorted),
+        min      => hd(Sorted),
+        max      => lists:last(Sorted),
+        ns_per_iter => lists:nth(Iters div 2, Sorted) / N
+    }.
+
+%% Worst-case side-exit cost: every element's amount is a bignum, so
+%% T2's combined fixnum check fails on every iteration and T1 handles
+%% each iter. This is the steady-state cost of a wholly profile-
+%% incorrect T2 compilation. Net stays bignum throughout but is never
+%% read by T2's arithmetic path (the (A & F) guard fires before
+%% reaching it), so the result remains correct.
+time_all_sideexit(N, Iters) ->
+    Big = 1 bsl 60,
+    BigList = [ {Big + I, I rem 7} || I <- lists:seq(1, N) ],
+    Times = [ begin
+                  T0 = erlang:monotonic_time(nanosecond),
+                  _  = total(BigList, 0),
                   T1 = erlang:monotonic_time(nanosecond),
                   T1 - T0
               end || _ <- lists:seq(1, Iters) ],
