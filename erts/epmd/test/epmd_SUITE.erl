@@ -396,13 +396,24 @@ get_port_nr(Config) when is_list(Config) ->
 
 %% Register with slow write and ask about port nr
 slow_get_port_nr(Config) when is_list(Config) ->
-    port_request([?EPMD_PORT_PLEASE2_REQ,d,$f,d,$o,d,$o]).
+    %% Since the mitigation for CVE-2026-42792 epmd measures the packet
+    %% timeout from the start of a request instead of refreshing it on
+    %% every byte received, so that a client cannot hold a connection
+    %% open indefinitely by dribbling out its request.  This suite runs
+    %% epmd with "-packet_timeout 1", which is shorter than the delays
+    %% this case inserts, so raise the timeout for this case in order to
+    %% keep testing that a slow - but not stalled - client is served.
+    port_request([?EPMD_PORT_PLEASE2_REQ,d,$f,d,$o,d,$o],
+                 " -packet_timeout 10").
 
 
 % Internal function used above
 
 port_request(M) ->
-    ok = epmdrun(),
+    port_request(M, []).
+
+port_request(M, EpmdArgs) ->
+    ok = epmdrun(EpmdArgs),
     Port = 1042,
     {ok,RSock} = register_node("foo", Port),
     {ok,Sock} = connect(),
