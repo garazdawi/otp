@@ -27,7 +27,9 @@
          invalid_module/1, erl_1152/1, get_coverage/1, check_trailing/1, unicode/1,
          filename_completion/1, binding_completion/1, record_completion/1, no_completion/1,
          map_completion/1, function_parameter_completion/1, fun_completion/1,
-         legacy_user_defined_completion/1]).
+         legacy_user_defined_completion/1,
+         type_suggestion_cache_isolation/1,
+         type_suggestion_cache_level/1]).
 -record(a_record,
         {a_field   :: atom1 | atom2 | btom | 'my atom' | {atom3, {atom4, non_neg_integer()}} | 'undefined',
          b_field   :: boolean() | 'undefined',
@@ -55,7 +57,8 @@ all() ->
     [normal, filename_completion, binding_completion, get_coverage, type_completion,
      record_completion, fun_completion, map_completion, function_parameter_completion,
      no_completion, quoted_fun, quoted_module, quoted_both, erl_1152, check_trailing,
-     invalid_module, unicode, legacy_user_defined_completion].
+     invalid_module, unicode, legacy_user_defined_completion,
+     type_suggestion_cache_isolation, type_suggestion_cache_level].
 
 groups() ->
     [].
@@ -342,6 +345,63 @@ function_parameter_completion(Config) ->
     {yes, _, _} = do_expand("complete_function_parameter:'emoji"),
 
     ok.
+
+%% The user_type cache must include the calling module so two modules
+%% with same-named local types don't share entries.
+type_suggestion_cache_isolation(_Config) ->
+    FunType = {type, 1, 'fun',
+               [{type, 1, product, []},
+                {user_type, 1, my_type, []}]},
+    MkFT = fun(Atom) ->
+                   [{{type, my_type},
+                     {attribute, 1, type,
+                      {my_type, {atom, 1, Atom}, []}}}]
+           end,
+    {{parameters, []},
+     {return, {user_type, mod_a, my_type, [], value_from_mod_a}}} =
+        edlin_type_suggestion:type_tree(mod_a, FunType, [], MkFT(value_from_mod_a)),
+    {{parameters, []},
+     {return, {user_type, mod_b, my_type, [], value_from_mod_b}}} =
+        edlin_type_suggestion:type_tree(mod_b, FunType, [], MkFT(value_from_mod_b)),
+    ok.
+
+%% The catch-all type clause caches by (Type, Level). With the bug the
+%% Level was hardcoded to 1, so a deeper lookup (e.g. inside a map, where
+%% Level is decremented) read back the Level=1 expansion which wraps
+%% user types with {user_type,...} that the deeper Level should not produce.
+type_suggestion_cache_level(_Config) ->
+    %% Suppress the on-disk doc lookup so the catch-all's lookup_type
+    %% returns `hidden` deterministically and falls through to FT.
+    put({edlin_type_suggestion, module_debug_info_doc, erlang}, none),
+    FT = [{{type, my_type},
+           {attribute, 1, type, {my_type, {atom, 1, leaf}, []}}}],
+    %% Synthetic 4-tuple type so we hit the catch-all (not the list/tuple/
+    %% map clauses, which decrement Level themselves).
+    Wibble = {type, 1, wibble, [{user_type, 1, my_type, []}]},
+
+    Top = {type, 1, 'fun', [{type, 1, product, []}, Wibble]},
+    {{parameters, []},
+     {return, {type, wibble, [{user_type, _, my_type, [], leaf}]}}} =
+        edlin_type_suggestion:type_tree(mod_a, Top, [], FT),
+
+    %% Same wibble(my_type()) inside a map. map decrements Level, so the
+    %% catch-all is reached at Level=0 where my_type must resolve through
+    %% the non-1 user_type clause (no {user_type,...} wrapper).
+    Nested = {type, 1, 'fun',
+              [{type, 1, product, []},
+               {type, 1, map,
+                [{type, 1, map_field_assoc,
+                  [{type, 1, atom, []}, Wibble]}]}]},
+    {{parameters, []},
+     {return, {map, [{map_field_assoc, _,
+                      {type, wibble, [Inner]}}]}}} =
+        edlin_type_suggestion:type_tree(mod_a, Nested, [], FT),
+    case Inner of
+        {user_type, _, _, _, _} ->
+            ct:fail({catchall_cache_key_level_collision, Inner});
+        _ ->
+            ok
+    end.
 
 get_coverage(Config) ->
     compile_and_load2(Config,complete_function_parameter),
