@@ -139,9 +139,18 @@ jobs:
             docker run -v $PWD/:/github -v $HOME:$HOME otp \
                "/github/.github/scripts/ort-scanner.es restore-cache -i $HOME/.ort/ort-results/scan-result.init.json \
                -o $HOME/.ort/ort-results/scan-result.cache.json /github/${{ env.SCAN_RESULT_CACHE_PATH }}"
+            # Fill from REUSE first (SPDX-License-Identifier headers, fast)
+            # so scancode only has to fuzzy-match license text on files that
+            # are not REUSE-compliant. The post-scan reuse overwrite below
+            # would have re-produced these same results, so this only shifts
+            # which step actually scans them.
+            docker run -v $PWD/:/github -v $HOME:$HOME otp \
+               "/github/.github/scripts/ort-scanner.es scan -t reuse -s fill \
+               -i $HOME/.ort/ort-results/scan-result.cache.json \
+               -o $HOME/.ort/ort-results/scan-result.reusefilled.json /github"
             docker run -v $PWD/:/github -v $HOME:$HOME otp \
                "/github/.github/scripts/ort-scanner.es scan -t scancode -s fill \
-               -i $HOME/.ort/ort-results/scan-result.cache.json \
+               -i $HOME/.ort/ort-results/scan-result.reusefilled.json \
                -o $HOME/.ort/ort-results/scan-result.json /github"
 
       - name: Run OSS Review Toolkit (scanner)
