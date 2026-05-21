@@ -37,6 +37,7 @@
          zlc/1,
          zbc/1,
          zmc/1,
+         zmc_perf/1,
          multi_lc/1,
          multi_mc/1,
          simple_cases/1,
@@ -112,7 +113,7 @@ all() ->
      funs, custom_stacktrace, try_catch, eval_expr_5, zero_width,
      eep37, eep43, otp_15035, otp_16439, otp_14708, otp_16545, otp_16865,
      eep49, binary_and_map_aliases, eep58, strict_generators, binary_skip,
-     assignment_generators, zlc, zbc, zmc, multi_lc, multi_mc].
+     assignment_generators, zlc, zbc, zmc, zmc_perf, multi_lc, multi_mc].
 
 groups() ->
     [].
@@ -455,6 +456,35 @@ zmc(Config) when is_list(Config) ->
 
     error_check("begin #{K => V || K := V <- #{1=>2} && K := _ <:- #{2=>3}} end.",
         {bad_generators,{#{1 => 2},#{2 => 3}}}),
+    ok.
+
+%% Regression: zip over map generators must be linear, not O(N^2).
+%% The buggy code rebuilt the map iterator into a map on every step,
+%% triggering many erts_internal:mc_refill/1 calls; the fix keeps the
+%% iterator raw, so mc_refill from erl_eval should not appear.
+zmc_perf(Config) when is_list(Config) ->
+    N = 5000,
+    M = maps:from_list([{X, X} || X <- lists:seq(1, N)]),
+    [Expr] = parse_exprs("[V1+V2 || _:=V1 <- maps:iterator(M, ordered) && "
+                         "_:=V2 <- maps:iterator(M, ordered)]."),
+    Bs = erl_eval:add_binding('M', M, erl_eval:new_bindings()),
+    Parent = self(),
+    Pid = spawn_link(fun() ->
+                             receive go -> ok end,
+                             {value, _, _} = erl_eval:expr(Expr, Bs),
+                             Parent ! done
+                     end),
+    1 = erlang:trace(Pid, true, [call]),
+    _ = erlang:trace_pattern({erts_internal, mc_refill, 1}, true, [global]),
+    Pid ! go,
+    receive done -> ok end,
+    _ = erlang:trace_pattern({erts_internal, mc_refill, 1}, false, [global]),
+    NCalls = (fun F(Acc) ->
+                      receive {trace, Pid, call, _} -> F(Acc + 1)
+                      after 0 -> Acc
+                      end
+              end)(0),
+    true = NCalls < 100,
     ok.
 
 %% EEP 78: multi-comprehensions
