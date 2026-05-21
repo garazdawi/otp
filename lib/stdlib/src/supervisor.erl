@@ -436,7 +436,14 @@ see more details [above](`m:supervisor#sup_flags`).
                    | {RestartStrategy :: strategy(),
                       Intensity :: non_neg_integer(),
                       Period :: pos_integer()}.
--type children() :: {Ids :: [child_id()], Db :: #{child_id() => child_rec()}}.
+-type children() :: {Ids :: [child_id()],
+                     Db :: #{child_id() => child_rec()},
+                     PidIndex :: #{pid() => child_id()}}.
+%% PidIndex maps the live `pid()' of every running child in Db to its
+%% child_id(). It is kept in sync with the `pid' field of each child
+%% record so that a pid lookup on an incoming `EXIT' is O(1) instead
+%% of an O(N) fold over Db. Children whose `pid' is `undefined' or a
+%% `{restarting, _}' tuple are absent from the index.
 
 %%--------------------------------------------------------------------------
 %% Defaults
@@ -466,7 +473,7 @@ see more details [above](`m:supervisor#sup_flags`).
 
 -record(state, {name                   :: sup_name() | {pid(), module()},
 		strategy = one_for_one :: strategy(),
-		children = {[],#{}}    :: children(), % Ids in start order
+		children = {[],#{},#{}} :: children(), % Ids in start order
                 dynamics               :: {'maps', #{pid() => list()}}
                                         | {'mapsets', #{pid() => []}}
                                         | 'undefined',
@@ -1347,14 +1354,16 @@ wakeup(State0) ->
     State1 = purge_restarts(State0),
     State1#state{hibernating = false}.
 
-update_childspec(State, StartSpec) when ?is_simple(State) ->
+update_childspec(State0, StartSpec) when ?is_simple(State0) ->
+    State = migrate_state_children(State0),
     case check_startspec(StartSpec, State#state.auto_shutdown) of
-        {ok, {[_],_}=Children} ->
+        {ok, {[_],_,_}=Children} ->
             {ok, State#state{children = Children}};
         Error ->
             {error, Error}
     end;
-update_childspec(State, StartSpec) ->
+update_childspec(State0, StartSpec) ->
+    State = migrate_state_children(State0),
     case check_startspec(StartSpec, State#state.auto_shutdown) of
 	{ok, Children} ->
 	    OldC = State#state.children, % In reverse start order !
@@ -1364,17 +1373,39 @@ update_childspec(State, StartSpec) ->
 	    {error, Error}
     end.
 
-update_childspec1({[Id|OldIds], OldDb}, {Ids,Db}, KeepOld) ->
+%% Pre-30 supervisor states stored `children' as a {Ids, Db} 2-tuple
+%% without a pid index. Migrate to the 3-tuple shape on code_change.
+migrate_state_children(#state{children = {Ids, Db}} = State) ->
+    State#state{children = {Ids, Db, pidindex_rebuild(Db)}};
+migrate_state_children(#state{children = {_,_,_}} = State) ->
+    State.
+
+update_childspec1({[Id|OldIds], OldDb, OldP2I}, {Ids,Db,_P2I}, KeepOld) ->
     case update_chsp(maps:get(Id,OldDb), Db) of
 	{ok,NewDb} ->
-	    update_childspec1({OldIds,OldDb}, {Ids,NewDb}, KeepOld);
+	    update_childspec1({OldIds,OldDb,OldP2I}, {Ids,NewDb,#{}}, KeepOld);
 	false ->
-	    update_childspec1({OldIds,OldDb}, {Ids,Db}, [Id|KeepOld])
+	    update_childspec1({OldIds,OldDb,OldP2I}, {Ids,Db,#{}}, [Id|KeepOld])
     end;
-update_childspec1({[],OldDb}, {Ids,Db}, KeepOld) ->
+update_childspec1({[],OldDb,_OldP2I}, {Ids,Db,_P2I}, KeepOld) ->
     KeepOldDb = maps:with(KeepOld,OldDb),
     %% Return them in (kept) reverse start order.
-    {lists:reverse(Ids ++ KeepOld),maps:merge(KeepOldDb,Db)}.
+    NewIds = lists:reverse(Ids ++ KeepOld),
+    NewDb = maps:merge(KeepOldDb,Db),
+    %% Rebuild the pid index from the merged child records: in this
+    %% rarely-used code_change path, getting it right is more important
+    %% than incrementally updating.
+    NewP2I = pidindex_rebuild(NewDb),
+    {NewIds,NewDb,NewP2I}.
+
+%% Rebuild the pid->id index from a Db. Used on the cold code_change
+%% path; not on the hot 'EXIT' path.
+pidindex_rebuild(Db) ->
+    maps:fold(fun(Id, #child{pid = P}, Acc) when is_pid(P) ->
+                      Acc#{P => Id};
+                 (_, _, Acc) ->
+                      Acc
+              end, #{}, Db).
 
 update_chsp(#child{id=Id}=OldChild, NewDb) ->
     case maps:find(Id, NewDb) of
@@ -1817,8 +1848,9 @@ save_child(Child, State) ->
     do_save_child(Child, State).
 
 -spec do_save_child(child_rec(), state()) -> state().
-do_save_child(#child{id = Id} = Child, #state{children = {Ids,Db}} = State) ->
-    State#state{children = {[Id|Ids],Db#{Id => Child}}}.
+do_save_child(#child{id = Id, pid = Pid} = Child,
+              #state{children = {Ids,Db,P2I}} = State) ->
+    State#state{children = {[Id|Ids],Db#{Id => Child},pidindex_put(Pid,Id,P2I)}}.
 
 -spec del_child(child_rec(), state()) -> state();
                (child_id(), children()) -> children().
@@ -1827,23 +1859,32 @@ del_child(#child{pid = Pid}, State) when ?is_simple(State) ->
 del_child(Child, State) when is_record(Child,child), is_record(State,state) ->
     NChildren = del_child(Child#child.id, State#state.children),
     State#state{children = NChildren};
-del_child(Id, {Ids,Db}) ->
+del_child(Id, {Ids,Db,P2I}) ->
     case maps:get(Id, Db) of
-        Child when Child#child.restart_type =:= temporary ->
-            {lists:delete(Id, Ids), maps:remove(Id, Db)};
-        Child ->
-            {Ids, Db#{Id=>Child#child{pid=undefined}}}
+        #child{pid = OldPid, restart_type = temporary} ->
+            {lists:delete(Id, Ids),
+             maps:remove(Id, Db),
+             pidindex_remove(OldPid, P2I)};
+        #child{pid = OldPid} = Child ->
+            {Ids,
+             Db#{Id=>Child#child{pid=undefined}},
+             pidindex_remove(OldPid, P2I)}
     end.
 
-%% In: {[S4, S3, Ch, S1, S0],Db}
-%% Ret: {{[S4, S3, Ch],Db1}, {[S1, S0],Db2}}
-%% Db1 and Db2 contain the keys in the lists they are associated with.
+%% In: {[S4, S3, Ch, S1, S0],Db,P2I}
+%% Ret: {{[S4, S3, Ch],Db1,P2I1}, {[S1, S0],Db2,P2I2}}
+%% Db1 and Db2 contain the keys in the lists they are associated with;
+%% P2I1 / P2I2 contain the live-pid entries for those keys.
 -spec split_child(child_id(), children()) -> {children(), children()}.
-split_child(Id, {Ids,Db}) ->
+split_child(Id, {Ids,Db,P2I}) ->
     {IdsAfter,IdsBefore} = split_ids(Id, Ids, []),
     DbBefore = maps:with(IdsBefore,Db),
-    #{Id:=Ch} = DbAfter = maps:with(IdsAfter,Db),
-    {{IdsAfter,DbAfter#{Id=>Ch#child{pid=undefined}}},{IdsBefore,DbBefore}}.
+    #{Id:=Ch} = DbAfter0 = maps:with(IdsAfter,Db),
+    DbAfter = DbAfter0#{Id=>Ch#child{pid=undefined}},
+    P2IBefore = pidindex_with(IdsBefore, Db, P2I),
+    P2IAfter = pidindex_remove(Ch#child.pid,
+                               pidindex_with(IdsAfter, Db, P2I)),
+    {{IdsAfter,DbAfter,P2IAfter},{IdsBefore,DbBefore,P2IBefore}}.
 
 split_ids(Id, [Id|Ids], After) ->
     {lists:reverse([Id|After]), Ids};
@@ -1868,7 +1909,7 @@ find_child(Pid, State) when is_pid(Pid), ?is_simple(State) ->
         Other ->
             Other
     end;
-find_child(Id, #state{children = {_Ids,Db}}) ->
+find_child(Id, #state{children = {_Ids,Db,_P2I}}) ->
     maps:find(Id, Db).
 
 %% Get the child record - either by child id or by pid.  If
@@ -1886,7 +1927,7 @@ find_child_and_args(Pid, State) when ?is_simple(State) ->
     end;
 find_child_and_args(Pid, State) when is_pid(Pid) ->
     find_child_by_pid(Pid, State);
-find_child_and_args(Id, #state{children={_Ids,Db}})  ->
+find_child_and_args(Id, #state{children={_Ids,Db,_P2I}})  ->
     maps:find(Id, Db).
 
 %% Given the pid, find the child record for a dynamic child, and
@@ -1903,22 +1944,22 @@ find_dynamic_child(Pid, State) ->
     end.
 
 %% Given the pid, find the child record for a non-dynamic child.
+%% Uses the pid->id index in children() for O(1) lookup, so a flood
+%% of 'EXIT' messages no longer scales O(N^2).
 -spec find_child_by_pid(IdOrPid, state()) -> {ok,child_rec()} | error when
       IdOrPid :: pid() | {restarting,pid()}.
-find_child_by_pid(Pid,#state{children={_Ids,Db}}) ->
-    Fun = fun(_Id,#child{pid=P}=Ch,_) when P =:= Pid ->
-                  throw(Ch);
-             (_,_,error) ->
-                  error
-          end,
-    try maps:fold(Fun,error,Db)
-    catch throw:Child -> {ok,Child}
-    end.
+find_child_by_pid(Pid,#state{children={_Ids,Db,P2I}}) when is_pid(Pid) ->
+    case P2I of
+        #{Pid := Id} -> {ok, maps:get(Id, Db)};
+        #{} -> error
+    end;
+find_child_by_pid(_, _State) ->
+    error.
 
 %% Get the child record from a simple_one_for_one supervisor - no pid
 %% It is assumed that the child can always be found
 -spec get_dynamic_child(state()) -> child_rec().
-get_dynamic_child(#state{children={[Id],Db}}) ->
+get_dynamic_child(#state{children={[Id],Db,_P2I}}) ->
     #{Id := Child} = Db,
     Child.
 
@@ -1927,16 +1968,46 @@ get_dynamic_child(#state{children={[Id],Db}}) ->
              (term(), child_id(), children()) -> children().
 set_pid(Pid, Id, #state{children=Children} = State) ->
     State#state{children = set_pid(Pid, Id, Children)};
-set_pid(Pid, Id, {Ids, Db}) ->
-    NewDb = maps:update_with(Id, fun(Child) -> Child#child{pid=Pid} end, Db),
-    {Ids,NewDb}.
+set_pid(Pid, Id, {Ids, Db, P2I}) ->
+    #{Id := OldChild} = Db,
+    NewDb = Db#{Id => OldChild#child{pid=Pid}},
+    NewP2I = pidindex_put(Pid, Id,
+                          pidindex_remove(OldChild#child.pid, P2I)),
+    {Ids,NewDb,NewP2I}.
 
 %% Remove the Id and the child record from the process state
 -spec remove_child(child_id(), state()) -> state().
-remove_child(Id, #state{children={Ids,Db}} = State) ->
+remove_child(Id, #state{children={Ids,Db,P2I}} = State) ->
     NewIds = lists:delete(Id,Ids),
+    OldPid = case Db of
+                 #{Id := #child{pid = P}} -> P;
+                 _ -> undefined
+             end,
     NewDb = maps:remove(Id,Db),
-    State#state{children = {NewIds,NewDb}}.
+    NewP2I = pidindex_remove(OldPid, P2I),
+    State#state{children = {NewIds,NewDb,NewP2I}}.
+
+%% Helpers for maintaining the pid->id index. Entries are only
+%% recorded for live pids; `undefined' and `{restarting, _}' are
+%% deliberately not indexed because find_child_by_pid/2 only matches
+%% raw pids (the ones delivered by 'EXIT' messages).
+pidindex_put(Pid, Id, P2I) when is_pid(Pid) -> P2I#{Pid => Id};
+pidindex_put(_, _, P2I) -> P2I.
+
+pidindex_remove(Pid, P2I) when is_pid(Pid) -> maps:remove(Pid, P2I);
+pidindex_remove(_, P2I) -> P2I.
+
+%% Build a sub-index containing only the pid entries for the given Ids,
+%% taking each child's pid from Db.
+pidindex_with(Ids, Db, _P2I) ->
+    lists:foldl(fun(Id, Acc) ->
+                        case Db of
+                            #{Id := #child{pid = P}} when is_pid(P) ->
+                                Acc#{P => Id};
+                            _ ->
+                                Acc
+                        end
+                end, #{}, Ids).
 
 %% In the order of Ids, traverse the children and update each child
 %% according to the return value of the Fun.
@@ -1948,27 +2019,31 @@ remove_child(Id, #state{children={Ids,Db}} = State) ->
                                              remove |
                                              {abort, Reason}),
       Reason :: term().
-children_map(Fun,{Ids,Db}) ->
-    children_map(Fun, Ids, Db, []).
+children_map(Fun,{Ids,Db,P2I}) ->
+    children_map(Fun, Ids, Db, P2I, []).
 
-children_map(Fun,[Id|Ids],Db,Acc) ->
-    case Fun(Id,maps:get(Id,Db)) of
+children_map(Fun,[Id|Ids],Db,P2I,Acc) ->
+    #{Id := OldChild} = Db,
+    case Fun(Id,OldChild) of
         {update,Child} ->
-            children_map(Fun,Ids,Db#{Id => Child},[Id|Acc]);
+            NewP2I = pidindex_put(Child#child.pid, Id,
+                                  pidindex_remove(OldChild#child.pid, P2I)),
+            children_map(Fun,Ids,Db#{Id => Child},NewP2I,[Id|Acc]);
         remove ->
-            children_map(Fun,Ids,maps:remove(Id,Db),Acc);
+            NewP2I = pidindex_remove(OldChild#child.pid, P2I),
+            children_map(Fun,Ids,maps:remove(Id,Db),NewP2I,Acc);
         {abort,Reason} ->
-            {error,{lists:reverse(Ids)++[Id|Acc],Db},Reason}
+            {error,{lists:reverse(Ids)++[Id|Acc],Db,P2I},Reason}
     end;
-children_map(_Fun,[],Db,Acc) ->
-    {ok,{Acc,Db}}.
+children_map(_Fun,[],Db,P2I,Acc) ->
+    {ok,{Acc,Db,P2I}}.
 
 %% In the order of Ids, map over all children and return the list
 -spec children_to_list(Fun, children()) -> List when
       Fun :: fun((child_id(), child_rec()) -> Elem),
       List :: list(Elem),
       Elem :: term().
-children_to_list(Fun,{Ids,Db}) ->
+children_to_list(Fun,{Ids,Db,_P2I}) ->
     children_to_list(Fun, Ids, Db, []).
 children_to_list(Fun,[Id|Ids],Db,Acc) ->
     children_to_list(Fun,Ids,Db,[Fun(Id,maps:get(Id,Db))|Acc]);
@@ -1982,11 +2057,11 @@ children_to_list(_Fun,[],_Db,Acc) ->
       Acc1 :: term(),
       AccIn :: term(),
       AccOut :: term().
-children_fold(Fun,Init,{_Ids,Db}) ->
+children_fold(Fun,Init,{_Ids,Db,_P2I}) ->
     maps:fold(Fun, Init, Db).
 
 %% The order is not important - so ignore Ids
-children_any(Pred, {_Ids, Db}) ->
+children_any(Pred, {_Ids, Db, _P2I}) ->
     Iter=maps:iterator(Db),
     children_any1(Pred, maps:next(Iter)).
 
@@ -1996,8 +2071,8 @@ children_any1(Pred, {Key, Value, Iter}) ->
     Pred(Key, Value) orelse children_any1(Pred, maps:next(Iter)).
 
 -spec append(children(), children()) -> children().
-append({Ids1,Db1},{Ids2,Db2}) ->
-    {Ids1++Ids2,maps:merge(Db1,Db2)}.
+append({Ids1,Db1,P2I1},{Ids2,Db2,P2I2}) ->
+    {Ids1++Ids2,maps:merge(Db1,Db2),maps:merge(P2I1,P2I2)}.
 
 %%-----------------------------------------------------------------
 %% Func: init_state/4
@@ -2131,7 +2206,7 @@ check_startspec([ChildSpec|T], Ids, Db, AutoShutdown) ->
 	Error -> Error
     end;
 check_startspec([], Ids, Db, _AutoShutdown) ->
-    {ok, {lists:reverse(Ids),Db}}.
+    {ok, {lists:reverse(Ids),Db,#{}}}.
 
 check_childspec(ChildSpec, AutoShutdown) when is_map(ChildSpec) ->
     try
@@ -2520,7 +2595,11 @@ dyn_fold(Fun,Init,#state{dynamics={_Kind,Db}}) ->
     maps:fold(fun(Pid,_,Acc) -> Fun(Pid,Acc) end, Init, Db).
 
 dyn_map(Fun, #state{dynamics={_Kind,Db}}) ->
-    lists:map(Fun, maps:keys(Db)).
+    %% Single-pass over Db, no intermediate keys list. The final
+    %% reverse keeps the iteration order that the previous
+    %% `lists:map(Fun, maps:keys(Db))' produced, which some callers
+    %% (and tests) depend on for small dynamic supervisors.
+    lists:reverse(maps:fold(fun(K,_V,Acc) -> [Fun(K)|Acc] end, [], Db)).
 
 dyn_exists(Pid, #state{dynamics={_Kind, Db}}) ->
     is_map_key(Pid, Db).

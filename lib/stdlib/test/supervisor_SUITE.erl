@@ -33,7 +33,8 @@
 
 %% Internal export
 -export([init/1, terminate_all_children/1,
-         middle9212/0, gen_server9212/0, handle_info/2, start_registered_name/1, log/2]).
+         middle9212/0, gen_server9212/0, handle_info/2, start_registered_name/1, log/2,
+         start_inert_child/0]).
 
 %% API tests
 -export([ sup_start_normal/1, sup_start_ignore_init/1, 
@@ -94,6 +95,7 @@
 	 hanging_restart_loop_simple/1, code_change/1, code_change_map/1,
 	 code_change_simple/1, code_change_simple_map/1,
          order_of_children/1, scale_start_stop_many_children/1,
+         scale_mass_exit_children/1,
          format_log_1/1, format_log_2/1, already_started_outside_supervisor/1,
 	 which_children/1, which_children_simple_one_for_one/1]).
 
@@ -124,6 +126,7 @@ all() ->
      hanging_restart_loop_rest_for_one, hanging_restart_loop_simple,
      code_change, code_change_map, code_change_simple, code_change_simple_map,
      order_of_children, scale_start_stop_many_children,
+     scale_mass_exit_children,
      format_log_1, format_log_2, already_started_outside_supervisor,
      which_children, which_children_simple_one_for_one].
 
@@ -2683,11 +2686,11 @@ code_change_simple(_Config) ->
     SimpleChild2 = {child2,{supervisor_1, start_child, []}, permanent,
 		    brutal_kill, worker, []},
 
-    {error, {error, {ok,{[_,_],_}}}} =
+    {error, {error, {ok,{[_,_],_,_}}}} =
 	fake_upgrade(SimplePid,{ok,{SimpleFlags,[SimpleChild1,SimpleChild2]}}),
 
     %% Attempt to remove child
-    {error, {error, {ok,{[],_}}}} = fake_upgrade(SimplePid,{ok,{SimpleFlags,[]}}),
+    {error, {error, {ok,{[],_,_}}}} = fake_upgrade(SimplePid,{ok,{SimpleFlags,[]}}),
 
     terminate(SimplePid,shutdown),
     ok.
@@ -2708,11 +2711,11 @@ code_change_simple_map(_Config) ->
     %% Attempt to add child
     SimpleChild2 = #{id=>child2,
 		     start=>{supervisor_1, start_child, []}},
-    {error, {error, {ok, {[_,_],_}}}} =
+    {error, {error, {ok, {[_,_],_,_}}}} =
 	fake_upgrade(SimplePid,{ok,{SimpleFlags,[SimpleChild1,SimpleChild2]}}),
 
     %% Attempt to remove child
-    {error, {error, {ok, {[],_}}}} =
+    {error, {error, {ok, {[],_,_}}}} =
 	fake_upgrade(SimplePid,{ok,{SimpleFlags,[]}}),
 
     terminate(SimplePid,shutdown),
@@ -2894,6 +2897,110 @@ scale_start_stop_many_children() ->
     end,
 
     ok.
+
+%% Test that a non-simple supervisor's pid->child lookup on each
+%% incoming 'EXIT' is O(1), not O(N). A naive map-fold makes the
+%% per-call cost scale linearly with the number of children, which
+%% turns a mass-termination of N children into O(N^2) work.
+%%
+%% Verified with tracing on the internal helper supervisor:find_child_by_pid/2:
+%% with an O(N) implementation, the total time spent in this function
+%% scales quadratically with the number of children; with an O(1)
+%% pid index it scales linearly.
+scale_mass_exit_children(_Config) ->
+    case erlang:system_info(build_type) of
+        opt -> scale_mass_exit_children_1();
+        Other -> {skip,"Run on build type 'opt' only (current: '" ++
+                      atom_to_list(Other)++"')"}
+    end.
+
+scale_mass_exit_children_1() ->
+    %% Suppress the per-child supervisor termination log spam.
+    OldLevel = logger:get_primary_config(),
+    ok = logger:set_primary_config(level, none),
+    try
+        N1 = 1000,
+        N2 = 5000,
+        T1 = mass_exit_lookup_time(N1),
+        T2 = mass_exit_lookup_time(N2),
+        ct:log("find_child_by_pid total time: "
+               "~w children -> ~w us, ~w children -> ~w us",
+               [N1, T1, N2, T2]),
+        %% An O(N) lookup turns the total work into O(N^2); for a 5x
+        %% jump in children that is ~25x more time spent inside the
+        %% helper. An O(1) lookup keeps it linear (~5x). The bound is
+        %% deliberately generous to keep the test stable on slow CI.
+        ScaleLimit = 12,
+        Scale = T2 div max(T1, 1),
+        ct:log("Scale: ~w (limit ~w)", [Scale, ScaleLimit]),
+        if Scale > ScaleLimit ->
+                ct:fail({bad_find_child_by_pid_scale, Scale});
+           true ->
+                ok
+        end
+    after
+        logger:set_primary_config(OldLevel)
+    end.
+
+mass_exit_lookup_time(N) ->
+    process_flag(trap_exit, true),
+    SupFlags = #{strategy => one_for_one,
+                 intensity => N + 100,
+                 period => 1},
+    {ok, Sup} = supervisor:start_link(?MODULE, {ok, {SupFlags, []}}),
+    Pids = [begin
+                Spec = #{id => I,
+                         start => {?MODULE, start_inert_child, []},
+                         restart => temporary,
+                         shutdown => 1000,
+                         type => worker,
+                         modules => []},
+                {ok, P} = supervisor:start_child(Sup, Spec),
+                P
+            end || I <- lists:seq(1, N)],
+    %% Enable call-time tracing on the per-EXIT helper, scoped to the
+    %% supervisor process. The supervisor is suspended while we arm
+    %% tracing and queue up all the exit signals so that:
+    %%   * find_child_by_pid/2 has zero accumulated time at start, and
+    %%   * every EXIT is in the mailbox before the supervisor runs.
+    ok = sys:suspend(Sup),
+    1 = erlang:trace_pattern({supervisor, find_child_by_pid, 2},
+                             true, [call_time]),
+    1 = erlang:trace(Sup, true, [call]),
+    [exit(P, kill) || P <- Pids],
+    ok = sys:resume(Sup),
+    ok = wait_mass_exit_drained(Sup, 600),
+    %% Sum the trace results across all schedulers.
+    {call_time, Stats} =
+        erlang:trace_info({supervisor, find_child_by_pid, 2}, call_time),
+    Total = lists:foldl(fun({_PidT, _Calls, S, Us}, Acc) ->
+                                Acc + S * 1_000_000 + Us
+                        end, 0, Stats),
+    erlang:trace_pattern({supervisor, find_child_by_pid, 2},
+                         false, [call_time]),
+    erlang:trace(Sup, false, [call]),
+    unlink(Sup),
+    exit(Sup, shutdown),
+    receive {'EXIT', Sup, _} -> ok after 5000 -> ok end,
+    Total.
+
+start_inert_child() ->
+    Pid = spawn_link(fun inert_child_loop/0),
+    {ok, Pid}.
+
+inert_child_loop() ->
+    receive _ -> inert_child_loop() end.
+
+wait_mass_exit_drained(_Sup, 0) ->
+    timeout;
+wait_mass_exit_drained(Sup, N) ->
+    Counts = supervisor:count_children(Sup),
+    case proplists:get_value(active, Counts) of
+        0 -> ok;
+        _ ->
+            timer:sleep(50),
+            wait_mass_exit_drained(Sup, N - 1)
+    end.
 
 %% Test report callback for Logger handler error_logger
 format_log_1(_Config) ->
