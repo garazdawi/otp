@@ -81,6 +81,7 @@ MODULES= \
 	lists_SUITE \
 	lists_property_test_SUITE \
 	log_mf_h_SUITE \
+	man_docs_SUITE \
 	math_SUITE \
 	ms_transform_SUITE \
 	peer_SUITE \
