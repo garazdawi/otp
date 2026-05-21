@@ -433,6 +433,8 @@ build_limited_bin([#{control_char := C, args := As, width := F, adjust := Ad,
     end;
 build_limited_bin([[$\n|_]=NL|Cs], NumOfPs, Count, MaxLen, _I) ->
     [NL|build_limited_bin(Cs, NumOfPs, Count, MaxLen, 0)];
+build_limited_bin([$\n|Cs], NumOfPs, Count, MaxLen, _I) ->
+    [$\n|build_limited_bin(Cs, NumOfPs, Count, MaxLen, 0)];
 build_limited_bin([$\t|Cs], NumOfPs, Count, MaxLen, I) ->
     [$\t|build_limited_bin(Cs, NumOfPs, Count, MaxLen, ((I + 8) div 8) * 8)];
 build_limited_bin([C|Cs], NumOfPs, Count, MaxLen, I) when is_integer(C) ->
