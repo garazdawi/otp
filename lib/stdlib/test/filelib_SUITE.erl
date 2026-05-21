@@ -26,7 +26,8 @@
 	 init_per_group/2,end_per_group/2,
 	 init_per_testcase/2,end_per_testcase/2,
 	 wildcard_one/1,wildcard_two/1,wildcard_errors/1,
-	 fold_files/1,otp_5960/1,ensure_dir_eexist/1,ensure_dir_symlink/1,
+         fold_files/1,fold_files_symlink_cycle/1,
+         otp_5960/1,ensure_dir_eexist/1,ensure_dir_symlink/1,
          ensure_path_single_dir/1, ensure_path_nested_dirs/1,
          ensure_path_binary_args/1, ensure_path_symlink/1,
          ensure_path_relative_path/1, ensure_path_relative_path_dot_dot/1,
@@ -55,7 +56,8 @@ suite() ->
 
 all() -> 
     [wildcard_one, wildcard_two, wildcard_errors,
-     fold_files, otp_5960, ensure_dir_eexist, ensure_dir_symlink,
+     fold_files, fold_files_symlink_cycle,
+     otp_5960, ensure_dir_eexist, ensure_dir_symlink,
      ensure_path_single_dir, ensure_path_nested_dirs, ensure_path_binary_args,
      ensure_path_symlink, ensure_path_relative_path,
      ensure_path_relative_path_dot_dot,
@@ -387,6 +389,41 @@ fold_files(Config) when is_list(Config) ->
     del(Files),
     foreach(fun(D) -> ok = file:del_dir(D) end, lists:reverse(Dirs)),
     ok = file:del_dir(Dir).
+
+%% fold_files/5 must terminate and report each file once when a
+%% directory contains a symlink that loops back to an ancestor.
+fold_files_symlink_cycle(Config) when is_list(Config) ->
+    PrivDir = proplists:get_value(priv_dir, Config),
+    Dir = filename:join(PrivDir, "fold_files_symlink_cycle"),
+    A = filename:join(Dir, "a"),
+    ok = filelib:ensure_path(A),
+    ok = file:write_file(filename:join(A, "f.txt"), <<"hello\n">>),
+    case file:make_symlink("../a", filename:join(A, "b")) of
+        {error, enotsup} ->
+            {skip, "Symlinks not supported"};
+        {error, eperm} ->
+            {win32,_} = os:type(),
+            {skip, "Windows user not privileged for symlinks"};
+        ok ->
+            Parent = self(),
+            Pid = spawn(fun() ->
+                                R = filelib:fold_files(
+                                      Dir, "[.]txt$", true,
+                                      fun(F, Acc) -> [F|Acc] end, []),
+                                Parent ! {self(), R}
+                        end),
+            MRef = erlang:monitor(process, Pid),
+            receive
+                {Pid, Files} ->
+                    erlang:demonitor(MRef, [flush]),
+                    [_] = [F || F <- Files, filename:basename(F) =:= "f.txt"];
+                {'DOWN', MRef, process, Pid, Reason} ->
+                    ct:fail({crashed, Reason})
+            after 30000 ->
+                    exit(Pid, kill),
+                    ct:fail(no_termination)
+            end
+    end.
 
 same_lists(Expected0, Actual0, BaseDir) ->
     Expected = [filename:absname(N, BaseDir) || N <- lists:sort(Expected0)],
