@@ -37,7 +37,7 @@
          otp_15159/1, otp_15639/1, otp_15705/1, otp_15847/1, otp_15875/1,
          github_4801/1, chars_limit/1, error_info/1, otp_17525/1,
          unscan_format_without_maps_order/1, build_text_without_maps_order/1,
-         native_records/1, cover_fread/1]).
+         native_records/1, cover_fread/1, bwrite_empty_map/1]).
 
 -export([pretty/2, trf/3, rfd/2]).
 
@@ -75,7 +75,7 @@ all() ->
      error_info, otp_17525, unscan_format_without_maps_order,
      build_text_without_maps_order,
      native_records,
-     cover_fread].
+     cover_fread, bwrite_empty_map].
 
 %% Error cases for output.
 error_1(Config) when is_list(Config) ->
@@ -3501,3 +3501,8 @@ fread_float_not_accepted(Format, [C|Cs], Prefix) ->
 fread_float_not_accepted(_, [], _) ->
     ok.
 
+bwrite_empty_map(_Config) ->
+    <<"[1,#{},2]">> = io_lib:bwrite([1, #{}, 2], []),
+    <<"{1,#{},2}">> = io_lib:bwrite({1, #{}, 2}, []),
+    <<"#{}">> = io_lib:bwrite(#{}, []),
+    ok.
