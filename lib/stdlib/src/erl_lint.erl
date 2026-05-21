@@ -4234,10 +4234,10 @@ spec_decl(Anno, MFA0, TypeSpecs, #lint{specs = Specs, module = Mod} = St0) ->
 	      {F, Arity} -> {Mod, F, Arity};
 	      {_M, _F, Arity} -> MFA0
 	  end,
-    St1 = St0#lint{specs = maps:put(MFA, Anno, Specs)},
     case is_map_key(MFA, Specs) of
-	true -> add_error(Anno, {redefine_spec, MFA0}, St1);
+        true -> add_error(Anno, {redefine_spec, MFA0}, St0);
 	false ->
+            St1 = St0#lint{specs = maps:put(MFA, Anno, Specs)},
             St2 = case MFA of
                       {Mod, _, _} ->
                           St1;
