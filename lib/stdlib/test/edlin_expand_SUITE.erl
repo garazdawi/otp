@@ -26,7 +26,8 @@
 -export([normal/1, type_completion/1, quoted_fun/1, quoted_module/1, quoted_both/1,
          invalid_module/1, erl_1152/1, get_coverage/1, check_trailing/1, unicode/1,
          filename_completion/1, binding_completion/1, record_completion/1, no_completion/1,
-         map_completion/1, function_parameter_completion/1, fun_completion/1]).
+         map_completion/1, function_parameter_completion/1, fun_completion/1,
+         legacy_user_defined_completion/1]).
 -record(a_record,
         {a_field   :: atom1 | atom2 | btom | 'my atom' | {atom3, {atom4, non_neg_integer()}} | 'undefined',
          b_field   :: boolean() | 'undefined',
@@ -51,10 +52,10 @@ suite() ->
      {timetrap,{minutes,1}}].
 
 all() ->
-    [normal, filename_completion, binding_completion, get_coverage, type_completion, 
+    [normal, filename_completion, binding_completion, get_coverage, type_completion,
      record_completion, fun_completion, map_completion, function_parameter_completion,
      no_completion, quoted_fun, quoted_module, quoted_both, erl_1152, check_trailing,
-     invalid_module, unicode].
+     invalid_module, unicode, legacy_user_defined_completion].
 
 groups() ->
     [].
@@ -646,6 +647,19 @@ unicode(Config) when is_list(Config) ->
         do_format([{"'кlирилли́ческий атом'",[]},
                    {"'кlирилли́ческий атомB'",[]},
                    {"module_info",[]}]),
+    ok.
+
+legacy_user_defined_completion(_Config) ->
+    Ft = [{{function, {shell_default, my_func, 1}}, fun(_A) -> 0 end},
+          {{function, {shell_default, my_function, 2}}, fun(_A, _B) -> 0 end}],
+    ShellState = {shell_state, [], [], Ft},
+    {yes, "func", Matches} =
+        edlin_expand:expand(lists:reverse("my_"),
+                            [{legacy_output, true}],
+                            ShellState),
+    true = lists:member({"my_func", ""}, Matches),
+    true = lists:member({"my_function", ""}, Matches),
+    false = lists:member("user_defined", Matches),
     ok.
 
 do_expand(String) ->
