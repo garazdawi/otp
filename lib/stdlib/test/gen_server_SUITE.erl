@@ -51,6 +51,7 @@
 	 otp_5854/1, hibernate/1, auto_hibernate/1, otp_7669/1, call_format_status/1,
 	 error_format_status/1, terminate_crash_format/1, crash_in_format_status/1,
          throw_in_format_status/1, format_all_status/1,
+         format_status_subset/1,
 	 get_state/1, replace_state/1, call_with_huge_message_queue/1,
 	 undef_handle_call/1, undef_handle_cast/1, undef_handle_info/1,
 	 undef_init/1, undef_code_change/1, undef_terminate1/1,
@@ -128,7 +129,8 @@ groups() ->
        multicall_recv_opt_noconnection]},
      {format_status, [],
       [call_format_status, error_format_status, terminate_crash_format,
-       crash_in_format_status, throw_in_format_status, format_all_status]},
+       crash_in_format_status, throw_in_format_status, format_all_status,
+       format_status_subset]},
      {undef_callbacks, [],
       [undef_handle_call, undef_handle_cast, undef_handle_info, undef_handle_continue,
        undef_init, undef_code_change, undef_terminate1, undef_terminate2]}].
@@ -2575,6 +2577,18 @@ format_all_status(Config) when is_list(Config) ->
     end,
 
     process_flag(trap_exit, OldFl).
+
+format_status_subset(Config) when is_list(Config) ->
+    OldFl = process_flag(trap_exit, true),
+    Sanitized = sanitized_state,
+    State = fun(_S) -> #{ state => Sanitized } end,
+    {ok, Pid} = gen_server:start_link(format_status_server, {state, State}, []),
+    {status, Pid, _, [_, _, _, _, Info]} = sys:get_status(Pid),
+    {data, [{"State", Sanitized}]} = lists:last(Info),
+    gen_server:call(Pid, stop),
+    receive {'EXIT', Pid, stopped} -> ok end,
+    process_flag(trap_exit, OldFl),
+    ok.
 
 %% Verify that sys:get_state correctly returns gen_server state
 get_state(Config) when is_list(Config) ->
