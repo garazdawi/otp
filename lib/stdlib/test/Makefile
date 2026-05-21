@@ -58,6 +58,7 @@ MODULES= \
 	erl_lint_SUITE \
 	erl_pp_SUITE \
 	erl_scan_SUITE \
+	erl_error_SUITE \
 	error_info_lib \
 	error_logger_h_SUITE \
 	escript_SUITE \
