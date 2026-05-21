@@ -48,6 +48,7 @@ MODULES= \
 	dummy_via \
 	edlin_expand_SUITE \
 	edlin_context_SUITE \
+	edlin_SUITE \
 	epp_SUITE \
 	erl_anno_SUITE \
 	erl_eval_SUITE \
