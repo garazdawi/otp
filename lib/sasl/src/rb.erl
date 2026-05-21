@@ -694,29 +694,36 @@ read_reports(Fd, Res, Type) ->
 	    [{unknown, Reason, [], FilePos} | Res]
     end.
 
+%% Length prefix: a 16-bit big-endian size, or — for events >= 64KiB —
+%% a 16-bit zero sentinel followed by the real 32-bit size. See
+%% log_mf_h:encode_header/1.
 read_report(Fd) ->
     case io:get_chars(Fd,'',2) of
+        eof -> eof;
+        [0,0] ->
+            case io:get_chars(Fd,'',4) of
+                [B3,B2,B1,B0] ->
+                    <<Size:32>> = <<B3,B2,B1,B0>>,
+                    read_report_body(Fd, Size);
+                _ ->
+                    {error,"Premature end of file"}
+            end;
         [Hi,Lo] ->
-            Size = get_int16(Hi,Lo),
-            case io:get_chars(Fd,'',Size) of
-                eof ->
-                    {error,"Premature end of file"};
-                List ->
-                    Bin = list_to_binary(List),
-		    Ref = make_ref(),
-		    case (catch {Ref,binary_to_term(Bin)}) of
-			{'EXIT',_} ->
-			    {error, "Incomplete erlang term in log"};
-			{Ref,Term} ->
-			    {ok, Term}
-		    end
-	    end;
-        eof ->
-            eof
+            <<Size:16>> = <<Hi,Lo>>,
+            read_report_body(Fd, Size)
     end.
- 
-get_int16(Hi,Lo) ->
-    ((Hi bsl 8) band 16#ff00) bor (Lo band 16#ff).
+
+read_report_body(Fd, Size) ->
+    case io:get_chars(Fd,'',Size) of
+        eof ->
+            {error,"Premature end of file"};
+        List ->
+            try binary_to_term(list_to_binary(List)) of
+                Term -> {ok, Term}
+            catch _:_ ->
+                {error, "Incomplete erlang term in log"}
+            end
+    end.
 
 
 %%-----------------------------------------------------------------
