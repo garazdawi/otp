@@ -1958,6 +1958,8 @@ do_swap(Mod1, Handler1, Args1, State1, Handler2, Args2, SName) ->
     case catch Mod2:init({Args2, State2}) of
 	{ok, State2a} ->
 	    {ok, Handler#handler{state = State2a}};
+        {ok, State2a, hibernate} ->
+            {hibernate, Handler#handler{state = State2a}};
 	Other ->
 	    report_terminate(Handler, crash, {error, Other}, SName, false),
 	    no
