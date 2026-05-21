@@ -623,10 +623,11 @@ over_to_opening_paren([CC|Stack], [OC|Bef], Word) when OC==$(; OC==$[; OC==${; O
     end;
 over_to_opening_paren([CC|Stack], [CC|Bef], Word) -> %% Nested parenthesis of same type
     over_to_opening_paren([CC,CC|Stack], Bef, [CC|Word]);
-over_to_opening_paren(Stack, [Q,NEC|Bef], Word) when Q == $"; Q == $', NEC /= $$, NEC /= $\\ ->
+over_to_opening_paren(Stack, [Q,NEC|Bef], Word)
+  when (Q == $"  orelse Q == $'), NEC /= $$, NEC /= $\\ ->
     %% Consume the whole quoted text, it may contain parenthesis which
     %% would have confused us.
-    {Bef1, QuotedWord} = over_to_opening_quote(Q, Bef),
+    {Bef1, QuotedWord} = over_to_opening_quote(Q, [NEC|Bef]),
     over_to_opening_paren(Stack, Bef1, QuotedWord ++ Word);
 over_to_opening_paren(CC, [C|Bef], Word) -> over_to_opening_paren(CC, Bef, [C|Word]).
 
