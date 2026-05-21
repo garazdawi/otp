@@ -75,7 +75,8 @@
     attached/0, attached/1,
     attached_cntrl_channel_handler_crash/0, attached_cntrl_channel_handler_crash/1,
     cntrl_channel_handler_crash/0, cntrl_channel_handler_crash/1,
-    cntrl_channel_handler_crash_old_release/0, cntrl_channel_handler_crash_old_release/1
+    cntrl_channel_handler_crash_old_release/0, cntrl_channel_handler_crash_old_release/1,
+    stray_down/0, stray_down/1
 ]).
 
 suite() ->
@@ -97,7 +98,8 @@ shutdown_alternatives() ->
 alternative() ->
     [basic, peer_states, cast, detached, dyn_peer, stop_peer,
      io_redirect, multi_node, duplicate_name, attached, attached_cntrl_channel_handler_crash,
-     cntrl_channel_handler_crash, cntrl_channel_handler_crash_old_release | shutdown_alternatives()].
+     cntrl_channel_handler_crash, cntrl_channel_handler_crash_old_release,
+     stray_down | shutdown_alternatives()].
 
 groups() ->
     [
@@ -763,3 +765,19 @@ cntrl_channel_handler_crash_test(Node) ->
         5000 ->
             ct:fail(peer_did_not_halt)
     end.
+
+stray_down() ->
+    [{doc, "Stray 'DOWN' message must not kill the peer io_server"}].
+
+stray_down(Config) when is_list(Config) ->
+    Conn = proplists:get_value(connection, Config),
+    {ok, Peer, _Node} = peer:start_link(#{connection => Conn}),
+    IoServer = peer:call(Peer, erlang, whereis, [user]),
+    true = is_pid(IoServer),
+    StrayRef = peer:call(Peer, erlang, make_ref, []),
+    ok = peer:cast(Peer, erlang, send,
+                   [IoServer, {'DOWN', StrayRef, process, IoServer, stray}]),
+    ct:sleep(200),
+    'nonode@nohost' = peer:call(Peer, erlang, node, []),
+    true = peer:call(Peer, erlang, is_process_alive, [IoServer]),
+    ok = peer:stop(Peer).
