@@ -37,6 +37,7 @@
          error_info/1, subject_is_sub_binary/1, pattern_is_sub_binary/1,
          import/1,
          kill_yielding/1,
+         replace_long_replacement_linear/1,
 
          last_test/1]).
 
@@ -64,6 +65,7 @@ all() ->
      error_info, subject_is_sub_binary, pattern_is_sub_binary,
      import,
      kill_yielding,
+     replace_long_replacement_linear,
 
      last_test].
 
@@ -1271,6 +1273,23 @@ receive_any() ->
     receive M -> M
     after 1000 -> timeout
     end.
+
+%% Regression: re:replace/4 must be linear in the replacement length.
+%% A 16x size bump costs ~16x linear vs ~256x quadratic.
+replace_long_replacement_linear(Config) when is_list(Config) ->
+    Time = fun(N) ->
+                   Repl = binary:copy(<<"a">>, N),
+                   max(lists:min(
+                         [begin
+                              T0 = erlang:monotonic_time(microsecond),
+                              _ = re:replace(<<"x">>, "x", Repl,
+                                             [{return,binary}]),
+                              erlang:monotonic_time(microsecond) - T0
+                          end || _ <- lists:seq(1, 5)]), 1)
+           end,
+    Ratio = Time(32000) / Time(2000),
+    ct:log("ratio ~p (linear 16, quadratic 256)", [Ratio]),
+    true = Ratio < 60.
 
 last_test(Config) when is_list(Config) ->
     erts_debug:set_internal_state(available_internal_state, true),
