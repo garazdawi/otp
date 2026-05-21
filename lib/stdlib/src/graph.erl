@@ -481,10 +481,8 @@ acyclic_add_edge(_G, From, To, _Label) when From =:= To ->
 acyclic_add_edge(G, From, To, Label) ->
     case get_path(G, To, From) of
         false ->
-            false = has_path(G, To, From),  % assert - remove me
             do_add_edge(G, From, To, Label);
         _ ->
-            true = has_path(G, To, From),  % assert - remove me
             error({bad_edge, {From,To}})
     end.
 
