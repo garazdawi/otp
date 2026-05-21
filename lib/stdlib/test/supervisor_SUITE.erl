@@ -2898,71 +2898,42 @@ scale_start_stop_many_children() ->
 
     ok.
 
-%% Test that a non-simple supervisor's pid->child lookup on each
-%% incoming 'EXIT' is O(1), not O(N). A naive map-fold makes the
-%% per-call cost scale linearly with the number of children, which
-%% turns a mass-termination of N children into O(N^2) work.
-%%
-%% Verified with tracing on the internal helper supervisor:find_child_by_pid/2:
-%% with an O(N) implementation, the total time spent in this function
-%% scales quadratically with the number of children; with an O(1)
-%% pid index it scales linearly.
+%% Total time inside find_child_by_pid/2 must scale linearly with the
+%% number of children. The old maps:fold made it O(N) per call, giving
+%% O(N^2) total during a mass-exit.
 scale_mass_exit_children(_Config) ->
     case erlang:system_info(build_type) of
         opt -> scale_mass_exit_children_1();
-        Other -> {skip,"Run on build type 'opt' only (current: '" ++
-                      atom_to_list(Other)++"')"}
+        Other -> {skip, "build type " ++ atom_to_list(Other)}
     end.
 
 scale_mass_exit_children_1() ->
-    %% Suppress the per-child supervisor termination log spam.
     OldLevel = logger:get_primary_config(),
     ok = logger:set_primary_config(level, none),
     try
-        N1 = 1000,
-        N2 = 5000,
-        T1 = mass_exit_lookup_time(N1),
-        T2 = mass_exit_lookup_time(N2),
-        ct:log("find_child_by_pid total time: "
-               "~w children -> ~w us, ~w children -> ~w us",
-               [N1, T1, N2, T2]),
-        %% An O(N) lookup turns the total work into O(N^2); for a 5x
-        %% jump in children that is ~25x more time spent inside the
-        %% helper. An O(1) lookup keeps it linear (~5x). The bound is
-        %% deliberately generous to keep the test stable on slow CI.
-        ScaleLimit = 12,
+        T1 = mass_exit_lookup_time(1000),
+        T2 = mass_exit_lookup_time(5000),
+        ct:log("find_child_by_pid total time: 1000 -> ~wus, 5000 -> ~wus",
+               [T1, T2]),
+        %% O(N^2) would be ~25x for a 5x jump; O(1) lookup keeps it ~5x.
         Scale = T2 div max(T1, 1),
-        ct:log("Scale: ~w (limit ~w)", [Scale, ScaleLimit]),
-        if Scale > ScaleLimit ->
-                ct:fail({bad_find_child_by_pid_scale, Scale});
-           true ->
-                ok
-        end
+        Scale =< 12 orelse ct:fail({bad_scale, Scale})
     after
         logger:set_primary_config(OldLevel)
     end.
 
 mass_exit_lookup_time(N) ->
     process_flag(trap_exit, true),
-    SupFlags = #{strategy => one_for_one,
-                 intensity => N + 100,
-                 period => 1},
+    SupFlags = #{strategy => one_for_one, intensity => N + 100, period => 1},
     {ok, Sup} = supervisor:start_link(?MODULE, {ok, {SupFlags, []}}),
     Pids = [begin
                 Spec = #{id => I,
                          start => {?MODULE, start_inert_child, []},
-                         restart => temporary,
-                         shutdown => 1000,
-                         type => worker,
-                         modules => []},
+                         restart => temporary, shutdown => 1000,
+                         type => worker, modules => []},
                 {ok, P} = supervisor:start_child(Sup, Spec),
                 P
             end || I <- lists:seq(1, N)],
-    %% Enable call-time tracing on the per-EXIT helper, scoped to the
-    %% supervisor process. The supervisor is suspended while we arm
-    %% tracing and queue up all the exit signals so that:
-    %%   * find_child_by_pid/2 has zero accumulated time at start, and
-    %%   * every EXIT is in the mailbox before the supervisor runs.
     ok = sys:suspend(Sup),
     1 = erlang:trace_pattern({supervisor, find_child_by_pid, 2},
                              true, [call_time]),
@@ -2970,36 +2941,25 @@ mass_exit_lookup_time(N) ->
     [exit(P, kill) || P <- Pids],
     ok = sys:resume(Sup),
     ok = wait_mass_exit_drained(Sup, 600),
-    %% Sum the trace results across all schedulers.
     {call_time, Stats} =
         erlang:trace_info({supervisor, find_child_by_pid, 2}, call_time),
-    Total = lists:foldl(fun({_PidT, _Calls, S, Us}, Acc) ->
-                                Acc + S * 1_000_000 + Us
-                        end, 0, Stats),
-    erlang:trace_pattern({supervisor, find_child_by_pid, 2},
-                         false, [call_time]),
-    erlang:trace(Sup, false, [call]),
+    Total = lists:foldl(fun({_, _, S, Us}, Acc) -> Acc + S * 1_000_000 + Us end,
+                        0, Stats),
+    erlang:trace_pattern({supervisor, find_child_by_pid, 2}, false, [call_time]),
     unlink(Sup),
     exit(Sup, shutdown),
     receive {'EXIT', Sup, _} -> ok after 5000 -> ok end,
     Total.
 
 start_inert_child() ->
-    Pid = spawn_link(fun inert_child_loop/0),
-    {ok, Pid}.
-
-inert_child_loop() ->
-    receive _ -> inert_child_loop() end.
+    {ok, proc_lib:spawn_link(timer, sleep, [infinity])}.
 
 wait_mass_exit_drained(_Sup, 0) ->
     timeout;
 wait_mass_exit_drained(Sup, N) ->
-    Counts = supervisor:count_children(Sup),
-    case proplists:get_value(active, Counts) of
+    case proplists:get_value(active, supervisor:count_children(Sup)) of
         0 -> ok;
-        _ ->
-            timer:sleep(50),
-            wait_mass_exit_drained(Sup, N - 1)
+        _ -> timer:sleep(50), wait_mass_exit_drained(Sup, N - 1)
     end.
 
 %% Test report callback for Logger handler error_logger
