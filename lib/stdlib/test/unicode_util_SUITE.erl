@@ -31,7 +31,8 @@
          whitespace/1,
          get/1,
          lookup/1, category/1, is_id_func/1,
-         count/1]).
+         count/1,
+         decompose_fast_path/1]).
 
 -export([debug/0, id/1, bin_split/1, uc_loaded_size/0,
         time_count/4  %% Used by stdlib_bench_SUITE
@@ -52,7 +53,8 @@ all() ->
      is_id_func,
      get,
      lookup,
-     count
+     count,
+     decompose_fast_path
     ].
 
 debug() ->
@@ -396,6 +398,48 @@ is_id_func(_Config) ->
     false = unicode_util:is_letter_not_pattern_syntax(11823),
     true = unicode_util:is_letter_not_pattern_syntax($a),
     ok.
+
+%% Non-Hangul code points > 16#D7A3 must take decompose/1's fast path
+%% and skip the decompose_1/1 / decompose_compat_1/1 helpers.
+decompose_fast_path(_Config) ->
+    Tester = self(),
+    Tracer = spawn_link(fun F() ->
+                                receive
+                                    {dump, Tester} -> Tester ! {calls, self()};
+                                    {trace, _, call, MFA} -> Tester ! {call, MFA}, F()
+                                end
+                        end),
+    1 = erlang:trace(self(), true, [call, {tracer, Tracer}]),
+    1 = erlang:trace_pattern({unicode_util, decompose_1, 1}, true, [local]),
+    1 = erlang:trace_pattern({unicode_util, decompose_compat_1, 1}, true, [local]),
+    try
+        [[16#1100, 16#1161]] = unicode_util:nfd([16#AC00]),
+        [16#E000]  = unicode_util:nfd([16#E000]),
+        [16#20000] = unicode_util:nfd([16#20000]),
+        [16#8C48]  = unicode_util:nfd([16#F900]),
+        [16#E000]  = unicode_util:nfkd([16#E000]),
+        [16#20000] = unicode_util:nfkd([16#20000]),
+        [16#8C48]  = unicode_util:nfkd([16#F900])
+    after
+        erlang:trace_pattern({unicode_util, decompose_compat_1, 1}, false, [local]),
+        erlang:trace_pattern({unicode_util, decompose_1, 1}, false, [local]),
+        erlang:trace(self(), false, [call])
+    end,
+    Tracer ! {dump, self()},
+    Bad = collect_non_hangul_calls(),
+    [] = Bad,
+    ok.
+
+collect_non_hangul_calls() ->
+    receive
+        {call, {_, _, [CP]}} when is_integer(CP),
+                                  CP >= 16#AC00, CP =< 16#D7A3 ->
+            collect_non_hangul_calls();
+        {call, MFA} ->
+            [MFA | collect_non_hangul_calls()];
+        {calls, _} ->
+            []
+    end.
 
 count(Config) ->
     Parent = self(),
