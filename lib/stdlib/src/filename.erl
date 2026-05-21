@@ -311,10 +311,13 @@ basenameb(Bin,Sep) ->
     
 
 
-basename1([$/], Tail0, _DirSep2) ->
-    %% End of filename -- must get rid of trailing directory separator.
-    [_|Tail] = lists:reverse(Tail0),
-    lists:reverse(Tail);
+%% End of filename -- get rid of all trailing directory separators,
+%% matching the binary implementation.
+basename1([$/], Tail, DirSep2) ->
+    strip_trailing_sep(lists:reverse(Tail), DirSep2);
+basename1([$/,Next|Rest], Tail, DirSep2)
+  when Next =:= $/; Next =:= DirSep2 ->
+    basename1([Next|Rest], Tail, DirSep2);
 basename1([$/|Rest], _Tail, DirSep2) ->
     basename1(Rest, Rest, DirSep2);
 basename1([DirSep2|Rest], Tail, DirSep2) when is_integer(DirSep2) ->
@@ -323,6 +326,13 @@ basename1([Char|Rest], Tail, DirSep2) when is_integer(Char) ->
     basename1(Rest, Tail, DirSep2);
 basename1([], Tail, _DirSep2) ->
     Tail.
+
+strip_trailing_sep([$/|Rest], DirSep2) ->
+    strip_trailing_sep(Rest, DirSep2);
+strip_trailing_sep([DirSep2|Rest], DirSep2) when is_integer(DirSep2) ->
+    strip_trailing_sep(Rest, DirSep2);
+strip_trailing_sep(Rev, _DirSep2) ->
+    lists:reverse(Rev).
 
 skip_prefix(Name, false) ->
     Name;
@@ -375,16 +385,14 @@ basename(Name, Ext) when is_list(Name), is_binary(Ext) ->
     basename(filename_string_to_binary(Name),Ext);
 basename(Name, Ext) when is_binary(Name), is_binary(Ext) ->
     BName = basename(Name),
-    LAll = byte_size(Name),
     LN = byte_size(BName),
     LE = byte_size(Ext),
     case LN - LE of
 	Neg when Neg < 0 ->
 	    BName;
 	Pos ->
-	    StartLen = LAll - Pos - LE,
-	    case Name of
-		<<_:StartLen/binary,Part:Pos/binary,Ext/binary>> ->
+            case BName of
+                <<Part:Pos/binary,Ext/binary>> ->
 		    Part;
 		_Other ->
 		    BName
@@ -402,14 +410,25 @@ basename(Ext, Ext, Tail, _DrvSep2) ->
     lists:reverse(Tail);
 basename([$/|[]], Ext, Tail, DrvSep2) ->
     basename([], Ext, Tail, DrvSep2);
+basename([$/,Next|Rest], Ext, Tail, DirSep2)
+  when Next =:= $/; Next =:= DirSep2 ->
+    basename([Next|Rest], Ext, Tail, DirSep2);
 basename([$/|Rest], Ext, _Tail, DrvSep2) ->
     basename(Rest, Ext, [], DrvSep2);
 basename([DirSep2|Rest], Ext, Tail, DirSep2) when is_integer(DirSep2) ->
     basename([$/|Rest], Ext, Tail, DirSep2);
 basename([Char|Rest], Ext, Tail, DrvSep2) when is_integer(Char) ->
     basename(Rest, Ext, [Char|Tail], DrvSep2);
-basename([], _Ext, Tail, _DrvSep2) ->
-    lists:reverse(Tail).
+basename([], Ext, Tail, _DrvSep2) ->
+    %% Strip Ext from BName at end of input so it works even when the
+    %% input had trailing separators (e.g. "foo.erl/").
+    BName = lists:reverse(Tail),
+    case lists:suffix(Ext, BName) of
+        true when BName =/= Ext ->
+            lists:sublist(BName, length(BName) - length(Ext));
+        _ ->
+            BName
+    end.
 
 %% Returns the directory part of a pathname.
 %%
