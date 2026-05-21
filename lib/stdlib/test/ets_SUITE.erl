@@ -48,6 +48,7 @@
          fold_badarg/1]).
 -export([t_delete_object/1, t_init_table/1, t_whitebox/1,
          select_bound_chunk/1, t_delete_all_objects/1, t_test_ms/1,
+         t_fun2ms_shell_error/1,
          t_delete_all_objects_trap/1,
 	 t_select_delete/1,t_select_replace/1,t_select_replace_next_bug/1,
          t_select_pam_stack_overflow_bug/1,
@@ -168,7 +169,7 @@ all() ->
      select_bound_chunk,
      t_init_table, t_whitebox, t_delete_all_objects,
      t_delete_all_objects_trap,
-     t_test_ms, t_select_delete, t_select_replace,
+     t_test_ms, t_fun2ms_shell_error, t_select_delete, t_select_replace,
      t_select_replace_next_bug,
      t_select_pam_stack_overflow_bug,
      t_select_flatmap_term_copy_bug,
@@ -1614,6 +1615,17 @@ t_test_ms(Config) when is_list(Config) ->
 					     ['$$']}]),
     true = (if is_list(String) -> true; true -> false end),
     verify_etsmem(EtsMem).
+
+%% Regression: ets:fun2ms/1 must propagate ms_transform diagnostics
+%% instead of collapsing them to {error,transform_error}.
+t_fun2ms_shell_error(Config) when is_list(Config) ->
+    {ok,Tokens,_} = erl_scan:string("fun(X) -> ets:foo(X) end."),
+    {ok,[Expr]} = erl_parse:parse_exprs(Tokens),
+    {value,ShellFun,_} = erl_eval:expr(Expr, []),
+    %% apply/3 bypasses the ms_transform parse_transform, which would
+    %% reject a non-literal fun argument at compile time.
+    {error,[{_,[{_,ms_transform,_}|_]}|_],[]} =
+        apply(ets, fun2ms, [ShellFun]).
 
 %% Test the select reverse BIFs.
 t_select_reverse(Config) when is_list(Config) ->
