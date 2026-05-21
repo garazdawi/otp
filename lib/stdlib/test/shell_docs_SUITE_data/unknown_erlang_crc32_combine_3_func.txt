@@ -2,11 +2,11 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  crc32_combine(FirstCrc, SecondCrc, SecondSize)[0m
+[1m  crc32_combine(FirstCrc, SecondCrc, SecondSize)[0m
 
   Combines two previously computed crc32 checksums.
 
@@ -15,11 +15,18 @@
 
   The following code:
 
-    Y = erlang:crc32(Data1),
-    Z = erlang:crc32(Y,Data2).
+    1> Data1 = ~"abc", Data2 = ~"def".
+    2> X = erlang:crc32(Data1).
+    891568578
+    3> Y = erlang:crc32(X,Data2).
+    1267612143
 
-  assigns the same value to [;;4mZ[0m as this:
+  assigns the same value to [4mZ[0m as this:
 
-    X = erlang:crc32(Data1),
-    Y = erlang:crc32(Data2),
-    Z = erlang:crc32_combine(X,Y,iolist_size(Data2)).
+    1> Data1 = ~"abc", Data2 = ~"def".
+    2> X = erlang:crc32(Data1).
+    891568578
+    3> Y = erlang:crc32(Data2).
+    214229345
+    4> Z = erlang:crc32_combine(X,Y,iolist_size(Data2)).
+    1267612143

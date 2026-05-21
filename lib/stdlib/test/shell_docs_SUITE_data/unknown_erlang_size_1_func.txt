@@ -2,24 +2,38 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  size(Item)[0m
+[1m  size(Item)[0m
 
   Returns the number of elements in a tuple or the number of bytes
   in a binary or bitstring.
-
-  For example:
-
-    > size({morni, mulle, bwange}).
-    3
-    > size(<<11, 22, 33>>).
-    3
 
   For bitstrings, the number of whole bytes is returned. That is, if
   the number of bits in the bitstring is not divisible by 8, the
   resulting number of bytes is rounded down.
 
-  See also [;;4mtuple_size/1[0m, [;;4mbyte_size/1[0m, and [;;4mbit_size/1[0m.
+  See also [4mtuple_size/1[0m, [4mbyte_size/1[0m, and [4mbit_size/1[0m.
+
+  [4mNote[0m
+
+    It is recommended to avoid [4msize/1[0m in new code.
+
+[1mExamples[0m
+
+    1> size({a, b, c}).
+    3
+    2> tuple_size({a, b, c}).
+    3
+    3> size(<<11, 22, 33>>).
+    3
+    4> byte_size(<<11, 22, 33>>).
+    3
+    5> size(<<11, 7:4>>).
+    1
+    6> byte_size(<<11, 7:4>>).
+    2
+    7> bit_size(<<11, 7:4>>).
+    12

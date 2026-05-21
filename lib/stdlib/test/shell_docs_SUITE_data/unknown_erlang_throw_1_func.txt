@@ -2,36 +2,38 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  throw(Any)[0m
+[1m  throw(Any)[0m
 
-  Raises an exception of class [;;4mthrow[0m. Intended to be used to do
+  Raises an exception of class [4mthrow[0m. Intended to be used to do
   non-local returns from functions.
 
   If evaluated within a catch expression, the catch expression
-  returns value [;;4mAny[0m.
+  returns value [4mAny[0m.
 
   For example:
 
-    > catch throw({hello, there}).
-            {hello,there}
+    1> catch throw({hello, there}).
+    {hello,there}
 
-  If evaluated within a [;;4mtry[0m-block of a try expression, the value [;;4m[0m
-  [;;4mAny[0m can be caught within the catch block.
+  If evaluated within a [4mtry[0m-block of a try expression, the value [4m[0m
+  [4mAny[0m can be caught within the catch block.
 
   For example:
 
-    try
-        throw({my_exception, "Something happened"})
-    catch
-        throw:{my_exception, Desc} ->
-            io:format(standard_error, "Error: ~s~n", [Desc])
-    end
+    1>  try
+            throw({my_exception, "Something happened"})
+        catch
+            throw:{my_exception, Desc} ->
+                io:format(standard_error, "Error: ~s~n", [Desc])
+        end.
+    %% Output to standard error: Error: Something happened
 
-  Failure: [;;4mnocatch[0m if not caught by an exception handler.
+  If [4mthrow/1[0m is not evaluated within a catch, a [4mnocatch[0m run-time
+  error occurs.
 
   See the guide about errors and error handling for additional
   information.

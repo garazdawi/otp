@@ -2,23 +2,24 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  list_to_bitstring(BitstringList)[0m
+[1m  list_to_bitstring(BitstringList)[0m
 
-  Returns a bitstring that is made from the integers and bitstrings
-  in [;;4mBitstringList[0m. (The last tail in [;;4mBitstringList[0m is allowed
-  to be a bitstring.)
+  Returns a bitstring made from the integers and bitstrings in [4m[0m
+  [4mBitstringList[0m.
 
-  For example:
+  The last tail in [4mBitstringList[0m is allowed to be a bitstring.
 
-    > Bin1 = <<1,2,3>>.
+[1mExamples[0m
+
+    1> Bin1 = <<1,2,3>>.
     <<1,2,3>>
-    > Bin2 = <<4,5>>.
+    2> Bin2 = <<4,5>>.
     <<4,5>>
-    > Bin3 = <<6,7:4>>.
+    3> Bin3 = <<6,7:4>>.
     <<6,7:4>>
-    > list_to_bitstring([Bin1,1,[2,3,Bin2],4|Bin3]).
+    4> list_to_bitstring([Bin1,1,[2,3,Bin2],4|Bin3]).
     <<1,2,3,1,2,3,4,5,4,6,7:4>>

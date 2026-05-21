@@ -2,15 +2,43 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  is_function(Term)[0m
+[1m  is_function(Term)[0m
 
-  Returns [;;4mtrue[0m if [;;4mTerm[0m is a fun, otherwise [;;4mfalse[0m.
+  Returns [4mtrue[0m if [4mTerm[0m is a fun; otherwise, returns [4mfalse[0m.
 
-[;1m  is_function(Term, Arity)[0m
+[1mExamples[0m
 
-  Returns [;;4mtrue[0m if [;;4mTerm[0m is a fun that can be applied with [;;4mArity[0m
-  number of arguments, otherwise [;;4mfalse[0m.
+    1> is_function(fun() -> ok end).
+    true
+    2> is_function(fun lists:sum/1).
+    true
+    3> is_function({lists,sum}).
+    false
+
+[1m  is_function(Term, Arity)[0m
+
+  Returns [4mtrue[0m if [4mTerm[0m is a fun that can be applied with [4mArity[0m
+  number of arguments; otherwise, returns [4mfalse[0m.
+
+[1mExamples[0m
+
+    1> is_function(fun() -> ok end, 0).
+    true
+    2> is_function(fun lists:sum/1, 1).
+    true
+    3> is_function({lists,sum}, 1).
+    false
+    4> is_function(fun lists:sum/1, -1).
+    ** exception error: bad argument
+         in function  is_function/2
+            called as is_function(fun lists:sum/1,-1)
+            *** argument 2: out of range
+    5> is_function(fun lists:sum/1, bad_arity).
+    ** exception error: bad argument
+         in function  is_function/2
+            called as is_function(fun lists:sum/1,bad_arity)
+            *** argument 2: not an integer

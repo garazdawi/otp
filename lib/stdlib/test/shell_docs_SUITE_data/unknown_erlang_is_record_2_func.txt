@@ -2,22 +2,30 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  is_record(Term, RecordTag)[0m
+[1m  is_record(Term, Name)[0m
 
-  Returns [;;4mtrue[0m if [;;4mTerm[0m is a tuple and its first element is [;;4m[0m
-  [;;4mRecordTag[0m. Otherwise returns [;;4mfalse[0m.
+  Returns [4mtrue[0m if [4mTerm[0m is either a tuple record or a native
+  record named [4mName[0m; otherwise, returns [4mfalse[0m.
 
-  [;;4mNote[0m
+  This is allowed in guard tests if [4mName[0m is a literal atom.
 
-    Normally the compiler treats calls to [;;4mis_record/2[0m
-    especially. It emits code to verify that [;;4mTerm[0m is a tuple,
-    that its first element is [;;4mRecordTag[0m, and that the size is
-    correct. However, if [;;4mRecordTag[0m is not a literal atom, the
-    BIF [;;4mis_record/2[0m is called instead and the size of the tuple
-    is not verified.
+  The compilation will fail with an error message if [4mName[0m does not
+  refer to either a record defined in the same module as the call to [4m[0m
+  [4mis_record/2[0m or a native record imported into it.
 
-  Allowed in guard tests, if [;;4mRecordTag[0m is a literal atom.
+  If [4mName[0m is a variable and [4mTerm[0m is a native record, this
+  function returns [4mtrue[0m if [4mName[0m refers to a native record named [4m[0m
+  [4mName[0m in any module; otherwise, it returns [4mfalse[0m.
+
+  If [4mName[0m is a variable and [4mTerm[0m is tuple, this function returns [4m[0m
+  [4mtrue[0m if the first element of the tuple is [4mName[0m; otherwise, it
+  returns [4mfalse[0m.
+
+  [4mChange[0m
+
+    Before OTP 29, this function would only work for tuple
+    records.

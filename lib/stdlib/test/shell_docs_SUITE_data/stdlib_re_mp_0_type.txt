@@ -2,15 +2,29 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  mp()[0m
+[1m  mp()[0m
 
   Opaque data type containing a compiled regular expression.
 
-  [;;4mmp/0[0m is guaranteed to be a tuple() having the atom [;;4mre_pattern[0m
-  as its first element, to allow for matching in guards. The arity
-  of the tuple or the content of the other fields can change in
-  future Erlang/OTP releases.
+  A compiled regular expression of this type can only be executed on
+  the node instance where it was compiled.
+
+  [4mChange[0m
+
+    Before Erlang/OTP 28, it was possible to abuse [4mmp()[0m and
+    execute such terms on nodes other than the one where they were
+    compiled. This was unsafe, as it only worked if the two nodes
+    were sufficiently compatible (hardware and software), and
+    executing incompatible [4mmp()[0m terms could lead to unpleasant
+    side effects. From Erlang/OTP 28 this unsafe abuse is no
+    longer possible. Instead use the possibility to safely export
+    and import compiled regular expressions between nodes.
+
+  Type [4mmp()[0m is guaranteed to be a tuple having the atom [4m[0m
+  [4mre_pattern[0m as its first element to allow for matching in guards.
+  The arity of the tuple or the content of the other fields can
+  change in future Erlang/OTP releases.

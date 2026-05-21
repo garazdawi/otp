@@ -2,21 +2,21 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  list_to_float(String)[0m
+[1m  list_to_float(String)[0m
 
-  Returns the float whose text representation is [;;4mString[0m.
+  Returns the float whose text representation is [4mString[0m.
 
-  For example:
+[1mExamples[0m
 
-    > list_to_float("2.2017764e+0").
+    1> list_to_float("2.2017764e+0").
     2.2017764
 
   The float string format is the same as the format for Erlang float
   literals except for that underscores are not permitted.
 
-  Failure: [;;4mbadarg[0m if [;;4mString[0m contains a bad representation of a
-  float.
+  Failure: [4mbadarg[0m if [4mString[0m contains a invalid representation of
+  a float.

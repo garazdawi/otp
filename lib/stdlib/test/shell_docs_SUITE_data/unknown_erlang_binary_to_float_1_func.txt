@@ -2,24 +2,28 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  binary_to_float(Binary)[0m
+[1m  binary_to_float(Binary)[0m
 
-[;;4mSince[0m:
+[4mSince[0m:
   OTP R16B
 
-  Returns the float whose text representation is [;;4mBinary[0m.
-
-  For example:
-
-    > binary_to_float(<<"2.2017764e+0">>).
-    2.2017764
+  Returns the float whose text representation is [4mBinary[0m.
 
   The float string format is the same as the format for Erlang float
-  literals except for that underscores are not permitted.
+  literals, except that underscores are not permitted.
 
-  Failure: [;;4mbadarg[0m if [;;4mBinary[0m contains a bad representation of a
-  float.
+  Failure: [4mbadarg[0m if [4mBinary[0m contains an invalid representation
+  of a float.
+
+[1mExamples[0m
+
+    1> binary_to_float(~"10.5").
+    10.5
+    2> binary_to_float(~"17.0").
+    17.0
+    3> binary_to_float(<<"2.2017764e+1">>).
+    22.017764

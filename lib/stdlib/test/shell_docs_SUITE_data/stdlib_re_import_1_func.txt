@@ -1,0 +1,18 @@
+%% %CopyrightBegin%
+%%
+%% SPDX-License-Identifier: Apache-2.0
+%%
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
+%%
+%% %CopyrightEnd%
+
+[1m  import(Exported)[0m
+
+[4mSince[0m:
+  OTP 28.1
+
+  Imports a regular expression compiled with option [4mexport[0m. The
+  importing is cheap if the importing node is compatible enough to
+  the exporting node. If incompatible, as a fallback the [4mimport/1[0m
+  function will re-compile the regular expression from its string
+  format, which is included in [4mexported()[0m.
