@@ -828,7 +828,7 @@ get_decoding_offset(#{mode := urlsafe}) -> 257;
 get_decoding_offset(#{}) -> 1.
 
 -compile({inline, [{b64d, 2}]}).
-b64d(X, Off) ->
+b64d(X, Off) when is_integer(X, 0, 255) ->
     element(X + Off,
             {
 	     %% standard base64 alphabet (RFC 4648 Section 4)
