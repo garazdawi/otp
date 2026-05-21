@@ -33,7 +33,8 @@
          init_per_group/2,end_per_group/2]).
 
 -export([opts/1, degree/1, path/1, cycle/1, vertices/1,
-         edges/1, data/1, otp_3522/1, otp_3630/1, otp_8066/1, vertex_names/1]).
+         edges/1, data/1, otp_3522/1, otp_3630/1, otp_8066/1, vertex_names/1,
+         acyclic_add_edge_no_has_path/1]).
 
 -export([simple/1, loop/1, roots/1, isolated/1, topsort/1, subgraph/1,
          condensation/1, tree/1, traversals/1]).
@@ -43,8 +44,8 @@
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
 all() ->
-    [opts, degree, path, cycle, {group, misc},
-     {group, tickets}, {group, utils}].
+    [opts, degree, path, cycle, acyclic_add_edge_no_has_path,
+     {group, misc}, {group, tickets}, {group, utils}].
 
 groups() ->
     [{misc, [], [vertices, edges, data, vertex_names]},
@@ -153,6 +154,47 @@ cycle(Config) when is_list(Config) ->
     G1 = graph:del_vertex(G, x4),
     [x8] = graph:get_cycle(G1, x8),
     ok.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Regression: acyclic_add_edge/4 must not call has_path/3 (left-over
+%% debug assert) on top of the cycle check already done via get_path/3.
+acyclic_add_edge_no_has_path(Config) when is_list(Config) ->
+    %% Run the graph ops in a spawned worker so trace messages are
+    %% delivered reliably to a separate tracer.  Tracing self() with
+    %% the test process as the workload has been observed to drop
+    %% call-trace messages in CT contexts.
+    Self = self(),
+    Loop = fun L(N) ->
+                   receive
+                       {get, From}                -> From ! {calls, N};
+                       {trace, _, call, _}        -> L(N + 1);
+                       _                          -> L(N)
+                   end
+           end,
+    Tracer = spawn_link(fun() -> Loop(0) end),
+    Worker = spawn_link(fun() ->
+                                receive go -> ok end,
+                                G = graph:add_edge(
+                                      graph:add_vertex(
+                                        graph:add_vertex(
+                                          graph:new([acyclic]), a), b), a, b),
+                                _ = G,
+                                Self ! {done, self()},
+                                receive die -> ok end
+                        end),
+    erlang:trace_pattern({graph, has_path, 3}, true, [local]),
+    1 = erlang:trace(Worker, true, [call, {tracer, Tracer}]),
+    Worker ! go,
+    receive {done, Worker} -> ok end,
+    erlang:trace(Worker, false, [call]),
+    erlang:trace_pattern({graph, has_path, 3}, false, [local]),
+    Worker ! die,
+    Tracer ! {get, Self},
+    receive {calls, 0} -> ok;
+            {calls, N} -> ct:fail({unexpected_has_path_calls, N})
+    after 5000 -> ct:fail(tracer_timeout)
+    end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
