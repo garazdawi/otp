@@ -843,10 +843,11 @@ read_all_but_useless_chunks(File0) when is_atom(File0);
 					is_list(File0);
 					is_binary(File0) ->
     File = beam_filename(File0),
-    {ok, Module, ChunkIds0} = scan_beam(File, info),
+    FD = open_file(File),
+    {ok, Module, ChunkIds0} = scan_beam_fd(FD, info, false, []),
     ChunkIds = [Name || {Name,_,_} <- ChunkIds0,
 			not is_useless_chunk(Name)],
-    {ok, Module, Chunks} = scan_beam(File, ChunkIds),
+    {ok, Module, Chunks} = scan_beam_fd(reset_bb(FD), ChunkIds, false, []),
     {ok, {Module, lists:reverse(Chunks)}}.
 
 is_useless_chunk("CInf") -> true;
@@ -886,13 +887,14 @@ filter_funtab_1(<<Important:20/binary,_OldUniq:4/binary,T/binary>>, Zero) ->
 filter_funtab_1(Tail, _) when is_binary(Tail) -> [Tail].
 
 read_all_chunks(File0) when is_atom(File0);
-			    is_list(File0); 
+                            is_list(File0);
 			    is_binary(File0) ->
     try
         File = beam_filename(File0),
-        {ok, Module, ChunkIds0} = scan_beam(File, info),
+        FD = open_file(File),
+        {ok, Module, ChunkIds0} = scan_beam_fd(FD, info, false, []),
         ChunkIds = [Name || {Name,_,_} <- ChunkIds0],
-        {ok, Module, Chunks} = scan_beam(File, ChunkIds),
+        {ok, Module, Chunks} = scan_beam_fd(reset_bb(FD), ChunkIds, false, []),
         {ok, Module, lists:reverse(Chunks)}
     catch Error -> Error end.
 
@@ -933,25 +935,22 @@ scan_beam(File, What) ->
     scan_beam(File, What, false, []).
 
 %% -> {ok, Module, Data} | throw(Error)
-scan_beam(File, What0, AllowMissingChunks, OptionalChunks) ->
-    case scan_beam1(File, What0) of
-	{missing, _FD, Mod, Data, What} when AllowMissingChunks ->
-	    {ok, Mod, [{Id, missing_chunk} || Id <- What] ++ Data};
-	{missing, FD, Mod, Data, What} ->
-	    case What -- OptionalChunks of
-		[] -> {ok, Mod, Data};
-		[Missing | _] -> error({missing_chunk, filename(FD), Missing})
-	    end;
-	R ->
-	    R
-    end.
+scan_beam(File, What, AllowMissingChunks, OptionalChunks) ->
+    scan_beam_fd(open_file(File), What, AllowMissingChunks, OptionalChunks).
 
-%% -> {ok, Module, Data} | throw(Error)
-scan_beam1(File, What) ->
-    FD = open_file(File),
+%% Like scan_beam/4 but reuses an already-opened #bb{} so the same
+%% in-memory buffer can be scanned more than once.
+scan_beam_fd(FD, What, AllowMissingChunks, OptionalChunks) ->
     case catch scan_beam2(FD, What) of
 	Error when error =:= element(1, Error) ->
 	    throw(Error);
+        {missing, _FD, Mod, Data, Missing} when AllowMissingChunks ->
+            {ok, Mod, [{Id, missing_chunk} || Id <- Missing] ++ Data};
+        {missing, FD2, Mod, Data, Missing} ->
+            case Missing -- OptionalChunks of
+                [] -> {ok, Mod, Data};
+                [M | _] -> error({missing_chunk, filename(FD2), M})
+            end;
 	R ->
 	    R
     end.
@@ -1288,30 +1287,25 @@ extract_literals(Chunk0) ->
 
 -record(bb, {pos = 0 :: integer(),
 	     bin :: binary(),
-	     source :: binary() | string()}).
+             source :: binary() | string(),
+             %% Full uncompressed binary, kept so reset_bb/1 can rewind
+             %% the buffer without re-reading or re-decompressing.
+             data :: binary()}).
 
 open_file(Binary0) when is_binary(Binary0) ->
     Binary = maybe_uncompress(Binary0),
-    #bb{bin = Binary, source = Binary};
+    #bb{bin = Binary, source = Binary, data = Binary};
 open_file(FileName) ->
-    case file:open(FileName, [read, raw, binary]) of
-	{ok, Fd} ->
-	    read_all(Fd, FileName, []);
+    case file:read_file(FileName) of
+	{ok, Bin} ->
+            Binary = maybe_uncompress(Bin),
+            #bb{bin = Binary, source = FileName, data = Binary};
 	Error ->
 	    file_error(FileName, Error)
     end.
 
-read_all(Fd, FileName, Bins) ->
-    case file:read(Fd, 1 bsl 18) of
-	{ok, Bin} ->
-	    read_all(Fd, FileName, [Bin | Bins]);
-	eof ->
-	    ok = file:close(Fd),
-	    #bb{bin = maybe_uncompress(reverse(Bins)), source = FileName};
-	Error ->
-	    ok = file:close(Fd),
-	    file_error(FileName, Error)
-    end.
+reset_bb(#bb{data = Data} = FD) ->
+    FD#bb{pos = 0, bin = Data}.
 
 pread(FD, AtPos, Size) ->
     #bb{pos = Pos, bin = Binary} = FD,
@@ -1337,18 +1331,13 @@ beam_filename(Bin) when is_binary(Bin) ->
 beam_filename(File) ->
     filename:rootname(File, ".beam") ++ ".beam".
 
-%% Do not attempt to uncompress if we have the proper .beam format.
-%% This clause matches binaries given as input.
 maybe_uncompress(<<"FOR1",_/binary>>=Binary) ->
     Binary;
-%% This clause matches the iolist read from files.
-maybe_uncompress([<<"FOR1",_/binary>>|_]=IOData) ->
-    iolist_to_binary(IOData);
-maybe_uncompress(IOData) ->
+maybe_uncompress(Bin) ->
     try
-	zlib:gunzip(IOData)
+        zlib:gunzip(Bin)
     catch
-	_:_ -> iolist_to_binary(IOData)
+        _:_ -> Bin
     end.
 
 compress(IOData) ->
