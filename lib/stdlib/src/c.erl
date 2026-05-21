@@ -471,7 +471,7 @@ compile_info_add_cwd(Beam, Info) ->
         end,
     case lists:keytake(options, 1, Info) of
         false ->
-            [{options, CwdOpts}];
+            [{options, CwdOpts} | Info];
         {value, {options, Options}, InfoNoOpts} ->
             [{options, Options ++ CwdOpts} | InfoNoOpts]
     end.
