@@ -1076,7 +1076,7 @@ to_legacy_format([#{title:=Title}|Rest]) when Title =:= "commands"; Title =:= "b
     to_legacy_format(Rest);
 to_legacy_format([#{title:=Title, elems:=Elems}|Rest])
   when Title =:= "modules"; Title =:= "functions"; Title =:= "bindings";
-       Title =:= "user_defined", Title =:= "records"; Title =:= "fields";
+       Title =:= "user_defined"; Title =:= "records"; Title =:= "fields";
        Title =:= "types"; Title =:= "atoms"; Title =:= "matches";
        Title =:= "keywords"; Title =:= "typespecs" ->
     Elems1 = to_legacy_format(Elems),
