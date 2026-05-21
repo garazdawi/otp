@@ -37,6 +37,7 @@
          zip64_central_headers/0, unzip64_central_headers/0,
          zip64_central_headers/1, unzip64_central_headers/1,
          zip64_central_directory/1,
+         zip64_eocd_asymmetric_max_int16/1,
          basic_timestamp/1, extended_timestamp/1, capped_timestamp/1,
          uid_gid/1]).
 
@@ -51,13 +52,14 @@
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
-all() -> 
+all() ->
     [borderline, atomic, bad_zip, unzip_from_binary,
      unzip_to_binary, zip_to_binary, unzip_options,
      zip_options, list_dir_options, aliases,
      zip_api, open_leak, unzip_jar, compress_control, foldl,
      unzip_traversal_exploit, fd_leak, unicode, test_zip_dir,
-     explicit_file_info, {group, zip_group}, {group, zip64_group}].
+     explicit_file_info, zip64_eocd_asymmetric_max_int16,
+     {group, zip_group}, {group, zip64_group}].
 
 groups() -> 
     zip_groups().
@@ -735,6 +737,39 @@ try_bad(Name0, Reason, What, Config) ->
             io:format("unzip/2 returned ~p (expected ~p)\n", [Other, Expected]),
             ct:fail({bad_return_value, Other})
     end.
+
+%% find_eocd/1 must route to the ZIP64 path when only one of
+%% entries_on_disk / entries in the regular EOCD is 0xFFFF.
+zip64_eocd_asymmetric_max_int16(_Config) ->
+    MAX = 16#FFFF,
+    EOCD = 16#06054b50,
+    EOCD64 = 16#06064b50,
+    LOC = 16#07064b50,
+    {ok, {_, Archive0}} =
+        zip:zip("test.zip", [{"a.txt", <<"hello">>}], [memory]),
+    BodySize = byte_size(Archive0) - 22,
+    <<Body:BodySize/binary,
+      EOCD:32/little, 0:16/little, 0:16/little, _:16/little, _:16/little,
+      CDSize:32/little, CDOffset:32/little, 0:16/little>> = Archive0,
+    Eocd64Body = <<61:8, 3:8, 45:16/little,
+                   0:32/little, 0:32/little,
+                   1:64/little, 1:64/little,
+                   CDSize:64/little, CDOffset:64/little>>,
+    Trailer = <<EOCD64:32/little, (byte_size(Eocd64Body)):64/little, Eocd64Body/binary,
+                LOC:32/little, 0:32/little, BodySize:64/little, 1:32/little>>,
+    MkEocd = fun(OnDisk, Entries) ->
+                     <<EOCD:32/little, 0:16/little, 0:16/little,
+                       OnDisk:16/little, Entries:16/little,
+                       CDSize:32/little, CDOffset:32/little, 0:16/little>>
+             end,
+    [begin
+         A = <<Body/binary, Trailer/binary, (MkEocd(OnDisk, Entries))/binary>>,
+         {ok, [#zip_comment{},
+               #zip_file{name = "a.txt", info = #file_info{size = 5}}]} =
+             zip:list_dir(A),
+         {ok, [{"a.txt", <<"hello">>}]} = zip:unzip(A, [memory])
+     end || {OnDisk, Entries} <- [{MAX, 1}, {1, MAX}]],
+    ok.
 
 %% Test extracting to binary with memory option.
 unzip_to_binary(Config) when is_list(Config) ->
