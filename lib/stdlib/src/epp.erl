@@ -472,8 +472,7 @@ parse_file(Ifile, Options) ->
 	    {ok, Forms};
 	{ok,Epp,Extra} ->
 	    Forms = parse_file(Epp),
-            Epp ! {get_features, self()},
-            Ftrs = receive {features, X} -> X end,
+            Ftrs = get_features(Epp),
 	    close(Epp),
 	    {ok, Forms, [{features, Ftrs} | Extra]};
 	{error,E} ->
@@ -2256,6 +2255,20 @@ epp_request(Epp) ->
 epp_request(Epp, Req) ->
     Epp ! {epp_request,self(),Req},
     wait_epp_reply(Epp, erlang:monitor(process, Epp)).
+
+get_features(Epp) ->
+    Mref = erlang:monitor(process, Epp),
+    Epp ! {get_features, self()},
+    receive
+        {features, Ftrs} ->
+            erlang:demonitor(Mref, [flush]),
+            Ftrs;
+        {'DOWN', Mref, _, _, _} ->
+            receive
+                {features, Ftrs} -> Ftrs
+            after 0 -> []
+            end
+    end.
 
 epp_reply(From, Rep) ->
     From ! {epp_reply,self(),Rep},
