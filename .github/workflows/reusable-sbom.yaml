@@ -130,37 +130,40 @@ jobs:
               pip install -U ntia-conformance-checker
           EOF
 
-      - name: Restore from cache
-        if: hashFiles(env.SCAN_RESULT_CACHE_PATH) != ''
+      - name: Scan (init, optional cache restore, reuse fill, scancode fill)
         run: |
+            # Always initialise a fresh scan-result skeleton from the
+            # analyzer output.
             docker run -v $PWD/:/github -v $HOME:$HOME otp \
                "/github/.github/scripts/ort-scanner.es init -i $HOME/.ort/ort-results/analyzer-result.json \
                -o $HOME/.ort/ort-results/scan-result.init.json /github"
-            docker run -v $PWD/:/github -v $HOME:$HOME otp \
-               "/github/.github/scripts/ort-scanner.es restore-cache -i $HOME/.ort/ort-results/scan-result.init.json \
-               -o $HOME/.ort/ort-results/scan-result.cache.json /github/${{ env.SCAN_RESULT_CACHE_PATH }}"
-            # Fill from REUSE first (SPDX-License-Identifier headers, fast)
-            # so scancode only has to fuzzy-match license text on files that
-            # are not REUSE-compliant. The post-scan reuse overwrite below
-            # would have re-produced these same results, so this only shifts
-            # which step actually scans them.
+
+            # If a previous run's scan result is available, restore the
+            # entries whose files still match by SHA1; otherwise fall
+            # through to a from-scratch scan.
+            if [ -f "${{ env.SCAN_RESULT_CACHE_PATH }}" ]; then
+              docker run -v $PWD/:/github -v $HOME:$HOME otp \
+                 "/github/.github/scripts/ort-scanner.es restore-cache -i $HOME/.ort/ort-results/scan-result.init.json \
+                 -o $HOME/.ort/ort-results/scan-result.cache.json /github/${{ env.SCAN_RESULT_CACHE_PATH }}"
+              SCAN_INPUT=scan-result.cache.json
+            else
+              SCAN_INPUT=scan-result.init.json
+            fi
+
+            # Fill from REUSE first (SPDX-License-Identifier headers,
+            # fast) so scancode only has to fuzzy-match license text on
+            # files that are not REUSE-compliant. The trailing reuse
+            # overwrite step below would have re-produced these same
+            # results, so this only shifts which step actually scans
+            # them.
             docker run -v $PWD/:/github -v $HOME:$HOME otp \
                "/github/.github/scripts/ort-scanner.es scan -t reuse -s fill \
-               -i $HOME/.ort/ort-results/scan-result.cache.json \
+               -i $HOME/.ort/ort-results/$SCAN_INPUT \
                -o $HOME/.ort/ort-results/scan-result.reusefilled.json /github"
             docker run -v $PWD/:/github -v $HOME:$HOME otp \
                "/github/.github/scripts/ort-scanner.es scan -t scancode -s fill \
                -i $HOME/.ort/ort-results/scan-result.reusefilled.json \
                -o $HOME/.ort/ort-results/scan-result.json /github"
-
-      - name: Run OSS Review Toolkit (scanner)
-        if: hashFiles(env.SCAN_RESULT_CACHE_PATH) == ''
-        uses: oss-review-toolkit/ort-ci-github-action@1805edcf1f4f55f35ae6e4d2d9795ccfb29b6021 # ratchet:oss-review-toolkit/ort-ci-github-action@v1.1.0
-        with:
-            image: ghcr.io/oss-review-toolkit/ort-minimal:${{ env.ORT_VERSION }}
-            run: >
-              scanner
-            sw-version: ${{ env.OTP_SBOM_VERSION }}
 
       - name: Overwrite scan results using reuse
         run: |
