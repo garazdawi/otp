@@ -52,6 +52,7 @@ MODULES= \
 	erl_anno_SUITE \
 	erl_eval_SUITE \
 	erl_expand_records_SUITE \
+	erl_features_SUITE \
 	erl_internal_SUITE \
 	erl_lint_SUITE \
 	erl_pp_SUITE \
