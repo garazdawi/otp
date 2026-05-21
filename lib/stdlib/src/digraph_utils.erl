@@ -253,7 +253,12 @@ arborescence_root(G) ->
                             end
                     end,
                 [Root] = lists:foldl(F, [], digraph:vertices(G)),
-                {yes, Root}
+                %% A disconnected directed cycle satisfies the in-degree
+                %% counts, so reachability must also be checked.
+                case length(reachable([Root], G)) =:= digraph:no_vertices(G) of
+                    true -> {yes, Root};
+                    false -> no
+                end
             catch _:_ ->
                 no
             end;

@@ -31,17 +31,18 @@
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
 	 init_per_group/2,end_per_group/2]).
 
--export([simple/1, loop/1, roots/1, isolated/1, topsort/1, subgraph/1, 
-         condensation/1, tree/1, traversals/1]).
+-export([simple/1, loop/1, roots/1, isolated/1, topsort/1, subgraph/1,
+         condensation/1, tree/1, arborescence_disconnected_cycle/1,
+         traversals/1]).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
-all() -> 
+all() ->
     [simple, loop, roots, isolated, topsort, subgraph,
-     condensation, tree, traversals].
+     condensation, tree, arborescence_disconnected_cycle, traversals].
 
 groups() -> 
     [].
@@ -258,6 +259,13 @@ tree(Config) when is_list(Config) ->
     %% Parallel edges.
     false = is_arborescence([{a,b},{a,b}]),
 
+    ok.
+
+arborescence_disconnected_cycle(Config) when is_list(Config) ->
+    no = arborescence_root([a,b,c,d], [{a,b},{c,d},{d,c}]),
+    false = is_arborescence([a,b,c,d], [{a,b},{c,d},{d,c}]),
+    no = arborescence_root([a,b,c], [{a,b},{c,c}]),
+    false = is_arborescence([a,b,c], [{a,b},{c,c}]),
     ok.
 
 %% OTP-9040
