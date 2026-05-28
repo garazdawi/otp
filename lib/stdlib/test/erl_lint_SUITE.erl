@@ -4486,10 +4486,10 @@ otp_11851(Config) when is_list(Config) ->
             -spec ?MODULE:a(_) -> ok.
 	">>,
 	[],
-         {errors,[{{3,14},erl_lint,{redefine_spec,{a,1}}},
+         {errors,[{{2,14},erl_lint,{spec_fun_undefined,{a,1}}},
+                  {{3,14},erl_lint,{redefine_spec,{a,1}}},
                   {{5,14},erl_lint,{redefine_spec,{lint_test,a,1}}},
-                  {{6,14},erl_lint,{redefine_spec,{lint_test,a,1}}},
-                  {{6,14},erl_lint,{spec_fun_undefined,{a,1}}}],
+                  {{6,14},erl_lint,{redefine_spec,{lint_test,a,1}}}],
           []}}
           ],
     [] = run(Config, Ts),

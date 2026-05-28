@@ -2,29 +2,31 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  tl(List)[0m
+[1m  tl(List)[0m
 
-  Returns the tail of [;;4mList[0m, that is, the list minus the first
-  element
+  Returns the tail of [4mList[0m, which is the list without its first
+  element.
 
   It works with improper lists.
 
-  Examples:
+[1mExamples[0m
 
-    > tl([geesties, guilies, beasties]).
+    1> tl([geesties, guilies, beasties]).
     [guilies, beasties]
-
-    > tl([geesties]).
+    2> tl([geesties]).
     []
-
-    > tl([geesties, guilies, beasties | improper_end]).
+    3> tl([geesties, guilies, beasties | improper_end]).
     [guilies, beasties | improper_end]
-
-    > tl([geesties | improper_end]).
+    4> tl([geesties | improper_end]).
     improper_end
+    5> tl([]).
+    ** exception error: bad argument
+         in function  tl/1
+            called as tl([])
+            *** argument 1: not a nonempty list
 
-  Failure: [;;4mbadarg[0m if [;;4mList[0m is an empty list [;;4m[][0m.
+  Failure: [4mbadarg[0m if [4mList[0m is an empty list [4m[][0m.

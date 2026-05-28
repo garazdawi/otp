@@ -1,0 +1,35 @@
+%% %CopyrightBegin%
+%%
+%% SPDX-License-Identifier: Apache-2.0
+%%
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
+%%
+%% %CopyrightEnd%
+
+[1m  binary_part(Subject, Start, Length)[0m
+
+[4mSince[0m:
+  OTP R14B
+
+  Extracts the part of the binary described by [4mStart[0m and [4mLength[0m.
+
+  A negative length can be used to extract bytes at the end of a
+  binary.
+
+  [4mStart[0m is zero-based.
+
+  Failure: [4mbadarg[0m if [4mStart[0m and [4mLength[0m in any way reference
+  outside the binary.
+
+  For details about the semantics of [4mStart[0m and [4mLength[0m, see [4m[0m
+  [4mbinary:part/3[0m.
+
+[1mExamples[0m
+
+    1> Bin = <<1,2,3,4,5,6,7,8,9,10>>.
+    2> binary_part(Bin, 0, 2).
+    <<1,2>>
+    3> binary_part(Bin, 2, 3).
+    <<3,4,5>>
+    4> binary_part(Bin, byte_size(Bin), -5).
+    <<6,7,8,9,10>>

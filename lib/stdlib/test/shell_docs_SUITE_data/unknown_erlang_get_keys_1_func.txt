@@ -2,23 +2,26 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  get_keys(Val)[0m
+[1m  get_keys(Val)[0m
 
-  Returns a list of keys that are associated with the value [;;4mVal[0m in
+  Returns a list of keys that are associated with the value [4mVal[0m in
   the process dictionary. The items in the returned list can be in
   any order.
 
   For example:
 
-    > put(mary, {1, 2}),
-    put(had, {1, 2}),
-    put(a, {1, 2}),
-    put(little, {1, 2}),
-    put(dog, {1, 3}),
-    put(lamb, {1, 2}),
-    get_keys({1, 2}).
-    [mary,had,a,little,lamb]
+    1> put(allosaurus, '🦕').
+    2> put(brachiosaurus, '🦕').
+    3> put(carnotaurus, '🦕').
+    4> put(diplodocus, '🦕').
+    5> put(euoplocephalus, '🦕').
+    6> put(fox, '🦊').
+    7> lists:sort(get_keys('🦕')).
+    [allosaurus,brachiosaurus,carnotaurus,diplodocus,euoplocephalus]
+    8> erase().
+    9> get_keys('🦕').
+    []

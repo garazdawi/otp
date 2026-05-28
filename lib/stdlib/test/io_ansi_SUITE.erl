@@ -29,6 +29,7 @@
          init_per_group/2, end_per_group/2, init_per_testcase/2, end_per_testcase/2]).
 
 -export([enabled/1, fwrite/1, fwrite_test/0, format_color_option/1,
+         format_color_option_background/1,
          format_no_color_env/1, scan/1, doctests/1]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -38,7 +39,8 @@ suite() ->
     [].
 
 all() ->
-    [ doctests, enabled, fwrite, format_color_option, format_no_color_env, scan ].
+    [ doctests, enabled, fwrite, format_color_option,
+      format_color_option_background, format_no_color_env, scan ].
 
 
 groups() ->
@@ -190,6 +192,23 @@ format_color_option(Config) ->
                                io_ansi:format([underline, "x"], [],
                                               [{enabled,true}, {color,false}, {reset,false}])
                        end))
+    after
+        shell_test_lib:stop_tty(Term)
+    end.
+
+format_color_option_background(Config) ->
+    Term = shell_test_lib:setup_tty([{env, [{"TERM","xterm-256color"}, {"NO_COLOR",""}]}|Config]),
+    try
+        [?assertEqual(<<"x">>,
+                      shell_test_lib:rpc(
+                        Term,
+                        fun() ->
+                                group_leader(whereis(user), self()),
+                                io_ansi:format([Dir, "x"], [],
+                                               [{enabled,true}, {color,false}, {reset,false}])
+                        end))
+         || Dir <- [{background,4}, {background,10,20,30},
+                    blue_background, default_background]]
     after
         shell_test_lib:stop_tty(Term)
     end.

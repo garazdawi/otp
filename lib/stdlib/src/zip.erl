@@ -2070,7 +2070,7 @@ find_eocd(<<?END_OF_CENTRAL_DIR_64_LOCATOR_MAGIC:32/little,
             Comment:ZipCommentLength/binary>>) ->
     if DiskNum =:= ?MAX_INT16;
        StartDiskNum =:= ?MAX_INT16;
-       EntriesOnDisk =:= ?MAX_INT16,
+       EntriesOnDisk =:= ?MAX_INT16;
        Entries =:= ?MAX_INT16;
        Size =:= ?MAX_INT32;
        Offset =:= ?MAX_INT32 ->

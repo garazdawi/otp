@@ -2,24 +2,34 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  map_get(Key, Map)[0m
+[1m  map_get(Key, Map)[0m
 
-[;;4mSince[0m:
+[4mSince[0m:
   OTP 21.0
 
-  Returns value [;;4mValue[0m associated with [;;4mKey[0m if [;;4mMap[0m contains [;;4mKey[0m.
+  Returns value [4mValue[0m associated with [4mKey[0m if [4mMap[0m contains [4mKey[0m.
 
-  The call fails with a [;;4m{badmap,Map}[0m exception if [;;4mMap[0m is not a
-  map, or with a [;;4m{badkey,Key}[0m exception if no value is associated
-  with [;;4mKey[0m.
+  The call fails with a [4m{badmap,Map}[0m exception if [4mMap[0m is not a
+  map, or with a [4m{badkey,Key}[0m exception if no value is associated
+  with [4mKey[0m.
 
-  Example:
+[1mExamples[0m
 
-    > Key = 1337,
-      Map = #{42 => value_two,1337 => "value one","a" => 1},
-      map_get(Key,Map).
+    1> Key = 1337.
+    2> Map = #{42 => value_two,Key => "value one","a" => 1}.
+    3> map_get(Key, Map).
     "value one"
+    4> map_get(unknown_key, Map).
+    ** exception error: bad key: unknown_key
+         in function  map_get/2
+            called as map_get(unknown_key,#{42 => value_two,1337 => "value one","a" => 1})
+            *** argument 1: not present in map
+    5> map_get(key, no_map).
+    ** exception error: bad map: no_map
+         in function  map_get/2
+            called as map_get(key,no_map)
+            *** argument 2: not a map

@@ -2441,21 +2441,21 @@ must be literally in the call when used from the shell as well.
 
 For more information, see [`ms_transform`](`m:ms_transform`).
 """.
--spec fun2ms(LiteralFun) -> MatchSpec when
+-spec fun2ms(LiteralFun) -> MatchSpec | {error, Errors, Warnings} when
       LiteralFun :: function(),
-      MatchSpec :: match_spec().
+      MatchSpec :: match_spec(),
+      Errors :: [{File :: file:filename(),
+                  [{Location :: erl_anno:location() | none,
+                    Module :: module(),
+                    Reason :: term()}]}],
+      Warnings :: [].
 
 fun2ms(ShellFun) when is_function(ShellFun) ->
     %% Check that this is really a shell fun...
     case erl_eval:fun_data(ShellFun) of
         {fun_data,ImportList,Clauses} ->
-            case ms_transform:transform_from_shell(
-                   ?MODULE,Clauses,ImportList) of
-                {error,[_|_],_} ->
-                    {error,transform_error};
-                Else ->
-                    Else
-            end;
+            ms_transform:transform_from_shell(
+              ?MODULE,Clauses,ImportList);
         _ ->
             exit({badarg,{?MODULE,fun2ms,
                           [function,called,with,real,'fun',

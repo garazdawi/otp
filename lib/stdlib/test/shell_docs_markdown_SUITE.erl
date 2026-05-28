@@ -86,7 +86,7 @@
          singleton_numbered_list_with_format/1, singleton_numbered_list_followed_inner_paragraph/1,
          singleton_numbered_list_followed_inner_paragraph2/1, multiline_numbered_indented_list/1,
          multiline_numbered_indented_list2/1, multiline_numbered_list/1, even_nested_numbered_list/1,
-         odd_nested_numbered_list/1]).
+         odd_nested_numbered_list/1, non_digit_dot_not_numbered_list/1]).
 
 -export([table_with_rows/1, table_with_escaped_bars/1, fake_table_test/1]).
 
@@ -270,7 +270,8 @@ numbered_list_tests() ->
       multiline_numbered_indented_list2,
       multiline_numbered_list,
       even_nested_numbered_list,
-      odd_nested_numbered_list
+      odd_nested_numbered_list,
+      non_digit_dot_not_numbered_list
     ].
 
 table_tests() ->
@@ -1030,6 +1031,9 @@ odd_nested_numbered_list(_Config) ->
                      ])
                  ])],
     compile_and_compare(Input, Result).
+
+non_digit_dot_not_numbered_list(_Config) ->
+    compile_and_compare(~"x. apple", [p(~"x. apple")]).
 
 
 table_with_rows(_Config) ->

@@ -296,7 +296,7 @@ function where all variables will have syntactically valid names.
       Function :: erl_parse:abstract_form()).
 
 legalize_vars({function,ANNO,Name0,Arity,Clauses0}) ->
-    ?TEST(F),
+    ?TEST({function,ANNO,Name0,Arity,Clauses0}),
     %% Collect all used variables in this function and classify them
     %% as either syntactically valid or not.
     F = fun({var,_Anno,Name}, {Valid, Invalid}) ->

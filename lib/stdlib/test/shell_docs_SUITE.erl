@@ -28,6 +28,7 @@
 
 -export([render/1, links/1, normalize/1, render_prop/1,render_non_native/1, ansi/1, columns/1, render_man/1]).
 -export([render_function/1, render_type/1, render_callback/1, doctests/1]).
+-export([extract_callback_specs/1, render_callback_spec/1]).
 
 -export([render_all/1, update_render/0, update_render/1]).
 
@@ -44,7 +45,8 @@ all() ->
       {group, prop},
       {group, render_smoke},
       ansi, columns,
-      doctests
+      doctests,
+      extract_callback_specs, render_callback_spec
     ].
 
 
@@ -316,6 +318,23 @@ render_callback(_Config) ->
                         end
                 end, format_configurations())
       end),
+    ok.
+
+extract_callback_specs(_Config) ->
+    #{callback := Callbacks, function := Functions} =
+        shell_docs:extract_type_specs(gen_server),
+    {attribute, _, callback, _} = maps:get({init, 1}, Callbacks),
+    {attribute, _, callback, _} = maps:get({handle_call, 3}, Callbacks),
+    maps:foreach(fun(_, {attribute, _, callback, _}) -> ok end, Callbacks),
+    maps:foreach(fun(_, {attribute, _, spec, _}) -> ok end, Functions),
+    ok.
+
+render_callback_spec(_Config) ->
+    {ok, Docs} = code:get_doc(gen_server),
+    Rendered = unicode:characters_to_binary(
+                 shell_docs:render_callback(gen_server, init, 1, Docs,
+                                            #{ansi => false})),
+    true = is_binary(string:find(Rendered, <<"-callback">>)),
     ok.
 
 render_man(_Config) ->

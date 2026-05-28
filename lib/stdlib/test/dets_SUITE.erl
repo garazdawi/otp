@@ -48,7 +48,8 @@
          otp_5487/1, otp_6206/1, otp_6359/1, otp_4738/1, otp_7146/1,
          otp_8070/1, otp_8856/1, otp_8898/1, otp_8899/1, otp_8903/1,
          otp_8923/1, otp_9282/1, otp_11245/1, otp_11709/1, otp_13229/1,
-         otp_13260/1, otp_13830/1, receive_optimisation/1]).
+         otp_13260/1, otp_13830/1, receive_optimisation/1,
+         pending_worker_crash/1]).
 
 -export([dets_dirty_loop/0]).
 
@@ -96,7 +97,8 @@ all() ->
 	insert_new, repair_continuation, otp_5487, otp_6206,
 	otp_6359, otp_4738, otp_7146, otp_8070, otp_8856, otp_8898,
 	otp_8899, otp_8903, otp_8923, otp_9282, otp_11245, otp_11709,
-        otp_13229, otp_13260, otp_13830, receive_optimisation
+        otp_13229, otp_13260, otp_13830, receive_optimisation,
+        pending_worker_crash
     ].
 
 groups() -> 
@@ -3493,6 +3495,66 @@ otp_13830(Config) ->
     ok = dets:close(Tab),
     {ok, Tab} = dets:open_file(Tab, [{file, File}, {version, default}]),
     ok = dets:close(Tab).
+
+%% A pending_call/7 worker dying before sending {pending_reply,_} must
+%% not leave the #pending{} entry behind — otherwise subsequent opens
+%% for the same table queue on it forever.
+pending_worker_crash(Config) when is_list(Config) ->
+    ct:timetrap({seconds, 30}),
+    OldTrap = process_flag(trap_exit, true),
+    Tab = pending_worker_crash,
+    File = filename(Tab, Config),
+    file:delete(File),
+    {ok, Tab} = dets:open_file(Tab, [{file, File}]),
+
+    DetsServer = whereis(dets),
+    1 = erlang:trace(DetsServer, true, [procs]),
+
+    %% Trigger a pending add_user and kill the worker dets_server
+    %% spawns before it can reply.
+    Tester = self(),
+    Victim = spawn(fun() ->
+                           catch dets:open_file(Tab, [{file, File}]),
+                           Tester ! {self(), done}
+                   end),
+    receive
+        {trace, DetsServer, spawn, Worker, _} ->
+            exit(Worker, kill)
+    after 5000 ->
+            ct:fail("dets_server did not spawn a pending worker")
+    end,
+    _ = erlang:trace(DetsServer, false, [procs]),
+
+    %% A second open must not hang on the orphaned pending entry.
+    Probe = spawn(fun() ->
+                          R = catch dets:open_file(Tab, [{file, File}]),
+                          Tester ! {self(), R}
+                  end),
+    Result = receive {Probe, R} -> R after 5000 -> timeout end,
+
+    exit(Victim, kill),
+    exit(Probe, kill),
+    case whereis(dets) of
+        undefined -> ok;
+        Srv -> exit(Srv, kill)
+    end,
+    dets:start(),
+    file:delete(File),
+    flush_exits(),
+    process_flag(trap_exit, OldTrap),
+
+    case Result of
+        timeout ->
+            ct:fail("second dets:open_file/2 hung after pending worker crash");
+        {ok, Tab} -> ok;
+        {'EXIT', {dets_process_died, _}} -> ok;
+        {error, {dets_worker_died, _}} -> ok
+    end.
+
+flush_exits() ->
+    receive {'EXIT', _, _} -> flush_exits()
+    after 0 -> ok
+    end.
 
 receive_optimisation(Config) ->
     Tab = dets_receive_optimisation_test,

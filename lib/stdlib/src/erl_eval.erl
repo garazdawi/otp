@@ -1251,10 +1251,11 @@ check_bad_generators([{Generate,_,_,V}|T], Env, Acc)
 check_bad_generators([{Generate,_,_,Iter0}|T], Env, Acc)
     when Generate =:= m_generate;
          Generate =:= m_generate_strict ->
-    case maps:next(Iter0) of
-        none -> check_bad_generators(T, Env, [#{}|Acc]);
-        _ -> check_bad_generators(T, Env, [#{K => V || K := V <- Iter0}|Acc])
-    end;
+    %% Keep the raw iterator; materialising it on every step would make
+    %% eval_zip O(N^2) for an N-element map generator.  is_generator_end/1
+    %% inspects the iterator directly; eval_zip materialises lazily into
+    %% the {bad_generators,_} error term.
+    check_bad_generators(T, Env, [{map_iter, Iter0}|Acc]);
 check_bad_generators([{Generate,_,P,<<_/bitstring>>=Bin}|T], {Bs0, Lf, Ef}, Acc)
     when Generate =:= b_generate;
          Generate =:= b_generate_strict ->
@@ -1272,23 +1273,24 @@ check_bad_generators([{b_generate,_,_,Term}|T], Env, Acc) ->
 check_bad_generators([{b_generate_strict,_,_,Term}|T], Env, Acc) ->
     check_bad_generators(T, Env, [Term|Acc]);
 check_bad_generators([], _, Acc)->
-    case any(fun is_generator_end/1, Acc) of
-        false ->
-            %% None of the generators has reached its end.
-            {ok, list_to_tuple(reverse(Acc))};
-        true ->
-            case all(fun(V) -> is_generator_end(V) end, Acc) of
-                true ->
-                    %% All generators have reached their end.
-                    {ok, list_to_tuple(reverse(Acc))};
-                false ->
-                    {error, {bad_generators,list_to_tuple(reverse(Acc))}}
-            end
+    Gens = reverse(Acc),
+    case {any(fun is_generator_end/1, Gens),
+          all(fun is_generator_end/1, Gens)} of
+        {false, _} -> {ok, Gens};
+        {true, true} -> {ok, Gens};
+        {true, false} -> {error, {bad_generators, Gens}}
     end.
 
+is_generator_end({map_iter, Iter}) -> maps:next(Iter) =:= none;
 is_generator_end([]) -> true;
 is_generator_end(<<>>) -> true;
-is_generator_end(Other) -> Other =:= #{}.
+is_generator_end(#{}) -> true;
+is_generator_end(_) -> false.
+
+materialize_generator({map_iter, Iter}) ->
+    maps:from_list(maps:to_list(Iter));
+materialize_generator(V) ->
+    V.
 
 native_record_init([{K, V}|Defs], Vs, Acc) ->
     %% Fill in fields that have default values.
@@ -1400,15 +1402,20 @@ eval_mc2([], _Bs, _Lf, _Ef, _FUVs, Acc) ->
     Acc.
 
 eval_zip(E, [{zip, Anno, VarList}|Qs], Bs0, Lf, Ef, FUVs, Acc0, Fun) ->
-    Gens = case check_bad_generators(VarList, {Bs0, Lf, Ef}, []) of
-               {ok, Acc} -> Acc;
-               {error, Reason} ->
-                   apply_error(Reason, ?STACKTRACE, Anno, Bs0, Ef, none)
-           end,
+    BadGens = fun(Gens) ->
+                      {bad_generators,
+                       list_to_tuple([materialize_generator(G) || G <- Gens])}
+              end,
+    GensRaw = case check_bad_generators(VarList, {Bs0, Lf, Ef}, []) of
+                  {ok, Acc} -> Acc;
+                  {error, {bad_generators, BadAcc}} ->
+                      apply_error(BadGens(BadAcc), ?STACKTRACE, Anno, Bs0, Ef, none)
+              end,
     StrictPats = get_strict_patterns(VarList, []),
     {Rest, Bs1} = bind_all_generators(VarList, Bs0, Lf, Ef, FUVs, StrictPats),
     case {Rest, Qs, Bs1} of
-        {_, _, error} -> apply_error({bad_generators,Gens}, ?STACKTRACE, Anno, Bs0, Ef, none);
+        {_, _, error} ->
+            apply_error(BadGens(GensRaw), ?STACKTRACE, Anno, Bs0, Ef, none);
         {[], [], _} -> Acc0;
         {[], _, _} -> Acc0;
         {_,_,done} -> Acc0;

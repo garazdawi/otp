@@ -51,6 +51,7 @@
 	  maps_syntax/1,
 	  format_options/1,
           form_vars/1,
+          debug_compile/1,
 	  quoted_atom_types/1,
           native_records/1,
 
@@ -83,7 +84,7 @@ groups() ->
       [func, call, recs, try_catch, if_then, receive_after,
        bits, head_tail, cond1, block, case1, ops,
        messages, maps_syntax, quoted_atom_types,
-       format_options, form_vars, native_records
+       format_options, form_vars, debug_compile, native_records
     ]},
      {attributes, [], [misc_attrs, import_export, dialyzer_attrs]},
      {tickets, [],
@@ -612,6 +613,12 @@ form_vars(Config) when is_list(Config) ->
                        end, Forms),
     ok = file:write_file(FileName, [erl_pp:form(F) || F <- Forms1]),
     {ok, _, _, []} = compile:file(FileName, [return|Opts]),
+    ok.
+
+debug_compile(Config) when is_list(Config) ->
+    %% Regression: erl_pp.erl must compile with DEBUG=true.
+    Src = filename:join(code:lib_dir(stdlib), "src/erl_pp.erl"),
+    {ok, _, _, []} = compile:file(Src, [binary, return, {d, 'DEBUG', true}]),
     ok.
 
 misc_attrs(Config) when is_list(Config) ->

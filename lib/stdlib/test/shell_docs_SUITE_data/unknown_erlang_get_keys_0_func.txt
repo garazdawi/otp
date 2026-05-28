@@ -2,13 +2,13 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  get_keys()[0m
+[1m  get_keys()[0m
 
-[;;4mSince[0m:
+[4mSince[0m:
   OTP 18.0
 
   Returns a list of all keys present in the process dictionary. The
@@ -16,8 +16,11 @@
 
   For example:
 
-    > put(dog, {animal,1}),
-    put(cow, {animal,2}),
-    put(lamb, {animal,3}),
-    get_keys().
-    [dog,cow,lamb]
+    1> put(dog, '🐶').
+    2> put(cow, '🐄').
+    3> put(lamb, '🐑').
+    4> lists:sort(get_keys()).
+    [cow,dog,lamb]
+    5> erase().
+    6> get_keys().
+    []

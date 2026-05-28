@@ -42,6 +42,7 @@
          init/1, pattern/1, strict/1, update/1,
 	 otp_5915/1, otp_7931/1, otp_5990/1,
 	 otp_7078/1, maps/1, zlc/1,
+         native_anon_update/1,
          side_effects/1]).
 
 init_per_testcase(_Case, Config) ->
@@ -54,10 +55,11 @@ suite() ->
     [{ct_hooks,[ts_install_cth]},
      {timetrap,{minutes,1}}].
 
-all() -> 
+all() ->
     [attributes, expr, guard, init,
      pattern, strict, update, maps,
-     side_effects, zlc, {group, tickets}].
+     side_effects, zlc, native_anon_update,
+     {group, tickets}].
 
 groups() -> 
     [{tickets, [],
@@ -468,6 +470,24 @@ zlc(Config) when is_list(Config) ->
              id(X) -> X.
             ">>],
     run(Config, Ts, [strict_record_tests]),
+    ok.
+
+native_anon_update(Config) when is_list(Config) ->
+    Ts = [<<"-record #nr{x = 0, y = 0}.
+             -record(tup, {a,b}).
+
+             update_anon(R, T) ->
+                 R#_{x = (T#tup{a = 1, b = 2})}.
+
+             t() ->
+                 R0 = #nr{x = 0, y = 7},
+                 T0 = #tup{a = 0, b = 0},
+                 R1 = update_anon(R0, T0),
+                 7 = R1#_.y,
+                 {tup,1,2} = R1#_.x,
+                 ok.
+            ">>],
+    run(Config, Ts),
     ok.
 
 %% Strict record tests in guards.

@@ -2,34 +2,35 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  list_to_integer(String, Base)[0m
+[1m  list_to_integer(String, Base)[0m
 
-  Returns an integer whose text representation in base [;;4mBase[0m is [;;4m[0m
-  [;;4mString[0m.
+  Returns an integer whose text representation in base [4mBase[0m is [4m[0m
+  [4mString[0m.
 
-  For example:
+  [4mString[0m must contain at least one digit character and can have an
+  optional prefix consisting of a single "[4m+[0m" or "[4m-[0m" character.
 
-    > list_to_integer("3FF", 16).
+  Failure: [4mbadarg[0m if [4mString[0m contains an invalid integer
+  representation.
+
+[1mExamples[0m
+
+    1> list_to_integer("3FF", 16).
     1023
-
-    > list_to_integer("+3FF", 16).
+    2> list_to_integer("+3FF", 16).
     1023
-
-    > list_to_integer("3ff", 16).
+    3> list_to_integer("3ff", 16).
     1023
-
-    > list_to_integer("3fF", 16).
-    1023
-
-    > list_to_integer("-3FF", 16).
+    4> list_to_integer("-3FF", 16).
     -1023
-
-  For example, when [;;4mBase[0m is 16, [;;4mString[0m must match the regular
-  expression [;;4m"^[+-]?([0-9]|[A-F]|[a-f])+$"[0m.
-
-  Failure: [;;4mbadarg[0m if [;;4mString[0m contains a bad representation of an
-  integer.
+    5> list_to_integer("Base36IsFun", 36).
+    41313437507787071
+    6> list_to_integer("102", 2).
+    ** exception error: bad argument
+         in function  list_to_integer/2
+            called as list_to_integer("102",2)
+            *** argument 1: not a textual representation of an integer

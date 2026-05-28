@@ -2,22 +2,21 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  list_to_binary(IoList)[0m
+[1m  list_to_binary(IoList)[0m
 
-  Returns a binary that is made from the integers and binaries in [;;4m[0m
-  [;;4mIoList[0m.
+  Returns a binary made from the integers and binaries in [4mIoList[0m.
 
-  For example:
+[1mExamples[0m
 
-    > Bin1 = <<1,2,3>>.
+    1> Bin1 = <<1,2,3>>.
     <<1,2,3>>
-    > Bin2 = <<4,5>>.
+    2> Bin2 = <<4,5>>.
     <<4,5>>
-    > Bin3 = <<6>>.
+    3> Bin3 = <<6>>.
     <<6>>
-    > list_to_binary([Bin1,1,[2,3,Bin2],4|Bin3]).
+    4> list_to_binary([Bin1,1,[2,3,Bin2],4|Bin3]).
     <<1,2,3,1,2,3,4,5,4,6>>

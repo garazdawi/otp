@@ -1,0 +1,25 @@
+%% %CopyrightBegin%
+%%
+%% SPDX-License-Identifier: Apache-2.0
+%%
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
+%%
+%% %CopyrightEnd%
+
+[1m  is_integer(Term, LB, UB)[0m
+
+[4mSince[0m:
+  OTP 29.0
+
+  Returns [4mtrue[0m if [4mTerm[0m, [4mLB[0m, and [4mUB[0m all evaluate to integers,
+  and [4mTerm[0m is between [4mLB[0m and [4mUB[0m inclusive; otherwise, returns [4m[0m
+  [4mfalse[0m.
+
+[1mExamples[0m
+
+    1> is_integer(15, 0, 1024).
+    true
+    2> is_integer(-1, 0, 1).
+    false
+
+  Failure: [4mbadarg[0m if [4mLB[0m or [4mUB[0m does not evaluate to an integer.

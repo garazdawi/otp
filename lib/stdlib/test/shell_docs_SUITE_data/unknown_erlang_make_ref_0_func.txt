@@ -2,18 +2,24 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  make_ref()[0m
+[1m  make_ref()[0m
 
-  Returns a unique reference. The reference is unique among
-  connected nodes.
+  Returns a unique reference.
 
-  [;;4mWarning[0m
+  The reference is unique among connected nodes.
 
-    Before OTP 23 when a node is restarted multiple times with the
-    same node name, references created on a newer node can be
-    mistaken for a reference created on an older node with the
-    same node name.
+  [4mWarning[0m
+
+    Before OTP 23, if a node was restarted multiple times with the
+    same node name, references created on a newer instance could
+    be mistaken for those created on an older instance with the
+    same name.
+
+[1mExamples[0m
+
+    1> is_reference(make_ref()).
+    true

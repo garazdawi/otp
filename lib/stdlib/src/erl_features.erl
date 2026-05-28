@@ -438,7 +438,7 @@ init_features() ->
                         false -> false
                     end
                 catch
-                    _ -> false
+                    _:_ -> false
                 end
         end,
     FOps = lists:filtermap(F, FeatureOps),
@@ -526,7 +526,7 @@ features_in(NameOrBin) ->
         {ok, {_, [{_, missing_chunk}]}} ->
             [];
         {ok, {_, [{_, Meta}]}} ->
-            MetaData = erlang:binary_to_term(Meta),
+            MetaData = erlang:binary_to_term(Meta, [safe]),
             proplists:get_value(enabled_features, MetaData, []);
         _ ->
             not_found

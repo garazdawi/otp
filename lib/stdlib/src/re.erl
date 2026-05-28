@@ -1491,37 +1491,32 @@ apply_mlist(Subject,Replacement,Mlist) ->
     do_mlist(Subject,Subject,0,precomp_repl(Replacement), Mlist).
 
 
-precomp_repl(<<>>) ->
-    [];
-precomp_repl(<<$\\,$g,${,Rest/binary>>) when byte_size(Rest) > 0 ->
-    {NS, <<$},NRest/binary>>} = pick_int(Rest),
-    [list_to_integer(NS) | precomp_repl(NRest)];
-precomp_repl(<<$\\,$g,Rest/binary>>) when byte_size(Rest) > 0 ->
-    {NS,NRest} = pick_int(Rest),
-    [list_to_integer(NS) | precomp_repl(NRest)];
-precomp_repl(<<$\\,X,Rest/binary>>) when X < $1 ; X > $9 ->
-    %% Escaped character
-    case precomp_repl(Rest) of
-	[BHead | T0] when is_binary(BHead) ->
-	    [<<X,BHead/binary>> | T0];
-	Other ->
-	    [<<X>> | Other]
-    end;
-precomp_repl(<<$\\,Rest/binary>>) when byte_size(Rest) > 0->
-    {NS,NRest} = pick_int(Rest),
-    [list_to_integer(NS) | precomp_repl(NRest)];
-precomp_repl(<<$&,Rest/binary>>) ->
-    [0 | precomp_repl(Rest)];
-precomp_repl(<<X,Rest/binary>>) ->
-    case precomp_repl(Rest) of
-	[BHead | T0] when is_binary(BHead) ->
-	    [<<X,BHead/binary>> | T0];
-	Other ->
-	    [<<X>> | Other]
-    end;
 precomp_repl(Repl) when is_function(Repl) ->
-    Repl.
-    
+    Repl;
+precomp_repl(Bin) when is_binary(Bin) ->
+    precomp_repl(Bin, <<>>, []).
+
+precomp_repl(<<>>, Buf, Acc) ->
+    lists:reverse(flush(Buf, Acc));
+precomp_repl(<<$\\,$g,${,Rest/binary>>, Buf, Acc) when byte_size(Rest) > 0 ->
+    {NS, <<$},NRest/binary>>} = pick_int(Rest),
+    precomp_repl(NRest, <<>>, [list_to_integer(NS) | flush(Buf, Acc)]);
+precomp_repl(<<$\\,$g,Rest/binary>>, Buf, Acc) when byte_size(Rest) > 0 ->
+    {NS,NRest} = pick_int(Rest),
+    precomp_repl(NRest, <<>>, [list_to_integer(NS) | flush(Buf, Acc)]);
+precomp_repl(<<$\\,X,Rest/binary>>, Buf, Acc) when X < $1 ; X > $9 ->
+    precomp_repl(Rest, <<Buf/binary, X>>, Acc);
+precomp_repl(<<$\\,Rest/binary>>, Buf, Acc) when byte_size(Rest) > 0 ->
+    {NS,NRest} = pick_int(Rest),
+    precomp_repl(NRest, <<>>, [list_to_integer(NS) | flush(Buf, Acc)]);
+precomp_repl(<<$&,Rest/binary>>, Buf, Acc) ->
+    precomp_repl(Rest, <<>>, [0 | flush(Buf, Acc)]);
+precomp_repl(<<X,Rest/binary>>, Buf, Acc) ->
+    precomp_repl(Rest, <<Buf/binary, X>>, Acc).
+
+flush(<<>>, Acc) -> Acc;
+flush(Buf, Acc) -> [Buf | Acc].
+
 
 
 pick_int(<<X,R/binary>>) when X >= $0, X =< $9 ->

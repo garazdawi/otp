@@ -1,0 +1,17 @@
+%% %CopyrightBegin%
+%%
+%% SPDX-License-Identifier: Apache-2.0
+%%
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
+%%
+%% %CopyrightEnd%
+
+[1m  exported()[0m
+
+  Opaque data type containing an exported compiled regular
+  expression.
+
+  Type [4mexported()[0m is guaranteed to be a tuple having the atom [4m[0m
+  [4mre_exported_pattern[0m as its first element to allow for matching in
+  guards. The arity of the tuple or the content of the other fields
+  can change in future Erlang/OTP releases.

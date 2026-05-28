@@ -2,13 +2,13 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  external_size(Term, Options)[0m
+[1m  external_size(Term, Options)[0m
 
-[;;4mSince[0m:
+[4mSince[0m:
   OTP R14B04
 
   Calculates, without doing the encoding, the maximum byte size for
@@ -16,10 +16,17 @@
 
   The following condition applies always:
 
-    > Size1 = byte_size(term_to_binary(Term, Options)),
-    > Size2 = erlang:external_size(Term, Options),
-    > true = Size1 =< Size2.
-    true
+    Size1 = byte_size(term_to_binary(Term, Options)),
+    Size2 = erlang:external_size(Term, Options),
+    true = Size1 =< Size2.
 
-  Option [;;4m{minor_version, Version}[0m specifies how floats are
-  encoded. For a detailed description, see [;;4mterm_to_binary/2[0m.
+  See [4mterm_to_binary/2[0m for a description of the options.
+
+[1mExamples[0m
+
+    1> Term = {ok,lists:duplicate(50, $A)}.
+    {ok,"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+    2> erlang:external_size(Term, [compressed]).
+    60
+    3> byte_size(term_to_binary(Term, [compressed])).
+    26

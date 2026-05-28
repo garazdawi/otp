@@ -772,7 +772,7 @@ format_status(Mod, Opt, Status, Args) ->
             try Mod:format_status(Status) of
                 NewStatus when is_map(NewStatus) ->
                     MergedStatus = maps:merge(Status, NewStatus),
-                    case maps:size(MergedStatus) =:= maps:size(NewStatus) of
+                    case maps:size(MergedStatus) =:= maps:size(Status) of
                         true ->
                             MergedStatus;
                         false ->

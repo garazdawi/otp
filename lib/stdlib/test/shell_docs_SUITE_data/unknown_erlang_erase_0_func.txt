@@ -2,17 +2,17 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  erase()[0m
+[1m  erase()[0m
 
   Returns the process dictionary and deletes it.
 
   For example:
 
-    > put(key1, {1, 2, 3}),
-    put(key2, [a, b, c]),
-    erase().
+    1> put(key1, {1, 2, 3}).
+    2> put(key2, [a, b, c]).
+    3> lists:sort(erase()).
     [{key1,{1,2,3}},{key2,[a,b,c]}]

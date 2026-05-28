@@ -304,21 +304,25 @@ do_is_regular(File, Mod) ->
 
 do_fold_files(Dir, RegExp, Recursive, Fun, Acc, Mod) ->
     {ok, Re1} = re:compile(RegExp,[unicode]),
-    do_fold_files1(Dir, Re1, RegExp, Recursive, Fun, Acc, Mod).
+    Seen = case dir_key(Dir, Mod) of
+               {ok, Key} -> #{Key => []};
+               error -> #{}
+           end,
+    do_fold_files1(Dir, Re1, RegExp, Recursive, Fun, Acc, Mod, Seen).
 
-do_fold_files1(Dir, RegExp, OrigRE, Recursive, Fun, Acc, Mod) ->
+do_fold_files1(Dir, RegExp, OrigRE, Recursive, Fun, Acc, Mod, Seen) ->
     case eval_list_dir(Dir, Mod) of
 	{ok, Files} -> do_fold_files2(Files, Dir, RegExp, OrigRE,
-				      Recursive, Fun, Acc, Mod);
+                                      Recursive, Fun, Acc, Mod, Seen);
 	{error, _}  -> Acc
     end.
 
 %% OrigRE is not to be compiled as it's for non conforming filenames,
 %% i.e. for filenames that does not comply to the current encoding, which should
 %% be very rare. We use it only in those cases and do not want to precompile.
-do_fold_files2([], _Dir, _RegExp, _OrigRE, _Recursive, _Fun, Acc, _Mod) -> 
+do_fold_files2([], _Dir, _RegExp, _OrigRE, _Recursive, _Fun, Acc, _Mod, _Seen) ->
     Acc;
-do_fold_files2([File|T], Dir, RegExp, OrigRE, Recursive, Fun, Acc0, Mod) ->
+do_fold_files2([File|T], Dir, RegExp, OrigRE, Recursive, Fun, Acc0, Mod, Seen) ->
     FullName = filename:join(Dir, File),
     Acc1 = case do_is_regular(FullName, Mod) of
                true  ->
@@ -341,13 +345,41 @@ do_fold_files2([File|T], Dir, RegExp, OrigRE, Recursive, Fun, Acc0, Mod) ->
                false ->
                    case Recursive andalso do_is_dir(FullName, Mod) of
                        true ->
-                           do_fold_files1(FullName, RegExp, OrigRE, Recursive,
-                                          Fun, Acc0, Mod);
+                           descend_or_skip(FullName, RegExp, OrigRE, Recursive,
+                                           Fun, Acc0, Mod, Seen);
                        false ->
                            Acc0
                    end
            end,
-    do_fold_files2(T, Dir, RegExp, OrigRE, Recursive, Fun, Acc1, Mod).
+    do_fold_files2(T, Dir, RegExp, OrigRE, Recursive, Fun, Acc1, Mod, Seen).
+
+%% Skip directories already on the descent path so a symlink cycle
+%% (e.g. a/b -> ../a) doesn't recurse indefinitely.
+descend_or_skip(Dir, RegExp, OrigRE, Recursive, Fun, Acc, Mod, Seen) ->
+    case dir_key(Dir, Mod) of
+        {ok, Key} when is_map_key(Key, Seen) ->
+            Acc;
+        {ok, Key} ->
+            do_fold_files1(Dir, RegExp, OrigRE, Recursive, Fun, Acc,
+                           Mod, Seen#{Key => []});
+        error ->
+            do_fold_files1(Dir, RegExp, OrigRE, Recursive, Fun, Acc, Mod, Seen)
+    end.
+
+%% {device, inode} uniquely identifies a directory on Unix; fall back
+%% to its canonical path when inode info is unavailable.
+dir_key(Dir, Mod) ->
+    case eval_read_file_info(Dir, Mod) of
+        {ok, #file_info{inode = Inode, major_device = Dev}}
+          when is_integer(Inode), is_integer(Dev), Inode > 0 ->
+            {ok, {Dev, Inode}};
+        {ok, _} ->
+            try {ok, {path, filename:absname(Dir)}}
+            catch _:_ -> error
+            end;
+        _ ->
+            error
+    end.
 
 do_last_modified(File, Mod) ->
     case eval_read_file_info(File, Mod) of

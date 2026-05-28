@@ -36,7 +36,8 @@
          gh_8268/1,
          moduledoc_include/1,
          stringify/1,
-         fun_type_arg/1
+         fun_type_arg/1,
+         parse_file_extra_epp_dies/1
         ]).
 
 -export([epp_parse_erl_form/2]).
@@ -84,7 +85,8 @@ all() ->
      gh_8268,
      moduledoc_include,
      stringify,
-     fun_type_arg].
+     fun_type_arg,
+     parse_file_extra_epp_dies].
 
 groups() ->
     [{upcase_mac, [], [upcase_mac_1, upcase_mac_2]},
@@ -2190,6 +2192,39 @@ fun_type_arg(Config) ->
            ok}],
     [] = run(Config, Ts),
     ok.
+
+%% parse_file/2 with `extra` must not hang if the Epp server dies
+%% before answering the {get_features,_} request.
+parse_file_extra_epp_dies(Config) when is_list(Config) ->
+    PrivDir = proplists:get_value(priv_dir, Config),
+    File = filename:join(PrivDir, "parse_file_extra_epp_dies.erl"),
+    ok = file:write_file(File,
+                         <<"-module(parse_file_extra_epp_dies).\n"
+                           "-export([f/0]).\n"
+                           "f() -> ok.\n">>),
+    Parent = self(),
+    {Worker, MRef} =
+        spawn_monitor(fun() ->
+                              receive go -> ok end,
+                              Parent ! {self(), epp:parse_file(File, [extra])}
+                      end),
+    1 = erlang:trace(Worker, true, [send, set_on_spawn]),
+    Worker ! go,
+    receive
+        {trace, Epp, send, {epp_reply, Epp, {eof, _}}, Worker}
+          when Epp =/= Worker ->
+            true = erlang:suspend_process(Epp),
+            exit(Epp, kill)
+    after 5000 ->
+            ct:fail("Did not observe Epp sending {eof,_} reply")
+    end,
+    receive
+        {Worker, _} -> ok;
+        {'DOWN', MRef, process, Worker, _} -> ok
+    after 5000 ->
+            exit(Worker, kill),
+            ct:fail("parse_file/2 hung after Epp server died")
+    end.
 
 
 %% Start location is 1.

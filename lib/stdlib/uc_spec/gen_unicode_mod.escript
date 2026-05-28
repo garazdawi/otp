@@ -469,7 +469,7 @@ gen_norm(Fd) ->
                 ),
 
     io:put_chars(Fd,
-                 "decompose(CP) when is_integer(CP), CP < 16#AC00, 16#D7A3 > CP ->\n"
+                 "decompose(CP) when is_integer(CP), CP < 16#AC00; is_integer(CP), CP > 16#D7A3 ->\n"
                  "    case unicode_table(CP) of\n"
                  "        {_,[],_,_} -> CP;\n"
                  "        {_,CPs,_,_} -> canonical_order(CPs)\n"
@@ -512,7 +512,7 @@ gen_norm(Fd) ->
                  "     [CP || {_, CP} <- lists:keysort(1,lists:reverse(Seq))] ++ canonical_order_1(Cont).\n\n"),
 
     io:put_chars(Fd,
-                 "decompose_compat(CP) when is_integer(CP), CP < 16#AC00, 16#D7A3 > CP ->\n"
+                 "decompose_compat(CP) when is_integer(CP), CP < 16#AC00; is_integer(CP), CP > 16#D7A3 ->\n"
                  "    case unicode_table(CP) of\n"
                  "        {_, [], [], _} -> CP;\n"
                  "        {_, _, {_,CPs}, _} -> canonical_order(CPs);\n"

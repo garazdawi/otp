@@ -2,21 +2,28 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
 %%
 %% %CopyrightEnd%
 
-[;1m  is_record(Term, RecordTag, Size)[0m
+[1m  is_record(Term, RecordTag, Size)[0m
 
-  [;;4mRecordTag[0m must be an atom.
+  Returns [4mtrue[0m either if [4mTerm[0m is a native record defined in
+  module [4mModule[0m with name [4mName[0m, or if [4mTerm[0m is a tuple, its
+  first element is [4mName[0m, and its size is [4mArity[0m; otherwise,
+  returns [4mfalse[0m.
 
-  Returns [;;4mtrue[0m if [;;4mTerm[0m is a tuple, its first element is [;;4m[0m
-  [;;4mRecordTag[0m, and its size is [;;4mSize[0m. Otherwise returns [;;4mfalse[0m.
+  This is allowed in guard tests if either [4mModule[0m and [4mName[0m are
+  literal atoms, or [4mName[0m is a literal atom and [4mSize[0m is a literal
+  integer.
 
-  Allowed in guard tests if [;;4mRecordTag[0m is a literal atom and [;;4mSize[0m
-  is a literal integer.
+  [4mNote[0m
 
-  [;;4mNote[0m
+    This BIF only checks if [4mTerm[0m is a native record created from
+    the given module. It does not check whether [4mTerm[0m is still
+    defined in the given module, nor whether it is exported.
 
-    This BIF is documented for completeness. Usually [;;4mis_record/2[0m
-    is to be used.
+  [4mChange[0m
+
+    Before Erlang/OTP 29, this function only worked for tuple
+    records.

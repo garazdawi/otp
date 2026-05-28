@@ -90,7 +90,11 @@ get_app(Path) ->
             _ -> case string:split(Path, "/lib/") of
                 [_, Rest] ->
                     case string:split(Rest, "/") of
-                        [AppStr, _] -> list_to_atom(AppStr);
+                        [AppStr, _] ->
+                            %% Strip any "-Version" suffix that an
+                            %% installed lib_dir carries.
+                            [Name | _] = string:split(AppStr, "-"),
+                            list_to_atom(Name);
                         _ -> error("Could not find app from path " ++ Path)
                     end;
                 _ -> error("Could not find app from path " ++ Path)
@@ -379,9 +383,7 @@ format_section(Title, Docs, Module, AllDocs) ->
         _ ->
             SortedDocs = lists:sort(fun({MFA1,_,_,_,_}, {MFA2,_,_,_,_}) -> MFA1 =< MFA2 end, Docs),
             [".SH ", Title, "\n.LP\n" |
-                lists:flatmap(fun(Doc) ->
-                            format_function([Doc], Module, AllDocs)
-                            end, SortedDocs)]
+                format_function(SortedDocs, Module, AllDocs)]
     end.
     
 format_function(FDocs, Module, AllDocs) ->

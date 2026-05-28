@@ -1513,12 +1513,16 @@ io_server_loop(Kind, Port, Refs, Out, PortBuf) ->
             peer_to_origin(Kind, Port, {message, To, Content}),
             io_server_loop(Kind, Port, Refs, Out, PortBuf);
         {'DOWN', CallerRef, _, _, Reason} ->
-            %% this is really not expected to happen, because "do_call"
-            %%  catches all exceptions
-            {Seq, Refs3} = maps:take(CallerRef, Refs),
-            {CallerRef, Out3} = maps:take(Seq, Out),
-            peer_to_origin(Kind, Port, {reply, Seq, crash, Reason}),
-            io_server_loop(Kind, Port, Refs3, Out3, PortBuf);
+            %% Stray 'DOWN's (e.g. from monitors set up elsewhere) must
+            %% not crash the io_server and take the peer node down.
+            case maps:take(CallerRef, Refs) of
+                {Seq, Refs3} when is_map_key(Seq, Out) ->
+                    {CallerRef, Out3} = maps:take(Seq, Out),
+                    peer_to_origin(Kind, Port, {reply, Seq, crash, Reason}),
+                    io_server_loop(Kind, Port, Refs3, Out3, PortBuf);
+                _ ->
+                    io_server_loop(Kind, Port, Refs, Out, PortBuf)
+            end;
         {init, started} ->
             notify_started(Kind, Port),
             io_server_loop(Kind, Port, Refs, Out, PortBuf);
