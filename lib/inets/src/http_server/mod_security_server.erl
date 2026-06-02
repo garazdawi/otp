@@ -256,7 +256,12 @@ handle_cast({store_failed_auth, Profile, [Info, DecodedString, SDirData]}, Table
     Dir  = proplists:get_value(path, SDirData),
     Addr = proplists:get_value(bind_address, SDirData),
     Port = proplists:get_value(port, SDirData),
-    {ok, [User,Password]} = httpd_util:split(DecodedString,":",2),
+    [User, Password] = case httpd_util:split(DecodedString,":",2) of
+                           {ok, [One,Two]} ->
+                               [One, Two];
+                           {ok, [One]} ->
+                               [One, ""]
+                       end,
     Seconds = universal_time(),
     Key = {User, Dir, Addr, Port, Profile},
     %% Event

@@ -587,6 +587,9 @@ basic_auth(Config) ->
     %% Neither user or password correct! ["dummy:dummy"]
     ok = auth_status(auth_request("/open/dummy.html", "dummy", "dummy", Version, Host), Config, 
 		     [{statuscode, 401}]),
+    %% Only send user and not password
+    ok = auth_status(auth_request("/open/dummy.html", "dummy", undefined, Version, Host), Config, 
+                     [{statuscode, 401}]),
     %% Nested secret/top_secret OK! ["Aladdin:open sesame"]
     ok = http_status(auth_request("/secret/top_secret/", "Aladdin", "AladdinPassword", Version, Host), 
 		     Config, [{statuscode, 200}]),
@@ -2474,13 +2477,18 @@ http_request(Request, Version, _) ->
 auth_request(Path, User, Passwd, "HTTP/1.1" = Version, Host) ->
     "GET " ++ Path ++ " " ++ Version ++  "\r\nhost:" ++ Host  ++
 	"\r\nAuthorization: Basic " ++  
-	base64:encode_to_string(User++":"++Passwd) ++
+        encode_user_password(User, Passwd) ++
 	"\r\n\r\n";
 auth_request(Path, User, Passwd, Version, _Host) ->
     "GET " ++ Path ++ " " ++ Version ++  
 	"\r\nAuthorization: Basic " ++  
-	base64:encode_to_string(User++":"++Passwd) ++
+        encode_user_password(User, Passwd) ++
 	"\r\n\r\n".
+
+encode_user_password(User, undefined) ->
+    base64:encode_to_string(User);
+encode_user_password(User, Password) ->
+    base64:encode_to_string(User++":"++Password).
 
 http_request_missing_CR(Request, "HTTP/1.1" = Version, Host) ->
     Request ++ Version ++ "\r\nhost:" ++ Host  ++ "\r\n\r\n\n";
