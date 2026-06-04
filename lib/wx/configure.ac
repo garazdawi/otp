@@ -603,7 +603,7 @@ AC_COMPILE_IFELSE(
  [AC_LANG_PROGRAM([[
   #include "wx/wx.h"
   ]], [[
-  #if wxMAJOR_VERSION > 2 && (wxMINOR_VERSION == 0 || WXWIN_COMPATIBILITY_3_0 == 1)
+  #if wxMAJOR_VERSION > 2 && (wxMINOR_VERSION == 0 || wxMINOR_VERSION >= 2 || WXWIN_COMPATIBILITY_3_0 == 1)
   ;
   #else
   #error barf
