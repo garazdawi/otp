@@ -1279,7 +1279,6 @@ tailrecur_ne:
 	    case EXTERNAL_PID_SUBTAG: {
 		ExternalThing *ap;
 		ExternalThing *bp;
-                int i;
 
 		if(!is_external(b))
 		    goto not_equal;
@@ -1293,16 +1292,14 @@ tailrecur_ne:
                 ASSERT(external_data_words(a) == EXTERNAL_PID_DATA_WORDS);
                 ASSERT(external_data_words(b) == EXTERNAL_PID_DATA_WORDS);
 
-                for (i = 0; i < EXTERNAL_PID_DATA_WORDS; i++) {
-                    if (ap->data.ui[i] != bp->data.ui[i])
-                        goto not_equal;
-                }
+                if (sys_memcmp(ap->data.ui, bp->data.ui,
+                               EXTERNAL_PID_DATA_WORDS * sizeof(Uint)) != 0)
+                    goto not_equal;
 		goto pop_next;
 	    }
 	    case EXTERNAL_PORT_SUBTAG: {
 		ExternalThing *ap;
 		ExternalThing *bp;
-		int i;
 
 		if(!is_external(b))
 		    goto not_equal;
@@ -1316,10 +1313,9 @@ tailrecur_ne:
 		ASSERT(EXTERNAL_PORT_DATA_WORDS == external_data_words(a));
 		ASSERT(EXTERNAL_PORT_DATA_WORDS == external_data_words(b));
 
-		for (i = 0; i < EXTERNAL_PORT_DATA_WORDS; i++) {
-		    if (ap->data.ui[i] != bp->data.ui[i])
-			goto not_equal;
-		}
+                if (sys_memcmp(ap->data.ui, bp->data.ui,
+                               EXTERNAL_PORT_DATA_WORDS * sizeof(Uint)) != 0)
+                    goto not_equal;
 		goto pop_next;
 	    }
 	    case EXTERNAL_REF_SUBTAG: {
