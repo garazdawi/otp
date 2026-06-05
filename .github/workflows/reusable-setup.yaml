@@ -83,7 +83,7 @@ jobs:
           echo "base_branch=${BASE_BRANCH}" >> "$GITHUB_OUTPUT"
 
           ## full_build_and_check
-          FULL_BUILD_AND_CHECK="false"
+          FULL_BUILD_AND_CHECK="true"
           if [[ "$EVENT_NAME" == "schedule" ]]; then
             FULL_BUILD_AND_CHECK="true"
           elif [[ "$EVENT_NAME" == "pull_request" ]]; then
