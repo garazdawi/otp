@@ -499,6 +499,91 @@ inlining with framestates, and the full CP/stack-scan lifecycle are
 green-lit **only if G3 shows the win** — that's most of the deferred
 ~25 weeks, spent only once it's bought evidence.
 
+### 6.1 The benchmark corpus, and what v1 honestly does to it
+
+The optimization target is the **application corpus**: RabbitMQ,
+MongooseIM, Phoenix/Ash-style web services. The tracked suite:
+
+- **`../awfy`** — the 14 classic AWFY benchmarks in both Erlang
+  (`apps/awfy/src/awfy_*.erl`) and Elixir
+  (`apps/awfy/lib/awfy/benchmarks/`), plus the OTP-benchmark
+  families (`apps/otp_benchmarks/`, incl. vendored estone, maps,
+  base64, binary_match, ets).
+- **OTP in-tree benches** (`HOWTO/BENCHMARKS.md`, `ts:benchmarks()`)
+  — `emulator_bench`, `stdlib_bench`, and the protocol-shaped
+  `ssl`/`ssh`/`inets`/`megaco` specs.
+- **Macro leg** — MongooseIM under Amoc load: a designed
+  first-class awfy leg (`awfy/PLAN/MONGOOSEIM_BENCH_PLAN.md` —
+  pinned MongooseIM broker, upstream amoc-arsenal-xmpp scenarios,
+  local + AWS topologies, throughput + p99 reporting;
+  `Dockerfile.mongoose`/`Dockerfile.amoc` already in the repo).
+  That plan's own workload description — "scheduler under
+  message-pass load, ETS contention from real session stores,
+  binary handling in XML, gen_server hot-paths, TLS CPU cost" —
+  is precisely the application-corpus mix T2 must be honest
+  about. P0's cycle-weighted profiling (below) rides this same
+  rig: perf the broker under Amoc load.
+
+Every tracked benchmark is **labelled by dominant op class** so
+wins and regressions are attributable: int/list/tuple loops |
+floats | binaries | maps | processes/ETS/runtime | mixed. Honest
+per-class expectations for v1 as scoped:
+
+| Class | Benchmarks (examples) | v1 expectation |
+|-------|----------------------|----------------|
+| int/list/tuple loops | Bounce, List, Towers, Permute, Queens, Sieve; estone list/arith micros | The validated class — 1.5–2× plausible |
+| floats | Mandelbrot, NBody | **No change** (floats are Phase E; out of v1) |
+| binaries | base64, binary_match, unicode, JSON parsing; ssl/ssh/megaco | No change from T2 (BIF/`bs_*` dominated) |
+| maps / polymorphic | Richards, DeltaBlue, Havlak, CD, Json model; Elixir structs | No change (maps out of v1; dispatch gated on G3) |
+| processes/ETS/runtime | estone msgp, ets suite, mnesia_tpcb | No change **by design** (`07` §19) |
+| application macro | MongooseIM/amoc | Low single digits from list/tuple fragments + leaf functions |
+
+The conclusion this table forces: **for the application corpus, the
+two coverage classes that matter most after v1 are binaries
+(protocol parsing/construction) and maps (Elixir structs,
+mongoose_acc-style accumulators)** — currently parked at Phase D
+and Phase 5 of `07` §17, i.e. last. That ordering was inherited
+from implementation convenience, not from corpus value. It changes:
+
+**P0 corpus measurement becomes cycle-weighted dynamic profiling.**
+Profile RabbitMQ, MongooseIM-under-amoc, and a Phoenix app under
+load (perf on Linux ARM64); bucket samples into: v1-class ops |
+binary ops | map ops | floats | runtime/BIF/NIF/GC (unreachable
+for T2 by design). This replaces the static op-counting audit and
+*decides the expansion order with data* — including the honest
+ceiling: the runtime/NIF bucket bounds what any JIT tier can do
+for these apps.
+
+**Gate G-bin — binary-matching loop experiment (MVP methodology,
+after G2).** Hand-write a T2-shaped specialisation of one real
+protocol-parser loop (an AMQP frame decoder or XMPP tokenizer
+shape: tail-recursive loop carrying a match context, `bs_get_*`
+ops fused, per-op match-context dance eliminated). Binary parsing
+loops are *loop-shaped* — the match context is ordinary
+loop-carried state in the argument vector, so re-call deopt (S2)
+and the whole loop-tier architecture apply unchanged; what's
+missing is only `bs_*` op coverage. If G-bin shows the win,
+Phase-D-style coverage is pulled forward ahead of general
+inlining.
+
+**Gate G-map — map-region experiment (MVP methodology, after
+G2).** Hand-write region-level shape specialisation
+(`02` §7.6's design) for one hot map-access chain (Elixir struct
+update pipeline or mongoose_acc fold): one shape guard at region
+entry, direct offset loads after. If it shows the win, Phase-5
+map coverage is pulled forward.
+
+G-bin and G-map are each 1–2 weeks, ordered against G3 by the P0
+profile's bucket sizes. The expansion sequence after v1 is thus
+bought with ~3–6 weeks of experiments instead of committed blind.
+
+One Elixir-specific honesty note: `Enum.map(list, fun)` delegates
+to `:lists.map/2` through a wrapper where the fun is a *parameter*,
+so v1's literal-fun intrinsics do not fire through Enum pipelines
+(that's the deferred cross-module/H11 case). Hand-written
+recursion and Erlang-style direct `lists:*` calls with literal
+funs — pervasive in RabbitMQ and MongooseIM — do fire.
+
 ## 7. The road back to the full design
 
 | Deferred component | Designed in | Unlocked by |
@@ -509,9 +594,10 @@ green-lit **only if G3 shows the win** — that's most of the deferred
 | Branch-frequency counters, cold-arm pruning | `02` §7.7, `04` §10.3 | G3 pass |
 | Monomorphic-target slots + cross-module inlining | `02` §7.5, `04` §10.1 | G3 pass + per-function watchpoints |
 | `speculate_range` + range profiling | `03` §9.3–9.4 | Measured LICM-hoistable win flag checks can't capture |
-| Map-shape feedback + region shape specialisation | `02` §7.6 | Phase 5, own MVP-style gate |
+| Map-shape feedback + region shape specialisation | `02` §7.6 | **G-map** pass (§6.1); priority vs G3/G-bin set by the P0 profile |
 | Polymorphic PIC, speculative funs | `03` §9.6, `04` §10.2 | Phase 6 |
-| Binary / messages / NIFs / floats | `07` §17 Phases 7–8 | Phase coverage, post-v1 |
+| Binary (`bs_*`) coverage in recovered loops | `07` §17 Phase 7 | **G-bin** pass (§6.1); priority vs G3/G-map set by the P0 profile |
+| Messages / NIFs / floats | `07` §17 Phase 8 | Phase coverage, post-v1 |
 | Per-instruction T1 PC table | `03` §9.1 (corrected, §3 above) | General mid-function deopt |
 | Erlang JIT-server process | `05` §15.3 | Scheduling policy outgrowing a C queue |
 | SSA chunk in BEAM file | `02` §7.8 | G1 failure only |
