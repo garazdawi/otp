@@ -30,6 +30,7 @@ extern "C"
 {
 #include "beam_bp.h"
 #include "erl_bits.h"
+#include "erl_map.h"
 }
 
 using namespace asmjit;
@@ -276,7 +277,39 @@ bool BeamModuleAssembler::t2_mvp_is_target() const {
         return true;
     }
 
+    /* G3 subject 1 targets, gated on T2_G31. */
+    if (t2_g31_enabled() && erts_is_atom_str("t2_g31", mod, 0) &&
+        ((current_arity == 2 &&
+          erts_is_atom_str("dispatch", current_function, 0)) ||
+         (current_arity == 3 &&
+          erts_is_atom_str("handle_call", current_function, 0)))) {
+        return true;
+    }
+
+    /* G-map target, gated on T2_GMAP. */
+    if (t2_gmap_enabled() && current_arity == 2 &&
+        erts_is_atom_str("t2_gmap", mod, 0) &&
+        erts_is_atom_str("sum_scores", current_function, 0)) {
+        return true;
+    }
+
     return false;
+}
+
+bool BeamModuleAssembler::t2_g31_enabled() const {
+    static bool enabled = []() {
+        const char *env = getenv("T2_G31");
+        return env != nullptr && env[0] == '1';
+    }();
+    return enabled;
+}
+
+bool BeamModuleAssembler::t2_gmap_enabled() const {
+    static bool enabled = []() {
+        const char *env = getenv("T2_GMAP");
+        return env != nullptr && env[0] == '1';
+    }();
+    return enabled;
 }
 
 bool BeamModuleAssembler::t2_gbin_enabled() const {
@@ -747,6 +780,15 @@ void BeamModuleAssembler::emit_t2_specializations() {
         } else if (entry.arity == 7 &&
                    erts_is_atom_str("string_ascii", entry.function, 0)) {
             emit_t2_json_scan(entry, false);
+        } else if (entry.arity == 2 &&
+                   erts_is_atom_str("dispatch", entry.function, 0)) {
+            emit_t2_g31_dispatch_2(entry);
+        } else if (entry.arity == 3 &&
+                   erts_is_atom_str("handle_call", entry.function, 0)) {
+            emit_t2_g31_handle_call_3(entry);
+        } else if (entry.arity == 2 &&
+                   erts_is_atom_str("sum_scores", entry.function, 0)) {
+            emit_t2_gmap_sum_scores_2(entry);
         } else {
             /* No specialization for this function (yet). Fall back to T1. */
             comment("(no specialization — fall back to T1)");
@@ -1229,6 +1271,217 @@ void BeamModuleAssembler::emit_t2_json_scan(const T2FunctionEntry &entry,
     a.b_vs(entry.side_exit);
     a.str(pos, a64::Mem(ctxu, offsetof(ErlSubBits, start)));
     mov_arg(ArgXRegister(6), TMP3);
+    comment("T2 yield: route through i_test_yield_shared");
+    a.adr(ARG3, entry.fn_entry);
+    a.b(resolve_fragment(ga->get_i_test_yield_shared(), disp1MB));
+}
+
+void BeamModuleAssembler::emit_t2_g31_dispatch_2(
+        const T2FunctionEntry &entry) {
+    /* G3 subject 1: cold-arm-pruned t2_g31:dispatch/2. Only the hot
+     * arm is emitted, with its guards fused:
+     *
+     *   dispatch({get, I}, State)
+     *       when is_integer(I), I >= 1, I =< 10 ->
+     *     element(I, State);
+     *
+     * Everything else — eleven cold arms — side-exits to the full
+     * T1 clause dispatch with pristine arguments. */
+    const Eterm atom_get =
+            erts_atom_put((byte *)"get", 3, ERTS_ATOM_ENC_LATIN1, 1);
+
+    a.tbnz(XREG0, imm(0), entry.side_exit); /* Msg not boxed */
+    a.and_(TMP1, XREG0, imm(~Uint64{0x7}));
+    a.ldr(TMP2, a64::Mem(TMP1));
+    a.cmp(TMP2, imm(make_arityval(2)));
+    a.b_ne(entry.side_exit);
+    a.ldr(TMP2, a64::Mem(TMP1, sizeof(Eterm)));
+    mov_imm(TMP3, atom_get);
+    a.cmp(TMP2, TMP3);
+    a.b_ne(entry.side_exit);
+    a.ldr(TMP4, a64::Mem(TMP1, 2 * sizeof(Eterm))); /* I, tagged */
+    a.and_(TMP5, TMP4, imm(_TAG_IMMED1_MASK));
+    a.cmp(TMP5, imm(_TAG_IMMED1_SMALL));
+    a.b_ne(entry.side_exit);
+
+    a.tbnz(XREG1, imm(0), entry.side_exit); /* State not boxed */
+    a.and_(TMP1, XREG1, imm(~Uint64{0x7}));
+    a.ldr(TMP2, a64::Mem(TMP1));
+    a.cmp(TMP2, imm(make_arityval(10)));
+    a.b_ne(entry.side_exit);
+
+    a.asr(TMP5, TMP4, imm(_TAG_IMMED1_SIZE)); /* raw I */
+    a.cmp(TMP5, imm(1));
+    a.b_lt(entry.side_exit);
+    a.cmp(TMP5, imm(10));
+    a.b_gt(entry.side_exit);
+
+    a.add(TMP1, TMP1, TMP5, a64::lsl(3)); /* element I at offset 8*I */
+    a.ldr(XREG0, a64::Mem(TMP1));
+
+    emit_leave_erlang_frame();
+    a.subs(FCALLS, FCALLS, imm(1));
+    a.b_mi(resolve_fragment(ga->get_dispatch_return(), disp1MB));
+    a.ret(a64::x30);
+}
+
+void BeamModuleAssembler::emit_t2_g31_handle_call_3(
+        const T2FunctionEntry &entry) {
+    /* Same hot arm inside the gen_server callback:
+     *
+     *   handle_call({get, I}, _From, State)
+     *       when is_integer(I), I >= 1, I =< 10 ->
+     *     {reply, element(I, State), State};
+     *
+     * Allocates the 3-tuple reply, so the GC test runs first (the
+     * fragment may move terms, invalidating derived pointers). */
+    const Eterm atom_get =
+            erts_atom_put((byte *)"get", 3, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_reply =
+            erts_atom_put((byte *)"reply", 5, ERTS_ATOM_ENC_LATIN1, 1);
+
+    emit_gc_test(ArgWord(0), ArgWord(4), ArgWord(3));
+
+    a.tbnz(XREG0, imm(0), entry.side_exit);
+    a.and_(TMP1, XREG0, imm(~Uint64{0x7}));
+    a.ldr(TMP2, a64::Mem(TMP1));
+    a.cmp(TMP2, imm(make_arityval(2)));
+    a.b_ne(entry.side_exit);
+    a.ldr(TMP2, a64::Mem(TMP1, sizeof(Eterm)));
+    mov_imm(TMP3, atom_get);
+    a.cmp(TMP2, TMP3);
+    a.b_ne(entry.side_exit);
+    a.ldr(TMP4, a64::Mem(TMP1, 2 * sizeof(Eterm)));
+    a.and_(TMP5, TMP4, imm(_TAG_IMMED1_MASK));
+    a.cmp(TMP5, imm(_TAG_IMMED1_SMALL));
+    a.b_ne(entry.side_exit);
+
+    a.tbnz(XREG2, imm(0), entry.side_exit);
+    a.and_(TMP1, XREG2, imm(~Uint64{0x7}));
+    a.ldr(TMP2, a64::Mem(TMP1));
+    a.cmp(TMP2, imm(make_arityval(10)));
+    a.b_ne(entry.side_exit);
+
+    a.asr(TMP5, TMP4, imm(_TAG_IMMED1_SIZE));
+    a.cmp(TMP5, imm(1));
+    a.b_lt(entry.side_exit);
+    a.cmp(TMP5, imm(10));
+    a.b_gt(entry.side_exit);
+
+    a.add(TMP1, TMP1, TMP5, a64::lsl(3));
+    a.ldr(TMP6, a64::Mem(TMP1)); /* V = element(I, State) */
+
+    /* Build {reply, V, State} on the heap. */
+    mov_imm(TMP2, make_arityval(3));
+    mov_imm(TMP3, atom_reply);
+    a.stp(TMP2, TMP3, a64::Mem(HTOP));
+    a.stp(TMP6, XREG2, a64::Mem(HTOP, 2 * sizeof(Eterm)));
+    a.orr(XREG0, HTOP, imm(TAG_PRIMARY_BOXED));
+    a.add(HTOP, HTOP, imm(4 * sizeof(Eterm)));
+
+    emit_leave_erlang_frame();
+    a.subs(FCALLS, FCALLS, imm(1));
+    a.b_mi(resolve_fragment(ga->get_dispatch_return(), disp1MB));
+    a.ret(a64::x30);
+}
+
+void BeamModuleAssembler::emit_t2_gmap_sum_scores_2(
+        const T2FunctionEntry &entry) {
+    /* G-map experiment: region-level flatmap shape specialization
+     * for
+     *
+     *   sum_scores([M | T], Acc) ->
+     *     #{active := A, score := S} = M,
+     *     case A of
+     *       true  -> sum_scores(T, Acc + S);
+     *       false -> sum_scores(T, Acc)
+     *     end;
+     *   sum_scores([], Acc) -> Acc.
+     *
+     * The shape guard is two key-slot compares (keys[0] == active,
+     * keys[4] == score, the observed layout for the 5-key template);
+     * after it, both values are direct offset loads — no per-key
+     * scan. Any other shape (different layout/size, hashmap,
+     * non-map) side-exits to T1's generic get_map_elements. */
+    Label loop = a.new_label();
+    Label nil_check = a.new_label();
+    Label do_add = a.new_label();
+    Label yield_setup = a.new_label();
+
+    const Eterm atom_active =
+            erts_atom_put((byte *)"active", 6, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_score =
+            erts_atom_put((byte *)"score", 5, ERTS_ATOM_ENC_LATIN1, 1);
+
+    a.bind(loop);
+    a.subs(FCALLS, FCALLS, imm(2));
+    a.b_le(yield_setup);
+    a.tbnz(XREG0, imm(1), nil_check);
+    a.and_(TMP1, XREG0, imm(~Uint64{0x7}));
+    a.ldp(TMP2, TMP3, a64::Mem(TMP1)); /* M, Tl */
+
+    a.tbnz(TMP2, imm(0), entry.side_exit); /* M not boxed */
+    a.and_(TMP1, TMP2, imm(~Uint64{0x7}));
+    a.ldr(TMP4, a64::Mem(TMP1));
+    mov_imm(TMP5, MAP_HEADER_FLATMAP);
+    a.cmp(TMP4, TMP5);
+    a.b_ne(entry.side_exit); /* not a flatmap */
+    a.ldr(TMP4, a64::Mem(TMP1, offsetof(flatmap_t, size)));
+    a.cmp(TMP4, imm(5));
+    a.b_ne(entry.side_exit);
+    a.ldr(TMP4, a64::Mem(TMP1, offsetof(flatmap_t, keys)));
+    a.and_(TMP4, TMP4, imm(~Uint64{0x7}));
+    a.ldr(TMP5, a64::Mem(TMP4, sizeof(Eterm))); /* keys[0] */
+    mov_imm(TMP6, atom_active);
+    a.cmp(TMP5, TMP6);
+    a.b_ne(entry.side_exit);
+    a.ldr(TMP5, a64::Mem(TMP4, 4 * sizeof(Eterm))); /* keys[3] */
+    mov_imm(TMP6, atom_score);
+    a.cmp(TMP5, TMP6);
+    a.b_ne(entry.side_exit);
+
+    /* Direct value loads: values start after the flatmap_t header.
+     * NOTE: flatmap key order is atom-index-dependent (it differed
+     * between two VMs of the same build during this experiment!).
+     * The guards above make a wrong guess safe (side-exit, T1
+     * handles it); production must guard the keys-tuple *pointer*
+     * recorded by runtime feedback (02 §7.6), never positions
+     * assumed at codegen time. */
+    a.ldr(TMP5, a64::Mem(TMP1, sizeof(flatmap_t)));                   /* A */
+    a.ldr(TMP6, a64::Mem(TMP1, sizeof(flatmap_t) + 3 * sizeof(Eterm))); /* S */
+
+    mov_imm(SUPER_TMP, am_true);
+    a.cmp(TMP5, SUPER_TMP);
+    a.b_eq(do_add);
+    mov_imm(SUPER_TMP, am_false);
+    a.cmp(TMP5, SUPER_TMP);
+    a.b_ne(entry.side_exit); /* non-boolean: T1 raises case_clause */
+    a.mov(XREG0, TMP3);      /* skip: just advance */
+    a.b(loop);
+
+    a.bind(do_add);
+    /* Combined smallint check on (S & Acc), then the one-detag add. */
+    a.and_(SUPER_TMP, TMP6, XREG1);
+    a.and_(SUPER_TMP, SUPER_TMP, imm(_TAG_IMMED1_MASK));
+    a.cmp(SUPER_TMP, imm(_TAG_IMMED1_SMALL));
+    a.b_ne(entry.side_exit);
+    a.and_(SUPER_TMP, TMP6, imm(~Uint64{_TAG_IMMED1_MASK}));
+    a.adds(SUPER_TMP, XREG1, SUPER_TMP);
+    a.b_vs(entry.side_exit);
+    a.mov(XREG1, SUPER_TMP);
+    a.mov(XREG0, TMP3);
+    a.b(loop);
+
+    a.bind(nil_check);
+    a.cmp(XREG0, imm(NIL));
+    a.b_ne(entry.side_exit);
+    a.mov(XREG0, XREG1);
+    emit_leave_erlang_frame();
+    a.subs(FCALLS, FCALLS, imm(1));
+    a.b_mi(resolve_fragment(ga->get_dispatch_return(), disp1MB));
+    a.ret(a64::x30);
+
+    a.bind(yield_setup);
     comment("T2 yield: route through i_test_yield_shared");
     a.adr(ARG3, entry.fn_entry);
     a.b(resolve_fragment(ga->get_i_test_yield_shared(), disp1MB));

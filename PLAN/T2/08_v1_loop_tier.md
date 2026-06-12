@@ -545,6 +545,18 @@ T1:
    clause-dispatch specialisation for one hot gen_server-shaped
    dispatch function — decides whether the *expected* branchy-code
    wins of `00` §1 are real.
+
+   **RUN — NULL**
+   ([`../verification/G31_GMAP_OUTCOME.md`](../verification/G31_GMAP_OUTCOME.md),
+   2026-06-12). A cold-arm-pruned, guard-fused hot arm on a
+   12-clause gen_server-shaped dispatcher: 1.02× isolated, 1.01×
+   through real `gen_server:call` roundtrips, engagement proven via
+   `+JDdump`. T1's select-based clause dispatch is already ~4 ns
+   for 12 clauses, and the gen_server wrapper outweighs dispatch
+   40:1. With subject 2 also null, **G3 is closed negative on both
+   subjects** — `00` §1's cold-arm-pruning thesis is empirically
+   refuted; the corpus wins live in data-access fusion (G-bin,
+   G-map, the MVP shape).
 2. *Mutual/structural recursion* (added by the census — see
    [`../verification/RESULTS.md`](../verification/RESULTS.md)):
    a T2 specialisation of `erl_types:are_all_limited/2` +
@@ -692,6 +704,23 @@ update pipeline or mongoose_acc fold): one shape guard at region
 entry, direct offset loads after. If it shows the win, Phase-5
 map coverage is pulled forward.
 
+**RUN — PASSED, 1.64×**
+([`../verification/G31_GMAP_OUTCOME.md`](../verification/G31_GMAP_OUTCOME.md),
+2026-06-12). Shape guard + direct offset loads on a struct-shaped
+fold (5-key flatmaps sharing a keys tuple, two fields read per
+map): 1.64× vs T1's per-key scan, correctness identical across
+modes including hashmap/badmatch side-exit paths. Two hard-won
+riders: (a) **flatmap key order is atom-index-dependent** — it
+differed between two VMs of the same build; production shape
+guards must test the runtime-recorded keys-tuple pointer
+(`02` §7.6's hash-consed shape pointer), never codegen-time key
+positions — the wrong-position variant ran 1.45× *slower* than T1
+(every element side-exiting), incidentally measuring the bounded
+mis-speculation regime that `03` §9.5's exit counters exist to
+jettison; (b) 1.64× is the two-field floor — the guard amortises
+further over wider regions. Phase-5 map coverage joins `bs_*` in
+the green-lit expansion set, behind G-bin in priority.
+
 G-bin and G-map are each 1–2 weeks, ordered against G3 by the P0
 profile's bucket sizes. The expansion sequence after v1 is thus
 bought with ~3–6 weeks of experiments instead of committed blind.
@@ -710,10 +739,10 @@ funs — pervasive in RabbitMQ and MongooseIM — do fire.
 | Framestates + eager-CP-push (general inlining) | `03` §9.2, `01` §6.5 | G3 pass — **subject 2 ran: no win** (`../verification/G3_OUTCOME.md`); stays deferred unless subject 1 + a cycle-profiled pool justify it |
 | Lazy stack scan, tombstone CP tables | `06` §5.3–5.5, `05` §14.2 | General inlining (CPs into blobs) |
 | Eager own-stack scan in the trace path (self-enable with CPs into blobs) | §4 Case B above | General inlining (CPs into blobs) |
-| Branch-frequency counters, cold-arm pruning | `02` §7.7, `04` §10.3 | G3 pass |
-| Monomorphic-target slots + cross-module inlining | `02` §7.5, `04` §10.1 | G3 pass + per-function watchpoints |
+| Branch-frequency counters, cold-arm pruning | `02` §7.7, `04` §10.3 | **G3 closed negative on both subjects** (`../verification/G31_GMAP_OUTCOME.md`) — shelved |
+| Monomorphic-target slots + cross-module inlining | `02` §7.5, `04` §10.1 | G3 closed negative — shelved unless an elimination-rich corpus shape resurfaces with cycle-profiled evidence |
 | `speculate_range` + range profiling | `03` §9.3–9.4 | Measured LICM-hoistable win flag checks can't capture |
-| Map-shape feedback + region shape specialisation | `02` §7.6 | **G-map** pass (§6.1); priority vs G3/G-bin set by the P0 profile |
+| Map-shape feedback + region shape specialisation | `02` §7.6 | **G-map PASSED, 1.64×** (`../verification/G31_GMAP_OUTCOME.md`) — green-lit, second in the expansion order behind G-bin |
 | Polymorphic PIC, speculative funs | `03` §9.6, `04` §10.2 | Phase 6 |
 | Binary (`bs_*`) coverage in recovered loops | `07` §17 Phase 7 | **G-bin PASSED** (`../verification/GBIN_OUTCOME.md`: 5.6× isolated scan, 6–10 % end-to-end json) — green-lit, first in the expansion order |
 | Messages / NIFs / floats | `07` §17 Phase 8 | Phase coverage, post-v1 |

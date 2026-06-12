@@ -1149,6 +1149,14 @@ public:
     bool t2_gbin_enabled() const;
     void emit_t2_json_scan(const T2FunctionEntry &entry, bool digits);
 
+    /* G3 subject 1 (branchy dispatch, T2_G31) and G-map (flatmap
+     * shape specialization, T2_GMAP) experiments. */
+    bool t2_g31_enabled() const;
+    void emit_t2_g31_dispatch_2(const T2FunctionEntry &entry);
+    void emit_t2_g31_handle_call_3(const T2FunctionEntry &entry);
+    bool t2_gmap_enabled() const;
+    void emit_t2_gmap_sum_scores_2(const T2FunctionEntry &entry);
+
     void codegen(JitAllocator *allocator,
                  const void **executable_ptr,
                  void **writable_ptr,
