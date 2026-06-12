@@ -1143,6 +1143,12 @@ public:
      * emit_i_test_yield hook so the T2 region can `bl` it. */
     Label t2_is_limited_entry;
 
+    /* G-bin experiment (PLAN/verification): fast-forward scan loops
+     * for stdlib json's byte-class scanners. Gated on the T2_GBIN
+     * env var. */
+    bool t2_gbin_enabled() const;
+    void emit_t2_json_scan(const T2FunctionEntry &entry, bool digits);
+
     void codegen(JitAllocator *allocator,
                  const void **executable_ptr,
                  void **writable_ptr,

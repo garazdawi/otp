@@ -29,6 +29,7 @@
 extern "C"
 {
 #include "beam_bp.h"
+#include "erl_bits.h"
 }
 
 using namespace asmjit;
@@ -266,7 +267,24 @@ bool BeamModuleAssembler::t2_mvp_is_target() const {
         return true;
     }
 
+    /* G-bin experiment targets, gated on T2_GBIN. */
+    if (t2_gbin_enabled() && current_arity == 7 &&
+        erts_is_atom_str("json", mod, 0) &&
+        (erts_is_atom_str("number", current_function, 0) ||
+         erts_is_atom_str("number_frac_cont", current_function, 0) ||
+         erts_is_atom_str("string_ascii", current_function, 0))) {
+        return true;
+    }
+
     return false;
+}
+
+bool BeamModuleAssembler::t2_gbin_enabled() const {
+    static bool enabled = []() {
+        const char *env = getenv("T2_GBIN");
+        return env != nullptr && env[0] == '1';
+    }();
+    return enabled;
 }
 
 int BeamModuleAssembler::t2_g3_mode() const {
@@ -722,6 +740,13 @@ void BeamModuleAssembler::emit_t2_specializations() {
         } else if (erts_is_atom_str("are_all_limited", entry.function, 0) &&
                    entry.arity == 2) {
             emit_t2_are_all_limited_2(entry);
+        } else if (entry.arity == 7 &&
+                   (erts_is_atom_str("number", entry.function, 0) ||
+                    erts_is_atom_str("number_frac_cont", entry.function, 0))) {
+            emit_t2_json_scan(entry, true);
+        } else if (entry.arity == 7 &&
+                   erts_is_atom_str("string_ascii", entry.function, 0)) {
+            emit_t2_json_scan(entry, false);
         } else {
             /* No specialization for this function (yet). Fall back to T1. */
             comment("(no specialization — fall back to T1)");
@@ -1034,6 +1059,176 @@ void BeamModuleAssembler::emit_t2_are_all_limited_2(
 
     /* --- yield: same shape as emit_t2_total_2 --- */
     a.bind(yield_setup);
+    comment("T2 yield: route through i_test_yield_shared");
+    a.adr(ARG3, entry.fn_entry);
+    a.b(resolve_fragment(ga->get_i_test_yield_shared(), disp1MB));
+}
+
+void BeamModuleAssembler::emit_t2_json_scan(const T2FunctionEntry &entry,
+                                            bool digits) {
+    /* G-bin experiment: fast-forward scanner for stdlib json's
+     * byte-class loops.
+     *
+     *   digits=true  — json:number/7 and json:number_frac_cont/7:
+     *                  consume 0-9.
+     *   digits=false — json:string_ascii/7: consume "plain" bytes
+     *                  (0x20..0x7F except `"` and `\`), 8 at a time
+     *                  via SWAR, bytewise at chunk/end boundaries.
+     *
+     * Entry contract: XREG0 = match context (or not — guarded),
+     * XREG1..XREG5 untouched pass-through state, X register 6
+     * (memory-resident) = Len, a tagged smallint counting consumed
+     * bytes.
+     *
+     * The body is pure fast-forward: it consumes bytes of the hot
+     * class with base/position/end in registers, then *every* exit
+     * — terminator byte, end of input, yield — syncs state (write
+     * the bit position back into the context, X6 = Len + consumed)
+     * and leaves. Terminator/end exits side-exit to the T1 entry,
+     * which re-matches the first unconsumed byte and takes whatever
+     * clause applies; this body needs no knowledge of the clause
+     * structure at all. Nothing is committed before sync, so any
+     * guard failure side-exits with pristine entry state.
+     *
+     * What this eliminates per byte vs T1: the function re-entry
+     * (prologue + i_test_yield), the bs_match position load/store
+     * and base load+mask, and the per-byte sub-binary bookkeeping —
+     * the "match-context dance". */
+    Label loop = a.new_label();
+    Label bytewise = a.new_label();
+    Label exit_scan = a.new_label();
+    Label yield_sync = a.new_label();
+
+    const a64::Gp ctxu = ARG1; /* untagged context pointer */
+    const a64::Gp base = ARG2; /* byte base pointer          */
+    const a64::Gp pos = ARG3;  /* current bit offset          */
+    const a64::Gp end_ = ARG4; /* end bit offset              */
+    const a64::Gp pos0 = ARG5; /* entry bit offset            */
+    const a64::Gp w = ARG6;    /* byte / SWAR word            */
+
+    /* --- guards: X0 must be a byte-aligned match context, Len a
+     * smallint. Side-exit leaves everything untouched. --- */
+    a.tbnz(XREG0, imm(0), entry.side_exit); /* not boxed */
+    a.and_(ctxu, XREG0, imm(~Uint64{0x7}));
+    a.ldr(TMP1, a64::Mem(ctxu));
+    mov_imm(TMP2, HEADER_SUB_BITS);
+    a.cmp(TMP1, TMP2);
+    a.b_ne(entry.side_exit);
+    a.ldr(base, a64::Mem(ctxu, offsetof(ErlSubBits, base_flags)));
+    a.and_(TMP1, base, imm(ERL_SUB_BITS_FLAG_MASK));
+    a.cmp(TMP1, imm(ERL_SUB_BITS_FLAG_MUTABLE));
+    a.b_ne(entry.side_exit); /* not a match context */
+    a.and_(base, base, imm(~Uint64{ERL_SUB_BITS_FLAG_MASK}));
+    a.ldr(pos, a64::Mem(ctxu, offsetof(ErlSubBits, start)));
+    a.ldr(end_, a64::Mem(ctxu, offsetof(ErlSubBits, end)));
+    a.tst(pos, imm(7));
+    a.b_ne(entry.side_exit); /* bit-unaligned start */
+    mov_arg(TMP1, ArgXRegister(6));
+    a.and_(TMP2, TMP1, imm(_TAG_IMMED1_MASK));
+    a.cmp(TMP2, imm(_TAG_IMMED1_SMALL));
+    a.b_ne(entry.side_exit); /* Len not a smallint */
+
+    a.mov(pos0, pos);
+
+    if (digits) {
+        /* --- digit scan: one byte per iteration --- */
+        a.bind(loop);
+        a.subs(FCALLS, FCALLS, imm(1));
+        a.b_le(yield_sync);
+        a.add(TMP1, pos, imm(8));
+        a.cmp(TMP1, end_);
+        a.b_hi(exit_scan); /* fewer than 8 bits left */
+        a.lsr(TMP2, pos, imm(3));
+        a.ldrb(w.w(), a64::Mem(base, TMP2));
+        a.sub(TMP3, w, imm('0'));
+        a.cmp(TMP3, imm(9));
+        a.b_hi(exit_scan); /* not 0-9 */
+        a.add(pos, pos, imm(8));
+        a.b(loop);
+    } else {
+        /* --- plain-ASCII scan, SWAR 8 bytes per iteration ---
+         * Stop byte: < 0x20, == 0x22 ("), == 0x5C (\), >= 0x80.
+         * Constants live in TMP1-TMP5; acc in ARG8; no calls in the
+         * body, so the ARG registers are plain scratch. */
+        const a64::Gp acc = ARG8;
+
+        mov_imm(TMP1, 0x0101010101010101ull);
+        mov_imm(TMP2, 0x8080808080808080ull);
+        mov_imm(TMP3, 0x2020202020202020ull);
+        mov_imm(TMP4, 0x2222222222222222ull);
+        mov_imm(TMP5, 0x5C5C5C5C5C5C5C5Cull);
+
+        a.bind(loop);
+        a.subs(FCALLS, FCALLS, imm(1));
+        a.b_le(yield_sync);
+        a.add(TMP6, pos, imm(64));
+        a.cmp(TMP6, end_);
+        a.b_hi(bytewise); /* fewer than 8 bytes left */
+        a.lsr(TMP6, pos, imm(3));
+        a.ldr(w, a64::Mem(base, TMP6)); /* 8 bytes, little-endian */
+
+        /* bad |= bytes < 0x20 or >= 0x80:
+         *   ((w - 0x2020..) & ~w | w) & 0x8080.. */
+        a.sub(TMP6, w, TMP3);
+        a.bic(TMP6, TMP6, w);
+        a.orr(TMP6, TMP6, w);
+        a.and_(acc, TMP6, TMP2);
+        /* bad |= zero byte in (w ^ 0x2222..)  [byte == `"`]:
+         *   (x - 0x0101..) & ~x & 0x8080.. */
+        a.eor(SUPER_TMP, w, TMP4);
+        a.sub(TMP6, SUPER_TMP, TMP1);
+        a.bic(TMP6, TMP6, SUPER_TMP);
+        a.and_(TMP6, TMP6, TMP2);
+        a.orr(acc, acc, TMP6);
+        /* bad |= zero byte in (w ^ 0x5C5C..)  [byte == `\`] */
+        a.eor(SUPER_TMP, w, TMP5);
+        a.sub(TMP6, SUPER_TMP, TMP1);
+        a.bic(TMP6, TMP6, SUPER_TMP);
+        a.and_(TMP6, TMP6, TMP2);
+        a.orr(acc, acc, TMP6);
+
+        a.cbnz(acc, bytewise); /* stop byte within this chunk */
+        a.add(pos, pos, imm(64));
+        a.b(loop);
+
+        /* Bounded tail: entered only when a stop byte or the end of
+         * input lies within the next 8 bytes, so this loops at most
+         * 8 times — no reduction check needed. */
+        a.bind(bytewise);
+        a.add(TMP6, pos, imm(8));
+        a.cmp(TMP6, end_);
+        a.b_hi(exit_scan); /* fewer than 8 bits left */
+        a.lsr(TMP6, pos, imm(3));
+        a.ldrb(w.w(), a64::Mem(base, TMP6));
+        a.sub(TMP6, w, imm(0x20));
+        a.cmp(TMP6, imm(0x5F));
+        a.b_hi(exit_scan); /* < 0x20 or >= 0x80 */
+        a.cmp(w, imm(0x22));
+        a.b_eq(exit_scan);
+        a.cmp(w, imm(0x5C));
+        a.b_eq(exit_scan);
+        a.add(pos, pos, imm(8));
+        a.b(bytewise);
+    }
+
+    /* --- exit: sync consumed bytes, side-exit to T1 entry --- */
+    a.bind(exit_scan);
+    a.sub(TMP1, pos, pos0); /* consumed bits */
+    mov_arg(TMP2, ArgXRegister(6));
+    a.adds(TMP3, TMP2, TMP1, a64::lsl(1)); /* Len + k, still tagged */
+    a.b_vs(entry.side_exit); /* Len + k overflows: redo in T1 */
+    a.str(pos, a64::Mem(ctxu, offsetof(ErlSubBits, start)));
+    mov_arg(ArgXRegister(6), TMP3);
+    a.b(entry.side_exit);
+
+    /* --- yield: sync first, then the standard trampoline --- */
+    a.bind(yield_sync);
+    a.sub(TMP1, pos, pos0);
+    mov_arg(TMP2, ArgXRegister(6));
+    a.adds(TMP3, TMP2, TMP1, a64::lsl(1));
+    a.b_vs(entry.side_exit);
+    a.str(pos, a64::Mem(ctxu, offsetof(ErlSubBits, start)));
+    mov_arg(ArgXRegister(6), TMP3);
     comment("T2 yield: route through i_test_yield_shared");
     a.adr(ARG3, entry.fn_entry);
     a.b(resolve_fragment(ga->get_i_test_yield_shared(), disp1MB));

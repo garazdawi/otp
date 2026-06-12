@@ -673,6 +673,18 @@ its `#decode{}` callbacks as funs per token, and the defaults are
 statically known funs — constant-fun inlining across the token
 loop once that machinery exists.)
 
+**RUN — PASSED**
+([`../verification/GBIN_OUTCOME.md`](../verification/GBIN_OUTCOME.md),
+2026-06-12). Three specialized scan functions: isolated string
+scanning **5.6×** (2.0 → 11.8 GB/s, beating json.erl's own
+Erlang-level 8-byte unroll), full real-document decodes **6–10 %**,
+correctness hash identical across modes. The match-context dance is
+a genuine per-op pool — the categorical opposite of G3's
+call-overhead null result. `bs_*` coverage in recovered loops is
+green-lit ahead of general inlining; the residual json profile
+(branchy `value`/`object_key` dispatch, map construction) now sizes
+G3-subject-1 and G-map against measured numbers.
+
 **Gate G-map — map-region experiment (MVP methodology, after
 G2).** Hand-write region-level shape specialisation
 (`02` §7.6's design) for one hot map-access chain (Elixir struct
@@ -703,7 +715,7 @@ funs — pervasive in RabbitMQ and MongooseIM — do fire.
 | `speculate_range` + range profiling | `03` §9.3–9.4 | Measured LICM-hoistable win flag checks can't capture |
 | Map-shape feedback + region shape specialisation | `02` §7.6 | **G-map** pass (§6.1); priority vs G3/G-bin set by the P0 profile |
 | Polymorphic PIC, speculative funs | `03` §9.6, `04` §10.2 | Phase 6 |
-| Binary (`bs_*`) coverage in recovered loops | `07` §17 Phase 7 | **G-bin** pass (§6.1); priority vs G3/G-map set by the P0 profile |
+| Binary (`bs_*`) coverage in recovered loops | `07` §17 Phase 7 | **G-bin PASSED** (`../verification/GBIN_OUTCOME.md`: 5.6× isolated scan, 6–10 % end-to-end json) — green-lit, first in the expansion order |
 | Messages / NIFs / floats | `07` §17 Phase 8 | Phase coverage, post-v1 |
 | Per-instruction T1 PC table | `03` §9.1 (corrected, §3 above) | General mid-function deopt |
 | Erlang JIT-server process | `05` §15.3 | Scheduling policy outgrowing a C queue |

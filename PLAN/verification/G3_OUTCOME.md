@@ -99,6 +99,33 @@ and the CPU doesn't move.
    always going to make). The deep corpus shows the loss case
    (0.97×); the real mix nets out near zero.
 
+## Scope of the conclusion — what this does *not* say about inlining
+
+This experiment measured inlining's **floor**: the subject has
+nothing to *eliminate* across the call boundary. `is_limited`'s
+dispatch header is already minimal, no caller-side fact makes any
+of its checks redundant, and no constants flow into it — so all
+stage b could harvest was call overhead, and call overhead turned
+out to be cheap. Inlining's real payoff is the optimization it
+unlocks — duplicate type tests eliminated, constants propagated
+into the callee, dead branches dropped — and the MVP already
+demonstrated that case (its 2× was substantially cross-boundary
+*elimination*: fused tag checks, the accumulator staying
+proven-small across the inlined `diff`). The corrected reading:
+
+> Inline when there is something to eliminate; never inline for
+> call-overhead alone. An inliner heuristic keyed on "callee
+> guards subsumed by caller facts / constant arguments" captures
+> the wins; one keyed on hotness × size captures the floor we
+> just measured to be ~zero.
+
+This *narrows* rather than kills the general-inlining case: the
+infrastructure question becomes "how much hot code has
+elimination-rich call boundaries", which the branchy-dispatch
+subject (G3 subject 1) and the intrinsics gate (G4 — literal funs
+are the ultimate constant argument) are better probes of than
+mutual recursion was.
+
 ## Architecture lessons (the valuable part)
 
 1. **Stage a's null result is evidence *against* the expensive
