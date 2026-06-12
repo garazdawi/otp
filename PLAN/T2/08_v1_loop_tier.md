@@ -95,14 +95,37 @@ Functions with no optimizable region get no counters and no profile
 slots — the zero-overhead property of `02_profiling.md` §7.1 is
 preserved, just with a looser, region-based notion of "eligible".
 
-**Loop bodies must be effect-free after leaf inlining** (no send,
-no ETS, no process dictionary, no non-inlined call). Allocation is
-not an effect (an abandoned partial iteration leaves garbage, not
-state). This is what makes the one-shape deopt model of S2 sound,
-and it matches the validated class exactly — effectful loops are
-runtime-dominated anyway. `lists:foreach/2` with a side-effecting
-fun is excluded; `map`/`filter`/`foldl` with pure funs are the
-targets.
+**Re-execution windows must be effect-free; effects are window
+boundaries, not disqualifiers.** A window is the span between two
+effect boundaries (or iteration start/end); every deopt-able guard
+fires before the window's first effect, so re-execution never
+repeats an effect. Allocation is not an effect (an abandoned
+partial iteration leaves garbage, not state). Effects come in two
+flavours with different coverage:
+
+- **BIF effects** (`!`/`erlang:send/2`, `ets:*`, `put/2`, …) are
+  CP-less leaf calls that T1 itself emits inline. T2 emits them the
+  same way — the op is a sync point, X/Y synced — and starts a
+  **new window** after it, whose deopt target is the post-effect
+  instruction boundary (one more entry kind in the T1 PC side
+  table, §3). A self-recursive loop with a send in the body
+  compiles fully, as two windows per iteration. One constraint for
+  *inlined helper* loops: their deopt targets are re-call
+  boundaries only, so between an effect and the back-edge
+  speculation is suspended (that span is emitted T1-shaped).
+  `lists:foreach/2`'s effect-last iteration shape loses nothing to
+  this; pure `map`/`filter`/`foldl` remain the best case (whole
+  iteration = one window).
+- **Erlang-call effects** (`gen_server:cast/2`, …) are real calls:
+  demote-on-return (S3) covers correctness, the pre-call window is
+  what T2 optimizes, and the loop re-enters T2 at its next prologue
+  pass. Post-G3 cross-module inlining converts these into their
+  underlying BIF effects (`cast` bottoms out in `erlang:send`),
+  upgrading them to the first flavour.
+
+Whether this window model captures enough real loops is measured,
+not argued — see the effect-shape census in §6 and
+[`../research/deopt_reexecution.md`](../research/deopt_reexecution.md).
 
 ## 3. The five structural simplifications
 
@@ -178,9 +201,32 @@ boundary** and branches to a T1 PC. Three cases, one shape:
 
 The legality rule that replaces framestates is **guards-before-
 effects**: within a re-execution window, every deopt-able guard
-precedes the first effect. Since v1 loop bodies are effect-free
-(§2), the rule is enforced trivially by the compile filter plus an
-IR validation pass.
+precedes the first effect, and windows end at effects (§2). The
+rule is enforced by the compile filter plus an IR validation pass.
+
+**Prior art and the known failure modes.** Pre-BeamAsm JIT
+experiments at OTP tried re-execution-style exits and hit two
+problems: too many JIT-worthy functions contain effects, and
+occasional re-execution ate the gains.
+[`../research/deopt_reexecution.md`](../research/deopt_reexecution.md)
+surveys how production JITs sit on this axis. Findings: HotSpot
+(`Unpack_reexecute`) and JSC (OSR exit to the current bytecode)
+both use re-execution as their *default* exit semantics, under
+exactly this guards-before-effects legality rule; no software JIT
+re-executes effects (Transmeta needed hardware store-buffering to
+do it); HHVM's tracelet model is the multi-op-region precedent,
+and its documented failure mode — too-small regions paying entry
+guards and state shuffle at every boundary — doesn't transfer to
+loop-sized regions whose boundary state is already T1's register
+layout. The cost lesson transfers inverted: JSC's exits cost
+~2.5–10 µs *because they re-enter an interpreter-format tier*,
+demanding near-certain speculation; T2 exits branch into native T1
+under an identical calling convention — the MVP's worst case
+(every iteration exits) measured ≈ pure-T1 cost, i.e. the
+mode-switch term that killed HiPE/BEAMJIT-era fallbacks is
+structurally absent. Exit *frequency* is the live risk; the §9.5
+exit-counter/jettison/backoff policy is its governor, and the
+floor is always T1.
 
 Deleted: `T2FrameState`, `parent_fs` chains, per-region deopt-stub
 X/Y-restore emission, eager CP pushes, multi-level inlining
@@ -477,7 +523,7 @@ T2-compiled function, including mid-loop-yielded processes.
 
 | Phase | Weeks | Contents | Gate |
 |-------|-------|----------|------|
-| **P0** | 4–5 | Bytecode→SSA builder + code-chunk retention; T1 PC side table (entries / call ops / continuations); trace matrix + inspection matrix; entry-only profile-cost measurement; corpus measurement (kept from old Phase 0) | **G1: SSA fidelity.** Reconstruct SSA for a corpus of OTP functions; structurally compare against AOT `beam_ssa` output and identity-emit behaviour. Material loss → fall back to the SSA chunk (`02` §7.8). |
+| **P0** | 4–5 | Bytecode→SSA builder + code-chunk retention; T1 PC side table (entries / call ops / continuations / post-effect boundaries); trace matrix + inspection matrix; entry-only profile-cost measurement; corpus measurement (kept from old Phase 0); **effect-shape census** — walk the SSA of dialyzer, RabbitMQ, MongooseIM and a Phoenix dep tree, find self-tail-recursive loop bodies, bucket them effect-free / BIF-effect-only / Erlang-call-bearing; this retires the S2 scope risk ("too many loops have effects") with data before anything is built | **G1: SSA fidelity.** Reconstruct SSA for a corpus of OTP functions; structurally compare against AOT `beam_ssa` output and identity-emit behaviour. Material loss → fall back to the SSA chunk (`02` §7.8). |
 | **P1** | 4 | Identity transform through the full pipeline; install/jettison; blob range registration + `c_p->i` translation; full OTP suite under `+JT2enable` (16A.1) | Suite green. State-preservation model proven end-to-end. |
 | **P2** | 6 | Entry speculation; flag-exit arithmetic; guard fusion + strength reduction; self-tail-recursion loop recovery + preheader hoisting + back-edge resume stubs; **local leaf inlining** (≤ size cap, no calls) | **G2: reproduce the MVP through the pipeline.** The hand-written MVP hit 1.97×; the compiled pipeline must hit ≥ 1.8× on the same benchmark, with ≤ 1 % tax on the application corpus. Miss → stop and re-examine before P3. |
 | **P3** | 6 | `lists:*` intrinsics (hand-ported expansions) + helper loop recovery + constant-fun body inlining; LICM-lite (preheader guard/capture hoisting); unrolling **only if** `test_heap` coalescing shows up on the corpus, else defer | **G4: intrinsics pay.** `foldl`/`map` benchmarks vs an `inline_list_funcs`-off baseline show the projected win. |
@@ -638,11 +684,13 @@ funs — pervasive in RabbitMQ and MongooseIM — do fire.
 - **G1 pass criteria.** "Structurally compare" needs a concrete
   definition — proposal: identical CFG shape, identical live-range
   count ±ε, and identity-emit output passing 16A.1 on the corpus.
-- **Fun purity for intrinsics.** The intrinsic inliner must verify
-  the literal fun's body is effect-free (§2) before recovering the
-  helper loop; otherwise fall back to a plain `call_ext`. The check
-  is a walk of the fun's SSA — define "effect-free" as the same set
-  S2 uses.
+- **Fun effect classification for intrinsics.** The intrinsic
+  inliner walks the literal fun's body and classifies it per §2:
+  effect-free (whole iteration = one window), BIF-effect-only
+  (window boundaries inside the iteration; speculation suspended
+  between the effect and the back-edge), or Erlang-call-bearing
+  (fall back to a plain `call_ext` of the helper). Define the
+  effect sets once, shared with the S2 validation pass.
 - **Demote-on-return interaction with `save_calls`.** A T1
   continuation CP means the *return* side of `save_calls` accounting
   is unchanged; confirm in the inspection matrix that call-side
