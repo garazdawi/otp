@@ -2271,11 +2271,18 @@ erts_proc_sig_send_altact_msg(Process *c_p, Eterm from, Eterm to, Eterm msg, Ete
     itpl[0] = make_arityval(ix);
     ERL_MESSAGE_FROM(mp) = make_tuple(itpl);
 
+    /*
+     * A wakeup caused by a local alternate-action message send (e.g.
+     * the alias reply of a gen_server:call) makes the receiver
+     * eligible for inline scheduling handoff...
+     */
+    erts_sched_handoff_hint_begin();
     if (!proc_queue_signal(&c_p->common, from, pid, (ErtsSignal *) mp, 0,
                            ERTS_SIG_Q_OP_ALTACT_MSG)) {
         mp->next = NULL;
         erts_cleanup_messages(mp);
     }
+    erts_sched_handoff_hint_end();
 
     ERTS_LC_ASSERT(!(rp_locks & ERTS_PROC_LOCKS_ALL_MINOR));
     if (c_p != rp && rp_locks)
