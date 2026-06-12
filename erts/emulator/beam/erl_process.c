@@ -132,7 +132,7 @@ const Process erts_invalid_process = {{ERTS_INVALID_PID}};
 int ERTS_WRITE_UNLIKELY(erts_default_spo_flags) = SPO_ON_HEAP_MSGQ;
 int ERTS_WRITE_UNLIKELY(erts_sched_compact_load);
 int ERTS_WRITE_UNLIKELY(erts_sched_balance_util) = 0;
-int ERTS_WRITE_UNLIKELY(erts_sched_inline_handoff) = 1;
+int ERTS_WRITE_UNLIKELY(erts_sched_inline_handoff) = ERTS_SCHED_HANDOFF_INLINE;
 Uint ERTS_WRITE_UNLIKELY(erts_no_schedulers);
 Uint ERTS_WRITE_UNLIKELY(erts_no_total_schedulers);
 Uint ERTS_WRITE_UNLIKELY(erts_no_dirty_cpu_schedulers) = 0;
@@ -6896,8 +6896,9 @@ maybe_handoff_runq(int enqueue, erts_aint32_t prio, Process *proc,
                    ErtsRunQueue *runq, int *handoffp)
 {
     ErtsSchedulerData *esdp;
+    int mode = erts_sched_inline_handoff;
 
-    if (!erts_sched_inline_handoff
+    if (mode == ERTS_SCHED_HANDOFF_OFF
         || enqueue != ERTS_ENQUEUE_NORMAL_QUEUE
         || prio != PRIORITY_NORMAL)
         return runq;
@@ -6907,8 +6908,7 @@ maybe_handoff_runq(int enqueue, erts_aint32_t prio, Process *proc,
         || esdp->type != ERTS_SCHED_NORMAL
         || !esdp->handoff.hint
         || !esdp->current_process
-        || esdp->current_process == proc
-        || esdp->handoff.pid != NIL)
+        || esdp->current_process == proc)
         return runq;
 
     if (runq != esdp->run_queue) {
@@ -6917,9 +6917,14 @@ maybe_handoff_runq(int enqueue, erts_aint32_t prio, Process *proc,
         runq = esdp->run_queue;
     }
 
-    esdp->handoff.pid = proc->common.id;
     esdp->handoff.count++;
-    *handoffp = !0;
+    if (mode == ERTS_SCHED_HANDOFF_INLINE && esdp->handoff.pid == NIL) {
+        esdp->handoff.pid = proc->common.id;
+        *handoffp = ERTS_SCHED_HANDOFF_INLINE;
+    }
+    else {
+        *handoffp = ERTS_SCHED_HANDOFF_MIGRATE;
+    }
     return runq;
 }
 
@@ -6951,7 +6956,7 @@ add2runq(int enqueue, erts_aint32_t prio,
 	erts_runq_lock(runq);
 
 	/* Enqueue the process */
-        if (handoff) {
+        if (handoff == ERTS_SCHED_HANDOFF_INLINE) {
             /*
              * Enqueue at the head of the normal priority queue; the
              * process runs inline on the reductions donated by the
