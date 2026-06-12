@@ -172,7 +172,7 @@ iterations. The overhead is:
    `(w - 0x2020..) & ~w & 0x8080..` family) with OR-reduction and a
    scalar tail that locates the exact stop byte. The control→data
    conversion is legal under the effect-free-window rule
-   (`08` §S2): the scalar tail is re-execution of pure work. This
+   (`08` §4.2): the scalar tail is re-execution of pure work. This
    layer was worth roughly another 2× on top of fused bytewise
    scanning in the G-bin experiment
    (`../verification/GBIN_OUTCOME.md`, addendum). Limits: per-byte

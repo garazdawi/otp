@@ -1,7 +1,7 @@
 # G3 experiment — outcome (subject 2: mutual/structural recursion)
 
 The call-crossing gate from
-[`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §6.1, subject 2:
+[`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §2, subject 2:
 hand-write a T2 specialisation of `erl_types:are_all_limited/2` +
 `is_limited/2` — the shape that carried **47 % of all calls** in the
 dialyzer PLT-build census ([`RESULTS.md`](RESULTS.md) §3) — and

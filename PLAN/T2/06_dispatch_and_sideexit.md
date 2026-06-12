@@ -3,12 +3,12 @@
 > **v1 scope rescoped by [`08_v1_loop_tier.md`](08_v1_loop_tier.md)**:
 > §§1–3 and §5.1–5.2 carry into v1 unchanged; §4.3's inlined-region
 > deopt stubs and §5.3–5.5's CP patching / lazy stack scan are
-> deferred to general inlining — v1 blobs contain no CPs (08 §S3),
+> deferred to general inlining — v1 blobs contain no CPs (08 §4.3),
 > so uninstall is prologue revert + thread-progress + a single
 > `c_p->i` translation. §4.2 gains a static-exit subcase: ops outside
 > the supported set lower as unconditional branches to their T1 PC.
 > The §2.3/§3.1 yield stub applies to *entry* yields; loop back-edge
-> yields save a T2 resume stub instead (08 §S5 — the MVP's §6 "Yield"
+> yields save a T2 resume stub instead (08 §4.5 — the MVP's §6 "Yield"
 > shape, promoted to the production model).
 >
 > Part of the T2 design. See [`README.md`](README.md) for the full
@@ -570,9 +570,14 @@ branch to the *T1 PC for this BEAM instruction*:
   b.ne .t1_pc_for_K
 ```
 
-`.t1_pc_for_K` is resolved at T2 codegen time from the T1 blob's
-per-instruction PC table (BeamAsm already maintains it for line
-debugging). The cold tail is *not* a stub — it's a direct branch
+`.t1_pc_for_K` is resolved at T2 codegen time from a T1-side PC
+table. **[Correction — verified against the code:]** BeamAsm does
+*not* maintain a per-instruction PC table today (only per-function
+line tables, `beam_ranges.c`); the table must be *emitted* by T1 at
+load time. v1 needs only four entry kinds (function entries, call
+ops, post-call continuations, post-effect boundaries — `08` §4.5);
+the full per-instruction table is costed when general mid-function
+deopt lands. The cold tail is *not* a stub — it's a direct branch
 to T1.
 
 State at the branch:

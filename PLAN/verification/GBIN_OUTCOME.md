@@ -1,7 +1,7 @@
 # G-bin experiment — outcome
 
 The binary-matching-loop gate from
-[`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §6.1: do
+[`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §2/§8: do
 T1's per-byte binary-matching overheads (the match-context dance)
 constitute a real pool that loop-tier fusion can harvest? Primary
 subject: stdlib `json:decode/1`'s scan loops. Run 2026-06-12, MVP
@@ -16,7 +16,7 @@ share (Amdahl), with the remainder sitting in exactly the shapes
 the other gates cover (branchy value dispatch, map/object
 construction, conversion BIFs). Binary `bs_*` coverage in recovered
 loops is green-lit for the post-v1 expansion — pulled ahead of
-general inlining as `08` §6.1 proposed.
+general inlining as `08` §7 records.
 
 Contrast with G3 (0 ± 1 %): per-byte binary-match overhead is a
 real per-op cost pool in T1; tiny-call overhead is not. The two
@@ -162,7 +162,7 @@ source-unrolled `string_ascii` already has.
 
 - **G-bin: PASSED.** Phase-D-style `bs_*` coverage in recovered
   loops moves ahead of general inlining in the expansion order, as
-  `08` §6.1 conditionally scheduled. The production form: loop
+  `08` §7 now records. The production form: loop
   recovery over `bs_match`-headed self-recursive functions, match
   context as loop-carried state, position/base/end register
   residency between sync points, byte-class guard fusion (SWAR

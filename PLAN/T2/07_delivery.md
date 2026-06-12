@@ -195,6 +195,9 @@ audits and measurements that gate the rest of the plan.
   table is complete and stable enough to use as a deopt target
   index (§9.1). If sparse, decide on the augmentation strategy
   before Phase 1 starts.
+  *Audit result (2026-06-12): the table does not exist — BeamAsm
+  keeps per-function line tables only. T1 must emit one; v1 needs
+  four entry kinds. See `08_v1_loop_tier.md` §4.5.*
 - **Profile-cost micro-benchmark.** Measure the realistic per-
   site profile-update cost on Apple Silicon and Linux ARM64 on
   representative workloads (the corpus above). Validates the
@@ -376,7 +379,7 @@ cut early.
    **Mitigation**: investigate compact encoding (arena-allocated
    custom format vs ETF) in Phase 0.
    *Superseded by the third-pass rescope*: with IR built from the
-   loaded BEAM code (`08_v1_loop_tier.md` §S1) this risk disappears
+   loaded BEAM code (`08_v1_loop_tier.md` §4.1) this risk disappears
    and is replaced by "SSA reconstruction loses material structure"
    — mitigated by the G1 fidelity gate, with the chunk as fallback.
 6. **AOT changes break existing modules.** Adding the SSA chunk
@@ -406,7 +409,7 @@ These were open questions at design time, resolved during review:
   *Superseded by the third-pass rescope*: v1 builds IR from the
   loaded BEAM code (no chunk, no compile option, works on existing
   beams); the chunk design remains the G1 fallback. See
-  `08_v1_loop_tier.md` §S1.
+  `08_v1_loop_tier.md` §4.1.
 - **Counter / feedback vector placement.** Side table per
   module; emitted only for tier-2-eligible functions. Detail: §7.
 - **OSR-exit in v1.** Yes, required for `erlang:trace/3`. In the
@@ -638,6 +641,10 @@ that hold the resulting prose. The critique itself is archived as
   to "v1 Phase 2", alongside type narrowing. Branchy Erlang code is
   the primary corpus; cold-arm pruning is one of the largest wins
   T2 can extract. (`02_profiling.md` §7.7.)
+  *[REFUTED by measurement — G3-1
+  (`../verification/G31_GMAP_OUTCOME.md`): a hand-built
+  cold-arm-pruned dispatcher measured 1.01–1.02×. Branch counters
+  and pruning are shelved; see `08_v1_loop_tier.md` §9.]*
 
 ### Inlining and code generation
 
@@ -760,7 +767,9 @@ that hold the resulting prose. The critique itself is archived as
   budget, descope to type-narrowing-only (Phase 2) without inlining
   (Phase 3).
 - **T2 ⇄ BeamAsm contract** (L3). The four invariants
-  (per-instruction PC table; calling-convention register
+  (per-instruction PC table — *which does not exist today and must
+  be emitted by T1; see `08_v1_loop_tier.md` §4.5*;
+  calling-convention register
   assignments; global runtime fragments; patchable function
   prologue) are documented in `05_runtime.md` §12.1, and
   `beam_jit_t2.h` enforces them via `static_assert`. CI fails the

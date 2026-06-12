@@ -1,7 +1,7 @@
 # T2 — Profiling Infrastructure
 
 > **v1 scope rescoped by [`08_v1_loop_tier.md`](08_v1_loop_tier.md)
-> §S1/§S4**: v1 keeps only the call counter and the function-entry
+> §4.1/§4.4**: v1 keeps only the call counter and the function-entry
 > type slots (§7.1–7.4); arith/call-return/switch sites (§7.3 items
 > 2–4), the monomorphic-target slot (§7.5), map-shape feedback
 > (§7.6) and branch counters (§7.7) are deferred behind their
@@ -149,6 +149,13 @@ patching with simple feedback collection. The T2 specialisation
 gives the optimization a much bigger payoff (compounding across
 inlined regions, deopt-on-mismatch eliminating the slow path
 from hot code) than IC-patching at T1 alone could deliver.
+
+> **[Decision reversed.]** The G-map experiment priced this win
+> (1.64× on struct-shaped access) and the T1 inline-cache route is
+> now **Track A item A2** in `08_v1_loop_tier.md` §8 — a T1-only
+> change that works on existing beams, with the T2 region
+> specialisation as the later compounding layer. The paragraph
+> above records the original (pre-measurement) reasoning.
 
 ### 7.7 Branch-frequency counters (v2)
 

@@ -1,7 +1,7 @@
 # G3 subject 1 (branchy dispatch) + G-map — outcomes
 
 The two remaining gates from
-[`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §6.1, run
+[`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §2/§8, run
 2026-06-12 with the established methodology: env-gated hand-written
 emitters (`T2_G31`, `T2_GMAP`) on the MVP scaffolding, single build,
 correctness hashes compared across modes, engagement proven (via

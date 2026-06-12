@@ -4,11 +4,11 @@
 > in v1, loop back-edge yields *resume into T2* via per-loop resume
 > stubs (supersedes §12.4 item 3's demote-for-the-invocation model
 > for back-edges; entry yields keep it), T2 blobs contain no CPs
-> (08 §S3) so §14.2's lazy stack scan and tombstone CP tables
+> (08 §4.3) so §14.2's lazy stack scan and tombstone CP tables
 > collapse to a single `c_p->i` translation, the Erlang JIT-server
 > of §15.3 is replaced by a C-side queue + dirty-scheduler job, and
 > watchpoints run at module granularity. All deferred machinery
-> returns with general inlining (08 §7).
+> returns with general inlining (08 §9).
 >
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers §§12–15: how T2 lives inside the

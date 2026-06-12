@@ -1,776 +1,602 @@
-# T2 v1 — The Loop Tier (third-pass rescope)
+# T2 v1 — The Loop Tier
 
-> Part of the T2 design. See [`README.md`](README.md) for the full
-> document index. **This file supersedes the v1 scoping in
-> [`00_overview.md`](00_overview.md)–[`07_delivery.md`](07_delivery.md).**
-> Those files remain the reference design for every component deferred
-> here — each cut below names the section it returns to. Written after
-> the MVP completed; grounded in
-> [`../mvp/OUTCOME.md`](../mvp/OUTCOME.md) and a code-level audit of
-> the ERTS facts the earlier files assumed.
+> **The authoritative T2 plan.** This document stands alone for
+> evidence, scope, and decisions; low-level mechanics it shares with
+> the reference designs are summarised here and detailed in
+> [`00`](00_overview.md)–[`07`](07_delivery.md) (each pointer says
+> what it holds). [`../verification/`](../verification/) holds the
+> experiment writeups backing every claim marked **[measured]**.
+> Where this file conflicts with 00–07, this file wins.
+>
+> *Changelog note:* this revision introduces three decisions that
+> were not in earlier drafts: the **Track A** T1/AOT capture work,
+> the **re-baseline go/no-go checkpoint** before the v1 build, and
+> the **reversal** of the earlier decision to drop the T1 map-key
+> inline cache in T2's favour (`02` §7.6's closing paragraph is
+> superseded by §8 A2).
 
-## 1. Why this revision
+## 1. Executive summary
 
-The MVP answered its question: the architecture beats T1 by ~2×
-(1.97× min, within 2 % of the instruction-count ceiling) on a hot
-list-walking loop. What it validated, precisely:
+T2 is a second, optimizing JIT tier above BeamAsm (T1) on aarch64.
+This plan scopes its first version to the **loop tier**: compile
+hot loop-shaped and leaf functions into fused native loops, side-exit
+to the intact T1 code for everything else, and change *nothing*
+observable except speed.
 
-- Prologue-side install with the intact T1 body as the side-exit
-  landing zone.
-- Iteration-start-stays-live → side-exits with no stub work, no
-  metadata, no register reconstruction.
-- Guard fusion + leaf inlining + register-resident loop state across
-  a recovered self-tail-call loop (the T2-internal back-edge alone
-  was worth 6 %, taking 1.85× to 1.97×).
-- Flag-checked (post-hoc) overflow side-exits costing ~nothing.
-- Side-exit-and-reclaim: the worst case costs roughly what pure T1
-  would have paid anyway.
+The plan is built on a completed experiment program — five
+hand-written, correctness-verified specializations plus a corpus
+census, measured against T1 on real workloads. Their combined
+verdict:
 
-What it did **not** validate: cold-arm pruning on branchy dispatch
-code, polymorphic call sites, map-shape specialisation,
-profile-driven range speculation, cross-module monomorphic inlining.
-The 00–07 v1 (~48–50 weeks, ~16 KLOC) builds infrastructure for all
-of these up front: framestates and eager-CP-push, an SSA chunk in the
-BEAM file, four kinds of profile site, lazy whole-stack CP scans, an
-Erlang JIT-server process.
+> **T2's wins come from fusing data access inside loops — binaries
+> first, maps second, tuples/lists as the base — not from
+> optimizing control flow or calls, which BeamAsm already executes
+> at the cost floor of modern out-of-order cores.**
 
-`00_overview.md` §1 itself concedes the corpus reality: branchy
-state-machine code dominates production Erlang, and the wins there
-are *expected* from pruning and guard elimination — expected, not
-measured. Meanwhile the measured 2× lives in the loop-shaped class
-and needs almost none of the heavy machinery.
+Three findings shape everything below: binary scan loops gain
+**5.6×** [measured]; map shape specialization gains **1.64×**
+[measured]; and the two control-flow bets — call-crossing
+optimization and branchy-dispatch specialization — measured **zero**,
+shelving roughly 25 weeks of general-inlining infrastructure that
+earlier drafts treated as core.
 
-The rescope principle:
+Status: architecture validated, scope evidence-backed,
+implementation not started. The recommended sequencing (§8) runs a
+short **T1/AOT capture track** first — all three wins have at least
+partial cheaper homes: binaries and maps substantially (a scan
+superinstruction; a T1 inline cache), the MVP's call-elimination
+half via AOT inlining defaults — then re-baselines T2's marginal
+value before committing to the ~24-week v1 build.
 
-> **No infrastructure lands ahead of a validated win that needs it.**
-> v1 ships the validated win class with the minimum machinery. Each
-> unvalidated win class gets an MVP-style hand-built experiment (per
-> `../mvp/OUTCOME.md` §"Next benchmark") before its infrastructure
-> is green-lit.
+## 2. Evidence
 
-Every architectural invariant of 00–07 survives intact: T1 calling
-convention, sync-point state preservation, deopt-to-T1, strict
-trace/NIF mutual exclusion, T1 as the permanent source of truth.
-Nothing here precludes growing back into the full design — the cuts
-are sequencing, not abandonment.
+### 2.1 The experiment program
 
-## 2. v1 scope: what the loop tier compiles
+Each experiment is a hand-written asmjit specialization installed
+via a codegen hook (the MVP scaffolding), env-gated so a single
+build provides T1 baseline and treatment, with byte-identical
+result hashes required across modes. Writeups under
+`PLAN/verification/`.
+
+| experiment | mechanism tested | result | writeup |
+|---|---|---|---|
+| MVP (`t2_mvp:total/2`) | loop recovery + elimination-rich leaf inlining + guard fusion | **1.97× min / 1.85× median**, within 2 % of instruction-count ceiling | `../mvp/OUTCOME.md` |
+| G-bin (`json` scan loops) | binary scan fusion: match-context registerization + loop ownership + SWAR | **5.56×** isolated (2.0 → 11.8 GB/s); **6–10 %** end-to-end on real JSON | `GBIN_OUTCOME.md` |
+| G-map (struct-shaped flatmaps) | shape guard + direct offset loads vs per-key scan | **1.64×**; mis-guessed shape ran 1.45× *slower* (every element side-exiting) | `G31_GMAP_OUTCOME.md` |
+| G3-2 (`erl_types` mutual recursion) | call-crossing / overhead-only inlining | **null** (0 ± 1 % CPU on the PLT build, despite 2.25× micro and proven engagement) | `G3_OUTCOME.md` |
+| G3-1 (gen_server-shaped dispatch) | cold-arm pruning + guard-fused hot arm | **null** (1.02× isolated, 1.01× through `gen_server:call`; engagement proven via `+JDdump`) | `G31_GMAP_OUTCOME.md` |
+| Effect-shape census | static + call-weighted dynamic corpus structure | effects-in-loops negligible; calls-in-loops dominate statically; call counts ≠ cycles | `RESULTS.md` |
+
+### 2.2 Why the wins land where they do
+
+- **Binary matching pays a real per-op tax in T1**: every
+  `bs_match` reloads position and end, masks the base, and stores
+  the position back to the heap — around a full function re-entry
+  per byte. ~10–14 cycles/byte, cut to ~3 by registerization and
+  loop ownership alone and to ~0.3 with SWAR on top. No core hides
+  that ratio. The fact that
+  `json.erl` hand-unrolls 8 bytes in Erlang (`string_ascii`) shows
+  libraries already pay complexity to dodge this cost.
+- **Map access pays a per-key scan** that one shape check
+  eliminates — but the shape is only knowable at runtime (flatmap
+  key order is atom-index-dependent; it differed between two VMs of
+  the same build during G-map).
+- **Calls and clause dispatch are already at the floor.** A 12-clause
+  dispatch is ~4 ns in T1; a tiny-body call is ~20 cycles, predicted
+  and store-forwarded. There is no overhead pool; only *elimination*
+  across a call boundary pays (the MVP's fused guards), never the
+  call mechanics themselves.
+
+### 2.3 Methodology rules (learned the hard way)
+
+1. **Size win pools with cycle profiles, never call counts.** The
+   census's 47 %-of-calls bucket held a few percent of cycles —
+   call counting over-weights tiny bodies ~10×.
+2. **Inline only where something can be eliminated** (callee checks
+   subsumed by caller facts, constant arguments) — never for call
+   overhead alone. Literal funs are the strongest constant argument
+   (the intrinsics case).
+3. **Shape guards must test runtime-recorded identity** (the
+   keys-tuple pointer), never layouts assumed at codegen time.
+4. Hand experiments must **prove engagement** (asm dump, counter
+   deltas) before a null result counts.
+5. All measurements so far are Apple Silicon big cores. Re-run the
+   kit on server ARM (Graviton) before treating the two nulls as
+   universal; the positives can only strengthen on smaller cores.
+
+## 3. What v1 compiles
 
 A function is compiled when its call counter trips **and** static
-structure puts it in the validated class:
+structure puts it in one of three classes:
 
-1. **Self-tail-recursive functions** → loop recovery. The MVP shape,
-   and the canonical Erlang loop idiom. Entry guards hoist to the
-   loop preheader (run once per invocation, not per iteration);
-   loop-carried values stay in CPU registers across the back-edge.
+1. **Self-tail-recursive functions** → loop recovery: the back-edge
+   becomes an internal branch, entry guards hoist to a preheader
+   (run once per invocation), loop-carried values stay in registers.
+   The canonical Erlang loop idiom and the MVP's validated shape.
 2. **Functions calling a `lists:*` higher-order helper with a
-   literal fun** → intrinsic inlining (`04_optimization.md` §10.4's
-   hand-ported expansions) + loop recovery of the helper, fun body
-   inlined via constant propagation.
-3. **Leaf functions with guard-heavy destructuring** — speculate
-   entry types, fuse the guards, return. No loop needed; same
-   machinery minus the back-edge.
+   literal fun** → intrinsic inlining (hand-ported expansions of
+   the `sys_core_fold_lists` set) + loop recovery of the helper,
+   fun body inlined by constant propagation. (Library-author opt-in
+   via a `-jit_inline` module attribute is the later extension —
+   `04` §10.4.)
+3. **Leaf functions with guard-heavy destructuring** → entry
+   speculation + fused guards + return; same machinery minus the
+   back-edge.
 
-Inside these bodies, the supported op set is Phase A as before:
-integer arithmetic, comparisons, cons/tuple destructure and
-construction, guard BIFs as primitive ops, and local calls to
-*leaf* functions small enough to inline (≤ the §10.3 size cap, no
-calls of their own).
+**The v1 op set**: integer arithmetic (overflow handled by flag
+checks, §4.4), comparisons, cons/tuple destructuring and
+construction, guard BIFs as primitive ops (the `04` §10.7 manifest,
+minus `length/1`), local calls to *inlineable leaves* (small,
+call-free), **and the byte-aligned binary scan subset** —
+match-context guards plus `bs_match` ensure/get-integer-8/skip in
+recovered loops, the G-bin shape. The scan subset is in v1 because
+it is the largest measured pool — at corpus scale too: 46 % of
+RabbitMQ's loop functions touch `bs_*` ops — and needs no machinery
+the loop tier doesn't already have (the match context is ordinary
+loop-carried state).
 
-Two rules make the boundary cheap instead of cliff-shaped:
+Two rules keep the boundary cheap rather than cliff-shaped:
 
-- **An op outside the set terminates the optimized region with a
-  static side-exit** — an unconditional branch to that op's T1 PC,
-  the same shape as a failed speculation (`06` §4.2). The function
-  still compiles; the unsupported tail just runs in T1. The old
-  whole-function eligibility cliff ("one map op anywhere disqualifies
-  the function") is gone.
-- **Non-inlineable calls demote-on-return** (§3 S3): the call is
-  emitted with the *T1 continuation* as its CP, so the callee
-  returns into T1 and the rest of that invocation runs there. The
-  compile filter simply avoids picking functions whose optimized
-  region is punctured by such calls.
+- **Unsupported ops terminate the optimized region** with a static
+  side-exit — an unconditional branch to that op's T1 address. The
+  function still compiles; the unsupported tail runs in T1.
+- **Non-inlineable calls demote-on-return** (§4.3): emitted with
+  the *T1 continuation* as their return address, so the callee
+  returns into T1 and the rest of that invocation runs there. For
+  self-tail-recursive spines this costs almost nothing: the next
+  iteration re-enters T2 through the patched prologue — inferred
+  from G3-2's structure (its slow path measured the *opposite*
+  configuration; the re-entry dynamic itself is mechanism
+  reasoning, to be confirmed in P2).
 
-Functions with no optimizable region get no counters and no profile
-slots — the zero-overhead property of `02_profiling.md` §7.1 is
-preserved, just with a looser, region-based notion of "eligible".
+Functions with no optimizable region get no counters and no
+profiling: zero overhead for code T2 can't improve.
 
-**Re-execution windows must be effect-free; effects are window
-boundaries, not disqualifiers.** A window is the span between two
-effect boundaries (or iteration start/end); every deopt-able guard
-fires before the window's first effect, so re-execution never
-repeats an effect. Allocation is not an effect (an abandoned
-partial iteration leaves garbage, not state). Effects come in two
-flavours with different coverage:
+**Effects.** Re-execution windows (§4.2) must be effect-free;
+effects are window *boundaries*, not disqualifiers. **Allocation is
+not an effect** — an abandoned partial iteration leaves garbage,
+not state — so cons/tuple builds live freely inside windows. BIF
+effects (`!`, `ets:*`, `put/2`, …) are CP-less leaf calls T2 emits
+inline — the op is a sync point, X/Y synced — and a new window
+starts after (deopt target: the post-effect boundary). A
+send-in-the-loop compiles fully, as two windows per iteration.
+Erlang-call effects (`gen_server:cast` is a call before it is an
+effect) demote-on-return. Census data: effectful BIFs in loops are
+a rounding error (derived from `RESULTS.md` §3: B+I+C buckets
+combined ≈ 0.25 % of all dialyzer calls); calls are the real
+boundary case, handled above.
 
-- **BIF effects** (`!`/`erlang:send/2`, `ets:*`, `put/2`, …) are
-  CP-less leaf calls that T1 itself emits inline. T2 emits them the
-  same way — the op is a sync point, X/Y synced — and starts a
-  **new window** after it, whose deopt target is the post-effect
-  instruction boundary (one more entry kind in the T1 PC side
-  table, §3). A self-recursive loop with a send in the body
-  compiles fully, as two windows per iteration. One constraint for
-  *inlined helper* loops: their deopt targets are re-call
-  boundaries only, so between an effect and the back-edge
-  speculation is suspended (that span is emitted T1-shaped).
-  `lists:foreach/2`'s effect-last iteration shape loses nothing to
-  this; pure `map`/`filter`/`foldl` remain the best case (whole
-  iteration = one window).
-- **Erlang-call effects** (`gen_server:cast/2`, …) are real calls:
-  demote-on-return (S3) covers correctness, the pre-call window is
-  what T2 optimizes, and the loop re-enters T2 at its next prologue
-  pass. Post-G3 cross-module inlining converts these into their
-  underlying BIF effects (`cast` bottoms out in `erlang:send`),
-  upgrading them to the first flavour.
+## 4. Architecture
 
-Whether this window model captures enough real loops is measured,
-not argued — see the effect-shape census in §6 and
-[`../research/deopt_reexecution.md`](../research/deopt_reexecution.md).
+**The state-preservation invariant everything below relies on**
+(full treatment: `01` §6): T2 code matches T1's abstract machine
+state — X/Y register layout, HTOP, FCALLS, stack — at every **sync
+point**: function entry, calls, returns, GC sites, BIF boundaries,
+speculation guards, tracing-relevant points, receive safe points.
+*Between* sync points, registers are free. This is what makes
+"branch to a T1 address" a complete deopt, lets GC and tracing
+observe T2 frames as ordinary T1 state, and bounds every mechanism
+in this section.
 
-## 3. The five structural simplifications
+The five load-bearing decisions, each self-contained here. (Deeper
+treatments: install mechanics `06`, speculation `03` §9.)
 
-### S1. Build the IR from the loaded BEAM code — no SSA chunk
+### 4.1 Build the IR from loaded BEAM code — no SSA chunk
 
-**Supersedes** `02_profiling.md` §7.8 and the "BEAM SSA at runtime"
-resolved decision in `07_delivery.md` §18.
+T2 builds its SSA IR by reconstruction from the module's loaded
+BEAM code: the loader retains the raw code chunk plus
+atom/literal/import tables for modules with eligible functions
+(today `beamfile_free()` discards them after T1 emission — a small
+loader change; retention is freed on purge and reported under an
+`erlang:memory/0` key), and the compile job re-decodes and runs
+standard Braun-style SSA construction. Types seed from the
+existing `Type` chunk, which the compiler already emits by default
+and BeamAsm already consumes.
 
-v1 builds T2 IR directly from the module's loaded BEAM code: the
-loader retains the raw code chunk (plus atom/literal/import tables)
-for modules with eligible functions — today `beamfile_free()`
-discards the decoded ops after native emission (`beam_file.c`), so
-retention is a new but small loader change — and the T2 compile job
-re-decodes and runs standard SSA construction (Braun-style; the CFG
-is explicit in BEAM labels, the X/Y registers are the variables).
-Types are seeded from the existing **`Type` chunk**, which the
-compiler already emits by default and BeamAsm already consumes at
-load time.
+Why: **T2 works on every `.beam` that exists** — applications,
+dependencies, Elixir — with no recompilation, no new chunk, no
+compile option, no file-size cost, no chunk/code version skew. This
+is the single largest real-world-reach lever in the plan. What's
+lost (beam_ssa-level annotations) is recovered by the forward
+dataflow pass T2 runs anyway. Fallback if the fidelity gate (§8,
+G1) fails: the SSA-chunk design archived in `02` §7.8.
 
-What this deletes: the new BEAM chunk format, the AOT compiler
-change, the loader chunk-parsing path, the `+t2_compile_eligible`
-compile option, the 30–80 % file-size cost, risk #5
-(`07_delivery.md` §18), and the whole class of SSA-chunk/code-chunk
-version-skew bugs.
+### 4.2 One deopt shape: re-call
 
-What this buys beyond deletion: **T2 works on every `.beam` that
-exists today** — applications, dependencies, Elixir output — with no
-recompilation. A tier that requires rebuilding the world with a new
-compile option has near-zero perf reach in its first years; a tier
-that applies to deployed code has full reach on day one. This is
-the single largest real-world-performance lever in the rescope.
+Every side-exit reconstructs **a valid argument vector at a call
+boundary** and branches to a T1 address. Three cases, one shape:
 
-What is lost vs. the chunk: `beam_ssa`-level value annotations.
-Recovered by the pass-2 forward dataflow (which the pipeline runs
-anyway) seeded by the Type chunk. The `jit_inline` annotation
-carrier is not needed in v1 at all — the intrinsic set is a T2-side
-manifest (`04_optimization.md` §10.4 already chose "ported, not
-generated"); the `-jit_inline` module attribute (which travels in
-BEAM files for free) covers library-author opt-in later.
+- *Loop iteration*: re-execute from the function entry with
+  iteration-start values (guards fire before any X-register
+  commit, so entry state is always intact — the MVP model).
+- *Inlined tail-recursive helper*: mid-loop state **is** a valid
+  fresh call (`foldl` suspended at element k ≡
+  `foldl(F, Acc_k, Rest_k)`); deopt materialises current loop state
+  into the call's argument registers and branches to the T1 call
+  instruction.
+- *Inlined leaf*: covered by the enclosing iteration's re-execution.
 
-Memory cost: ≈ the code chunk, only for modules with eligible
-functions, freed on purge. Reported under a new `erlang:memory/0`
-key alongside `jit_t2_code`.
-
-**Fallback**: if the Phase-0 fidelity gate (G1, §6) shows
-reconstruction loses material structure, the SSA-chunk design in
-`02_profiling.md` §7.8 is the documented fallback. It is a fallback,
-not a parallel track.
-
-### S2. One deopt shape: re-call — no framestates, no eager-CP-push
-
-**Defers** `03_compilation_and_speculation.md` §9.2 and the
-framestate machinery of `01_ir_and_state.md` §5/§6.5 to the general-
-inlining phase (post-G3).
-
-Every v1 side-exit reconstructs **a valid argument vector at a call
-boundary** and branches to a T1 PC. Three cases, one shape:
-
-1. **Outer guards / loop iteration**: re-execute the iteration from
-   the function entry with the iteration-start values (the MVP
-   model, byte-for-byte).
-2. **Inlined `lists:*` helper loop**: tail-recursive helpers have
-   the property that mid-loop state *is* a valid fresh-call state —
-   `foldl` suspended at element k ≡ `foldl(F, Acc_k, Rest_k)`.
-   Deopt materialises `(F, Acc_k, Rest_k)` into the call's argument
-   X-regs and branches to the T1 PC **of the call op itself**; T1
-   performs a genuine call to the genuine helper and the walk
-   finishes generically. Identical result, identical stacktraces if
-   anything later raises.
-3. **Inlined local leaf**: the leaf body is straight-line and
-   effect-free, so the enclosing iteration's re-execution covers it
-   (the MVP's `diff/2` case — `OUTCOME.md` finding 3).
-
-The legality rule that replaces framestates is **guards-before-
-effects**: within a re-execution window, every deopt-able guard
-precedes the first effect, and windows end at effects (§2). The
-rule is enforced by the compile filter plus an IR validation pass.
-
-**Prior art and the known failure modes.** Pre-BeamAsm JIT
-experiments at OTP tried re-execution-style exits and hit two
-problems: too many JIT-worthy functions contain effects, and
-occasional re-execution ate the gains.
-[`../research/deopt_reexecution.md`](../research/deopt_reexecution.md)
-surveys how production JITs sit on this axis. Findings: HotSpot
+The legality rule is **guards-before-effects**: within a window,
+every deopt-able guard precedes the first effect, so re-execution
+never repeats an effect. This is the rule HotSpot
 (`Unpack_reexecute`) and JSC (OSR exit to the current bytecode)
-both use re-execution as their *default* exit semantics, under
-exactly this guards-before-effects legality rule; no software JIT
-re-executes effects (Transmeta needed hardware store-buffering to
-do it); HHVM's tracelet model is the multi-op-region precedent,
-and its documented failure mode — too-small regions paying entry
-guards and state shuffle at every boundary — doesn't transfer to
-loop-sized regions whose boundary state is already T1's register
-layout. The cost lesson transfers inverted: JSC's exits cost
-~2.5–10 µs *because they re-enter an interpreter-format tier*,
-demanding near-certain speculation; T2 exits branch into native T1
-under an identical calling convention — the MVP's worst case
-(every iteration exits) measured ≈ pure-T1 cost, i.e. the
-mode-switch term that killed HiPE/BEAMJIT-era fallbacks is
-structurally absent. Exit *frequency* is the live risk; the §9.5
-exit-counter/jettison/backoff policy is its governor, and the
-floor is always T1.
+enforce per bytecode; no software JIT re-executes effects
+(`../research/deopt_reexecution.md`). The same invariant makes the
+SWAR scalar-tail re-scan legal (§7) — deopt discipline and
+vectorization legality coincide.
 
-Deleted: `T2FrameState`, `parent_fs` chains, per-region deopt-stub
-X/Y-restore emission, eager CP pushes, multi-level inlining
-metadata. The inlining depth that remains (leaf + one intrinsic
-level) keeps the deopt story one-shaped.
+Deleted relative to the full design: framestates, `parent_fs`
+chains, eager-CP-push, per-region deopt stubs, multi-level inlining
+metadata (`03` §9.2 holds the designs, on the shelf).
 
-### S3. No CPs into T2 blobs — the lifecycle collapses
+What re-execution costs in the bad case: **[measured]** directly
+once — G-map's wrong-shape variant ran 1.45× T1, bounded and
+correct — and bounded by the MVP's all-side-exit run plus its
+instruction-count analysis (exits land in native T1 under an
+identical calling convention; the interpreter-format tax that made
+pre-BeamAsm re-execution expensive is structurally absent). Exactly
+what the exit-counter policy (§4.6) exists to jettison.
 
-**Supersedes** the tombstone CP-patching and lazy whole-stack scan
-of `05_runtime.md` §14.2 and `06_dispatch_and_sideexit.md` §5.3–5.5
-for v1.
+### 4.3 No return addresses into T2 blobs
 
-Three rules:
+Three rules: non-inlined calls push the **T1 continuation** as
+their CP (CPs are unvalidated code addresses; two instructions
+instead of `bl`); inlined regions push no CP; the only T2 addresses
+the runtime ever holds are yield-resume PCs in `c_p->i` (§4.5),
+never on the Erlang stack.
 
-- **(a)** Calls T2 emits that aren't inlined are emitted as
-  "load the *T1 continuation PC* into LR, then branch" (two
-  instructions instead of `bl`), so the frame the callee pushes
-  holds a T1 address. The callee returns into T1 mid-function; the
-  sync-point invariant makes that exactly the state T1 expects at
-  the post-call boundary. CP values are arbitrary unvalidated code
-  addresses in BeamAsm, so this is free. A loop re-enters T2 at its
-  next pass through the patched prologue.
-- **(b)** Inlined regions push no CP at all (S2).
-- **(c)** The only T2 addresses the runtime ever holds are
-  back-edge yield-resume PCs (S5), confined to `c_p->i` — never the
-  Erlang stack.
+Consequences: stack-walking introspection (`current_stacktrace`,
+`backtrace`, crash dumps) is **byte-identical to T1 by
+construction**; uninstall/eviction collapses to: revert the
+prologue patch, thread-progress sync, translate `c_p->i` for
+processes yielded inside the blob (one field, one generation
+compare at schedule-in). The tombstone CP tables, lazy whole-stack
+scans, and continuation trampolines of `06` §5.3–5.5 are deleted
+from v1 and return only with general inlining (shelved, §9).
 
-Consequences:
+Cost: the post-call rest of an invocation runs in T1 — near-zero
+for tail-recursive spines (the next iteration re-enters T2 via the
+prologue), and the compile filter avoids functions whose optimized
+region is punctured by calls.
 
-- **Stacktraces and `process_info(_, backtrace | current_stacktrace)`
-  can never contain a T2 address.** CP-based introspection is
-  byte-identical to T1 *by construction*, not by translation.
-- **Uninstall** = revert the prologue patch (`06` §5.2 steps 1–2)
-  + thread-progress sync + translate `c_p->i` for processes yielded
-  inside the blob — a single field compared against a generation
-  counter at schedule-in, no stack walk. Deleted: per-blob
-  CP-to-T1-PC side tables, the lazy stack scan, continuation
-  trampolines, the high-water sweep, `+JT2lazy_scan_max_depth`.
-- **Eviction becomes trivially safe** — same sequence as uninstall.
+### 4.4 Profiling: a counter and entry types; overflow by flags
 
-Cost: the post-call remainder of an invocation runs in T1 after a
-real call. On the v1 target class (§2) the optimized region
-contains no such calls, so the cost is nil where it matters.
-
-The full CP machinery returns, unchanged from `06` §5, when general
-mid-function inlining lands.
-
-### S4. Profiling: entry types + a counter; overflow by flags, not ranges
-
-**Trims** `02_profiling.md` §7.3/§7.5/§7.6/§7.7 and **cuts**
-`speculate_range` from v1
-(`03_compilation_and_speculation.md` §9.3–9.4 amended below).
-
-Kept: the per-function call counter and **function-entry per-arg
-type slots**. Dropped for v1: arith-operand sites, call-return
-sites, switch-arg sites (no consumer in the v1 pass list),
-monomorphic-target slots (no general inlining to feed), map-shape
-slots (Phase 5), branch-frequency counters (gated on G3, §6).
+Kept: per-function call counter + function-entry per-argument type
+slots, emitted only for functions with an optimizable region.
+Dropped from v1: arithmetic/call-return/switch-site profiling,
+monomorphic-target slots, map-shape slots, branch counters (all
+shelved with their consumers, §9).
 
 Interior and loop-carried types come from forward dataflow seeded
-by entry speculation + the Type chunk + **proof carried by
-overflow-checked arithmetic** (an `adds`/`b.vs` whose exit didn't
-fire proves the result is small). The invariant that MVP findings
-#4 and #5 bought us (the AND-not-OR fused check; the Net-bignum
-corruption):
+by entry speculation, the `Type` chunk, and proof carried by
+**flag-checked arithmetic**: compute into scratch with flag-setting
+instructions, branch on overflow to the side-exit, commit after —
+T1's own fast-path pattern minus the hoisted type checks, measured
+at ~zero cost in the MVP. (This satisfies `03` §9.3's
+deopt-at-sync-point constraint with its wording amended from "deopt
+before the operation" to "deopt before the *commit*".)
+`speculate_range` and its (never-designed) range profiling are cut;
+the one IR invariant that survives from the MVP's corruption bugs:
+*every value a speculative lowering consumes must have its type
+established by a dominating guard or proof — loop-header phis are
+where this is easy to get wrong, and the IR validator enforces it.
+When fusing type checks into one mask, AND not OR: the combined
+predicate must require every input to satisfy every bit.*
 
-> Every value a speculative lowering consumes must have its type
-> established by a dominating guard or proof. Loop-header phis are
-> where this is easy to get wrong; the IR validator enforces it
-> mechanically.
+Steady-state tax budget: **≤ 1 %** on every tracked benchmark
+(entry-only sites are the cheap kind).
 
-`speculate_range` is cut entirely from v1:
+### 4.5 Install, yield, uninstall
 
-- It requires min/max range profiling that **no designed profile
-  slot collects** — `02` §7.2's slot is a type bitmask + saturating
-  count; the second-pass critique's H8 auto-selection rule
-  ("observed × 1.5") assumed data that was never going to exist.
-  This was a latent inconsistency in 00–07; resolving it by adding
-  range fields would have doubled profile cost for one consumer.
-- The MVP measured the alternative — compute into scratch with
-  flag-setting instructions, `b.vs` to the side-exit, commit only
-  after — at effectively zero cost (within 2 % of ceiling *with*
-  the V-flag branches in the loop). `mul` uses the
-  `smulh`-compare pattern T1 already uses.
-- The deopt-at-sync-point constraint (`03` §9.3) is still satisfied:
-  nothing is committed to X/Y before the flag check, so the exit
-  re-executes the whole BEAM op in T1, which handles the bignum
-  case generically. The constraint's wording changes from "deopt
-  before the operation" to "deopt before the *commit*".
+**Install** is the NIF model (full mechanics: `06` §§1–3): patch the
+single `b next` instruction at `L_f + 4` in the function prologue —
+every caller kind (external, intra-module direct branch, fun,
+apply) passes through it — to branch to the T2 entry stub. The
+frame is already pushed when the patch runs; the stub does its own
+reduction check. The T1 body stays intact as the side-exit landing
+zone and the in-flight fallback. Strict mutual exclusion with
+trace/NIF on the prologue: T2 installs only on a clean prologue;
+trace-enable jettisons T2 first ("trace always wins").
 
-The one-untag trick (`03` §9.4) stays verbatim. `speculate_range`
-returns in v2 only if LICM-hoistable range guards show a measured
-win the flag checks can't capture.
+**Yield**: function-entry yields demote the invocation to T1 (cheap,
+rebounds on next call). **Loop back-edge yields resume into T2**
+via a per-loop resume stub — without this, any invocation longer
+than one timeslice (~4 000 reductions ≈ iterations) runs its entire
+remainder in T1, which forfeits exactly the workloads the tier
+targets. This is *not* OSR-entry: resumption happens at a
+T2-defined yield point with fully synced state; there is no T1→T2
+mid-loop state mapping anywhere. The state saved at a back-edge
+yield is the loop state as a fresh-call argument vector, so
+jettison-time translation of a stale `c_p->i` is "point it at the
+T1 entry". Reductions are charged identically to T1 (per call, per
+iteration at back-edges).
 
-With profiling reduced to entry-only sites, the steady-state tax
-budget tightens from 3 % to **1 %**.
+**Uninstall** (watchpoint fired, trace enabled, eviction,
+exit-counter saturation): revert the prologue patch under the
+`code_ix` lock, thread-progress sync, fix `c_p->i` stragglers
+lazily. O(1), no stack scans (§4.3).
 
-### S5. Loop back-edge yields resume into T2
+**Requirements this creates**, both bounded ERTS changes verified
+against the code: T2 blobs must register for PC→MFA+line lookup
+(`beam_ranges.c` is strictly per-module today), and T1 must emit a
+small per-eligible-function PC side table — function entries, call
+ops, post-call continuations, post-effect boundaries. (The
+per-instruction PC table earlier drafts assumed **does not exist**
+in BeamAsm; only per-function line tables do.)
 
-**Supersedes** `05_runtime.md` §12.4 item 3's "yielded T2 frame
-demotes to T1" for loop back-edges (function-entry yields keep the
-demote model — they're pre-work and rebound on the next call).
+### 4.6 Self-correction
 
-Why this must be v1, not v2: a timeslice is ~4 000 reductions ≈
-~4 000 loop iterations. Under demote-on-yield, any fold longer than
-one timeslice runs its first slice in T2 and the **entire remainder
-in T1** — for recovered+inlined helper loops the T1 landing is the
-generic helper, which never re-enters T2 within the invocation. The
-bigger the loop, the smaller the win, on exactly the workload this
-tier exists for. (Self-recursive functions dodge this — T1's tail
-call re-enters through the patched prologue every iteration — but
-inlined-helper loops, case 2 of §2, do not.)
+Per-blob exit counters with the `03` §9.5 policy — jettison budget
+`100·2^R` for non-loop speculation sites, `25·2^R` in loops, where
+R is the recompile count; on recompile, sites that failed widen
+their speculation or drop it. *Static* unsupported-op exits that
+saturate demote the function permanently for the module's lifetime
+(recompiling cannot improve them). The floor is always T1.
 
-Mechanism: the back-edge yield saves `c_p->i` = a per-loop **T2
-resume stub**. The state saved at the yield is the loop state laid
-out as a fresh-call argument vector (S2), which makes the
-jettison-time story trivial: translating a stale `c_p->i` means
-pointing it at the **T1 function entry** — the saved X-regs already
-form a valid call. The MVP implemented exactly this resume shape
-(by accident of its hook placement) and it survived every test;
-`06` §6 "Yield" describes it.
+### 4.7 Carried over unchanged from the reference design
 
-This is **not** OSR-entry: resumption happens at a T2-defined yield
-point with fully synced state. There is no T1→T2 mid-loop state
-mapping anywhere.
+In-scope v1 components whose detailed designs live in 00–07, with
+the one-line versions an implementer needs:
 
-### Smaller cuts
+- **Install/side-exit mechanics** (`06` §§1–3, §5.1–5.2): the entry
+  stub assumes the frame is already pushed (the prologue ran), does
+  its own FCALLS decrement, and sets `ARG3 = L_f` so the
+  MFA-from-PC contract holds; install requires a clean prologue
+  under the `code_ix` write lock; co-located code allocation keeps
+  the patched `b` in ±128 MB range, with a per-module bridge pool
+  as fallback.
+- **One-untag arithmetic** (`03` §9.4): tagged + untagged preserves
+  the tag through addition; multiplication untags both and retags.
+- **Guard BIFs as primitive ops** (`04` §10.7, minus `length/1`):
+  pure, CSE-able, inline-lowered.
+- **Code cache** (`05` §13): separate evictable region, default
+  64 MB, single compile writer. **Tier-up** (`05` §15): call-counter
+  threshold `base·sqrt(size+1)·2^recompiles·M/(M−U)`, profile
+  stability check before compile, bounded queue.
+- **Observability** (`07` §16): `erlang:t2_stats/0`,
+  `erlang:t2_info/3`, trace/dump flags. **Testing** (`07` §16A):
+  the identity-transform suite (full OTP suite under `+JT2enable`
+  with optimizations off — the state-preservation sanity check),
+  forced-deopt harness, lifecycle test BIFs, concurrency stress,
+  regression benches with CI gates.
 
-- **The Erlang JIT-server process** (`05` §15.3): replaced by a
-  C-side MPSC queue drained by a single dirty-CPU-scheduler job;
-  install runs under the `code_ix` write lock as designed. Fewer
-  moving parts, no kernel-app boot-order coupling, same
-  single-writer property for the `JitAllocator`. The Erlang server
-  returns if scheduling policy ever outgrows a queue.
-- **Watchpoints at module granularity only** (`05` §14.1 trimmed):
-  v1's only cross-module dependency is intrinsic-inlined `lists:*`,
-  so the table is `Module → Vector<BlobRef>` with jettison-on-reload.
-  Every blob also registers its **own module** (its inlined local
-  leaves and literal funs live there — trace-enable lookups need it,
-  §4). Per-function granularity returns with general inlining.
-- **Tier-up target selection** (`07` App. C, M1) and per-call-site
-  deopt-skip (H10): no general inlining to drive; deferred with it.
+## 5. The compatibility contract
 
-### A correction, independent of the rescope
+The bar: **no observable difference vs T1 except speed.**
 
-`03_compilation_and_speculation.md` §9.1 asserts T2 deopt resolves
-cold-tail addresses from "the T1 blob's per-instruction PC table
-(which BeamAsm already maintains for line-number debugging)".
-**That table does not exist.** BeamAsm maintains per-function line
-tables only (`beam_ranges.c`), and `erts_debug:disassemble/1`
-returns `false` under the JIT. The Phase-0 "T1 PC table audit"
-would have discovered this; the rescope makes it moot:
-
-v1 needs T1 PCs at exactly three kinds of point — **function
-entries, call ops, and post-call continuations** (the latter for
-S3's demote-on-return CPs). BeamAsm binds labels at all three
-during emit; recording them into a small per-eligible-function side
-table at load time is a bounded T1 change, far cheaper than the
-per-instruction table the full design will eventually need (that
-need re-arises with general mid-function deopt, post-G3, and should
-be costed then).
-
-## 4. Compatibility invariants — the non-negotiables
-
-The bar: **no observable difference vs T1 except speed.** This
-section is the contract; the inspection matrix below is its test.
-
-1. **T2 never raises.** Any op that would raise side-exits first;
-   T1 re-executes and raises. Error terms, stacktraces, and line
-   numbers are byte-identical by construction. (This is also why v1
-   needs no exception IR: `try`/`catch`/`raise` ops are simply
-   outside the supported set and terminate the region per §2.)
-2. **Stack CPs are always T1 addresses** (S3). `current_stacktrace`,
-   `backtrace`, crash-dump stack sections, `process_display` —
-   identical without translation.
-3. **`c_p->i` is either a T1 address or a registered T2 resume
-   stub** (S5) that resolves to the correct `{M,F,A}`+line. This
-   requires registering T2 blob ranges for PC→MFA lookup:
-   `beam_ranges.c` is strictly per-loaded-module today, so v1
-   extends it (or adds a parallel index consulted by
-   `erts_lookup_function_info`). Small, bounded ERTS change; also
-   what perf/gdb metadata (`05` §12.5 item 6) needs.
-4. **Reductions are identical.** Every call — inlined or not —
-   costs its reduction; recovered loops pay at the back-edge
-   (`05` §12.4 item 1 verbatim). `process_info(_, reductions)`
-   matches T1 exactly.
-5. **Tracing and NIFs: strict mutual exclusion + jettison-on-enable**,
-   unchanged from `06` §2.4, plus the in-flight quiescence rule
-   spelled out below. Trace semantics never observe T2.
-   `save_calls` works via export indirection regardless of tier.
-6. **GC discipline identical** at every GC site (`01` §6). One
-   codegen consequence worth naming: scratch registers holding term
-   pointers are dead across any GC call — values are reloaded from
-   their X/Y homes after, since GC moves terms.
+1. **T2 never raises.** Anything that would raise side-exits first;
+   T1 re-executes and raises. Error terms, stacktraces, line
+   numbers byte-identical by construction. (Also why v1 needs no
+   exception IR — `try`/`catch` ops are region terminators.)
+2. **Stack CPs are always T1 addresses** (§4.3) — CP-based
+   introspection identical without translation.
+3. **`c_p->i` is a T1 address or a registered T2 resume stub**
+   resolving to correct `{M,F,A}`+line (§4.5).
+4. **Reductions identical**: every call costs its reduction,
+   recovered loops pay at the back-edge; `process_info(_,
+   reductions)` matches T1.
+5. **Tracing/NIF: strict mutual exclusion + jettison-on-enable.**
+   The in-flight case is pinned down: trace-triggered jettison is
+   ordered before the breakpoint commit, and `trace_pattern`'s
+   existing code-barrier machinery **already guarantees** that by
+   the time the BIF returns, every scheduler has passed a
+   scheduling boundary — verified against
+   `erl_bif_trace.c`/`code_ix.c`/`erl_process.c`
+   (`../verification/RESULTS.md` §1). So "every call after
+   `trace_pattern` returns is traced" holds identically to T1; the
+   only delta is inside the BIF's own execution window, where T1 is
+   also racy. Self-enable is correct by construction in v1
+   (effect-free loop bodies cannot call `trace_pattern`;
+   demote-on-return already routes the rest of that invocation to
+   T1). `save_calls` is expected tier-invariant via export
+   indirection; the inspection matrix confirms the call-side
+   accounting.
+6. **GC discipline identical** at every GC site; scratch registers
+   holding term pointers are dead across GC calls.
 7. **The one residual observable**: sampling another process's
-   `current_function` while it executes an *inlined leaf* reports
-   the outer function. Precedent: `erlc +inline` does the same
-   today. Documented, not hidden.
+   `current_function` mid-inlined-leaf reports the outer function —
+   the same behaviour `erlc +inline` exhibits today. Documented,
+   not hidden.
 
-### Trace-enable against an in-flight loop (the hard case)
+Deliverable: an **inspection matrix** (companion to the trace
+matrix of `05` §12.5 — every trace flag and match-spec action
+classified by preservation mechanism) — every introspection surface (`process_info` items,
+crash-dump fields, `process_display`, error stacktraces with line
+numbers, perf/gdb) × preservation mechanism × a test, including
+mid-loop-yielded processes.
 
-Setup: process P is mid-loop inside a T2 blob, and tracing is
-enabled on something the blob inlined — a local leaf, a `lists:*`
-helper, or the literal fun (funs are reachable via local-pattern
-tracing of the compiler-generated local function). Jettison alone
-("future entries go to T1") is not sufficient here, because P's
-in-flight invocation executes inlined copies that pass through no
-prologue. Two cases:
-
-**Case A — another process enables the trace.** Ordering rule:
-
-1. The trace path looks up affected blobs in the watchpoint index
-   and jettisons them (prologue revert + generation bump) *before*
-   the breakpoint stage/commit, under the same code-modification
-   permission.
-2. P keeps executing the inlined (untraced) copy only while the
-   `trace_pattern` call is still in flight. The BIF's existing
-   staged-breakpoint **thread-progress wait doubles as blob
-   quiescence**: a scheduler only passes a progress point at a
-   scheduling boundary, so by the time `trace_pattern` returns,
-   every process that was inside the blob has yielded out of it —
-   the back-edge yield saved `c_p->i` = resume stub, and the
-   generation check at next schedule-in redirects it to the T1
-   entry (a valid fresh call, S2/S5). From then on every call to
-   the traced function goes through its traced prologue.
-
-The resulting guarantee is **identical to T1's**: calls concurrent
-with the `trace_pattern` call itself are racy (they are under T1
-too, while breakpoints are staged); every call made after
-`trace_pattern` returns is traced. The delta vs T1 is confined to
-that window: a mid-loop T1 process would start emitting per-
-iteration call events as soon as the breakpoints commit, a few
-iterations earlier than the jettisoned T2 process. Nothing after
-the BIF returns differs. **Verified** (2026-06-12, see
-[`../verification/RESULTS.md`](../verification/RESULTS.md) §1): the
-BIF suspends its caller and resumes it only after the code-barrier
-finisher completes, and thread progress advances only at scheduling
-boundaries — the return-implies-quiescence property holds in the
-existing machinery. 16A still gets the forced regression test:
-enable tracing against a process mid-T2-loop, assert no post-return
-call goes unreported.
-
-**Case B — P enables the trace itself.** Unreachable from inside a
-v1 loop body (bodies are effect-free, §2; `trace_pattern` is about
-as effectful as a BIF gets). The only way P can execute
-`trace_pattern` is through a real, non-inlined call — and S3's
-demote-on-return already pointed that call's CP at the **T1
-continuation**, so by the time the BIF runs, the remainder of P's
-invocation is destined for T1 regardless; the inlined copies it
-would have executed are unreachable. The synchronous prologue
-revert inside the BIF covers P's *next* invocation. Correct by
-construction, no window at all. (Post-G3, when general inlining
-puts CPs into blobs, this stops being automatic — the enabling
-process could return *into* a tombstoned blob and keep executing
-inlined copies after its own `trace_pattern` returned. The trace
-path must then eagerly scan the calling process's own stack before
-returning; recorded in §7 so it lands with that machinery.)
-
-One index consequence: the module-granularity watchpoint table must
-record the blob's **own module** as a dependency, not only `lists`
-— a local trace pattern on an inlined local leaf (`{M,diff,2}`)
-must find the blob for `{M,total,2}`. Coarse (any trace in module M
-jettisons all of M's blobs) but correct, and trace-enable is rare;
-recompile follows automatically when the pattern clears
-(`06` §5.1's temporary jettison-and-recompile).
-
-**Deliverable: an inspection matrix** alongside the Phase-0 trace
-matrix (`05` §12.5) — every introspection surface (`process_info`
-items, crash-dump fields, `erlang:process_display/2`, error
-stacktraces with line numbers, perf/gdb integration) × its
-preservation mechanism × a test that exercises it against a
-T2-compiled function, including mid-loop-yielded processes.
-
-## 5. What stays from 00–07, unchanged
-
-- Install/uninstall mechanics: `06` §§1–3 and §5.1–5.2 (minus the
-  CP-scan steps S3 removed). The prologue patch at `L_f + 4`, the
-  entry-stub contract, mutual exclusion, the bridge pool.
-- The sync-point state model: `01` §6 (v1 simply has fewer sync-point
-  kinds in play).
-- One-untag arithmetic: `03` §9.4.
-- Recompile/backoff policy: `03` §9.5, with one amendment — exits
-  at *static* unsupported-op side-exits that saturate trigger a
-  permanent demote for the module's lifetime (recompiling cannot
-  improve a static exit), while speculative-site exits follow the
-  existing widening policy.
-- Guard BIFs as primitive ops: `04` §10.7 (minus `length/1`,
-  already removed).
-- Code cache and budget: `05` §13, with eviction simplified by S3.
-- Tier-up counter and thresholds: `05` §15.1–15.3.
-- Observability: `07` §16 in full, plus the inspection matrix.
-- Testing strategy: `07` §16A in full — identity-transform suite,
-  forced-deopt harness, lifecycle BIFs, concurrency stress,
-  regression benches.
-
-## 6. Phases, effort, and decision gates
-
-| Phase | Weeks | Contents | Gate |
-|-------|-------|----------|------|
-| **P0** | 4–5 | Bytecode→SSA builder + code-chunk retention; T1 PC side table (entries / call ops / continuations / post-effect boundaries); trace matrix + inspection matrix; entry-only profile-cost measurement; corpus measurement (kept from old Phase 0); **effect-shape census** — first round complete (tool: `../verification/effect_census.erl`, results: `../verification/RESULTS.md`): static over OTP/RabbitMQ/Elixir/Phoenix+Ash plus a call-weighted dynamic leg for dialyzer. Outcome: effects-in-loops are a rounding error (B ≈ 0.5 % of dialyzer loop calls); the scope limiter is *calls* in loops (D = 47 % of all dialyzer calls), now feeding G3 subject 2. Remaining P0 work: the cycle-weighted (perf) leg incl. MongooseIM-under-Amoc | **G1: SSA fidelity.** Reconstruct SSA for a corpus of OTP functions; structurally compare against AOT `beam_ssa` output and identity-emit behaviour. Material loss → fall back to the SSA chunk (`02` §7.8). |
-| **P1** | 4 | Identity transform through the full pipeline; install/jettison; blob range registration + `c_p->i` translation; full OTP suite under `+JT2enable` (16A.1) | Suite green. State-preservation model proven end-to-end. |
-| **P2** | 6 | Entry speculation; flag-exit arithmetic; guard fusion + strength reduction; self-tail-recursion loop recovery + preheader hoisting + back-edge resume stubs; **local leaf inlining** (≤ size cap, no calls) | **G2: reproduce the MVP through the pipeline.** The hand-written MVP hit 1.97×; the compiled pipeline must hit ≥ 1.8× on the same benchmark, with ≤ 1 % tax on the application corpus. Miss → stop and re-examine before P3. |
-| **P3** | 6 | `lists:*` intrinsics (hand-ported expansions) + helper loop recovery + constant-fun body inlining; LICM-lite (preheader guard/capture hoisting); unrolling deferred from v1 — it ships with the post-v1 `bs_*` expansion package together with the byte-lane SWAR recipes (§7; `04` §10.6 item 5, measured by G-bin), unless the P3 corpus shows `test_heap` coalescing wins earlier | **G4: intrinsics pay.** `foldl`/`map` benchmarks vs an `inline_list_funcs`-off baseline show the projected win. |
-| **P4** | 4 | Polish: eviction, watchpoints-lite, `erlang:t2_stats/0`, memory keys, docs, integration runs (RabbitMQ, OTP suite, Elixir compiler) | Hard floor: ≤ 1 % regression on every tracked benchmark. |
-
-**v1 total ≈ 24–26 weeks, ~10–11 KLOC** (vs 48–50 weeks, ~16 KLOC
-in the 00–07 scoping). The cut is real but the irreducible core —
-IR, type lattice, codegen, runtime integration — is unchanged; the
-savings come from S1–S5, not from optimism.
-
-**Gate G3 — the call-crossing experiment (1–2 weeks, anytime after
-P1, MVP methodology).** Two hand-written subjects, measured against
-T1:
-
-1. *Branchy dispatch*: cold-arm pruning + guard elimination +
-   clause-dispatch specialisation for one hot gen_server-shaped
-   dispatch function — decides whether the *expected* branchy-code
-   wins of `00` §1 are real.
-
-   **RUN — NULL**
-   ([`../verification/G31_GMAP_OUTCOME.md`](../verification/G31_GMAP_OUTCOME.md),
-   2026-06-12). A cold-arm-pruned, guard-fused hot arm on a
-   12-clause gen_server-shaped dispatcher: 1.02× isolated, 1.01×
-   through real `gen_server:call` roundtrips, engagement proven via
-   `+JDdump`. T1's select-based clause dispatch is already ~4 ns
-   for 12 clauses, and the gen_server wrapper outweighs dispatch
-   40:1. With subject 2 also null, **G3 is closed negative on both
-   subjects** — `00` §1's cold-arm-pruning thesis is empirically
-   refuted; the corpus wins live in data-access fusion (G-bin,
-   G-map, the MVP shape).
-2. *Mutual/structural recursion* (added by the census — see
-   [`../verification/RESULTS.md`](../verification/RESULTS.md)):
-   a T2 specialisation of `erl_types:are_all_limited/2` +
-   `is_limited/2`, inlining one level of the mutual recursion and
-   fusing the spine guards, measured on the dialyzer PLT-build
-   workload. The dynamic census showed this shape carries **47 % of
-   all calls** in that workload (vs 6 % for v1's A bucket) — if
-   call-crossing optimization can't move it, dialyzer-class code is
-   out of reach regardless of infrastructure.
-
-   **RUN — no win**
-   ([`../verification/G3_OUTCOME.md`](../verification/G3_OUTCOME.md),
-   2026-06-12). One-level callee inlining: 2.25× micro on
-   leaf-biased spines, **0 ± 1 % CPU** on the real PLT build despite
-   63 % of elements resolving inline and 82 % of spine re-entries
-   eliminated. The call-crossing structure alone (state across real
-   calls returning into T2): wash or loss. Root causes: BeamAsm's
-   tiny-call overhead is far cheaper than the census's call share
-   implied (call counts over-weight tiny bodies ~10×), and leaf
-   gains net against container losses on the real distribution.
-   Bonus finding: for self-tail-recursive spines, demote-on-return
-   re-enters T2 at the next element via the patched prologue —
-   v1's no-CPs-into-blobs rule costs almost nothing even on
-   call-bearing loops.
-
-Gate disposition after subject 2: **general inlining with
-framestates, eager-CP-push, and the CP/stack-scan lifecycle stay
-deferred — now on negative evidence, not just caution.** Subject 1
-(branchy dispatch) remains open; it targets redundant-check
-elimination, not call overhead, and must be preceded by cycle
-profiling that sizes its pool (the census's call-count weighting is
-now known to mislead — see G3_OUTCOME "Census methodology
-correction"). **G-bin is the highest-value open gate**: binary match
-loops are where T1 demonstrably pays heavy per-op overhead, unlike
-calls.
-
-### 6.1 The benchmark corpus, and what v1 honestly does to it
+## 6. Benchmarks and corpus
 
 The optimization target is the **application corpus**: RabbitMQ,
-MongooseIM, Phoenix/Ash-style web services. The tracked suite:
+MongooseIM, Phoenix/Ash-class services. Tracked suite, every entry
+labelled by op class so wins are attributable:
 
-- **`../awfy`** — the 14 classic AWFY benchmarks in both Erlang
-  (`apps/awfy/src/awfy_*.erl`) and Elixir
-  (`apps/awfy/lib/awfy/benchmarks/`), plus the OTP-benchmark
-  families (`apps/otp_benchmarks/`, incl. vendored estone, maps,
-  base64, binary_match, ets).
-- **OTP in-tree benches** (`HOWTO/BENCHMARKS.md`, `ts:benchmarks()`)
-  — `emulator_bench`, `stdlib_bench`, and the protocol-shaped
-  `ssl`/`ssh`/`inets`/`megaco` specs.
-- **JSON encode/decode** (new `otp_benchmarks` family to add in
-  awfy): `json:decode/1` / `json:encode/2` (stdlib, OTP 27+,
-  skipped on older refs the way `mnesia_tpcb` is) over the
-  standard nativejson trio — `twitter.json` (strings/escapes),
-  `citm_catalog.json` (structure/maps), `canada.json`
-  (number-parsing/floats) — plus a small 1–10 KB API-response
-  payload, which is the Phoenix-relevant case. Local-only
-  reference comparators, not dashboard legs: a SIMD/NIF parser as
-  the known-unreachable ceiling, Jason (Elixir) as the
-  optimized-pure-BEAM peer. The goal is not to beat handwritten
-  SIMD — it's to push the built-in parser/encoder far enough that
-  pure-BEAM stdlib `json` is the default sensible choice.
-- **Macro leg** — MongooseIM under Amoc load: a designed
-  first-class awfy leg (`awfy/PLAN/MONGOOSEIM_BENCH_PLAN.md` —
-  pinned MongooseIM broker, upstream amoc-arsenal-xmpp scenarios,
-  local + AWS topologies, throughput + p99 reporting;
-  `Dockerfile.mongoose`/`Dockerfile.amoc` already in the repo).
-  That plan's own workload description — "scheduler under
-  message-pass load, ETS contention from real session stores,
-  binary handling in XML, gen_server hot-paths, TLS CPU cost" —
-  is precisely the application-corpus mix T2 must be honest
-  about. P0's cycle-weighted profiling (below) rides this same
-  rig: perf the broker under Amoc load.
+- **awfy** — the 14 AWFY benchmarks in Erlang and Elixir, plus the
+  `otp_benchmarks` families (estone, maps, base64, binary_match,
+  ets).
+- **JSON encode/decode** (new awfy family to add): stdlib `json`
+  over the nativejson trio — twitter (strings), citm (structure),
+  canada (numbers) — plus a ~1.5 KB API-response payload. Local
+  comparators: a SIMD/NIF parser as the known-unreachable ceiling,
+  Jason as the pure-BEAM peer. Goal: make stdlib `json` the
+  default sensible choice, not beat handwritten SIMD. The G-bin
+  results (6–10 % from three functions) make this the compound
+  benchmark for the whole tier: the residual profile is dispatch
+  (measured null for specialization) + map construction (G-map) +
+  conversion BIFs (out of scope).
+- **OTP in-tree benches** (`HOWTO/BENCHMARKS.md`).
+- **Macro leg** — MongooseIM under Amoc
+  (`awfy/PLAN/MONGOOSEIM_BENCH_PLAN.md`, Dockerfiles already in
+  place); also the host for P0's cycle-weighted profiling.
 
-Every tracked benchmark is **labelled by dominant op class** so
-wins and regressions are attributable: int/list/tuple loops |
-floats | binaries | maps | processes/ETS/runtime | mixed. Honest
-per-class expectations for v1 as scoped:
+Honest per-class v1 expectations: int/list/tuple loop benchmarks
+1.5–2×; binary-scan-shaped code large (G-bin class, now in the v1
+op set); floats/full maps/processes-ETS-runtime unchanged;
+application macro low single digits until the map expansion lands
+(the census's dialyzer arithmetic illustrates the ceiling shape:
+the pure-loop bucket held 6.3 % of dynamic calls, so even 2× on
+all of it is ~3 % end-to-end — binaries are what move app-level
+numbers).
+Elixir note: `Enum` pipelines pass funs as parameters, so v1's
+literal-fun intrinsics fire for direct `lists:*` calls (pervasive
+in Erlang code) but not through `Enum` wrappers — that's the
+shelved cross-module case.
 
-| Class | Benchmarks (examples) | v1 expectation |
-|-------|----------------------|----------------|
-| int/list/tuple loops | Bounce, List, Towers, Permute, Queens, Sieve; estone list/arith micros | The validated class — 1.5–2× plausible |
-| floats | Mandelbrot, NBody | **No change** (floats are Phase E; out of v1) |
-| binaries | base64, binary_match, unicode, JSON parsing; ssl/ssh/megaco | No change from T2 (BIF/`bs_*` dominated) |
-| maps / polymorphic | Richards, DeltaBlue, Havlak, CD, Json model; Elixir structs | No change (maps out of v1; dispatch gated on G3) |
-| processes/ETS/runtime | estone msgp, ets suite, mnesia_tpcb | No change **by design** (`07` §19) |
-| JSON encode/decode | stdlib `json` over nativejson trio + small payloads | Little change in v1 (the `bs_*` match heads and map construction dominate); **the flagship G-bin target** — see below |
-| application macro | MongooseIM/amoc | Low single digits from list/tuple fragments + leaf functions |
+The census corpus structure (static + the dialyzer dynamic leg) is
+in `../verification/RESULTS.md`; per §2.3 rule 1, its call-weighted
+shares are structure, not cycle pools.
 
-The conclusion this table forces: **for the application corpus, the
-two coverage classes that matter most after v1 are binaries
-(protocol parsing/construction) and maps (Elixir structs,
-mongoose_acc-style accumulators)** — currently parked at Phase D
-and Phase 5 of `07` §17, i.e. last. That ordering was inherited
-from implementation convenience, not from corpus value. It changes:
+## 7. The binary expansion package (post-v1, green-lit)
 
-**P0 corpus measurement becomes cycle-weighted dynamic profiling.**
-Profile RabbitMQ, MongooseIM-under-amoc, and a Phoenix app under
-load (perf on Linux ARM64); bucket samples into: v1-class ops |
-binary ops | map ops | floats | runtime/BIF/NIF/GC (unreachable
-for T2 by design). This replaces the static op-counting audit and
-*decides the expansion order with data* — including the honest
-ceiling: the runtime/NIF bucket bounds what any JIT tier can do
-for these apps.
+First expansion after v1, *measured* end to end by G-bin. Contents:
 
-**Gate G-bin — binary-matching loop experiment (MVP methodology,
-after G2).** Hand-write a T2-shaped specialisation of one real
-binary-scanning loop. **Primary subject: stdlib `json:decode/1`'s
-scan loops** (`number/7`, the string scan, `escape_binary_ascii/5`
-on the encode side). They are the perfect specimen: 7-argument
-self-tail-recursive byte-dispatch loops whose bodies — integer
-accumulators (`Skip`/`Len` run-length tracking), small-int guards
-(`?is_0_to_9`, `?is_ascii_plain`), tuple/list accumulation — are
-*already in the v1 op set*; the only thing outside it is the
-`<<Byte, Rest/bits>>` match head. The per-iteration real work is
-tiny, so T1's per-op match-context dance dominates the loop —
-maximum fusion headroom, the same profile the MVP exploited.
-Secondary subject if a protocol shape is wanted: an AMQP frame
-decoder or XMPP tokenizer. Binary parsing loops are *loop-shaped*
-— the match context is ordinary loop-carried state in the argument
-vector, so re-call deopt (S2) and the whole loop-tier architecture
-apply unchanged; what's missing is only `bs_*` op coverage. If
-G-bin shows the win, Phase-D-style coverage is pulled forward
-ahead of general inlining. (A later compounding target the
-experiment should note but not implement: `json:decode/1` invokes
-its `#decode{}` callbacks as funs per token, and the defaults are
-statically known funs — constant-fun inlining across the token
-loop once that machinery exists.)
+- Full byte-aligned `bs_*` coverage in recovered loops beyond the
+  v1 scan subset (multi-byte extraction, `bs_match_string`,
+  context-threading across helper inlining).
+- **Loop unrolling + the byte-lane (SWAR) recipe library.**
+  Unrolling (×8 default for byte loops) enables: bounds-check
+  coalescing with a scalar epilogue; adjacent-load merging;
+  predicate lane-combining recipes (`== C`, `< C`, range,
+  small-set — ~5 recipes cover the byte-class tests that occur)
+  with OR-reduction and a scalar tail that relocates the stop byte.
+  Worth ~2× on top of fused bytewise scanning [measured]; the
+  package's acceptance bar is G-bin's full **≥4× isolated scan**
+  (the v1 gate covers only the bytewise layer, §8 P2). The
+  control→data conversion is legal under the §4.2 window rule, and
+  reductions stay faithful (a single `subs FCALLS, K` per chunk is
+  observably equivalent to K per-iteration decrements; yields at
+  chunk granularity, as T1's own source-unrolled loops already
+  have). Limits: per-byte loop-carried value dependences stay
+  scalar; UTF-8 doesn't unroll. (Unrolling's original
+  `test_heap`-coalescing motivation, `04` §10.6, still awaits
+  corpus evidence.)
+- Construction (`bs_create_bin`) batching is the follow-on, with
+  the encode-side scans (`escape_binary_ascii` — same shape as the
+  decode scans) as the first target.
 
-**RUN — PASSED**
-([`../verification/GBIN_OUTCOME.md`](../verification/GBIN_OUTCOME.md),
-2026-06-12). Three specialized scan functions: isolated string
-scanning **5.6×** (2.0 → 11.8 GB/s, beating json.erl's own
-Erlang-level 8-byte unroll), full real-document decodes **6–10 %**,
-correctness hash identical across modes. The match-context dance is
-a genuine per-op pool — the categorical opposite of G3's
-call-overhead null result. `bs_*` coverage in recovered loops is
-green-lit ahead of general inlining; the residual json profile
-(branchy `value`/`object_key` dispatch, map construction) now sizes
-G3-subject-1 and G-map against measured numbers.
+Then the **map expansion**: shape feedback slot (runtime-recorded
+keys-tuple pointer, per §2.3 rule 3) + region-level guard +
+direct-offset access — 1.64× on two-field access [measured], the
+guard amortising further over wider regions; flatmaps first,
+hashmaps out of scope.
 
-**Gate G-map — map-region experiment (MVP methodology, after
-G2).** Hand-write region-level shape specialisation
-(`02` §7.6's design) for one hot map-access chain (Elixir struct
-update pipeline or mongoose_acc fold): one shape guard at region
-entry, direct offset loads after. If it shows the win, Phase-5
-map coverage is pulled forward.
+## 8. Roadmap
 
-**RUN — PASSED, 1.64×**
-([`../verification/G31_GMAP_OUTCOME.md`](../verification/G31_GMAP_OUTCOME.md),
-2026-06-12). Shape guard + direct offset loads on a struct-shaped
-fold (5-key flatmaps sharing a keys tuple, two fields read per
-map): 1.64× vs T1's per-key scan, correctness identical across
-modes including hashmap/badmatch side-exit paths. Two hard-won
-riders: (a) **flatmap key order is atom-index-dependent** — it
-differed between two VMs of the same build; production shape
-guards must test the runtime-recorded keys-tuple pointer
-(`02` §7.6's hash-consed shape pointer), never codegen-time key
-positions — the wrong-position variant ran 1.45× *slower* than T1
-(every element side-exiting), incidentally measuring the bounded
-mis-speculation regime that `03` §9.5's exit counters exist to
-jettison; (b) 1.64× is the two-field floor — the guard amortises
-further over wider regions. Phase-5 map coverage joins `bs_*` in
-the green-lit expansion set, behind G-bin in priority.
+### Track A — T1/AOT captures (first; ~5–8 weeks of prototyping plus the re-baseline run, all upstreamable)
 
-G-bin and G-map are each 1–2 weeks, ordered against G3 by the P0
-profile's bucket sizes. The expansion sequence after v1 is thus
-bought with ~3–6 weeks of experiments instead of committed blind.
+Each measured win has at least a partial cheaper home; harvest
+those before paying for a tier, and let T2 face the strengthened
+baseline. None of this needs profiling, speculation, or deopt:
 
-One Elixir-specific honesty note: `Enum.map(list, fun)` delegates
-to `:lists.map/2` through a wrapper where the fun is a *parameter*,
-so v1's literal-fun intrinsics do not fire through Enum pipelines
-(that's the deferred cross-module/H11 case). Hand-written
-recursion and Erlang-style direct `lists:*` calls with literal
-funs — pervasive in RabbitMQ and MongooseIM — do fire.
+- **A1. Scan-run superinstruction** (~2–4 weeks prototype). AOT
+  recognizes byte-class scan loops (the stereotyped run-scan shape:
+  count/skip a class) and emits a `bs_match`-family "scan run" op;
+  T1 implements the fused, SWAR'd loop. Captures the head of the
+  G-bin distribution for json/protocol parsers at compiler+emitter
+  cost. Pattern-bound by design: misses state machines,
+  accumulating parsers, UTF-8, refactored variants — that long
+  tail is T2's case. (Degradation modes differ: an AOT pattern
+  miss is a silent cliff to full T1 cost, whereas T2 degrades
+  gradually via side-exits.) An AOT auto-unroll of scan clauses
+  (generalizing `string_ascii`'s hand-unroll; no new instruction)
+  is a cheaper sub-option capturing the middle of the win.
+- **A2. Map-key inline cache in T1** (~2–3 weeks prototype). Per
+  `get_map_elements` site: cache `{keys-tuple ptr → slot offsets}`;
+  hit → direct loads, miss → existing generic scan + refill. No
+  deopt (the miss path is today's code), works on **existing
+  beams including Elixir**. This is the previously-shelved
+  inline-cache idea, which G-map's 1.64× has now effectively
+  priced; the earlier decision to drop it in T2's favour is
+  reversed.
+- **A3. AOT inlining defaults** (~1 week measurement): default-on
+  local inlining and `inline_list_funcs`, capturing the
+  call-elimination half of the MVP win where types/ranges are
+  statically provable.
 
-## 7. The road back to the full design
+### Re-baseline checkpoint
 
-| Deferred component | Designed in | Unlocked by |
-|--------------------|-------------|-------------|
-| Framestates + eager-CP-push (general inlining) | `03` §9.2, `01` §6.5 | G3 pass — **subject 2 ran: no win** (`../verification/G3_OUTCOME.md`); stays deferred unless subject 1 + a cycle-profiled pool justify it |
-| Lazy stack scan, tombstone CP tables | `06` §5.3–5.5, `05` §14.2 | General inlining (CPs into blobs) |
-| Eager own-stack scan in the trace path (self-enable with CPs into blobs) | §4 Case B above | General inlining (CPs into blobs) |
-| Branch-frequency counters, cold-arm pruning | `02` §7.7, `04` §10.3 | **G3 closed negative on both subjects** (`../verification/G31_GMAP_OUTCOME.md`) — shelved |
-| Monomorphic-target slots + cross-module inlining | `02` §7.5, `04` §10.1 | G3 closed negative — shelved unless an elimination-rich corpus shape resurfaces with cycle-profiled evidence |
-| `speculate_range` + range profiling | `03` §9.3–9.4 | Measured LICM-hoistable win flag checks can't capture |
-| Map-shape feedback + region shape specialisation | `02` §7.6 | **G-map PASSED, 1.64×** (`../verification/G31_GMAP_OUTCOME.md`) — green-lit, second in the expansion order behind G-bin |
-| Polymorphic PIC, speculative funs | `03` §9.6, `04` §10.2 | Phase 6 |
-| Binary (`bs_*`) coverage in recovered loops | `07` §17 Phase 7 | **G-bin PASSED** (`../verification/GBIN_OUTCOME.md`: 5.6× isolated scan, 6–10 % end-to-end json) — green-lit, first in the expansion order |
-| Loop unrolling + byte-lane (SWAR) combining recipes | `04` §10.6 (item 5) | Ships with the `bs_*` expansion above — unrolling's second motivation, measured in the G-bin addendum (~2× on top of fused bytewise scanning); legality via the S2 effect-free-window rule |
-| Messages / NIFs / floats | `07` §17 Phase 8 | Phase coverage, post-v1 |
-| Per-instruction T1 PC table | `03` §9.1 (corrected, §3 above) | General mid-function deopt |
-| Erlang JIT-server process | `05` §15.3 | Scheduling policy outgrowing a C queue |
-| SSA chunk in BEAM file | `02` §7.8 | G1 failure only |
+Re-run the benchmark suite (§6) against the Track-A-improved T1.
+T2 v1 proceeds if its residual case — speculation on
+non-provable types/ranges, shape generality beyond recognized
+patterns, the long tail of binary loops, composition of all wins in
+one loop body — still clears the bar against ~24 weeks plus
+permanent ownership. This is a genuine go/no-go: shrinking T2 to a
+later, smaller project is an acceptable outcome, and the
+verification work transfers either way.
 
-## 8. Open questions
+### Track B — T2 v1 build (~24–26 weeks, ~10–11 KLOC)
 
-- **`beam_ranges` extension shape.** Separate range class for T2
-  blobs vs. folding into the module ranges; interaction with purge
-  ordering. Decide in P0 alongside the inspection matrix.
-- **Retained-code-chunk accounting.** Which `erlang:memory/0` key;
-  whether retention is dropped for modules whose eligible functions
-  all got blacklisted.
-- **G1 pass criteria.** "Structurally compare" needs a concrete
-  definition — proposal: identical CFG shape, identical live-range
-  count ±ε, and identity-emit output passing 16A.1 on the corpus.
-- **Fun effect classification for intrinsics.** The intrinsic
-  inliner walks the literal fun's body and classifies it per §2:
-  effect-free (whole iteration = one window), BIF-effect-only
-  (window boundaries inside the iteration; speculation suspended
-  between the effect and the back-edge), or Erlang-call-bearing
-  (fall back to a plain `call_ext` of the helper). Define the
-  effect sets once, shared with the S2 validation pass.
-- **Demote-on-return interaction with `save_calls`.** A T1
-  continuation CP means the *return* side of `save_calls` accounting
-  is unchanged; confirm in the inspection matrix that call-side
-  accounting (which happens in the callee dispatch) is also
-  tier-invariant. Expected yes via export indirection.
+Gate numbering: G1/G2/G4 below; G3 was the call-crossing gate and
+already ran — both subjects null (§2.1).
+
+| Phase | Weeks | Contents | Gate |
+|---|---|---|---|
+| **P0** | 4–5 | Bytecode→SSA builder + code-chunk retention; T1 PC side table (4 entry kinds, §4.5); blob range registration design; trace + inspection matrices; entry-only profile-cost measurement; cycle-weighted corpus profiling (MongooseIM-under-Amoc, RabbitMQ) — *remaining* P0 census work; Graviton re-run of the experiment kit | **G1: SSA fidelity** — reconstruct SSA for a corpus (the experiment subjects + a stdlib slice), identity-emit, compare against T1 behaviour and AOT `beam_ssa` structure. Material loss → SSA-chunk fallback. |
+| **P1** | 4 | Identity transform through the full pipeline; install/jettison; range registration + `c_p->i` translation; full OTP suite under `+JT2enable` | Suite green: state preservation proven end-to-end. |
+| **P2** | 6–7 | Entry speculation; flag-exit arithmetic; guard fusion; self-tail-recursion loop recovery + preheader hoisting + back-edge resume stubs; local leaf inlining; **the v1 binary scan subset** | **G2: reproduce the MVP (≥1.8×) and G-bin's *bytewise* layer (≥2.5× isolated scan — SWAR is the §7 package, gated at ≥4× there) through the pipeline**, ≤1 % tax on the application corpus. Miss → stop. |
+| **P3** | 6 | `lists:*` intrinsics + helper loop recovery + constant-fun inlining; LICM-lite | **G4**: `foldl`/`map` vs the post-Track-A default configuration (with A3's inlining defaults *on* — anything else is a strawman). |
+| **P4** | 4 | Eviction, watchpoints (module granularity — the index includes each blob's own module for trace lookups), observability (`erlang:t2_stats/0`, memory keys), docs, integration runs | Hard floor: ≤1 % regression on every tracked benchmark. |
+
+Then the expansion packages of §7, in order: binary, then maps.
+
+
+## 9. The shelf — deferred on negative evidence
+
+The governing rule, unchanged since the rescope: **no
+infrastructure lands ahead of a validated win that needs it.**
+Reopening any row below requires an MVP-style hand-built experiment
+(the §2 methodology) before its infrastructure is green-lit — the
+"reopens if" column states the evidence that would justify running
+one. Everything here has a finished design in 00–07.
+
+| component | design | why shelved | reopens if |
+|---|---|---|---|
+| General inlining: framestates, eager-CP-push, per-region deopt stubs | `03` §9.2, `01` §6.5 | G3-2 null: call overhead is not a pool; only elimination pays | a cycle-profiled, elimination-rich call-boundary corpus shape is found (G4 is the remaining probe; G3-1 also ran null) |
+| CPs into blobs: tombstone tables, lazy stack scan; plus the eager own-stack scan the trace path then needs for self-enabled `trace_pattern` | `06` §5.3–5.5, `05` §14.2 | needed only by general inlining; demote-on-return ≈ return-into-T2 for spines (inferred from G3-2's structure) | general inlining reopens — and must bring the trace-path own-stack scan with it |
+| Branch-frequency counters, cold-arm pruning | `02` §7.7, `04` §10.3 | G3-1 null: T1 clause dispatch is ~4 ns; gen_server machinery outweighs dispatch 40:1 | Graviton re-run contradicts the null, or a dispatch shape with eliminable per-arm work appears |
+| Monomorphic-target slots, cross-module inlining; with them, tier-up target selection (compile the dominant caller) and per-call-site deopt-skip | `02` §7.5, `04` §10.1, `07` App C M1/H10 | same evidence; Elixir `Enum` is the known motivating case | as above + the Enum-wrapper case sized by cycle profile |
+| `speculate_range` + range profiling | `03` §9.3–9.4 | flag-checked overflow measured ~free; range slots were never designed | an LICM-hoistable range-guard win flag checks can't capture |
+| Polymorphic PIC, speculative funs | `03` §9.6, `04` §10.2 | v2 by design | post-v1 |
+| Messages/NIFs/floats coverage | `07` §17 Phase 8 | no measured pool yet | corpus profile says otherwise |
+| Per-instruction T1 PC table | corrected in §4.5 | only general mid-function deopt needs it | general inlining reopens |
+| Erlang JIT-server process | `05` §15.3 | a C-side MPSC queue + one dirty-CPU job suffices | scheduling policy outgrows a queue |
+| SSA chunk in BEAM file | `02` §7.8 | reconstruction expected to suffice; reach argument | **G1 failure only** |
+
+## 10. Open questions
+
+- **`beam_ranges` extension shape** for T2 blob registration
+  (separate range class vs folding into module ranges; purge
+  ordering). Decide in P0 with the inspection matrix.
+- **Retained-code-chunk accounting**: which `erlang:memory/0` key;
+  drop retention when all eligible functions are blacklisted?
+- **G1 pass criteria**, concretely: identical CFG shape, live-range
+  count within ε, identity-emit passing the identity-transform
+  suite (`07` §16A.1) on the corpus.
+- **Fun effect classification for intrinsics**: effect-free fun →
+  whole iteration is one window; BIF-effect fun → window boundary
+  inside the iteration (speculation suspended between effect and
+  back-edge — `foreach`'s effect-last shape loses nothing);
+  Erlang-call fun → plain `call_ext` fallback. One shared effect
+  table with the §4.2 validator.
+- **Track A ownership**: the superinstruction and the IC are
+  compiler/T1 work that can proceed independently of (and benefit)
+  T2 — confirm staffing before the re-baseline gates on them.
+
+## Appendix — the experiment kit
+
+All experiment code is in-tree, env-gated, off by default, on this
+branch:
+
+| gate | targets | code |
+|---|---|---|
+| `T2_G3=a\|b` | `erl_types:are_all_limited/2` (+ `is_limited` label) | `arm/beam_asm_module.cpp` `emit_t2_are_all_limited_2` |
+| `T2_GBIN=1` | `json:number/7`, `number_frac_cont/7`, `string_ascii/7` | `emit_t2_json_scan` |
+| `T2_G31=1` | `t2_g31:dispatch/2`, `handle_call/3` | `emit_t2_g31_*` |
+| `T2_GMAP=1` | `t2_gmap:sum_scores/2` | `emit_t2_gmap_sum_scores_2` |
+| (static) | `t2_mvp:total/2`, `diff/2` | `emit_t2_total_2` (MVP) |
+
+Harnesses and writeups in `PLAN/verification/`; benchmark corpora
+documented in each outcome file's Reproduction section. The MVP
+hook (`emit_i_test_yield` → `T2FunctionEntry` → specialized bodies
+at `emit_int_code_end`) is experiment scaffolding — production
+install is the prologue patch of §4.5.

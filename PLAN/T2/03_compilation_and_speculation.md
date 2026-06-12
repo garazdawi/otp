@@ -3,10 +3,10 @@
 > **v1 scope rescoped by [`08_v1_loop_tier.md`](08_v1_loop_tier.md)**:
 > v1 uses re-call-only deopt — §9.2's framestates/eager-CP-push are
 > deferred to general inlining (post-G3), `speculate_range` is cut
-> from v1 in favour of flag-checked overflow side-exits (08 §S4),
+> from v1 in favour of flag-checked overflow side-exits (08 §4.4),
 > and "unsupported op" is no longer a compile abort but a static
-> side-exit region terminator (08 §2). §9.1's claim of an existing
-> per-instruction T1 PC table is corrected in 08 §3.
+> side-exit region terminator (08 §3). §9.1's claim of an existing
+> per-instruction T1 PC table is corrected in 08 §4.5.
 >
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers §§8–9: the T2 compilation

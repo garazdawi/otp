@@ -64,7 +64,15 @@
   from cold-arm pruning and DOMJIT-style guard elimination
   (`04_optimization.md` §10.7) — not from inlining or loop
   optimization, which are real but apply to a smaller fraction of
-  production code. The numeric/loop wins are an *expansion target*
+  production code.
+
+  > **[REFUTED by measurement.]** The G3-1 experiment
+  > (`../verification/G31_GMAP_OUTCOME.md`) hand-built exactly this
+  > optimization and measured 1.01–1.02× with engagement proven —
+  > T1's clause dispatch is already ~4 ns for 12 clauses. The
+  > measured wins are the *inverse* of this paragraph: data-access
+  > fusion in loops (binaries 5.6×, maps 1.64×, list/tuple loops
+  > 2×). See `08_v1_loop_tier.md` §2. The numeric/loop wins are an *expansion target*
   (see §2 below): if T2 closes the gap to NIF-level performance on
   numeric Erlang, code that today lives outside Erlang (NIFs, C
   ports, other languages) becomes plausible Erlang. The MVP under
@@ -129,6 +137,15 @@ The core argument: **inlining is the core value**, with type
 speculation as the enabler. Anything T2 does in the outer function
 *without* inlining will be modest (the AOT already did most of it).
 Anything T2 does *across* an inlined boundary is novel.
+
+> **[Half-refuted by measurement.]** G3-2
+> (`../verification/G3_OUTCOME.md`) showed overhead-only inlining
+> is worth ~zero — BeamAsm's call mechanics are already at the OoO
+> floor. The corrected heuristic: inline only where something can
+> be *eliminated* across the boundary (callee checks subsumed by
+> caller facts, constant arguments — literal funs above all). And
+> the largest measured outer-function win needed no inlining at
+> all (binary scan fusion, `08` §2).
 
 ### 2.1 Alternatives considered
 

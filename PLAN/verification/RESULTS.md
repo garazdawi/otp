@@ -2,13 +2,13 @@
 
 Verification work for [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md),
 run 2026-06-12. Two items completed: the **trace-quiescence ordering
-check** (08 §4 Case A's load-bearing assumption) and the first round
-of the **effect-shape census** (08 §6, the S2 scope risk), including
+check** (08 §5 item 5's load-bearing assumption) and the first round
+of the **effect-shape census** (08 §3/§4.2, the re-call scope risk), including
 a dynamic call-weighted leg for dialyzer.
 
 ## 1. Trace-quiescence ordering — CONFIRMED
 
-Claim (08 §4 Case A): `erlang:trace_pattern/3`'s return implies every
+Claim (08 §5 item 5): `erlang:trace_pattern/3`'s return implies every
 scheduler has passed a scheduling boundary after breakpoints commit,
 so a process mid-execution in a T2 blob has yielded out before the
 BIF returns.
@@ -33,7 +33,7 @@ functions", buckets by the worst blocker present anywhere in the
 function (conservative: whole-function, not loop-body-only):
 
 - **A** — pure v1 op set (compiles under the original effect-free rule)
-- **B** — + effectful BIF calls (compiles under the §S2 window model)
+- **B** — + effectful BIF calls (compiles under the §4.2 window model)
 - **I** — + `lists:*` higher-order call sites (P3 intrinsics)
 - **C** — + coverage-blocked ops: `bs_*`/maps/floats/try/receive
   (blocked on op coverage, **not** on the deopt model)
@@ -96,7 +96,7 @@ modest showing for v1's leaf class (`cerl:type/1` + `cerl:get_ann/1`
 
 **Honest v1 ceiling for dialyzer-shaped code**: the A bucket is
 6.3 % of dynamic calls; even a 2× speedup on all of it is ~3 %
-end-to-end. Consistent with 08 §6.1's "low single digits on the
+end-to-end. Consistent with 08 §6's "low single digits on the
 application corpus" prediction — now with data.
 
 ### Caveats
