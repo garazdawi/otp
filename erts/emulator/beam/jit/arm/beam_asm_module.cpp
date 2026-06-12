@@ -258,7 +258,30 @@ bool BeamModuleAssembler::t2_mvp_is_target() const {
         }
     }
 
+    /* G3 experiment target, gated on the T2_G3 env var so a single
+     * build provides the T1 baseline (off) and both stages. */
+    if (t2_g3_mode() != 0 && current_arity == 2 &&
+        erts_is_atom_str("erl_types", mod, 0) &&
+        erts_is_atom_str("are_all_limited", current_function, 0)) {
+        return true;
+    }
+
     return false;
+}
+
+int BeamModuleAssembler::t2_g3_mode() const {
+    static int mode = []() {
+        const char *env = getenv("T2_G3");
+        if (env == nullptr) {
+            return 0;
+        } else if (env[0] == 'a') {
+            return 1;
+        } else if (env[0] == 'b') {
+            return 2;
+        }
+        return 0;
+    }();
+    return mode;
 }
 
 void BeamModuleAssembler::emit_i_breakpoint_trampoline() {
@@ -696,6 +719,9 @@ void BeamModuleAssembler::emit_t2_specializations() {
 
         if (erts_is_atom_str("total", entry.function, 0) && entry.arity == 2) {
             emit_t2_total_2(entry);
+        } else if (erts_is_atom_str("are_all_limited", entry.function, 0) &&
+                   entry.arity == 2) {
+            emit_t2_are_all_limited_2(entry);
         } else {
             /* No specialization for this function (yet). Fall back to T1. */
             comment("(no specialization — fall back to T1)");
@@ -816,6 +842,197 @@ void BeamModuleAssembler::emit_t2_total_2(const T2FunctionEntry &entry) {
      * ARG3, sizeof(ErtsCodeMFA)`) is also satisfied by ARG3 =
      * fn_entry, since the public function entry is preceded by the
      * MFA struct laid down by emit_i_func_info. */
+    a.bind(yield_setup);
+    comment("T2 yield: route through i_test_yield_shared");
+    a.adr(ARG3, entry.fn_entry);
+    a.b(resolve_fragment(ga->get_i_test_yield_shared(), disp1MB));
+}
+
+void BeamModuleAssembler::emit_t2_are_all_limited_2(
+        const T2FunctionEntry &entry) {
+    /* G3 experiment: specialized body for
+     *
+     *   are_all_limited([E | Es], K) ->
+     *     is_limited(E, K) andalso are_all_limited(Es, K);
+     *   are_all_limited([], _) ->
+     *     true.
+     *
+     * with is_limited/2's dispatch *header* inlined:
+     *   - E =:= any                    -> true   (clause 1)
+     *   - K =< 0                       -> false  (clause 2)
+     *   - E not boxed / not a 4-tuple
+     *     / not an #c{} record         -> true   (catch-all clause)
+     *   - stage b: #c{} with a leaf
+     *     tag (atom | number | var)    -> true   (catch-all clause)
+     *   - anything else                -> real call to T1
+     *                                     is_limited/2, returning
+     *                                     into this loop.
+     *
+     * The call is the experiment: loop state (Tl, K) crosses a real
+     * Erlang call via two Y slots and execution resumes in the T2
+     * loop — the call-crossing structure the v1 loop tier forbids
+     * and G3 gates.
+     *
+     * Entry contract (after prologue + i_test_yield via the hook):
+     *   XREG0 = list (tagged), XREG1 = K, CP on E stack,
+     *   FCALLS decremented once.
+     *
+     * Iteration-start-stays-live: XREG0 keeps the *current* cons
+     * cell until the element is fully resolved; XREG1 keeps K
+     * always (restored from Y after calls). Every side-exit
+     * (non-list, low-stack) therefore lands at the T1 body with
+     * pristine arguments and T1 re-executes the element from
+     * scratch.
+     *
+     * is_limited/2's clause order is respected: the any-check comes
+     * before the K-check (any is limited even at K =< 0). */
+    Label loop_top = a.new_label();
+    Label nil_check = a.new_label();
+    Label commit = a.new_label();
+    Label ret_false = a.new_label();
+    Label ret_xreg0 = a.new_label();
+    Label yield_setup = a.new_label();
+
+    if (!t2_is_limited_entry.is_valid()) {
+        comment("(is_limited/2 label missing — fall back to T1)");
+        a.b(entry.side_exit);
+        return;
+    }
+
+    const Eterm atom_any =
+            erts_atom_put((byte *)"any", 3, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_c =
+            erts_atom_put((byte *)"c", 1, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_tag_atom =
+            erts_atom_put((byte *)"atom", 4, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_tag_number =
+            erts_atom_put((byte *)"number", 6, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_tag_var =
+            erts_atom_put((byte *)"var", 3, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_tag_identifier =
+            erts_atom_put((byte *)"identifier", 10, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_tag_binary =
+            erts_atom_put((byte *)"binary", 6, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_tag_record =
+            erts_atom_put((byte *)"record", 6, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_tag_nil =
+            erts_atom_put((byte *)"nil", 3, ERTS_ATOM_ENC_LATIN1, 1);
+
+    a.bind(loop_top);
+
+    /* Reduction accounting: T1 charges 3 per element (is_limited
+     * entry, is_limited return, self-call re-entry). Match it so
+     * scheduling never sees longer timeslices than T1. */
+    a.subs(FCALLS, FCALLS, imm(3));
+    a.b_le(yield_setup);
+
+    /* Non-empty cons check (LIST primary tag = 0b01; bit 1 set for
+     * boxed/immediate, clear for cons). */
+    a.tbnz(XREG0, imm(1), nil_check);
+
+    /* Load E (head) and Tl (tail). */
+    a.and_(TMP1, XREG0, imm(~Uint64{0x7}));
+    a.ldp(TMP2, TMP3, a64::Mem(TMP1));
+
+    /* --- inlined is_limited/2 dispatch header --- */
+
+    /* Clause 1: E =:= any -> limited. */
+    mov_imm(TMP5, atom_any);
+    a.cmp(TMP2, TMP5);
+    a.b_eq(commit);
+
+    /* Clause 2: K =< 0 -> not limited. Tagged smallint compare is
+     * order-preserving; non-smallint K side-exits to T1 instead of
+     * guessing. */
+    a.and_(TMP4, XREG1, imm(_TAG_IMMED1_MASK));
+    a.cmp(TMP4, imm(_TAG_IMMED1_SMALL));
+    a.b_ne(entry.side_exit);
+    a.cmp(XREG1, imm(make_small(0)));
+    a.b_le(ret_false);
+
+    /* Catch-all: non-boxed terms (atoms, immediates, conses) are
+     * limited. BOXED primary tag = 0b10 -> bit 0 clear. */
+    a.tbnz(TMP2, imm(0), commit);
+
+    /* Catch-all: boxed but not a 4-tuple (bignum, float, map, ...)
+     * or a 4-tuple that isn't an #c{} record. */
+    a.and_(TMP1, TMP2, imm(~Uint64{0x7}));
+    a.ldr(TMP4, a64::Mem(TMP1));
+    a.cmp(TMP4, imm(make_arityval(4)));
+    a.b_ne(commit);
+    a.ldr(TMP4, a64::Mem(TMP1, sizeof(Eterm)));
+    mov_imm(TMP5, atom_c);
+    a.cmp(TMP4, TMP5);
+    a.b_ne(commit);
+
+    if (t2_g3_mode() == 2) {
+        /* Stage b: leaf tags resolve to the catch-all without the
+         * call. Unrecognised tags simply take the call — the inline
+         * set doesn't need to be complete to be correct. */
+        a.ldr(TMP4, a64::Mem(TMP1, 2 * sizeof(Eterm)));
+        mov_imm(TMP5, atom_tag_atom);
+        a.cmp(TMP4, TMP5);
+        a.b_eq(commit);
+        mov_imm(TMP5, atom_tag_number);
+        a.cmp(TMP4, TMP5);
+        a.b_eq(commit);
+        mov_imm(TMP5, atom_tag_var);
+        a.cmp(TMP4, TMP5);
+        a.b_eq(commit);
+        mov_imm(TMP5, atom_tag_identifier);
+        a.cmp(TMP4, TMP5);
+        a.b_eq(commit);
+        mov_imm(TMP5, atom_tag_binary);
+        a.cmp(TMP4, TMP5);
+        a.b_eq(commit);
+        mov_imm(TMP5, atom_tag_record);
+        a.cmp(TMP4, TMP5);
+        a.b_eq(commit);
+        mov_imm(TMP5, atom_tag_nil);
+        a.cmp(TMP4, TMP5);
+        a.b_eq(commit);
+    }
+
+    /* --- slow path: real call to T1 is_limited(E, K) --- */
+
+    /* Stack room for two Y slots; if tight, side-exit and let T1's
+     * own allocate trigger the GC. XREG0/XREG1 are still pristine. */
+    a.add(SUPER_TMP, HTOP, imm((2 + S_RESERVED) * sizeof(Eterm)));
+    a.cmp(SUPER_TMP, E);
+    a.b_hi(entry.side_exit);
+
+    sub(E, E, 2 * sizeof(Eterm));
+    a.stp(TMP3, XREG1, a64::Mem(E)); /* save Tl, K */
+    a.mov(XREG0, TMP2);              /* arg 0 = E; arg 1 = K in place */
+    a.bl(t2_is_limited_entry);       /* T1 call; result in XREG0 */
+    a.ldp(TMP3, XREG1, a64::Mem(E).post(2 * sizeof(Eterm)));
+
+    mov_imm(SUPER_TMP, am_true);
+    a.cmp(XREG0, SUPER_TMP);
+    a.b_ne(ret_xreg0); /* false -> return it (booleans only) */
+
+    /* --- element resolved as limited: advance the spine --- */
+    a.bind(commit);
+    a.mov(XREG0, TMP3);
+    a.b(loop_top);
+
+    /* --- [] -> true; anything else non-cons -> T1 raises --- */
+    a.bind(nil_check);
+    a.cmp(XREG0, imm(NIL));
+    a.b_ne(entry.side_exit);
+    mov_imm(XREG0, am_true);
+    a.b(ret_xreg0);
+
+    a.bind(ret_false);
+    mov_imm(XREG0, am_false);
+
+    a.bind(ret_xreg0);
+    emit_leave_erlang_frame();
+    a.subs(FCALLS, FCALLS, imm(1));
+    a.b_mi(resolve_fragment(ga->get_dispatch_return(), disp1MB));
+    a.ret(a64::x30);
+
+    /* --- yield: same shape as emit_t2_total_2 --- */
     a.bind(yield_setup);
     comment("T2 yield: route through i_test_yield_shared");
     a.adr(ARG3, entry.fn_entry);

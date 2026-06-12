@@ -1131,6 +1131,18 @@ public:
     /* Per-MFA hand-coded specializations. */
     void emit_t2_total_2(const T2FunctionEntry &entry);
 
+    /* G3 experiment (PLAN/verification): specialized
+     * erl_types:are_all_limited/2 with the is_limited/2 dispatch
+     * header inlined and container elements handled via a real call
+     * to T1 is_limited that returns into the T2 loop. Gated on the
+     * T2_G3 env var: 0=off, 1=stage a (spine+call only), 2=stage b
+     * (+leaf-tag inlining). */
+    int t2_g3_mode() const;
+    void emit_t2_are_all_limited_2(const T2FunctionEntry &entry);
+    /* Public entry label of erl_types:is_limited/2, recorded by the
+     * emit_i_test_yield hook so the T2 region can `bl` it. */
+    Label t2_is_limited_entry;
+
     void codegen(JitAllocator *allocator,
                  const void **executable_ptr,
                  void **writable_ptr,

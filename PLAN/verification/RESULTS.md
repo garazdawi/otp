@@ -129,6 +129,11 @@ application corpus" prediction — now with data.
    that shape, dialyzer-class code is out of reach regardless of
    infrastructure, and the loop tier's expansion budget should go to
    G-bin/G-map instead.
+   *Update: the mutual-recursion experiment ran — no end-to-end
+   win (0 ± 1 % CPU); see [`G3_OUTCOME.md`](G3_OUTCOME.md). The
+   call-count weighting used in §3 above is now known to over-weight
+   tiny-body functions ~10×; treat this section's dynamic shares as
+   structure, not cycle pools.*
 3. **G-bin's corpus-scale weight is confirmed** for RabbitMQ-class
    code: half its loop functions touch binaries.
 4. **The v1 loop tier remains the right beachhead** — it's the

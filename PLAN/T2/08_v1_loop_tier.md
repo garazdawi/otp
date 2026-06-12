@@ -555,10 +555,31 @@ T1:
    call-crossing optimization can't move it, dialyzer-class code is
    out of reach regardless of infrastructure.
 
-Branch-frequency counters, monomorphic-target slots, general
-inlining with framestates, and the full CP/stack-scan lifecycle are
-green-lit **only if G3 shows the win** — that's most of the deferred
-~25 weeks, spent only once it's bought evidence.
+   **RUN — no win**
+   ([`../verification/G3_OUTCOME.md`](../verification/G3_OUTCOME.md),
+   2026-06-12). One-level callee inlining: 2.25× micro on
+   leaf-biased spines, **0 ± 1 % CPU** on the real PLT build despite
+   63 % of elements resolving inline and 82 % of spine re-entries
+   eliminated. The call-crossing structure alone (state across real
+   calls returning into T2): wash or loss. Root causes: BeamAsm's
+   tiny-call overhead is far cheaper than the census's call share
+   implied (call counts over-weight tiny bodies ~10×), and leaf
+   gains net against container losses on the real distribution.
+   Bonus finding: for self-tail-recursive spines, demote-on-return
+   re-enters T2 at the next element via the patched prologue —
+   v1's no-CPs-into-blobs rule costs almost nothing even on
+   call-bearing loops.
+
+Gate disposition after subject 2: **general inlining with
+framestates, eager-CP-push, and the CP/stack-scan lifecycle stay
+deferred — now on negative evidence, not just caution.** Subject 1
+(branchy dispatch) remains open; it targets redundant-check
+elimination, not call overhead, and must be preceded by cycle
+profiling that sizes its pool (the census's call-count weighting is
+now known to mislead — see G3_OUTCOME "Census methodology
+correction"). **G-bin is the highest-value open gate**: binary match
+loops are where T1 demonstrably pays heavy per-op overhead, unlike
+calls.
 
 ### 6.1 The benchmark corpus, and what v1 honestly does to it
 
@@ -674,7 +695,7 @@ funs — pervasive in RabbitMQ and MongooseIM — do fire.
 
 | Deferred component | Designed in | Unlocked by |
 |--------------------|-------------|-------------|
-| Framestates + eager-CP-push (general inlining) | `03` §9.2, `01` §6.5 | G3 pass |
+| Framestates + eager-CP-push (general inlining) | `03` §9.2, `01` §6.5 | G3 pass — **subject 2 ran: no win** (`../verification/G3_OUTCOME.md`); stays deferred unless subject 1 + a cycle-profiled pool justify it |
 | Lazy stack scan, tombstone CP tables | `06` §5.3–5.5, `05` §14.2 | General inlining (CPs into blobs) |
 | Eager own-stack scan in the trace path (self-enable with CPs into blobs) | §4 Case B above | General inlining (CPs into blobs) |
 | Branch-frequency counters, cold-arm pruning | `02` §7.7, `04` §10.3 | G3 pass |

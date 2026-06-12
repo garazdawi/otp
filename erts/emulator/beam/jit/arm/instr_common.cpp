@@ -3120,6 +3120,15 @@ void BeamModuleAssembler::emit_i_test_yield() {
      * The side_exit label is bound here, so anything emitted next —
      * the existing T1 function body — becomes the T1 fallback that
      * T2 returns to on guard failure. */
+    /* G3 experiment: record the public entry of erl_types:is_limited/2
+     * (without diverting it) so the are_all_limited/2 T2 region can
+     * call it directly. */
+    if (code_header.is_valid() && t2_g3_mode() != 0 && current_arity == 2 &&
+        erts_is_atom_str("erl_types", mod, 0) &&
+        erts_is_atom_str("is_limited", current_function, 0)) {
+        t2_is_limited_entry = current_label;
+    }
+
     if (code_header.is_valid() && t2_mvp_is_target()) {
         Label t2_entry = a.new_label();
         Label side_exit = a.new_label();
