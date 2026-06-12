@@ -84,9 +84,13 @@ Mechanisms inherited verbatim from BeamAsm:
    inlined boundaries — that would change observable scheduling.
    For loop-recovered inlined regions (§10.5), the FCALLS
    decrement is emitted at the loop back-edge so each iteration
-   pays one reduction. Unrolling K iterations into one body emits
-   K decrements (correctness over micro-optimization). This is an
-   IR-level invariant; no pass may eliminate FCALLS decrements.
+   pays one reduction. Unrolling K iterations into one body pays
+   K decrements' worth — a single `subs FCALLS, K` at the chunk
+   boundary is observably equivalent (identical counts; yields at
+   chunk granularity, which is the granularity T1's own
+   source-unrolled loops like json's `string_ascii` already have).
+   This is an IR-level invariant; no pass may eliminate or reduce
+   the total FCALLS charge.
 2. **Function-entry yield (`i_test_yield`).** Every T2-compiled
    function emits the same `i_test_yield` sequence as T1. The
    yield jumps to the shared `i_test_yield_shared` fragment which

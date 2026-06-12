@@ -118,6 +118,46 @@ fuses `<<Byte, Rest/bits>>` + guard + self-tail-call patterns —
 exactly what the loop-recovery + `bs_*` op coverage produces
 mechanically).
 
+## Addendum — decomposing the win into layers (follow-up)
+
+The experiment's own data splits the 5.6× and corrects an earlier
+framing ("SWAR is idiom recognition either way" — it isn't). The
+digit scanner had **no SWAR** — and still delivered canada's win —
+while SWAR roughly doubled the string scanner. Three layers:
+
+1. **Context registerization** (position/base/end in registers,
+   write-back at exits) — generic dataflow over `bs_*` IR ops;
+   applies to any loop over a match context regardless of body.
+2. **Loop-level compilation** (no per-iteration re-entry) — loop
+   recovery; generic.
+3. **SWAR** = loop **unrolling ×8** + a *bounded set of general
+   lane-combining rewrites*: bounds-check coalescing
+   (`pos+64 ≤ end` + scalar epilogue), adjacent-load merging
+   (8 byte loads → one 64-bit load; T1's unified `bs_match`
+   already does this *within* one instruction), and predicate
+   lane-combining recipes (`== C`, `< C`, range, small-set — ~5
+   recipes cover the byte-class tests that occur in practice) with
+   OR-reduction and a scalar tail that relocates the exact stop
+   byte.
+
+The control→data conversion in layer 3 (compute all 8 predicates,
+branch once, re-scan the chunk on a hit) is legal **because of the
+S2 effect-free-window rule** — the scalar tail is re-execution of
+pure work at finer grain. The deopt discipline and the
+vectorization legality are the same invariant.
+
+Consequences: scan-SWAR is *not* a json-shaped template — with
+unrolling in the pipeline plus the recipe library, it falls out for
+any effect-free byte loop whose per-lane test is in the recipe set.
+Honest limits: per-byte loop-carried value dependences
+(`Acc*10 + D` parsing — guard side combinable, value side scalar)
+and variable-length matches (UTF-8). Plan impact: unrolling gains a
+second, now-measured motivation (`04` §10.6) and ships with the
+`bs_*` expansion package (`08` §7); reduction accounting per chunk
+(`subs FCALLS, #8`) keeps counts identical to T1's per-byte charge,
+with yields at chunk granularity — the same granularity T1's own
+source-unrolled `string_ascii` already has.
+
 ## Gate disposition
 
 - **G-bin: PASSED.** Phase-D-style `bs_*` coverage in recovered

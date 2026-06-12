@@ -6,9 +6,12 @@
 > that feeds it) is gated on the G3 experiment. §10.5's loop
 > recovery applies *first and foremost to the compiled function's
 > own self-tail-recursion* — the MVP's validated core win — not just
-> to inlined helpers. Unrolling (§10.6) is deferred unless the P3
-> corpus shows `test_heap` coalescing wins; LICM-lite (preheader
-> guard hoisting) stays.
+> to inlined helpers. Unrolling (§10.6) is deferred from v1 but now
+> ships with the post-v1 `bs_*` expansion package together with the
+> byte-lane SWAR recipes — its second motivation (§10.6 item 5) was
+> measured by G-bin; the original `test_heap`-coalescing motivation
+> still awaits corpus evidence. LICM-lite (preheader guard hoisting)
+> stays in v1.
 >
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers §§10–11: the inlining strategy
@@ -161,6 +164,20 @@ iterations. The overhead is:
 3. **Term creation.** Building K cons cells in one body advances
    HTOP once (`add htop, htop, K*16`) instead of K times.
 4. **Branch overhead.** One taken back-edge per K elements.
+5. **Byte-lane parallelism (SWAR) — measured.** For byte-class scan
+   loops over binaries, unrolling ×8 enables a bounded set of
+   general lane-combining rewrites: bounds-check coalescing,
+   adjacent-load merging, and predicate lane-combining recipes
+   (`== C`, `< C`, range, small-set membership — the classic
+   `(w - 0x2020..) & ~w & 0x8080..` family) with OR-reduction and a
+   scalar tail that locates the exact stop byte. The control→data
+   conversion is legal under the effect-free-window rule
+   (`08` §S2): the scalar tail is re-execution of pure work. This
+   layer was worth roughly another 2× on top of fused bytewise
+   scanning in the G-bin experiment
+   (`../verification/GBIN_OUTCOME.md`, addendum). Limits: per-byte
+   loop-carried value dependences stay scalar; variable-length
+   matches (UTF-8) don't unroll.
 
 Heuristics:
 - Default factor 4; up to 8 for very small bodies.
