@@ -106,6 +106,10 @@ struct saved_calls {
 extern Export exp_send, exp_receive, exp_timeout;
 extern int ERTS_WRITE_UNLIKELY(erts_sched_compact_load);
 extern int ERTS_WRITE_UNLIKELY(erts_sched_balance_util);
+/* Inline scheduling handoff modes (+sih) */
+#define ERTS_SCHED_HANDOFF_OFF     0  /* wake on assigned run queue */
+#define ERTS_SCHED_HANDOFF_MIGRATE 1  /* migrate to waker's run queue (tail) */
+#define ERTS_SCHED_HANDOFF_INLINE  2  /* migrate + queue jump + donated slice */
 extern int ERTS_WRITE_UNLIKELY(erts_sched_inline_handoff);
 extern Uint ERTS_WRITE_UNLIKELY(erts_no_schedulers);
 extern Uint ERTS_WRITE_UNLIKELY(erts_no_total_schedulers);
