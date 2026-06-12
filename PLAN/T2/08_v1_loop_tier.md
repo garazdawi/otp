@@ -460,11 +460,14 @@ too, while breakpoints are staged); every call made after
 that window: a mid-loop T1 process would start emitting per-
 iteration call events as soon as the breakpoints commit, a few
 iterations earlier than the jettisoned T2 process. Nothing after
-the BIF returns differs. P0 must verify that the existing
-staged-bp thread-progress ordering actually provides the
-return-implies-quiescence property (trace-matrix row), and 16A
-gets a forced test: enable tracing against a process mid-T2-loop,
-assert no post-return call goes unreported.
+the BIF returns differs. **Verified** (2026-06-12, see
+[`../verification/RESULTS.md`](../verification/RESULTS.md) §1): the
+BIF suspends its caller and resumes it only after the code-barrier
+finisher completes, and thread progress advances only at scheduling
+boundaries — the return-implies-quiescence property holds in the
+existing machinery. 16A still gets the forced regression test:
+enable tracing against a process mid-T2-loop, assert no post-return
+call goes unreported.
 
 **Case B — P enables the trace itself.** Unreachable from inside a
 v1 loop body (bodies are effect-free, §2; `trace_pattern` is about
@@ -523,7 +526,7 @@ T2-compiled function, including mid-loop-yielded processes.
 
 | Phase | Weeks | Contents | Gate |
 |-------|-------|----------|------|
-| **P0** | 4–5 | Bytecode→SSA builder + code-chunk retention; T1 PC side table (entries / call ops / continuations / post-effect boundaries); trace matrix + inspection matrix; entry-only profile-cost measurement; corpus measurement (kept from old Phase 0); **effect-shape census** — walk the SSA of dialyzer, RabbitMQ, MongooseIM and a Phoenix dep tree, find self-tail-recursive loop bodies, bucket them effect-free / BIF-effect-only / Erlang-call-bearing; this retires the S2 scope risk ("too many loops have effects") with data before anything is built | **G1: SSA fidelity.** Reconstruct SSA for a corpus of OTP functions; structurally compare against AOT `beam_ssa` output and identity-emit behaviour. Material loss → fall back to the SSA chunk (`02` §7.8). |
+| **P0** | 4–5 | Bytecode→SSA builder + code-chunk retention; T1 PC side table (entries / call ops / continuations / post-effect boundaries); trace matrix + inspection matrix; entry-only profile-cost measurement; corpus measurement (kept from old Phase 0); **effect-shape census** — first round complete (tool: `../verification/effect_census.erl`, results: `../verification/RESULTS.md`): static over OTP/RabbitMQ/Elixir/Phoenix+Ash plus a call-weighted dynamic leg for dialyzer. Outcome: effects-in-loops are a rounding error (B ≈ 0.5 % of dialyzer loop calls); the scope limiter is *calls* in loops (D = 47 % of all dialyzer calls), now feeding G3 subject 2. Remaining P0 work: the cycle-weighted (perf) leg incl. MongooseIM-under-Amoc | **G1: SSA fidelity.** Reconstruct SSA for a corpus of OTP functions; structurally compare against AOT `beam_ssa` output and identity-emit behaviour. Material loss → fall back to the SSA chunk (`02` §7.8). |
 | **P1** | 4 | Identity transform through the full pipeline; install/jettison; blob range registration + `c_p->i` translation; full OTP suite under `+JT2enable` (16A.1) | Suite green. State-preservation model proven end-to-end. |
 | **P2** | 6 | Entry speculation; flag-exit arithmetic; guard fusion + strength reduction; self-tail-recursion loop recovery + preheader hoisting + back-edge resume stubs; **local leaf inlining** (≤ size cap, no calls) | **G2: reproduce the MVP through the pipeline.** The hand-written MVP hit 1.97×; the compiled pipeline must hit ≥ 1.8× on the same benchmark, with ≤ 1 % tax on the application corpus. Miss → stop and re-examine before P3. |
 | **P3** | 6 | `lists:*` intrinsics (hand-ported expansions) + helper loop recovery + constant-fun body inlining; LICM-lite (preheader guard/capture hoisting); unrolling **only if** `test_heap` coalescing shows up on the corpus, else defer | **G4: intrinsics pay.** `foldl`/`map` benchmarks vs an `inline_list_funcs`-off baseline show the projected win. |
@@ -534,13 +537,25 @@ in the 00–07 scoping). The cut is real but the irreducible core —
 IR, type lattice, codegen, runtime integration — is unchanged; the
 savings come from S1–S5, not from optimism.
 
-**Gate G3 — the branchy-corpus experiment (1–2 weeks, anytime after
-P1, MVP methodology).** Hand-write cold-arm pruning + guard
-elimination + clause-dispatch specialisation for one hot
-gen_server-shaped dispatch function (the way `emit_t2_total_2` was
-hand-written), measure against T1. This is the experiment that
-decides whether the *expected* branchy-code wins of `00` §1 are
-real. Branch-frequency counters, monomorphic-target slots, general
+**Gate G3 — the call-crossing experiment (1–2 weeks, anytime after
+P1, MVP methodology).** Two hand-written subjects, measured against
+T1:
+
+1. *Branchy dispatch*: cold-arm pruning + guard elimination +
+   clause-dispatch specialisation for one hot gen_server-shaped
+   dispatch function — decides whether the *expected* branchy-code
+   wins of `00` §1 are real.
+2. *Mutual/structural recursion* (added by the census — see
+   [`../verification/RESULTS.md`](../verification/RESULTS.md)):
+   a T2 specialisation of `erl_types:are_all_limited/2` +
+   `is_limited/2`, inlining one level of the mutual recursion and
+   fusing the spine guards, measured on the dialyzer PLT-build
+   workload. The dynamic census showed this shape carries **47 % of
+   all calls** in that workload (vs 6 % for v1's A bucket) — if
+   call-crossing optimization can't move it, dialyzer-class code is
+   out of reach regardless of infrastructure.
+
+Branch-frequency counters, monomorphic-target slots, general
 inlining with framestates, and the full CP/stack-scan lifecycle are
 green-lit **only if G3 shows the win** — that's most of the deferred
 ~25 weeks, spent only once it's bought evidence.
