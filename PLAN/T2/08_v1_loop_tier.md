@@ -318,7 +318,9 @@ mapping anywhere.
 - **Watchpoints at module granularity only** (`05` §14.1 trimmed):
   v1's only cross-module dependency is intrinsic-inlined `lists:*`,
   so the table is `Module → Vector<BlobRef>` with jettison-on-reload.
-  Per-function granularity returns with general inlining.
+  Every blob also registers its **own module** (its inlined local
+  leaves and literal funs live there — trace-enable lookups need it,
+  §4). Per-function granularity returns with general inlining.
 - **Tier-up target selection** (`07` App. C, M1) and per-call-site
   deopt-skip (H10): no general inlining to drive; deferred with it.
 
@@ -366,7 +368,8 @@ section is the contract; the inspection matrix below is its test.
    (`05` §12.4 item 1 verbatim). `process_info(_, reductions)`
    matches T1 exactly.
 5. **Tracing and NIFs: strict mutual exclusion + jettison-on-enable**,
-   unchanged from `06` §2.4. Trace semantics never observe T2.
+   unchanged from `06` §2.4, plus the in-flight quiescence rule
+   spelled out below. Trace semantics never observe T2.
    `save_calls` works via export indirection regardless of tier.
 6. **GC discipline identical** at every GC site (`01` §6). One
    codegen consequence worth naming: scratch registers holding term
@@ -376,6 +379,70 @@ section is the contract; the inspection matrix below is its test.
    `current_function` while it executes an *inlined leaf* reports
    the outer function. Precedent: `erlc +inline` does the same
    today. Documented, not hidden.
+
+### Trace-enable against an in-flight loop (the hard case)
+
+Setup: process P is mid-loop inside a T2 blob, and tracing is
+enabled on something the blob inlined — a local leaf, a `lists:*`
+helper, or the literal fun (funs are reachable via local-pattern
+tracing of the compiler-generated local function). Jettison alone
+("future entries go to T1") is not sufficient here, because P's
+in-flight invocation executes inlined copies that pass through no
+prologue. Two cases:
+
+**Case A — another process enables the trace.** Ordering rule:
+
+1. The trace path looks up affected blobs in the watchpoint index
+   and jettisons them (prologue revert + generation bump) *before*
+   the breakpoint stage/commit, under the same code-modification
+   permission.
+2. P keeps executing the inlined (untraced) copy only while the
+   `trace_pattern` call is still in flight. The BIF's existing
+   staged-breakpoint **thread-progress wait doubles as blob
+   quiescence**: a scheduler only passes a progress point at a
+   scheduling boundary, so by the time `trace_pattern` returns,
+   every process that was inside the blob has yielded out of it —
+   the back-edge yield saved `c_p->i` = resume stub, and the
+   generation check at next schedule-in redirects it to the T1
+   entry (a valid fresh call, S2/S5). From then on every call to
+   the traced function goes through its traced prologue.
+
+The resulting guarantee is **identical to T1's**: calls concurrent
+with the `trace_pattern` call itself are racy (they are under T1
+too, while breakpoints are staged); every call made after
+`trace_pattern` returns is traced. The delta vs T1 is confined to
+that window: a mid-loop T1 process would start emitting per-
+iteration call events as soon as the breakpoints commit, a few
+iterations earlier than the jettisoned T2 process. Nothing after
+the BIF returns differs. P0 must verify that the existing
+staged-bp thread-progress ordering actually provides the
+return-implies-quiescence property (trace-matrix row), and 16A
+gets a forced test: enable tracing against a process mid-T2-loop,
+assert no post-return call goes unreported.
+
+**Case B — P enables the trace itself.** Unreachable from inside a
+v1 loop body (bodies are effect-free, §2; `trace_pattern` is about
+as effectful as a BIF gets). The only way P can execute
+`trace_pattern` is through a real, non-inlined call — and S3's
+demote-on-return already pointed that call's CP at the **T1
+continuation**, so by the time the BIF runs, the remainder of P's
+invocation is destined for T1 regardless; the inlined copies it
+would have executed are unreachable. The synchronous prologue
+revert inside the BIF covers P's *next* invocation. Correct by
+construction, no window at all. (Post-G3, when general inlining
+puts CPs into blobs, this stops being automatic — the enabling
+process could return *into* a tombstoned blob and keep executing
+inlined copies after its own `trace_pattern` returned. The trace
+path must then eagerly scan the calling process's own stack before
+returning; recorded in §7 so it lands with that machinery.)
+
+One index consequence: the module-granularity watchpoint table must
+record the blob's **own module** as a dependency, not only `lists`
+— a local trace pattern on an inlined local leaf (`{M,diff,2}`)
+must find the blob for `{M,total,2}`. Coarse (any trace in module M
+jettisons all of M's blobs) but correct, and trace-enable is rare;
+recompile follows automatically when the pattern clears
+(`06` §5.1's temporary jettison-and-recompile).
 
 **Deliverable: an inspection matrix** alongside the Phase-0 trace
 matrix (`05` §12.5) — every introspection surface (`process_info`
@@ -438,6 +505,7 @@ green-lit **only if G3 shows the win** — that's most of the deferred
 |--------------------|-------------|-------------|
 | Framestates + eager-CP-push (general inlining) | `03` §9.2, `01` §6.5 | G3 pass |
 | Lazy stack scan, tombstone CP tables | `06` §5.3–5.5, `05` §14.2 | General inlining (CPs into blobs) |
+| Eager own-stack scan in the trace path (self-enable with CPs into blobs) | §4 Case B above | General inlining (CPs into blobs) |
 | Branch-frequency counters, cold-arm pruning | `02` §7.7, `04` §10.3 | G3 pass |
 | Monomorphic-target slots + cross-module inlining | `02` §7.5, `04` §10.1 | G3 pass + per-function watchpoints |
 | `speculate_range` + range profiling | `03` §9.3–9.4 | Measured LICM-hoistable win flag checks can't capture |
