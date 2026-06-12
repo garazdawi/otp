@@ -512,6 +512,18 @@ MongooseIM, Phoenix/Ash-style web services. The tracked suite:
 - **OTP in-tree benches** (`HOWTO/BENCHMARKS.md`, `ts:benchmarks()`)
   — `emulator_bench`, `stdlib_bench`, and the protocol-shaped
   `ssl`/`ssh`/`inets`/`megaco` specs.
+- **JSON encode/decode** (new `otp_benchmarks` family to add in
+  awfy): `json:decode/1` / `json:encode/2` (stdlib, OTP 27+,
+  skipped on older refs the way `mnesia_tpcb` is) over the
+  standard nativejson trio — `twitter.json` (strings/escapes),
+  `citm_catalog.json` (structure/maps), `canada.json`
+  (number-parsing/floats) — plus a small 1–10 KB API-response
+  payload, which is the Phoenix-relevant case. Local-only
+  reference comparators, not dashboard legs: a SIMD/NIF parser as
+  the known-unreachable ceiling, Jason (Elixir) as the
+  optimized-pure-BEAM peer. The goal is not to beat handwritten
+  SIMD — it's to push the built-in parser/encoder far enough that
+  pure-BEAM stdlib `json` is the default sensible choice.
 - **Macro leg** — MongooseIM under Amoc load: a designed
   first-class awfy leg (`awfy/PLAN/MONGOOSEIM_BENCH_PLAN.md` —
   pinned MongooseIM broker, upstream amoc-arsenal-xmpp scenarios,
@@ -536,6 +548,7 @@ per-class expectations for v1 as scoped:
 | binaries | base64, binary_match, unicode, JSON parsing; ssl/ssh/megaco | No change from T2 (BIF/`bs_*` dominated) |
 | maps / polymorphic | Richards, DeltaBlue, Havlak, CD, Json model; Elixir structs | No change (maps out of v1; dispatch gated on G3) |
 | processes/ETS/runtime | estone msgp, ets suite, mnesia_tpcb | No change **by design** (`07` §19) |
+| JSON encode/decode | stdlib `json` over nativejson trio + small payloads | Little change in v1 (the `bs_*` match heads and map construction dominate); **the flagship G-bin target** — see below |
 | application macro | MongooseIM/amoc | Low single digits from list/tuple fragments + leaf functions |
 
 The conclusion this table forces: **for the application corpus, the
@@ -556,15 +569,27 @@ for these apps.
 
 **Gate G-bin — binary-matching loop experiment (MVP methodology,
 after G2).** Hand-write a T2-shaped specialisation of one real
-protocol-parser loop (an AMQP frame decoder or XMPP tokenizer
-shape: tail-recursive loop carrying a match context, `bs_get_*`
-ops fused, per-op match-context dance eliminated). Binary parsing
-loops are *loop-shaped* — the match context is ordinary
-loop-carried state in the argument vector, so re-call deopt (S2)
-and the whole loop-tier architecture apply unchanged; what's
-missing is only `bs_*` op coverage. If G-bin shows the win,
-Phase-D-style coverage is pulled forward ahead of general
-inlining.
+binary-scanning loop. **Primary subject: stdlib `json:decode/1`'s
+scan loops** (`number/7`, the string scan, `escape_binary_ascii/5`
+on the encode side). They are the perfect specimen: 7-argument
+self-tail-recursive byte-dispatch loops whose bodies — integer
+accumulators (`Skip`/`Len` run-length tracking), small-int guards
+(`?is_0_to_9`, `?is_ascii_plain`), tuple/list accumulation — are
+*already in the v1 op set*; the only thing outside it is the
+`<<Byte, Rest/bits>>` match head. The per-iteration real work is
+tiny, so T1's per-op match-context dance dominates the loop —
+maximum fusion headroom, the same profile the MVP exploited.
+Secondary subject if a protocol shape is wanted: an AMQP frame
+decoder or XMPP tokenizer. Binary parsing loops are *loop-shaped*
+— the match context is ordinary loop-carried state in the argument
+vector, so re-call deopt (S2) and the whole loop-tier architecture
+apply unchanged; what's missing is only `bs_*` op coverage. If
+G-bin shows the win, Phase-D-style coverage is pulled forward
+ahead of general inlining. (A later compounding target the
+experiment should note but not implement: `json:decode/1` invokes
+its `#decode{}` callbacks as funs per token, and the defaults are
+statically known funs — constant-fun inlining across the token
+loop once that machinery exists.)
 
 **Gate G-map — map-region experiment (MVP methodology, after
 G2).** Hand-write region-level shape specialisation
