@@ -135,6 +135,82 @@ hunting), timer/allocator red-black trees, `list_to_binary_copy`.
    extra-msacc OTP build (`--with-microstate-accounting=extra`)
    for exact send/ETS/NIF/alloc state shares.
 
+## Second round — perf in colima, artifact-free (the precise numbers)
+
+The macOS round's `process_info` signal artifact is gone here: Linux
+`perf` samples scheduler threads directly and `+JPperf map` resolves
+JIT frames by name. Run in colima (aarch64 Ubuntu 24.04, 4 vCPU,
+6 GB), `cpu-clock -F 499`, 15 s window under steady load. RabbitMQ
+4.3.1 on OTP 28 (the generic-unix release **boot-fails on OTP 29** —
+`{horus,extraction_denied,{unknown_instruction,{line,...}}}`: Khepri's
+Horus bytecode extractor can't decode OTP 29's new `line` instruction
+form; worth reporting upstream). Bandit/Jason on **OTP 29** via
+`Mix.install`. Publisher throttled so subscriber queues stay bounded
+(the unthrottled QoS0 firehose OOM-killed the broker in the smaller
+VM — itself a data point about flow control, not about CPU).
+
+### DSO split — the headline (% of all samples)
+
+| layer | RabbitMQ (MQTT, 75 k msg/s) | Bandit (JSON API, 83 k req/s) |
+|---|---|---|
+| `beam.smp` (VM internals + BIFs) | **50.8 %** | **56.7 %** |
+| `[kernel]` (wakeups, softirq, I/O) | **30.4 %** | 12.7 %¹ |
+| `[JIT]` (all compiled Erlang/Elixir) | **12.2 %** | **20.7 %** |
+| libc | 6.2 % | 9.2 % |
+
+¹ Bandit's pipelined keepalive client amortises syscalls over 8
+requests/recv, so its kernel share is lower than a
+connection-per-request load would show; RabbitMQ's per-message
+socket wakeups are the real thing.
+
+**The number the whole effort was after: JIT-compiled code — the
+entire surface a second tier could touch — is 12 % of CPU on a
+loaded broker and 21 % on a JSON API.** The rest is the VM and the
+kernel.
+
+### RabbitMQ — `beam.smp` is term plumbing + ETS + GC + alloc
+
+Hottest symbols (% of all samples): `make_internal_hash` 4.6 (ETS
+routing-table term hashing — single hottest in the profile), `eq`
+2.9, `__aarch64_cas4_acq` 2.8 (atomics, mostly ETS rwlocks),
+`copy_struct_x` 1.9 (message-send copy), `do_minor` 1.5 (GC),
+`erts_cmp_compound` 1.4, `size_object_x` 1.3, `copy_shallow_x` 0.9,
+the `ethr_rwmutex_*` pair ~1.6, the allocator RBT
+(`rbt_delete`/`rbt_insert`/`mbc_free`/`aoff_*`) ~2.6, `garbage_collect`
+0.5, `db_get_element_hash` 0.4. The **hottest JIT symbol is
+`call_light_bif_shared` (1.2 %)** — the *top* of the Erlang-code
+bucket is the dispatch into BIFs, not application logic. The 30 %
+kernel is `__wake_up_sync_key` + `try_to_wake_up` + softirq +
+`writev`/`recvfrom`: a scheduler wakeup and socket write per message.
+
+Coherent VM pools, ranked: term hashing+compare+copy (~13 %),
+ETS locking/atomics (~5 %), GC (~3 %), allocator churn (~3 %).
+
+### Bandit — closer to JIT-friendly, and it names the wins
+
+The Elixir JSON API is the friendlier shape: 21 % JIT, and the JIT
+frames are *real application work* a T2 tier or Track A could move:
+
+- **`Jason.Decoder:string/6` 3.7 %, `number/6` 1.2 %, `object/6`
+  1.1 %, `value/5` 0.9 %** — the JSON decode scan loops, ~7 % of
+  total, **exactly the G-bin shape** (Jason is hand-written binary
+  matching; the same fusion that gave stdlib `json` 5.6× applies).
+  `Jason.Encode:escape_json_chunk/5` 0.7 % is the encode-side
+  G-bin shape.
+- **`String.Unicode:upcase/3` 1.1 %** — a binary/codepoint loop.
+- `i_get_map_element_hash_shared` 1.4 % + `flatmap_from_validated_list`
+  0.9 % + `erts_maps_update`/`erts_gc_update_map_exact` ~0.9 % — the
+  map/struct build+access path, **the G-map shape**.
+
+But the VM still dominates even here: `do_minor` 5.5 % (the single
+hottest symbol — GC), `do_binary_match_compile` 3.5 %
+(**`binary:match` recompiling its pattern every call — a library
+bug in the HTTP header path, not inherent**), `erts_cmp_compound`
+2.5, `erts_binary_part` 2.5, the allocator RBT ~4, `erts_schedule`
+2.2, `sweep_new_heap`+`full_sweep_heaps`+`garbage_collect`+
+`offset_heap` ~4 more GC, `list_to_binary_copy`+`_size` ~3,
+`eq`/`memcmp` ~2. GC alone across its symbols is **~12 %**.
+
 ## Consequences for the plan
 
 - `08` §6's honest-expectations table is confirmed by direct
@@ -144,9 +220,45 @@ hunting), timer/allocator red-black trees, `list_to_binary_copy`.
   Track B build: a **VM-internal investigation** (message path, GC,
   ETS, allocators) whose ceiling on deployed-server corpora is
   several times larger than the JIT's. Same discipline as the gate
-  program: pick the hottest coherent pool (the message/signal
-  path), build the cheapest experiment that prices it, then decide
-  where the next ~24 weeks actually go.
+  program: pick the hottest coherent pool, build the cheapest
+  experiment that prices it, then decide where the next ~24 weeks
+  actually go.
+
+### Where the next experiment should go, ranked by measured pool
+
+The two profiles agree on the ranking and disagree only on
+magnitude (server-message-heavy vs compute-heavy):
+
+1. **GC** — 3 % (RabbitMQ) to ~12 % (Bandit), the single largest
+   coherent VM pool, and the *hottest individual symbol* on the
+   Elixir leg (`do_minor` 5.5 %). A GC-policy or heap-sizing
+   experiment for server-shaped allocation is the highest-EV probe.
+2. **Term hashing + the ETS read path** — `make_internal_hash`
+   4.6 % + atomics/rwlocks ~5 % on RabbitMQ: the routing-table
+   lookup cost. Pure runtime; no JIT reach.
+3. **Send-side term copying** — `copy_struct_x`/`copy_shallow_x`/
+   `size_object_x` ~4 % on RabbitMQ: the per-message copy between
+   process heaps. The process-sharing/off-heap-message direction.
+4. **Allocator churn** — the RBT (`rbt_insert`/`delete`) +
+   `mbc_free`/`aoff_*` ~3–4 % both legs: carrier management under
+   message/connection turnover.
+5. **One library bug, free**: `do_binary_match_compile` 3.5 % on
+   Bandit — a `binary:match/2` call site recompiling its pattern
+   per request in the Plug/Bandit HTTP path. A cached compiled
+   pattern (`binary:compile_pattern/1`) is a one-line upstream fix
+   worth ~3 % of this workload, independent of everything else.
+
+**For the JIT specifically:** Bandit confirms the *one* server-class
+workload where T2 has real reach is **JSON/serialization-heavy
+APIs** — Jason's decode loops (~7 %, G-bin shape) plus the map
+build/access path (G-map shape) are ~10 % of total and exactly the
+shapes the gate program already validated. This is the concrete
+deployed-system case for the binary+map expansions, and it argues
+the **Track A captures** (a scan superinstruction reaching all of
+Jason; the map-key IC) deliver more of this win, to more existing
+deployments, than the tier does. RabbitMQ, by contrast, has almost
+no JIT-addressable pool — its cost is term plumbing and ETS, full
+stop.
 
 ## Reproduction
 
