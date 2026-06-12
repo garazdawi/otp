@@ -524,6 +524,17 @@ permanent ownership. This is a genuine go/no-go: shrinking T2 to a
 later, smaller project is an acceptable outcome, and the
 verification work transfers either way.
 
+The checkpoint also weighs the JIT against the **VM-internal
+track** surfaced by the real-application profiling
+(`../verification/PROFILE_RESULTS.md`): on deployed-server
+workloads the dominant pools are the message/signal-delivery path,
+GC (9.5–12.4 % of busy everywhere), ETS hashing+locking, send-side
+copying, and allocator churn — several times the JIT-addressable
+share on those corpora. Before Track B starts, the hottest of
+these (the message/signal path) deserves the same treatment the
+JIT got: the cheapest experiment that prices it. The next ~24
+weeks should go to whichever pool prices highest.
+
 ### Track B — T2 v1 build (~24–26 weeks, ~10–11 KLOC)
 
 Gate numbering: G1/G2/G4 below; G3 was the call-crossing gate and
@@ -531,7 +542,7 @@ already ran — both subjects null (§2.1).
 
 | Phase | Weeks | Contents | Gate |
 |---|---|---|---|
-| **P0** | 4–5 | Bytecode→SSA builder + code-chunk retention; T1 PC side table (4 entry kinds, §4.5); blob range registration design; trace + inspection matrices; entry-only profile-cost measurement; cycle-weighted corpus profiling (MongooseIM-under-Amoc, RabbitMQ) — *remaining* P0 census work; Graviton re-run of the experiment kit | **G1: SSA fidelity** — reconstruct SSA for a corpus (the experiment subjects + a stdlib slice), identity-emit, compare against T1 behaviour and AOT `beam_ssa` structure. Material loss → SSA-chunk fallback. |
+| **P0** | 4–5 | Bytecode→SSA builder + code-chunk retention; T1 PC side table (4 entry kinds, §4.5); blob range registration design; trace + inspection matrices; entry-only profile-cost measurement; cycle-weighted corpus profiling — **first round complete** (`../verification/PROFILE_RESULTS.md`: dialyzer, RabbitMQ at 489 k msg/s, Bandit at 148 k req/s — server workloads are dominated by VM-internal costs: signal/message path, GC 9.5–12.4 %, port, ETS, copy/alloc; JIT-addressable code is a ≤ 25 % long tail there; MongooseIM-under-Amoc and a Linux `perf` pass remain); Graviton re-run of the experiment kit | **G1: SSA fidelity** — reconstruct SSA for a corpus (the experiment subjects + a stdlib slice), identity-emit, compare against T1 behaviour and AOT `beam_ssa` structure. Material loss → SSA-chunk fallback. |
 | **P1** | 4 | Identity transform through the full pipeline; install/jettison; range registration + `c_p->i` translation; full OTP suite under `+JT2enable` | Suite green: state preservation proven end-to-end. |
 | **P2** | 6–7 | Entry speculation; flag-exit arithmetic; guard fusion; self-tail-recursion loop recovery + preheader hoisting + back-edge resume stubs; local leaf inlining; **the v1 binary scan subset** | **G2: reproduce the MVP (≥1.8×) and G-bin's *bytewise* layer (≥2.5× isolated scan — SWAR is the §7 package, gated at ≥4× there) through the pipeline**, ≤1 % tax on the application corpus. Miss → stop. |
 | **P3** | 6 | `lists:*` intrinsics + helper loop recovery + constant-fun inlining; LICM-lite | **G4**: `foldl`/`map` vs the post-Track-A default configuration (with A3's inlining defaults *on* — anything else is a strawman). |
