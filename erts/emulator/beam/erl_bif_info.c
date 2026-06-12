@@ -4228,6 +4228,22 @@ BIF_RETTYPE statistics_1(BIF_ALIST_1)
 	hp = HAlloc(BIF_P, 3);
 	res = TUPLE2(hp, cs, SMALL_ZERO);
 	BIF_RET(res);
+    } else if (BIF_ARG_1 == am_sched_inline_handoffs) {
+	Uint64 arms = 0, picks = 0;
+	Uint hsz = 3;
+	Eterm at, pt;
+	int ix;
+	for (ix = 0; ix < erts_no_schedulers; ix++) {
+	    arms += ERTS_SCHEDULER_IX(ix)->handoff.count;
+	    picks += ERTS_SCHEDULER_IX(ix)->handoff.picks;
+	}
+	erts_bld_uint64(NULL, &hsz, arms);
+	erts_bld_uint64(NULL, &hsz, picks);
+	hp = HAlloc(BIF_P, hsz);
+	at = erts_bld_uint64(&hp, NULL, arms);
+	pt = erts_bld_uint64(&hp, NULL, picks);
+	res = TUPLE2(hp, at, pt);
+	BIF_RET(res);
     } else if (BIF_ARG_1 == am_garbage_collection) {
 	res = erts_gc_info_request(BIF_P);
 	if (is_non_value(res))
