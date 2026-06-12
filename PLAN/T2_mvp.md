@@ -66,7 +66,7 @@ so the hot loop touches no bignums and triggers no GC.
 
 Per iteration, T1 emits roughly:
 
-```
+```arm
 total_t1_entry:
   subs REDS, REDS, #2
   b.le yield_stub
@@ -96,7 +96,7 @@ Most of the per-iteration cost is:
 
 T2 with `diff/2` inlined and the `t2_assume_smallints` directive:
 
-```
+```arm
 total_t2_entry:
   ;; 2 reds/iter to match T1 (diff call + total tail call).
   subs REDS, REDS, #2
