@@ -106,6 +106,7 @@ struct saved_calls {
 extern Export exp_send, exp_receive, exp_timeout;
 extern int ERTS_WRITE_UNLIKELY(erts_sched_compact_load);
 extern int ERTS_WRITE_UNLIKELY(erts_sched_balance_util);
+extern int ERTS_WRITE_UNLIKELY(erts_sched_inline_handoff);
 extern Uint ERTS_WRITE_UNLIKELY(erts_no_schedulers);
 extern Uint ERTS_WRITE_UNLIKELY(erts_no_total_schedulers);
 extern Uint ERTS_WRITE_UNLIKELY(erts_no_dirty_cpu_schedulers);
@@ -706,6 +707,15 @@ struct ErtsSchedulerData_ {
     ErtsRunQueue *run_queue;
     int virtual_reds;
     int cpu_id;			/* >= 0 when bound */
+    struct {
+        int hint;       /* non-zero while executing a message-send wakeup
+                           performed by current_process */
+        Eterm pid;      /* pid of process armed for inline handoff */
+        int reds;       /* leftover reductions to donate at handoff pick */
+        int granted;    /* reductions granted to executing process at pick */
+        Uint64 count;   /* number of inline handoffs armed */
+        Uint64 picks;   /* number of armed processes picked inline */
+    } handoff;
     ErtsAuxWorkData aux_work_data;
     ErtsAtomCacheMap atom_cache_map;
 
@@ -2565,6 +2575,8 @@ ERTS_GLB_INLINE ErtsRunQueue *erts_bind_runq_proc(Process *p, int bind);
 ERTS_GLB_INLINE int erts_proc_runq_is_bound(Process *p);
 ERTS_GLB_INLINE ErtsRunQueue *erts_get_runq_proc(Process *p, int *boundp);
 ERTS_GLB_INLINE ErtsRunQueue *erts_get_runq_current(ErtsSchedulerData *esdp);
+ERTS_GLB_INLINE void erts_sched_handoff_hint_begin(void);
+ERTS_GLB_INLINE void erts_sched_handoff_hint_end(void);
 ERTS_GLB_INLINE void erts_runq_lock(ErtsRunQueue *rq);
 ERTS_GLB_INLINE int erts_runq_trylock(ErtsRunQueue *rq);
 ERTS_GLB_INLINE void erts_runq_unlock(ErtsRunQueue *rq);
@@ -2806,6 +2818,33 @@ erts_get_runq_current(ErtsSchedulerData *esdp)
     if (!esdp)
 	esdp = erts_get_scheduler_data();
     return esdp->run_queue;
+}
+
+/*
+ * Mark that wakeups performed until the corresponding end call are
+ * caused by a message sent by the currently executing process, making
+ * the woken process eligible for inline scheduling handoff. When inline
+ * handoff is disabled this is a single predictable branch with no
+ * scheduler lookup, keeping the message-send path free.
+ */
+ERTS_GLB_INLINE void
+erts_sched_handoff_hint_begin(void)
+{
+    if (erts_sched_inline_handoff != ERTS_SCHED_HANDOFF_OFF) {
+        ErtsSchedulerData *esdp = erts_get_scheduler_data();
+        if (esdp)
+            esdp->handoff.hint = 1;
+    }
+}
+
+ERTS_GLB_INLINE void
+erts_sched_handoff_hint_end(void)
+{
+    if (erts_sched_inline_handoff != ERTS_SCHED_HANDOFF_OFF) {
+        ErtsSchedulerData *esdp = erts_get_scheduler_data();
+        if (esdp)
+            esdp->handoff.hint = 0;
+    }
 }
 
 ERTS_GLB_INLINE void

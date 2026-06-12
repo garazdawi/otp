@@ -674,6 +674,8 @@ __decl_noreturn void __noreturn  erts_usage(void)
 		 ERTS_SCHED_THREAD_MIN_STACK_SIZE,
 		 ERTS_SCHED_THREAD_MAX_STACK_SIZE,
                  ERTS_DEFAULT_DIO_SCHED_STACK_SIZE);
+    erts_fprintf(stderr, "-sih Bool      enable or disable scheduler inline handoff of\n");
+    erts_fprintf(stderr, "               processes woken by message sends (default true)\n");
     erts_fprintf(stderr, "-spp Bool      set port parallelism scheduling hint\n");
     erts_fprintf(stderr, "-S n1:n2       set number of schedulers (n1), and number of\n");
     erts_fprintf(stderr, "               schedulers online (n2); maximum for both\n");
@@ -2040,6 +2042,19 @@ erl_start(int argc, char **argv)
                 /* ignore argument, eager check io no longer used */
                 arg = get_arg(sub_param+4, argv[i+1], &i);
             }
+	    else if (has_prefix("ih", sub_param)) {
+		arg = get_arg(sub_param+2, argv[i+1], &i);
+		if (sys_strcmp("true", arg) == 0)
+		    erts_sched_inline_handoff = 1;
+		else if (sys_strcmp("false", arg) == 0)
+		    erts_sched_inline_handoff = 0;
+		else {
+		    erts_fprintf(stderr,
+				 "bad scheduler inline handoff value '%s'\n",
+				 arg);
+		    erts_usage();
+		}
+	    }
 	    else if (has_prefix("pp", sub_param)) {
 		arg = get_arg(sub_param+2, argv[i+1], &i);
 		if (sys_strcmp(arg, "true") == 0)
