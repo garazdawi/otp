@@ -1,5 +1,11 @@
 # T2 MVP Plan
 
+> **Status: complete — passed.** 1.97× min / 1.85× median vs T1,
+> all correctness criteria met. See [`mvp/OUTCOME.md`](mvp/OUTCOME.md)
+> for the writeup and [`mvp/STATUS.md`](mvp/STATUS.md) for the dev
+> log. The findings drove the third-pass v1 rescope in
+> [`T2/08_v1_loop_tier.md`](T2/08_v1_loop_tier.md).
+
 Stop planning the universe. Pick the smallest experiment that retires
 the central question — *can this architecture produce code that beats
 T1 at all?* — and ship it. Everything else in `T2.md` is conditional

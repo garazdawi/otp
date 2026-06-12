@@ -1,5 +1,13 @@
 # T2 — Profiling Infrastructure
 
+> **v1 scope rescoped by [`08_v1_loop_tier.md`](08_v1_loop_tier.md)
+> §S1/§S4**: v1 keeps only the call counter and the function-entry
+> type slots (§7.1–7.4); arith/call-return/switch sites (§7.3 items
+> 2–4), the monomorphic-target slot (§7.5), map-shape feedback
+> (§7.6) and branch counters (§7.7) are deferred behind their
+> consumers' gates, and §7.8's SSA chunk is replaced by building IR
+> from the loaded BEAM code (§7.8 stays as the G1 fallback design).
+>
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers §7: the T1 profiling changes
 > that produce the data T2 consumes — eligibility check, type

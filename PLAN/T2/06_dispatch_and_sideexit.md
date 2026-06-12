@@ -1,5 +1,16 @@
 # T2 — Dispatch, Install/Uninstall, and Side-exits
 
+> **v1 scope rescoped by [`08_v1_loop_tier.md`](08_v1_loop_tier.md)**:
+> §§1–3 and §5.1–5.2 carry into v1 unchanged; §4.3's inlined-region
+> deopt stubs and §5.3–5.5's CP patching / lazy stack scan are
+> deferred to general inlining — v1 blobs contain no CPs (08 §S3),
+> so uninstall is prologue revert + thread-progress + a single
+> `c_p->i` translation. §4.2 gains a static-exit subcase: ops outside
+> the supported set lower as unconditional branches to their T1 PC.
+> The §2.3/§3.1 yield stub applies to *entry* yields; loop back-edge
+> yields save a T2 resume stub instead (08 §S5 — the MVP's §6 "Yield"
+> shape, promoted to the production model).
+>
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers the *concrete mechanics* of how a
 > T2 blob is plugged into a running BEAM, how it is unplugged again,

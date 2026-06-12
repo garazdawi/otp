@@ -1,5 +1,11 @@
 # T2 — Delivery (Observability, Testing, Phases, Risks)
 
+> **v1 phase plan superseded**: the §17 phases 0–4 and Appendix B's
+> 48–50-week v1 estimate are replaced by the rescoped P0–P4 (~24–26
+> weeks) in [`08_v1_loop_tier.md`](08_v1_loop_tier.md) §6, which also
+> gates phases 5+ behind MVP-style experiments. §16 (observability)
+> and §16A (testing strategy) carry into v1 unchanged.
+>
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers §§16–19 and the appendices: the
 > project-management material — observability hooks, testing
@@ -252,7 +258,11 @@ constant-fun-target inlining all work end-to-end.
 - T2 recognises annotated callees with constant-known fun arg.
 - Tail-recursion → loop recovery.
 - LoopInfo analysis pass.
-- Multi-frame deopt dispatch (the hard part).
+- Per-region deopt stubs emitted from codegen-time framestate
+  metadata. (An earlier draft listed "multi-frame deopt dispatch
+  (the hard part)" here — that machinery was eliminated by the
+  eager-CP-push design; see Appendix C "State preservation and
+  deopt".)
 
 Benchmark: big wins on accessor-heavy code, on `lists:foldl`/
 `lists:map`-heavy code, gen_server callback dispatch.
@@ -365,6 +375,10 @@ cut early.
    adds 80% to BEAM file size, deployment friction.
    **Mitigation**: investigate compact encoding (arena-allocated
    custom format vs ETF) in Phase 0.
+   *Superseded by the third-pass rescope*: with IR built from the
+   loaded BEAM code (`08_v1_loop_tier.md` §S1) this risk disappears
+   and is replaced by "SSA reconstruction loses material structure"
+   — mitigated by the G1 fidelity gate, with the chunk as fallback.
 6. **AOT changes break existing modules.** Adding the SSA chunk
    and `jit_inline` annotation must be backwards-compatible.
    **Mitigation**: chunk is optional; old loaders ignore unknown
@@ -389,6 +403,10 @@ These were open questions at design time, resolved during review:
   §6.
 - **BEAM SSA at runtime.** New BEAM chunk + new C API +
   mandatory compile option (`+t2_compile_eligible`). Detail: §7.6.
+  *Superseded by the third-pass rescope*: v1 builds IR from the
+  loaded BEAM code (no chunk, no compile option, works on existing
+  beams); the chunk design remains the G1 fallback. See
+  `08_v1_loop_tier.md` §S1.
 - **Counter / feedback vector placement.** Side table per
   module; emitted only for tier-2-eligible functions. Detail: §7.
 - **OSR-exit in v1.** Yes, required for `erlang:trace/3`. In the

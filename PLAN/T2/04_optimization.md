@@ -1,5 +1,15 @@
 # T2 — Optimization (Inlining + Code Generation)
 
+> **v1 scope rescoped by [`08_v1_loop_tier.md`](08_v1_loop_tier.md)**:
+> v1 inlining is local-leaf + `lists:*` intrinsics with literal funs
+> only; §10.1's cross-module monomorphic inlining (and §7.5's slot
+> that feeds it) is gated on the G3 experiment. §10.5's loop
+> recovery applies *first and foremost to the compiled function's
+> own self-tail-recursion* — the MVP's validated core win — not just
+> to inlined helpers. Unrolling (§10.6) is deferred unless the P3
+> corpus shows `test_heap` coalescing wins; LICM-lite (preheader
+> guard hoisting) stays.
+>
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers §§10–11: the inlining strategy
 > (what we inline in v1, the higher-order-intrinsic annotation

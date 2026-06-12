@@ -1,5 +1,13 @@
 # T2 — Compilation and Speculation
 
+> **v1 scope rescoped by [`08_v1_loop_tier.md`](08_v1_loop_tier.md)**:
+> v1 uses re-call-only deopt — §9.2's framestates/eager-CP-push are
+> deferred to general inlining (post-G3), `speculate_range` is cut
+> from v1 in favour of flag-checked overflow side-exits (08 §S4),
+> and "unsupported op" is no longer a compile abort but a static
+> side-exit region terminator (08 §2). §9.1's claim of an existing
+> per-instruction T1 PC table is corrected in 08 §3.
+>
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers §§8–9: the T2 compilation
 > pipeline (pass list, ordering rationale, what we deliberately
@@ -149,10 +157,16 @@ maintains T1's exact X/Y state (§6). A `speculate_type` or
 the speculate guards. No stub, no metadata table lookup, no
 framestate reconstruction.
 
-The cold-tail address is resolved at T2 codegen time by reading the
-T1 blob's per-instruction PC table (which BeamAsm already maintains
-for line-number debugging). This is the *only* T1↔T2 cross-reference,
-and it's resolved once at codegen, not per deopt.
+The cold-tail address is resolved at T2 codegen time by reading a
+T1-side PC table. **Correction (verified against the code):** BeamAsm
+does *not* maintain a per-instruction PC table today — only
+per-function line tables (`beam_ranges.c`); `erts_debug:disassemble/1`
+returns `false` under the JIT. The table must be *emitted* by T1 at
+load time for eligible functions. v1 needs only three kinds of entry
+(function entries, call ops, post-call continuations — see
+`08_v1_loop_tier.md` §3); the full per-instruction table is costed
+when general mid-function deopt lands. Either way it is the *only*
+T1↔T2 cross-reference, resolved once at codegen, not per deopt.
 
 ### 9.2 Inlined-region deopt — eager-CP-push
 

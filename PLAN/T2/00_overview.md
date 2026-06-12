@@ -3,6 +3,12 @@
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers §§1–4: goals, motivation,
 > architecture diagram, and the prior-art-vs-departures choices.
+>
+> **v1 scoping superseded.** After the MVP passed,
+> [`08_v1_loop_tier.md`](08_v1_loop_tier.md) rescoped v1; where it
+> conflicts with the v1 framing here (SSA chunk, framestates, the
+> 48–50-week phase plan), 08 wins. This file remains the reference
+> for goals, motivation, and the full-design architecture.
 
 ## 1. Goals and non-goals
 

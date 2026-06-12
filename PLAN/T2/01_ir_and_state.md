@@ -1,5 +1,13 @@
 # T2 — IR and State Preservation
 
+> **v1 scope rescoped by [`08_v1_loop_tier.md`](08_v1_loop_tier.md)**:
+> v1 builds this IR from the *loaded BEAM code* via SSA
+> reconstruction rather than an SSA chunk (08 §S1), and the
+> framestate machinery (§5.1's `T2FrameState`, §6.5's
+> inlined-region framestates) is deferred to general inlining —
+> v1 deopt is re-call-only (08 §S2). The sync-point model of §6 is
+> unchanged and is the part the MVP validated.
+>
 > Part of the T2 design. See [`README.md`](README.md) for the full
 > document index. This file covers §§5–6: the T2 SSA IR (op
 > categories, type lattice, where types come from, why a new IR
