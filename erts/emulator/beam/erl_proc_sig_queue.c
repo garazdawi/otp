@@ -2949,12 +2949,19 @@ erts_proc_sig_send_demonitor(ErtsPTabElementCommon *sender, Eterm from,
     sig->common.tag = ERTS_PROC_SIG_MAKE_TAG(ERTS_SIG_Q_OP_DEMONITOR,
                                              type, 0);
 
+    /*
+     * Monitor and demonitor signals are part of synchronous call
+     * patterns (e.g. gen_server:call); let the woken receiver be
+     * eligible for inline scheduling handoff.
+     */
+    erts_sched_handoff_hint_begin();
     if (is_not_internal_pid(to)
         || !proc_queue_signal(sender, from, to, sig,
                               !(system || (is_pid(from) || is_port(from))),
                               ERTS_SIG_Q_OP_DEMONITOR)) {
         erts_monitor_release(mon);
     }
+    erts_sched_handoff_hint_end();
 }
 
 int
@@ -2963,6 +2970,7 @@ erts_proc_sig_send_monitor(ErtsPTabElementCommon *sender, Eterm from,
 {
     ErtsSignal *sig = (ErtsSignal *) mon;
     Uint32 type = ERTS_ML_GET_TYPE(mon);
+    int res;
 
     ASSERT(is_internal_pid(to) || to == am_undefined);
     ASSERT(erts_monitor_is_target(mon));
@@ -2970,7 +2978,11 @@ erts_proc_sig_send_monitor(ErtsPTabElementCommon *sender, Eterm from,
     sig->common.tag = ERTS_PROC_SIG_MAKE_TAG(ERTS_SIG_Q_OP_MONITOR,
                                              type, 0);
 
-    return proc_queue_signal(sender, from, to, sig, 0, ERTS_SIG_Q_OP_MONITOR);
+    /* See erts_proc_sig_send_demonitor() */
+    erts_sched_handoff_hint_begin();
+    res = proc_queue_signal(sender, from, to, sig, 0, ERTS_SIG_Q_OP_MONITOR);
+    erts_sched_handoff_hint_end();
+    return res;
 }
 
 void
