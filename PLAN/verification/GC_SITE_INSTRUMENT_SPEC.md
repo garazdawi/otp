@@ -76,9 +76,29 @@ Phase 0 is being built incrementally on aarch64. **Done and tested**
   at the allocation → GC-invariant, no HTOP-delta staleness.
   `HeapOnlyAlloc` deliberately *not* noted (avoids double-counting the
   test_heap-reserved region). No double-counting confirmed.
+- **Per-function attribution** (JIT-inline): each function gets a
+  stable-address counter, found-or-created at codegen via its
+  `{M,F,A}`, incremented inline; readout
+  `erts_debug:get_internal_state(alloc_profile_sites)` →
+  `[{{M,F,A},Words}]`. Verified exact per function.
 - **Properties verified**: gross-churn semantic (transient garbage
   counted), per-process isolation, normal operation unaffected when
   off, correctness through GCs.
+
+**Capstone — real workload (`prof_json.erl`, native Darwin build).**
+`json:decode/1` of `twitter.json` ×20, per-function attribution:
+
+```
+total 17.6 MB;  64% {json,object_push,8}   24% {json,object_value,7}
+                 5% {json,object_start,7}    3% {json,array_start,7} ...
+```
+
+The tool names the exact allocators: result-map/object construction
+dominates JSON decode — confirming `GC_RESULTS.md`'s "map
+construction is the pool" with the precise functions, the worklist
+the whole GC investigation set out to produce. (C-path BIF
+allocation — the small `erlang:*` float-decode entries — is in the
+per-process total but not yet per-site; immaterial here.)
 
 **Remaining** (next increments): per-site MFA attribution (the
 counter is currently a per-process *total* — site attribution needs
