@@ -148,12 +148,28 @@ Eterm* erts_set_hole_marker(Eterm* ptr, Uint sz);
 #endif
 
 /*
+ * Heap-allocation profiling note (see PLAN/verification/
+ * GC_SITE_INSTRUMENT_SPEC.md). Counts C-path ("fresh") heap
+ * allocations — BIFs, dynamic maps, etc. — that bypass the JIT's
+ * inline test_heap hook. Gated by the startup flag and the
+ * per-process flag; counts at the point of allocation so it is
+ * GC-invariant (no HTOP-delta staleness). HeapOnlyAlloc is *not*
+ * noted: it allocates within an already-reserved region that the
+ * test_heap hook has accounted for, so noting it would double-count.
+ */
+extern int erts_alloc_profile_enabled;
+#define ERTS_GALLOC_NOTE(p, sz)                                             \
+  ((void) ((erts_alloc_profile_enabled && (p)->galloc_active)              \
+           ? ((p)->galloc_words += (Uint)(sz)) : (Uint)0))
+
+/*
  * Allocate heap memory, first on the ordinary heap;
  * failing that, in a heap fragment.
  */
 #define HAllocX(p, sz, xtra)                                                \
   (ASSERT((sz) >= 0),                                                       \
      ErtsHAllocLockCheck(p),                                                \
+     ERTS_GALLOC_NOTE((p),(sz)),                                            \
      ((IS_FORCE_HEAP_FRAGS || (!HEAP_START(p) || HeapWordsLeft(p) < (sz)))  \
       ? erts_heap_alloc((p),(sz),(xtra))                                    \
       : (INIT_HEAP_MEM(HEAP_TOP(p), sz),                                    \
@@ -219,11 +235,13 @@ Eterm* erts_set_hole_marker(Eterm* ptr, Uint sz);
 #  define HeapFragOnlyAlloc(p, sz)              \
   (ASSERT((sz) >= 0),                           \
    ErtsHAllocLockCheck(p),                      \
+   ERTS_GALLOC_NOTE((p),(sz)),                  \
    erts_heap_alloc((p),(sz),0))
 #else
 #  define HeapFragOnlyAlloc(p, sz)              \
   (ASSERT((sz) >= 0),                           \
    ErtsHAllocLockCheck(p),                      \
+   ERTS_GALLOC_NOTE((p),(sz)),                  \
    erts_heap_alloc((p),(sz),512))
 #endif
 
