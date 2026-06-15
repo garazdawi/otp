@@ -56,43 +56,81 @@ Grounded in `erl_gc.c` / `erl_vm.h` (read 2026-06-15):
    (`erl_alloc_util.c:7959`) + `instrument:allocations` show the
    shape a BIF + histogram readout should take.
 
-## Phase 0 — sampling allocation profiler (recommended first)
+## Phase 0 — event-driven allocation-volume profiler (recommended first)
 
-**Goal**: allocation *volume* by site, statistically. Skips per-term
-metadata, the GC-walk, and (mostly) the JIT changes. Likely delivers
-the worklist at ~10% of the full cost and risk.
+**Goal**: allocation *volume* by site, **exact, not sampled**. Skips
+per-term metadata, the GC-walk, and the GC-copy-loop changes
+entirely. Delivers the worklist at a fraction of Phase 1's cost/risk.
 
-**Mechanism**: a periodic sampler (reuse the existing reduction-based
-yield check, or a per-scheduler timer) that, on each tick, reads the
-running process's `c_p->i` (current BEAM IP — already maintained
-cheaply when `erts_alcu_enable_code_atags` is set, per
-`instr_common.cpp:3103`) and the words allocated since the last tick,
-and credits those words to the IP. IP → `{M,F,A}`+line via
-`erts_find_function_from_pc` (`beam_ranges.c:299`).
+**Mechanism** (the key realisation: hook the *heap-reserving
+instructions*, where the allocation size is a compile-time constant
+and the machine state is already GC-safe — verified against the JIT):
 
-- *Allocated-since-last-tick* is the awkward part: `htop` resets at
-  GC. Track a per-process cumulative `total_heap_allocated` counter
-  (incremented at GC by the pre-GC `htop - heap` and between by
-  reading `htop`); sample its delta. One counter, no per-term store.
-- *Attribution granularity*: statistical (sample rate × allocation
-  rate), like a CPU profiler. Good enough to rank sites; not exact.
-- *Lifetime*: not captured per site, but the **global** survival
-  fraction from `gc_inst` already bounds it, and Phase 0 can bucket
-  samples by "process whose survival fraction is low" to separate
-  garbage-heavy from retention-heavy processes.
+1. **`test_heap` / `allocate_heap`** (`emit_gc_test`,
+   `instr_common.cpp:137`): `bytes_needed` (specifically `Nh`, the
+   *heap* words) is a literal known at codegen, and `after_gc_check`
+   is a GC-safe point. When eheap atags are enabled, record
+   `(site, Nh_words)` there. The site is this instruction's own
+   address (a codegen constant), mapped to `{M,F,A}` via
+   `erts_find_function_from_pc` (`beam_ranges.c:299`) at readout.
+2. **BIF returns** (`emit_i_bif_body_shared`, `instr_bif.cpp:70`):
+   BIFs allocate variably via their own `HAlloc`. HTOP lives in
+   x23 and there is already an `emit_leave_runtime` boundary —
+   snapshot HTOP before the call, diff after, attribute
+   `HTOP_after − HTOP_before` to the BIF's MFA. Covers the
+   `binary_to_term`/`list_to_binary`/etc. allocators that have no
+   preceding `test_heap`.
+3. **`bs_create_bin` / `bs_*`** heap reservations: same as (1) —
+   hook the size-known reservation point.
 
-**Cost**: a per-process counter, a sampler hook in the scheduler
-loop, a global IP→words histogram, one BIF to read it. ~300–500 LOC
-C, no GC-copy-loop change, no metadata arrays, no per-arch JIT
-codegen. **Risk: low** — additive, off by default, touches no
-correctness-critical GC path.
+   (`trim` / `i_trim` is **not** a hook site — it adjusts the stack,
+   not the heap, so it allocates nothing. The heap-reserving
+   instructions above are the complete set.)
+
+This is **exact and event-driven**: it fires only at allocation
+points (zero cost for non-allocating code), and records the precise
+words each site reserves, not a statistical estimate. It is the
+heap-side analogue of the existing `+M atags code` (which only sees
+`erts_alloc`), gated the same way (`+M…atags code` for eheap, or a
+dedicated `+RGsites` flag).
+
+**Two overhead variants:**
+
+- *C call* (simplest to prototype): at the hook, call a recorder
+  `erts_record_heap_alloc(site, words)`. Needs `enter/leave_runtime`
+  (register flush) at each `test_heap` — heavy, but fine for a
+  profiling mode that's off by default.
+- *Inline per-site counter* (low overhead, recommended): give each
+  `test_heap` site a 64-bit counter slot allocated at load time
+  (same pattern as the per-function profiling counters already in the
+  T2 plan); emit an inline `ldr/add/str` (3 instructions, no register
+  flush, no safe-point dance) incrementing it by `Nh`. Readout walks
+  the slots, maps each site→MFA. No C call on the hot path.
+
+**Captures**: allocation *volume* by site (exact). **Does not
+capture**: per-site *lifetime* — that still needs GC correlation
+(Phase 1). But the **global** survival fraction from `gc_inst`
+already establishes the garbage is short-lived, and the volume
+ranking restricted to low-survival processes is the actionable
+worklist.
+
+**Cost**: the JIT hook at `emit_gc_test` (+ the bs/allocate variants)
+and the BIF-return delta, a per-site counter table or a global
+IP→words histogram, one readout BIF. Per-arch JIT touch, but *only*
+at the allocation instructions and *only* an inline counter increment
+— no GC-copy-loop change, no per-term metadata, no 2× heap memory.
+**Risk: low–moderate** — additive, off by default; the only
+correctness concern is that the counter increment must not perturb
+the allocation/GC fast path (the inline variant is a plain memory
+store, inert to GC).
 
 **Deliverable test**: run against Bandit + RabbitMQ in colima (the
-existing leg scripts), produce a ranked `MFA → allocated-bytes/s`
-table. Compare against the perf hot-function list — if it agrees,
-the coarse list was already the worklist and Phase 1 is unnecessary;
-if it surfaces allocators perf missed (allocation ≠ CPU), that's the
-new signal.
+existing leg scripts), produce a ranked `MFA → allocated-bytes`
+table. Compare against the `+JPperf` hot-function list — if it
+agrees, the coarse list was already the worklist and Phase 1 is
+unnecessary; if it surfaces allocators perf missed (allocation ≠
+CPU — a function can allocate heavily while costing little CPU),
+that's the new, valuable signal.
 
 ## Phase 1 — full per-term lifetime+site histogram (idea #50)
 
@@ -160,23 +198,33 @@ corrupts the heap silently. Demands the full GC test battery.
 
 ## Decision
 
-**Recommendation: build Phase 0, then re-decide.** The major-GC
-mystery turned out to be library config (not garbage at all), which
-removed the most urgent motivation. What remains — attributing the
-genuine minor-GC allocation churn — is real but we already have a
-coarse worklist from perf + the global survival fractions. Phase 0
-(low-risk sampling profiler) sharpens that into an allocation-weighted
-ranking cheaply; if its ranking matches the perf list, **the full
-Phase 1 build is not worth its cost and risk**, and the next move is
-straight to acting on the sites (escape analysis / heap-size tuning).
-Phase 1 is reserved for the case where per-site *lifetime* precision
-is the actual blocker for a specific optimization decision — which no
-current finding requires yet.
+**Recommendation: build Phase 0 (the event-driven volume profiler),
+then re-decide.** It is the right first build: exact, low-risk, no
+GC-copy-loop surgery, reuses the IP→MFA + histogram-readout infra,
+and answers the actual question ("which sites allocate the churn").
+The major-GC mystery turned out to be library config (not garbage at
+all), which removed the most urgent motivation; what remains is
+attributing the genuine minor-GC allocation churn, and Phase 0 does
+that exactly. If its ranking matches the perf hot-function list,
+**the full Phase 1 metadata-array build is not worth its cost and
+risk**, and the next move is straight to acting on the sites (escape
+analysis / heap-size tuning). Phase 1 (per-site *lifetime*) is
+reserved for the case where lifetime precision is the actual blocker
+for a specific optimization decision — which no current finding
+requires yet.
 
 In short: the heavy GC instrumentation is now *specified and
 ready to build*, but the evidence says **measure cheaper first (Phase
 0) and likely skip the heavy build**, consistent with the session's
 discipline of not building infrastructure ahead of a validated need.
+
+> **Phase 0 design credit / note**: the event-driven hook approach
+> (record at `test_heap`/BIF-return rather than per-term or by
+> sampling) replaced an earlier statistical-sampling sketch. It is
+> better on every axis — exact instead of estimated, event-driven
+> instead of timer-driven, zero cost for non-allocating code — and
+> it is the heap-side mirror of the existing erts_alloc atags
+> mechanism. This is the build to do.
 
 ## References
 
