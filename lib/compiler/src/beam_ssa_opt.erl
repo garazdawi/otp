@@ -714,7 +714,32 @@ ssa_opt_scan_loop_rewrite({#opt_st{ssa=Blocks0,args=Args,anno=Anno0,cnt=Cnt0}=St
 ssa_opt_scan_loop_rewrite({St, FuncDb}) ->
     {St, FuncDb}.
 
+%% The largest binary-match footprint among the validated json scans
+%% (json:string/7 has 6 bs_match/bs_ensure/bs_start_match ops). Functions
+%% with more have complex multi-region matching whose backtracking trips
+%% a bs_pos_bsm3 save-placement edge case (a position save lands in a
+%% [op,succeeded] test block -> cg_test crash). Skipping them is correct
+%% (just unoptimized); the proper fix is in pre_codegen's deferred-save
+%% placement (PLAN/T2/09, task #19).
+-define(SCAN_MAX_BS_OPS, 6).
+
 scan_rewrite(#{class:=Class, counters:=Counters}, Args, Blocks0, Cnt0) ->
+    case scan_bs_op_count(Blocks0) > ?SCAN_MAX_BS_OPS of
+        true ->
+            none;
+        false ->
+            scan_rewrite_1(Class, Counters, Args, Blocks0, Cnt0)
+    end.
+
+scan_bs_op_count(Blocks) ->
+    maps:fold(fun(_L, #b_blk{is=Is}, Acc) ->
+                      Acc + length([1 || #b_set{op=Op} <- Is,
+                                         (Op =:= bs_match orelse
+                                          Op =:= bs_ensure orelse
+                                          Op =:= bs_start_match)])
+              end, 0, Blocks).
+
+scan_rewrite_1(Class, Counters, Args, Blocks0, Cnt0) ->
     case {scan_encode_class(Class), scan_start_match_blocks(Blocks0)} of
         {{ok,Kind,Range,VPack}, [{L,CtxVar}]} ->
             %% bs_scan produces the *advanced* match context CtxNew (so the
