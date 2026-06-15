@@ -1256,6 +1256,23 @@ behavior of earlier flags.
     > properly in OTP. When these bugs have been fixed, this flag will be
     > removed.
 
+  - **`+sih true|migrate|false`{: #+sih }** - Sets the scheduler inline handoff
+    mode. By default (`true`) inline handoff is enabled. When a running process
+    wakes another process up by sending it a message, the woken process is
+    placed on the current scheduler's run queue instead of being scheduled on
+    another scheduler, and is run inline using the remaining part of the waking
+    process' time slice when the waking process schedules out (for example, by
+    blocking in a `receive`). This improves latency and cache locality for
+    synchronous communication patterns such as
+    [`gen_server:call/2,3`](`gen_server:call/2`), at no extra reduction cost
+    since the woken process runs on reductions the waking process was already
+    entitled to.
+
+    When set to `migrate`, the woken process is still moved to the waking
+    process' run queue (avoiding an inter-scheduler wakeup), but is not run
+    inline and instead gets a time slice of its own. When set to `false`, a
+    woken process is scheduled as usual on its assigned run queue.
+
   - **`+spp Bool`{: #+spp }** - Sets default scheduler hint for port
     parallelism. If set to `true`, the virtual machine schedules port tasks when
     it improves parallelism in the system. If set to `false`, the virtual
