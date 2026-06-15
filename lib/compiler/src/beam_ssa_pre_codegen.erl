@@ -238,6 +238,9 @@ fix_bs(#st{ssa=Blocks,cnt=Count0}=St) ->
            (#b_set{op=bs_match,dst=Dst,args=[_,ParentCtx|_]}, A) ->
                 %% Link this match context to the previous match context.
                 A#{Dst => ParentCtx};
+           (#b_set{op=bs_scan,dst=Dst,args=[ParentCtx|_]}, A) ->
+                %% A1-1b: bs_scan yields the advanced context.
+                A#{Dst => ParentCtx};
            (_, A) ->
                 A
         end,
@@ -253,8 +256,24 @@ fix_bs(#st{ssa=Blocks,cnt=Count0}=St) ->
             %% Insert position instructions where needed.
             {Linear1,Count} = bs_pos_bsm3(Linear0, CtxChain, Count0),
 
+            %% A1-1b: combine bs_scan + bs_extract (the byte count) into a
+            %% single bs_scan that writes the count register, and rename
+            %% the now-undefined advanced-context dst to the root context
+            %% (rename_vars also rewrites phi arguments).
+            {Linear2,ScanRen} = bs_merge_scans(Linear1, CtxChain),
+            Linear3 = case map_size(ScanRen) of
+                          0 ->
+                              Linear2;
+                          _ ->
+                              Blocks2 = maps:from_list(Linear2),
+                              RPO2 = beam_ssa:rpo(Blocks2),
+                              Blocks3 = beam_ssa:rename_vars(ScanRen, RPO2,
+                                                             Blocks2),
+                              beam_ssa:linearize(Blocks3)
+                      end,
+
             %% Rename instructions.
-            Linear = bs_instrs(Linear1, CtxChain, []),
+            Linear = bs_instrs(Linear3, CtxChain, []),
 
             St#st{ssa=maps:from_list(Linear),cnt=Count}
     end.
@@ -462,6 +481,15 @@ bs_restores_is([#b_set{op=bs_match,dst=NewPos,args=Args}=I|Is],
                     bs_restores_is(Is, CtxChain, SPos, FPos, Rs)
             end
     end;
+bs_restores_is([#b_set{op=bs_scan,dst=NewPos,args=[_FromCtx|_]}|Is],
+               CtxChain, SPos0, _FPos, Rs) ->
+    %% A1-1b: bs_scan always succeeds and advances the position in place,
+    %% so it is treated like a plain match that moves the position to its
+    %% dst (the advanced context).
+    Start = bs_subst_ctx(NewPos, CtxChain),
+    SPos = SPos0#{Start := NewPos},
+    FPos = SPos,
+    bs_restores_is(Is, CtxChain, SPos, FPos, Rs);
 bs_restores_is([#b_set{op=bs_extract,args=[FromPos|_]}|Is],
                CtxChain, SPos, _FPos, Rs) ->
     Start = bs_subst_ctx(FromPos, CtxChain),
@@ -694,6 +722,56 @@ bs_combine(Dst, Ctx, [{L,#b_blk{is=Is0}=Blk}|Acc]) ->
                                Succeeded#b_set{args=[Dst]}]),
             [{L,Blk#b_blk{is=Is}}|Acc]
     end.
+
+%% A1-1b: merge `CtxNew = bs_scan ...` immediately followed by
+%% `Count = bs_extract CtxNew` into a single bs_scan that writes the
+%% count register. The advanced context CtxNew is dropped here; bs_instrs
+%% substitutes any remaining reference to the root context.
+bs_merge_scans(Linear, CtxChain) ->
+    bs_merge_scans(Linear, CtxChain, [], #{}).
+
+bs_merge_scans([{L,#b_blk{is=Is0}=Blk}|Bs], CtxChain, Acc, Ren0) ->
+    {Is,Ren} = bs_merge_scans_is(Is0, CtxChain, Ren0),
+    bs_merge_scans(Bs, CtxChain, [{L,Blk#b_blk{is=Is}}|Acc], Ren);
+bs_merge_scans([], _CtxChain, Acc, Ren) ->
+    {reverse(Acc), Ren}.
+
+bs_merge_scans_is(Is, CtxChain, Ren0) ->
+    %% A bs_scan and its count-extracting bs_extract may be separated by
+    %% position-save instructions inserted by bs_pos_bsm3, so don't rely on
+    %% adjacency: map each bs_scan dst (the advanced context) to its
+    %% extracted count, make the bs_scan write the count directly, drop the
+    %% extract, and return a rename of the advanced-context dst to the root
+    %% context (applied by the caller so phi args are handled too).
+    Scans = maps:from_list([{D,Ctx} || #b_set{op=bs_scan,dst=D,
+                                              args=[Ctx|_]} <- Is]),
+    Counts = maps:from_list(
+               [{Src,Count} || #b_set{op=bs_extract,dst=Count,args=[Src]} <- Is,
+                               is_map_key(Src, Scans)]),
+    case map_size(Counts) of
+        0 ->
+            {Is, Ren0};
+        _ ->
+            Ren = maps:fold(fun(ScanDst, Ctx, R) ->
+                                    R#{ScanDst => bs_subst_ctx(Ctx, CtxChain)}
+                            end, Ren0, maps:with(maps:keys(Counts), Scans)),
+            {bs_merge_scans_rewrite(Is, Counts), Ren}
+    end.
+
+bs_merge_scans_rewrite([#b_set{op=bs_scan,dst=D}=Scan|Is], Counts) ->
+    case Counts of
+        #{D := Count} ->
+            [Scan#b_set{dst=Count}|bs_merge_scans_rewrite(Is, Counts)];
+        #{} ->
+            [Scan|bs_merge_scans_rewrite(Is, Counts)]
+    end;
+bs_merge_scans_rewrite([#b_set{op=bs_extract,args=[Src]}|Is], Counts)
+  when is_map_key(Src, Counts) ->
+    bs_merge_scans_rewrite(Is, Counts);
+bs_merge_scans_rewrite([I|Is], Counts) ->
+    [I|bs_merge_scans_rewrite(Is, Counts)];
+bs_merge_scans_rewrite([], _Counts) ->
+    [].
 
 bs_subst_ctx(#b_var{}=Var, CtxChain) ->
     case CtxChain of

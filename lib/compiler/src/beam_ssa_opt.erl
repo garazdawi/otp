@@ -717,8 +717,13 @@ ssa_opt_scan_loop_rewrite({St, FuncDb}) ->
 scan_rewrite(#{class:=Class, counters:=Counters}, Args, Blocks0, Cnt0) ->
     case {scan_encode_class(Class), scan_start_match_blocks(Blocks0)} of
         {{ok,Kind,Range,VPack}, [{L,CtxVar}]} ->
-            CountVar = #b_var{name=Cnt0},
-            {Adds,Rename,Cnt1} =
+            %% bs_scan produces the *advanced* match context CtxNew (so the
+            %% position tracker in pre_codegen follows the advance and the
+            %% backtracking save captures the post-scan position); the byte
+            %% count is pulled with bs_extract and folded into each counter.
+            CtxNew = #b_var{name=Cnt0},
+            CountVar = #b_var{name=Cnt0+1},
+            {Adds,CntRename,Cnt1} =
                 lists:foldl(
                   fun({Index,1}, {As,Ren,C}) ->
                           Formal = lists:nth(Index+1, Args),
@@ -728,14 +733,19 @@ scan_rewrite(#{class:=Class, counters:=Counters}, Args, Blocks0, Cnt0) ->
                           {[Add|As], Ren#{Formal => NewV}, C+1};
                      ({_Index,_K}, Acc) ->
                           Acc
-                  end, {[], #{}, Cnt0+1}, Counters),
+                  end, {[], #{}, Cnt0+2}, Counters),
+            %% Thread the context (CtxVar -> CtxNew) and the counters
+            %% (Len -> Len') in the downstream uses; bs_scan and the adds
+            %% read the originals (inserted after the rename).
+            Rename = CntRename#{CtxVar => CtxNew},
             Labels = beam_ssa:rpo(Blocks0),
             Blocks1 = beam_ssa:rename_vars(Rename, Labels, Blocks0),
-            Scan = #b_set{op=bs_scan,dst=CountVar,
+            Scan = #b_set{op=bs_scan,dst=CtxNew,
                           args=[CtxVar,#b_literal{val=Kind},
                                 #b_literal{val=Range},#b_literal{val=VPack}]},
-            Blocks = scan_insert_after(L, CtxVar, [Scan|lists:reverse(Adds)],
-                                       Blocks1),
+            Extract = #b_set{op=bs_extract,dst=CountVar,args=[CtxNew]},
+            New = [Scan, Extract | lists:reverse(Adds)],
+            Blocks = scan_insert_after(L, CtxVar, New, Blocks1),
             {Blocks, Cnt1};
         {_, _} ->
             none
