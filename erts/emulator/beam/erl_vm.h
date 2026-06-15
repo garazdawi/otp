@@ -158,9 +158,10 @@ Eterm* erts_set_hole_marker(Eterm* ptr, Uint sz);
  * test_heap hook has accounted for, so noting it would double-count.
  */
 extern int erts_alloc_profile_enabled;
+void erts_galloc_note_cpath(struct process *p, Uint sz);
 #define ERTS_GALLOC_NOTE(p, sz)                                             \
   ((void) ((erts_alloc_profile_enabled && (p)->galloc_active)              \
-           ? ((p)->galloc_words += (Uint)(sz)) : (Uint)0))
+           ? (erts_galloc_note_cpath((p), (Uint)(sz)), 0) : 0))
 
 /*
  * Allocate heap memory, first on the ordinary heap;

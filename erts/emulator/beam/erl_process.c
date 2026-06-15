@@ -212,6 +212,25 @@ erts_galloc_get_counter(Eterm module, Eterm function, Uint arity)
     return &s->words;
 }
 
+/* C-path allocation (BIFs, dynamic maps, gc_bif arithmetic): add to
+ * the per-process total, and attribute per-function via the current
+ * BEAM instruction pointer (c_p->i, set at BIF call sites), resolved
+ * to an MFA by the code ranges. Called only when actively profiling
+ * (the macro gate already checked), so the find_function_from_pc +
+ * counter lookup cost is paid only under profiling. */
+void
+erts_galloc_note_cpath(Process *p, Uint sz)
+{
+    const ErtsCodeMFA *mfa;
+    p->galloc_words += sz;
+    mfa = erts_find_function_from_pc(p->i);
+    if (mfa) {
+        Uint *c = erts_galloc_get_counter(mfa->module, mfa->function,
+                                          mfa->arity);
+        *c += sz;
+    }
+}
+
 void
 erts_galloc_reset(void)
 {
