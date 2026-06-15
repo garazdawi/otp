@@ -124,40 +124,118 @@ that the broker's cost is term-plumbing/routing/ETS, not a single
 function. (Note `rabbit_mqtt_packet:parse_*` ~14 % *is* the binary
 G-bin shape, the one slice a JIT could meaningfully fuse.)
 
+## Third app — Bandit + **Ash** + Postgres (realistic framework)
+
+The first Bandit run is a *thin* API: decode JSON → build one map →
+`Ecto.insert_all` / `Repo.all`. Real Elixir web apps run a framework.
+This run swaps the bare Ecto handler for **Ash 3 + AshPostgres** (one
+of the explicitly-targeted frameworks) backed by a real Postgres in
+the container: a `Bench.Item` resource, `Ash.Changeset.for_create →
+Ash.create!` per record on `op:"create"`, `Ash.Query.sort/limit →
+Ash.read!` on `op:"list"`. Same OTP 29 instrumented build (Elixir
+1.19.2, `elixir-otp-28` zip runs cleanly on OTP 29), same global
+`alloc_profile_all` switch, 12 s window, ~795 MB/s allocation rate
+(9.5 GB total — heavy load).
+
+```
+total 9.5 GB allocated
+
+ 12.31%  erlang:is_atom/1            ┐
+  7.71%  erlang:put/2                │ C-path cross-attribution
+  4.97%  erlang:erase/1             ┘ (leaf guard + pdict BIFs)
+  4.33%  prim_inet:recv0/3           ┐ socket I/O
+  0.81%  prim_inet:send/4            ┘ (~5.6% incl. async_recv)
+  3.34%  Spark.Dsl.Extension:do_fetch_opt/3    ┐ Ash reads its
+  1.25%  Spark.Dsl.Extension:get_entities/2    │ compiled DSL at
+  0.51%  Spark.Dsl.Extension:persisted!/3      ┘ runtime (~5%)
+  3.12%  DBConnection.Holder:checkout_call/5   ┐
+  1.26%  Ecto.Repo.Queryable:struct_load!/6    │
+  1.07%  Ecto.Type:load/3                      │ Ecto / Postgrex /
+  1.00%  Ecto.Adapters.SQL:log/5               │ DBConnection driver
+  0.82%  Ecto.Type:process_loaders/3           │ stack (~11%, the
+  0.77%  Postgrex.Messages:parse/3             │ DB round-trip)
+  0.75%  Ecto.Type:adapter_load/3              │
+  0.66%  Postgrex.Messages:encode/1            ┘
+  0.96%  Ash.Actions.Create:commit/3           ┐ Ash action
+  0.69%  Ash.Helpers:do_deep_merge_maps/2      │ pipeline +
+  0.57%  Ash.CanOpts (validate/to_options)     │ authz (~4%)
+  0.46%  Ash.Actions.Helpers:restrict_field_access/2 ┘
+  1.20%  maps:from_list/1            ← was 46% in the thin run
+  0.95%  Jason.Encode:map_naive_loop/3
+  ...    long flat tail of Enum/Keyword/Access/maps, each ≤ 0.7%
+```
+
+**The headline: `maps:from_list/1` collapsed from 46 % to 1.2 %.**
+Adding a real framework + real DB I/O *dissolves* the single hot
+allocator into a long tail. The allocation is now **diffuse** — the
+DB driver stack (Ecto/Postgrex/DBConnection, ~11 %), Spark reading
+Ash's compiled DSL at runtime (~5 %), the Ash action/authorization
+pipeline (~4 %), socket I/O (~5.6 %), and JSON encode (~1 %) — with
+no structurally-meaningful allocator above ~4 %. The shape is
+RabbitMQ's, not the thin Bandit's.
+
+Caveat on the top three: `erlang:is_atom/1` (12 %), `erlang:put/2`
+(7.7 %), `erlang:erase/1` (5 %) are leaf guard / process-dictionary
+BIFs that do not themselves build terms on the process heap. They are
+**C-path cross-attribution** — `erts_galloc_note_cpath` resolves the
+allocator via `c_p->i`, and in Ash/Spark's extremely call-dense,
+guard-heavy, pdict-using code (telemetry/logger metadata, DBConnection
+state) these hot leaves are the frequent "landing spot" at a heap-
+fragment boundary. The precisely inline-attributed entries (the
+`Ash.*`/`Ecto.*`/`Spark.*`/`Jason.*` JIT-compiled functions) are the
+trustworthy, structurally-meaningful signal; the diffuse conclusion
+holds with or without the artifact.
+
 ## Significance
 
 This closes the loop the GC investigation opened. The original
 question — "where do deployed BEAM systems spend CPU, and what's the
 lever" — resolved to: VM-internal cost dominates servers, GC is the
-biggest coherent pool, the lever is reducing allocation, and **the
-allocation is concentrated in map construction and JSON
-ser/deser**. The tool that produced this is a working, tested,
-gated heap-allocation profiler in the ARM JIT + runtime, and it runs
-on real applications.
+biggest coherent pool, the lever is reducing allocation. **But the
+*concentration* of that allocation depends entirely on how thin the
+app is.** A micro-thin JSON API funnels ~half its churn through
+`maps:from_list`; a real framework (Ash) or a message broker
+(RabbitMQ) spreads the same churn across dozens of framework / driver
+/ protocol functions with no hot spot. The tool that produced this is
+a working, tested, gated heap-allocation profiler in the ARM JIT +
+runtime, and it runs on real applications.
 
-## Bandit vs RabbitMQ — the headline contrast
+## The headline contrast — thin API vs framework vs broker
 
-| | Bandit (JSON API) | RabbitMQ (MQTT broker) |
-|---|---|---|
-| total / 12 s | 18.2 GB | 4.5 GB |
-| top allocator | `maps:from_list/1` **46 %** | `trie_match_try/9` **9 %** |
-| shape | **concentrated** (1 fn ~½ the churn) | **diffuse** (long tail, no hot spot) |
-| nature | map construction + JSON ser/deser | routing + parsing + msg containers |
-| optimization lever | clear (attack `maps:from_list`) | none single; inherent broker work |
+| | Bandit thin (Jason+Ecto) | Bandit + **Ash** + PG | RabbitMQ (MQTT) |
+|---|---|---|---|
+| total / 12 s | 18.2 GB | 9.5 GB | 4.5 GB |
+| top *real* allocator | `maps:from_list/1` **46 %** | DB stack ~11 %, no fn > 4 % | `trie_match_try/9` **9 %** |
+| `maps:from_list/1` | **46 %** | **1.2 %** | — |
+| shape | **concentrated** (1 fn ~½) | **diffuse** (framework + DB) | **diffuse** (routing + parse) |
+| nature | map build + JSON ser/deser | Spark DSL + Ecto/Postgrex + Ash pipeline | routing + parsing + msg containers |
+| optimization lever | clear (attack `maps:from_list`) | none single; framework + DB I/O | none single; inherent broker work |
 
-The same tool, run on two real deployed servers, shows that "reduce
-allocation" is a sharp, actionable lever for one class (serialization
-APIs: a few functions dominate) and a diffuse, low-yield one for
-another (message brokers: allocation is spread across the routing /
-parsing / delivery logic). That distinction — which only per-function
-attribution on the real app can reveal — is the payoff.
+The same tool, run on three workloads, shows that **"reduce
+allocation" is only a sharp lever for thin serialization APIs** — and
+even there, the 46 % `maps:from_list` concentration is partly an
+artifact of the benchmark's thinness. The moment a realistic framework
+(Ash) or a message broker (RabbitMQ) is in the path, the same churn
+goes diffuse: spread across DSL interpretation, the DB driver stack,
+the action pipeline, routing and protocol parsing — no hot spot to
+attack. This is the grounding the investigation needed: the headline
+`maps:from_list` finding does not survive contact with a real
+framework. Per-function attribution on the *real* app is what reveals
+that — a synthetic or thin benchmark would have kept us chasing
+`maps:from_list`.
 
 ## Reproduction
 
-Bandit: build OTP 29 with the instrumentation (`git archive` → Linux
-aarch64 container → configure → make), then `bandit_galloc.sh`.
+Bandit (thin): build OTP 29 with the instrumentation (`git archive` →
+Linux aarch64 container → configure → make), then `bandit_galloc.sh`.
+Bandit + Ash + Postgres: same OTP 29 build, `bandit_ash.sh` —
+`apt-get postgresql`, seed an `items` table, `Mix.install([bandit,
+jason, ash ~> 3.0, ash_postgres ~> 2.0])` on Elixir 1.19.2
+(`elixir-otp-28` zip runs on OTP 29 with `ELIXIR_ERL_OPTIONS=+fnu`),
+`Bench.Item` Ash resource over the existing table (`integer_primary_key`,
+no migrations needed), `http_db.erl` driving mixed create/list batches.
 RabbitMQ: the patch applied to OTP 28.5.0.2 (rabbit doesn't boot on
 OTP 29) + a 2-line assembler-member fixup, `make release`, then
-`rabbit_galloc.sh`. Both use the global `alloc_profile_all` switch
+`rabbit_galloc.sh`. All use the global `alloc_profile_all` switch
 under load. The instrumentation is off by default (no
 `ERL_ALLOC_PROFILE`), zero overhead.
