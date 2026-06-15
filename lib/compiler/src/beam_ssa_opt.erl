@@ -378,9 +378,10 @@ ssa_opt_scan_loop({St, FuncDb}) ->
 
 scan_find_loops(Self, Args, Blocks) ->
     Defs = scan_defs(Blocks),
+    Preds = beam_ssa:predecessors(Blocks),
     Calls = scan_self_calls(Self, Blocks),
-    lists:foldl(fun(Call, Acc) ->
-                        case scan_match(Call, Args, Defs) of
+    lists:foldl(fun({Lsc, Call}, Acc) ->
+                        case scan_match(Lsc, Call, Args, Defs, Blocks, Preds) of
                             {ok, Scan} -> [Scan | Acc];
                             none -> Acc
                         end
@@ -395,16 +396,16 @@ scan_defs(Blocks) ->
               end, #{}, Blocks).
 
 scan_self_calls({Name,Arity}, Blocks) ->
-    maps:fold(fun(_L, #b_blk{is=Is}, Acc) ->
-                      [I || #b_set{op=call,
-                                   args=[#b_local{name=#b_literal{val=N},
-                                                  arity=A}|_]}=I <- Is,
-                            N =:= Name, A =:= Arity] ++ Acc
+    maps:fold(fun(L, #b_blk{is=Is}, Acc) ->
+                      [{L, I} || #b_set{op=call,
+                                        args=[#b_local{name=#b_literal{val=N},
+                                                       arity=A}|_]}=I <- Is,
+                                 N =:= Name, A =:= Arity] ++ Acc
               end, [], Blocks).
 
 %% Match one self-call against the scan idiom. The call args line up
 %% positionally with the function's formal args.
-scan_match(#b_set{op=call, args=[_Self | CallArgs]}, Args, Defs)
+scan_match(Lsc, #b_set{op=call, args=[_Self | CallArgs]}, Args, Defs, Blocks, Preds)
   when length(CallArgs) =:= length(Args) ->
     Pairs = lists:zip(Args, CallArgs),
     %% The match context is the single call arg defined by `bs_match`.
@@ -413,7 +414,7 @@ scan_match(#b_set{op=call, args=[_Self | CallArgs]}, Args, Defs)
         [{CtxIx, Ctx}] ->
             case scan_check_others(Pairs, CtxIx, Defs) of
                 {ok, Counters} ->
-                    case scan_byte_class(Ctx, Defs) of
+                    case scan_byte_class(Ctx, Lsc, Defs, Blocks, Preds) of
                         {ok, Byte, Class} ->
                             {ok, #{ctx_index => CtxIx,
                                    byte => Byte,
@@ -428,7 +429,7 @@ scan_match(#b_set{op=call, args=[_Self | CallArgs]}, Args, Defs)
         _ ->
             none
     end;
-scan_match(_, _, _) ->
+scan_match(_, _, _, _, _, _) ->
     none.
 
 scan_enumerate(L) ->
@@ -466,22 +467,107 @@ scan_affine_inc(Ca, F, Defs) ->
         #{} -> no
     end.
 
-%% The byte is `bs_extract Ctx`; classify the guards applied to it.
-scan_byte_class(Ctx, Defs) ->
+%% The byte is `bs_extract Ctx`; classify how it is tested. Two shapes:
+%% a `switch` on the byte whose in-class arms reach the self-call (the
+%% printable-ASCII `string/7` shape — an enumerated set the compiler
+%% lowers to a jump table), or comparison guards (the `number/7` digit
+%% range). The switch is path-sensitive: arms are in-class only if they
+%% reach the self-call block `Lsc`, so a non-recursing switch on the
+%% byte (e.g. `number_frac_cont`'s e/E handling) is correctly ignored.
+scan_byte_class(Ctx, Lsc, Defs, Blocks, Preds) ->
     case [Byte || {Byte, #b_set{op=bs_extract, args=[C]}} <- maps:to_list(Defs),
                   C =:= Ctx] of
         [Byte] ->
-            case scan_classify(Byte, Defs) of
-                none -> none;
-                Class -> {ok, Byte, Class}
+            case scan_switch_invals(Byte, Lsc, Blocks, Preds) of
+                {ok, InVals} ->
+                    case scan_canonical_class(InVals) of
+                        none -> none;
+                        Class -> {ok, Byte, Class}
+                    end;
+                bail ->
+                    none;
+                none ->
+                    case scan_cmp_class(Byte, Defs) of
+                        none -> none;
+                        Class -> {ok, Byte, Class}
+                    end
             end;
         _ ->
             none
     end.
 
+%% If the byte is the argument of a `switch` whose arms route in-class
+%% values to the self-call, return those values. `none` => no governing
+%% switch (try comparison guards); `bail` => a switch we cannot model
+%% soundly (non-integer arms, default reaches the self-call, or more
+%% than one governing switch).
+scan_switch_invals(Byte, Lsc, Blocks, Preds) ->
+    Anc = scan_ancestors(Lsc, Preds),
+    Switches = [{Def, List}
+                || {_L, #b_blk{last=#b_switch{arg=A, fail=Def, list=List}}}
+                       <- maps:to_list(Blocks), A =:= Byte],
+    Active = [S || {Def, List}=S <- Switches,
+                   sets:is_element(Def, Anc) orelse
+                       lists:any(fun({_,L}) -> sets:is_element(L, Anc) end, List)],
+    case Active of
+        [] ->
+            none;
+        [{Def, List}] ->
+            case sets:is_element(Def, Anc) of
+                true ->
+                    %% Default continues the scan: would be a notset over
+                    %% the whole byte range — not modelled yet.
+                    bail;
+                false ->
+                    InVals = [V || {#b_literal{val=V}, L} <- List,
+                                   sets:is_element(L, Anc)],
+                    NonInt = [V || V <- InVals, not is_integer(V)],
+                    if
+                        NonInt =/= [] -> bail;
+                        InVals =:= [] -> none;
+                        true -> {ok, InVals}
+                    end
+            end;
+        _ ->
+            bail
+    end.
+
+%% Blocks that can reach L (L and all its ancestors), by reverse walk.
+scan_ancestors(L, Preds) ->
+    scan_ancestors([L], Preds, sets:new([{version,2}])).
+
+scan_ancestors([L|Ls], Preds, Seen) ->
+    case sets:is_element(L, Seen) of
+        true ->
+            scan_ancestors(Ls, Preds, Seen);
+        false ->
+            Ps = maps:get(L, Preds, []),
+            scan_ancestors(Ps ++ Ls, Preds, sets:add_element(L, Seen))
+    end;
+scan_ancestors([], _Preds, Seen) ->
+    Seen.
+
+%% Canonicalize an in-class value set into a range, a range-minus-a-few
+%% (notset, the SWAR recipe shape), or a literal set.
+scan_canonical_class(Vals0) ->
+    Vals = lists:usort(Vals0),
+    case Vals of
+        [] ->
+            none;
+        _ ->
+            Lo = hd(Vals),
+            Hi = lists:last(Vals),
+            Excl = lists:seq(Lo, Hi) -- Vals,
+            if
+                Excl =:= [] -> {range, Lo, Hi};
+                length(Excl) =< 4 -> {notset, Excl, Lo, Hi};
+                true -> {set, Vals}
+            end
+    end.
+
 %% Collect literal comparisons applied to Byte and fold them into a
 %% class. Handles `>=`/`=<` ranges and `=:=` equality sets.
-scan_classify(Byte, Defs) ->
+scan_cmp_class(Byte, Defs) ->
     Cmps = [scan_normalize(Op, As, Byte)
             || {_V, #b_set{op={bif,Op}, args=As}} <- maps:to_list(Defs),
                lists:member(Op, ['>=','=<','>','<','=:=']),
