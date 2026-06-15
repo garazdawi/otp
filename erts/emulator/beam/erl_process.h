@@ -115,6 +115,9 @@ extern int ERTS_WRITE_UNLIKELY(erts_no_aux_work_threads);
 extern int erts_sched_thread_suggested_stack_size;
 extern int erts_dcpu_sched_thread_suggested_stack_size;
 extern int erts_dio_sched_thread_suggested_stack_size;
+/* Heap-allocation profiling: when nonzero, the JIT emits the (gated)
+ * recording hook at heap-allocation sites. Set once at startup. */
+extern int erts_alloc_profile_enabled;
 #define ERTS_SCHED_THREAD_MIN_STACK_SIZE 20	/* Kilo words */
 #define ERTS_SCHED_THREAD_MAX_STACK_SIZE 8192	/* Kilo words */
 
@@ -1093,6 +1096,11 @@ struct process {
     Uint min_heap_size;         /* Minimum size of heap (in words). */
     Uint min_vheap_size;        /* Minimum size of virtual heap (in words). */
     Uint max_heap_size;         /* Maximum size of heap (in words). */
+
+    /* Heap-allocation profiling (gated by erts_alloc_profile_enabled at
+     * JIT emit time, then by galloc_active per process at runtime). */
+    Uint galloc_active;         /* per-process on/off (0 = no recording) */
+    Uint galloc_words;          /* accumulated heap words allocated */
 
     ErtsCodePtr i;              /* Program counter. */
     Sint catches;               /* Number of catches on stack */

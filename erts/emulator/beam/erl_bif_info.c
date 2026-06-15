@@ -4279,7 +4279,12 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
     }
 
     if (is_atom(BIF_ARG_1)) {
-	if (ERTS_IS_ATOM_STR("reds_left", BIF_ARG_1)) {
+	if (ERTS_IS_ATOM_STR("alloc_profile", BIF_ARG_1)) {
+	    /* Heap-allocation profiling: read the calling process's
+	     * accumulated heap words (in words). */
+	    BIF_RET(erts_make_integer(BIF_P->galloc_words, BIF_P));
+	}
+	else if (ERTS_IS_ATOM_STR("reds_left", BIF_ARG_1)) {
 	    /* Used by (emulator) */
 	    BIF_RET(make_small((Uint) ERTS_BIF_REDS_LEFT(BIF_P)));
 	}
@@ -4990,7 +4995,17 @@ BIF_RETTYPE erts_debug_set_internal_state_2(BIF_ALIST_2)
     }
 
     if (is_atom(BIF_ARG_1)) {
-	
+
+	if (ERTS_IS_ATOM_STR("alloc_profile", BIF_ARG_1)) {
+	    /* Heap-allocation profiling: enable/disable recording on the
+	     * calling process and reset its accumulator. Recording only
+	     * happens if the VM was started with the gate on
+	     * (ERL_ALLOC_PROFILE=1). */
+	    BIF_P->galloc_active = (BIF_ARG_2 == am_true);
+	    BIF_P->galloc_words = 0;
+	    BIF_RET(am_true);
+	}
+
 	if (ERTS_IS_ATOM_STR("reds_left", BIF_ARG_1)) {
 	    Sint reds;
 	    if (term_to_Sint(BIF_ARG_2, &reds) != 0) {

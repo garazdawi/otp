@@ -143,7 +143,27 @@ heap-side analogue of the existing `+M atags code` (which only sees
 `erts_alloc`), gated the same way (`+M…atags code` for eheap, or a
 dedicated `+RGsites` flag).
 
-**Two overhead variants:**
+**Gating — two levels, so the off path is nearly free:**
+
+1. **VM-startup flag** (global, e.g. `+Vgcprof` / a boot option,
+   checked at JIT *emit* time like `erts_alcu_enable_code_atags`).
+   When **off**, the JIT emits the completely normal allocation code
+   — zero extra instructions, zero overhead. This is the default and
+   the shipping state.
+2. **Per-process flag** (a field on `Process`, checked at *runtime*).
+   Only consulted when the startup flag was on at emit time. When the
+   process flag is **off**, the emitted code runs the normal path plus
+   **one extra branch** (load the flag, branch-if-zero past the
+   recording) — **no C calls, no recording**. When **on**, it records.
+
+So the three states are: startup-off → identical to today; startup-on
++ process-off → one predicted-not-taken branch per allocation site;
+startup-on + process-on → record. A later global switch flips the
+per-process flag for all processes at once (iterate the process
+table, or a global "force-on" the per-process check also consults) —
+turning whole-system profiling on without recompiling code.
+
+**Two overhead variants for the *record* path (process flag on):**
 
 - *C call* (simplest to prototype): at the hook, call a recorder
   `erts_record_heap_alloc(site, words)`. Needs `enter/leave_runtime`

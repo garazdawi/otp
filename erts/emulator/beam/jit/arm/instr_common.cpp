@@ -155,6 +155,21 @@ void BeamModuleAssembler::emit_gc_test(const ArgWord &Ns,
     fragment_call(ga->get_garbage_collect());
 
     a.bind(after_gc_check);
+
+    /* Heap-allocation profiling hook (gated at emit time by the startup
+     * flag; at runtime by the per-process galloc_active flag). When the
+     * process flag is clear this is a single predicted-not-taken branch
+     * and no recording. Records the heap words (Nh) reserved at this
+     * site. See PLAN/verification/GC_SITE_INSTRUMENT_SPEC.md. */
+    if (erts_alloc_profile_enabled && Nh.get() > 0) {
+        Label gp_skip = a.new_label();
+        a.ldr(TMP1, a64::Mem(c_p, offsetof(Process, galloc_active)));
+        a.cbz(TMP1, gp_skip);
+        a.ldr(TMP2, a64::Mem(c_p, offsetof(Process, galloc_words)));
+        add(TMP2, TMP2, Nh.get());
+        a.str(TMP2, a64::Mem(c_p, offsetof(Process, galloc_words)));
+        a.bind(gp_skip);
+    }
 }
 
 void BeamModuleAssembler::emit_validate(const ArgWord &Arity) {

@@ -154,6 +154,7 @@ ErtsPTab erts_proc erts_align_attribute(ERTS_CACHE_LINE_SIZE);
 int erts_sched_thread_suggested_stack_size = -1;
 int erts_dcpu_sched_thread_suggested_stack_size = -1;
 int erts_dio_sched_thread_suggested_stack_size = -1;
+int erts_alloc_profile_enabled = 0;
 #ifdef ERTS_ENABLE_LOCK_CHECK
 ErtsLcPSDLocks erts_psd_required_locks[ERTS_PSD_SIZE];
 #endif
@@ -652,6 +653,15 @@ erts_step_proc_interval(void)
 void
 erts_pre_init_process(void)
 {
+    {
+        /* Startup gate for heap-allocation profiling. Env var for now;
+         * a proper +V boot flag can replace this later. Must be set
+         * before any module is JIT-compiled (this runs very early). */
+        char *ap = getenv("ERL_ALLOC_PROFILE");
+        if (ap != NULL && ap[0] == '1')
+            erts_alloc_profile_enabled = 1;
+    }
+
     erts_tsd_key_create(&sched_data_key, "erts_sched_data_key");
 
     erts_aux_work_flag_descr[ERTS_SSI_AUX_WORK_DELAYED_AW_WAKEUP_IX]
@@ -12597,6 +12607,8 @@ erl_create_process(Process* parent, /* Parent of process (default group leader).
     p->stop = p->hend - CP_SIZE; /* Reserve place for continuation pointer. */
     p->htop = p->heap;
     p->heap_sz = sz;
+    p->galloc_active = 0;
+    p->galloc_words = 0;
     p->abandoned_heap = NULL;
     p->live_hf_end = ERTS_INVALID_HFRAG_PTR;
     p->catches = 0;
