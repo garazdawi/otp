@@ -585,12 +585,18 @@ scan_flip('>')  -> '<';
 scan_flip('<')  -> '>';
 scan_flip('=:=') -> '=:='.
 
+%% NB: this comparison path is not yet path-sensitive — it folds every
+%% `>=`/`=<`/`=:=` on the byte regardless of whether that guard gates
+%% the self-call. A1-1 must make it path-sensitive (as the switch path
+%% already is) before the class drives a rewrite. For now we at least
+%% reject an inverted (empty) range, which a non-gating guard pair can
+%% otherwise produce.
 scan_fold_class(Cmps) ->
     Lo = scan_lower(Cmps),
     Hi = scan_upper(Cmps),
     Eqs = [L || {'=:=', L} <- Cmps],
     if
-        Lo =/= none, Hi =/= none -> {range, Lo, Hi};
+        Lo =/= none, Hi =/= none, Lo =< Hi -> {range, Lo, Hi};
         Eqs =/= [] -> {set, lists:usort(Eqs)};
         true -> none
     end.
