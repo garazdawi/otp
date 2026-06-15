@@ -290,7 +290,27 @@ bookkeeping.
   Stage tree-green: (1) define `bs_scan` everywhere + interpreter + JIT
   (dead, never emitted → build + full suite stay green); (2) the gated
   rewrite (default off → still green); (3) enable on the json subject,
-  gate. **Benchmark against the *naive* `string/7` path**, not the
+  gate.
+
+  **Status (built 2026-06-15).** Stage 1 DONE + committed (`c665569bbe`):
+  `bs_scan Ctx Kind Range VPack Dst` defined across genop/ssa/codegen/
+  validator/disasm + interpreter + arm JIT (`emit_bs_scan`, class-
+  specialized scalar loop) + x86 no-op stub; emulator + compiler build
+  clean, dead code. Stage 2 DONE + committed (`6d8202aebc`, gated off):
+  `ssa_opt_scan_loop_rewrite` inserts `bs_scan` + threads the counter.
+  **Works for simple single-binary scans** (`count_ws`=3, `count_dig`=5,
+  byte-identical). **KNOWN BUG on json multi-clause scans** — the
+  root-caused soundness issue: pre_codegen brackets the match region in
+  `bs_get_position`/`bs_set_position` for clause backtracking, and the
+  inserted `bs_scan` lands *inside* that bracket, so the restore
+  (`bs_set_position {x,0},{x,7}`) undoes the in-place advance while the
+  counter stays bumped → context vs Skip/Len desync (atoms parse,
+  numbers/strings mis-slice). **Fix:** `bs_scan` must produce the
+  *advanced context* as a threaded value (the bs_match/`bs_extract`
+  two-output pattern: `_X = bs_scan …` is the new context, `_Count =
+  bs_extract _X`), registered in `beam_ssa_pre_codegen:fix_bs` as a
+  context producer so the save captures the post-scan position and the
+  downstream match threads `_X`. That is the remaining A1-1b work. **Benchmark against the *naive* `string/7` path**, not the
   hand-unrolled `string_ascii/7`. Gate: full stdlib/json suite +
   byte-identical `json:decode` hashes on the nativejson trio; bytewise
   ≥2.5× on the G-bin bench. Needs an **emulator rebuild** + the ordering
