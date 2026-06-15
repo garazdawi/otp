@@ -184,18 +184,34 @@ bookkeeping.
   (`string_ascii/7` matches 8 bytes with `Len+8`; the fused scan must
   preserve that 1-byte-per-count invariant) nor that in-class arm
   blocks are side-effect-free between switch and self-call.
-- **A1-1 · scalar scan command, end to end.** First close the A1-0b
-  soundness gaps (path-sensitive comparison classes; bytes==count;
-  empty in-class arm path). Then add `{scan,…}` to the `genop.tab`
-  command set + `beam_ssa_codegen:bs_translate_instr/1` emission +
-  loader (`ops.tab` both arches) + a **scalar** (one byte per iter)
-  JIT handler. **Benchmark against the *naive* json path** — the
-  pre-SWAR `string/7` single-byte scanner, *not* the hand-unrolled
-  `string_ascii/7` — since A1's value is making naive code reach
-  hand-tuned speed (the hand-unroll becomes unnecessary). Gate: full
-  stdlib/json correctness suite + byte-identical `json:decode` hashes
-  on the nativejson trio; the bytewise layer ≥2.5× isolated on the
-  G-bin bench (`08` P2 bar).
+- **A1-1a · path-sensitive, rewrite-sound recognition. DONE**
+  (`c1d953d973`). Classifier now orients every guard (switch arm or
+  comparison branch) by whether its side reaches the self-call, so both
+  polarities are modelled — *scan-while-in-class* (`{range}`/`{set}`/
+  `{notset}` over the in-set) and *scan-until-stop* (`{notset,Stop,
+  0,255}`, the corrected `bin_search_inv`/`strlen`/`collect_line_bin`
+  shape). Plus the **single-byte gate**: every counter advances by 1,
+  excluding the hand-unrolled multi-byte matchers (`string_ascii/7`,
+  `Len+8`). Census: 201 stdlib+kernel modules, 0 crashes, 31 scan
+  loops, all classes semantically correct. Still annotate-only.
+  Remaining soundness item for A1-1b: verify the in-class arm blocks
+  carry no side effect between the class test and the self-call (today
+  only the call-arg affine/passthrough check guards this).
+- **A1-1b · the `{scan,…}` command, end to end** (next, atomic — these
+  land together or the tree won't build/test). The SSA rewrite that
+  replaces the recognized recursive scan with one scan operation; the
+  `{scan,…}` `bs_match` command in `genop.tab`; emission in
+  `beam_ssa_codegen:bs_translate_instr/1`; loader pass-through in
+  `ops.tab` (both arches); a **scalar** (one byte/iter) JIT handler in
+  `instr_bs.cpp` (both arches), the class-parameterized lift of
+  `emit_t2_json_scan`. Stage behind an off-by-default option first so
+  intermediate commits build. **Benchmark against the *naive* json
+  path** — the pre-SWAR `string/7` single-byte scanner, *not* the
+  hand-unrolled `string_ascii/7` — since A1's value is making naive
+  code reach hand-tuned speed (the hand-unroll becomes unnecessary).
+  Gate: full stdlib/json correctness suite + byte-identical
+  `json:decode` hashes on the nativejson trio; the bytewise layer
+  ≥2.5× isolated on the G-bin bench (`08` P2 bar).
 - **A1-2 · SWAR recipes.** The §3 lane recipes (8 bytes/iter) behind
   the scalar tail. Gate: G-bin full ≥4× isolated scan
   (`08` §7 acceptance bar); hashes unchanged.
