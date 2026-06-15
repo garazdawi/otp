@@ -40,6 +40,21 @@ optimization and branchy-dispatch specialization — measured **zero**,
 shelving roughly 25 weeks of general-inlining infrastructure that
 earlier drafts treated as core.
 
+A fourth finding, from per-function heap-allocation profiling on
+three real deployments (`../verification/GALLOC_RESULTS.md`),
+reshapes the map case. The map-construction pool that thin
+benchmarks made look dominant — `maps:from_list/1` = **46 %** of all
+heap allocation on a bare Jason+Ecto JSON API — **collapses to
+1.2 %** under a real framework (Bandit + **Ash** + Postgres) and
+never appears at all on RabbitMQ. Real-app allocation is *diffuse*
+(DB driver stack, framework DSL interpretation, protocol parsing; no
+allocator above ~4 % once a framework or broker is in the path),
+with binary parsing (MQTT ~14 %, JSON decode) the one JIT-fusable
+slice that survives contact with a real application. This confirms
+the ordering — **binaries are the load-bearing win** — and **demotes
+the map expansion to evidence-pending**: its isolated 1.64× is real,
+but its real-app pool is not.
+
 Status: architecture validated, scope evidence-backed,
 implementation not started. The recommended sequencing (§8) runs a
 short **T1/AOT capture track** first — all three wins have at least
@@ -478,7 +493,14 @@ Then the **map expansion**: shape feedback slot (runtime-recorded
 keys-tuple pointer, per §2.3 rule 3) + region-level guard +
 direct-offset access — 1.64× on two-field access [measured], the
 guard amortising further over wider regions; flatmaps first,
-hashmaps out of scope.
+hashmaps out of scope. **Status: evidence-pending, not green-lit.**
+Real-app allocation profiling (`../verification/GALLOC_RESULTS.md`,
+§2) found map construction diffuse and framework-dominated — the
+46 %→1.2 % `maps:from_list` collapse from thin Bandit to Bandit+Ash.
+Unlike the binary package (measured end-to-end by G-bin on a real
+decode), this one reopens only when a cycle- or allocation-profiled
+*real* workload shows a concentrated map-access pool — the isolated
+1.64× alone no longer justifies the build.
 
 ## 8. Roadmap
 
@@ -534,6 +556,17 @@ share on those corpora. Before Track B starts, the hottest of
 these (the message/signal path) deserves the same treatment the
 JIT got: the cheapest experiment that prices it. The next ~24
 weeks should go to whichever pool prices highest.
+
+Per-function heap-allocation profiling has since priced the GC
+pool's internals on three real apps (`../verification/GALLOC_RESULTS.md`):
+the allocation is **diffuse** — once a real framework (Ash) or
+broker (RabbitMQ) is in the path no allocator exceeds ~4 %, and the
+one concentrated allocator thin benchmarks showed (`maps:from_list`,
+46 %) was an artifact of benchmark thinness. So "reduce allocation"
+is a *library/runtime* lever (a cheaper `maps:from_list`, framework
+DSL caching, driver-stack allocation), not a single JIT target —
+which keeps the message/signal path, not allocation, as the top
+VM-internal pool to price next.
 
 ### Track B — T2 v1 build (~24–26 weeks, ~10–11 KLOC)
 
