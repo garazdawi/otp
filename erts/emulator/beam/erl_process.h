@@ -118,6 +118,12 @@ extern int erts_dio_sched_thread_suggested_stack_size;
 /* Heap-allocation profiling: when nonzero, the JIT emits the (gated)
  * recording hook at heap-allocation sites. Set once at startup. */
 extern int erts_alloc_profile_enabled;
+/* Per-function (per-MFA) allocation site counters. The JIT calls
+ * erts_galloc_get_counter at codegen time to obtain a stable counter
+ * address to embed; the others are readout/reset. */
+Uint *erts_galloc_get_counter(Eterm module, Eterm function, Uint arity);
+void erts_galloc_reset(void);
+Eterm erts_galloc_sites_term(Process *p);
 #define ERTS_SCHED_THREAD_MIN_STACK_SIZE 20	/* Kilo words */
 #define ERTS_SCHED_THREAD_MAX_STACK_SIZE 8192	/* Kilo words */
 

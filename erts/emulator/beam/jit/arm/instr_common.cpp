@@ -165,9 +165,22 @@ void BeamModuleAssembler::emit_gc_test(const ArgWord &Ns,
         Label gp_skip = a.new_label();
         a.ldr(TMP1, a64::Mem(c_p, offsetof(Process, galloc_active)));
         a.cbz(TMP1, gp_skip);
+
+        /* Per-process total. */
         a.ldr(TMP2, a64::Mem(c_p, offsetof(Process, galloc_words)));
         add(TMP2, TMP2, Nh.get());
         a.str(TMP2, a64::Mem(c_p, offsetof(Process, galloc_words)));
+
+        /* Per-function site counter: resolve a stable counter address
+         * for the function being compiled and increment it inline. */
+        if (is_atom(mod) && is_atom(current_function)) {
+            Uint *site = erts_galloc_get_counter(mod, current_function,
+                                                 current_arity);
+            mov_imm(TMP1, (Uint64)site);
+            a.ldr(TMP3, a64::Mem(TMP1));
+            add(TMP3, TMP3, Nh.get());
+            a.str(TMP3, a64::Mem(TMP1));
+        }
         a.bind(gp_skip);
     }
 }

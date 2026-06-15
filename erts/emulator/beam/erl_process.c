@@ -155,6 +155,124 @@ int erts_sched_thread_suggested_stack_size = -1;
 int erts_dcpu_sched_thread_suggested_stack_size = -1;
 int erts_dio_sched_thread_suggested_stack_size = -1;
 int erts_alloc_profile_enabled = 0;
+
+/*
+ * Heap-allocation profiling: per-function (per-MFA) site counters.
+ * Counters have stable addresses (each site is individually
+ * allocated and never moved) so the JIT can embed a counter's address
+ * inline. Find-or-create happens at JIT codegen time (rare,
+ * lock-protected); the runtime increment is a plain non-atomic add
+ * (racy-ok — we want magnitudes). JIT-inline allocations only; C-path
+ * allocations are in the per-process total, not yet per-site.
+ */
+#define ERTS_GALLOC_HASH 4096
+typedef struct erts_galloc_site {
+    struct erts_galloc_site *hnext; /* hash chain */
+    struct erts_galloc_site *lnext; /* full list, for readout */
+    Eterm module;
+    Eterm function;
+    Uint arity;
+    Uint words;                     /* the inline-incremented counter */
+} ErtsGallocSite;
+
+static ErtsGallocSite *erts_galloc_htab[ERTS_GALLOC_HASH];
+static ErtsGallocSite *erts_galloc_list;
+static erts_mtx_t erts_galloc_mtx;
+
+static void
+erts_galloc_init(void)
+{
+    erts_mtx_init(&erts_galloc_mtx, "alloc_profile", NIL,
+                  ERTS_LOCK_FLAGS_PROPERTY_STATIC
+                  | ERTS_LOCK_FLAGS_CATEGORY_GENERIC);
+}
+
+Uint *
+erts_galloc_get_counter(Eterm module, Eterm function, Uint arity)
+{
+    Uint h = (atom_val(module) ^ atom_val(function) ^ arity) % ERTS_GALLOC_HASH;
+    ErtsGallocSite *s;
+    erts_mtx_lock(&erts_galloc_mtx);
+    for (s = erts_galloc_htab[h]; s; s = s->hnext) {
+        if (s->module == module && s->function == function && s->arity == arity)
+            break;
+    }
+    if (!s) {
+        s = malloc(sizeof(ErtsGallocSite));
+        s->module = module;
+        s->function = function;
+        s->arity = arity;
+        s->words = 0;
+        s->hnext = erts_galloc_htab[h];
+        erts_galloc_htab[h] = s;
+        s->lnext = erts_galloc_list;
+        erts_galloc_list = s;
+    }
+    erts_mtx_unlock(&erts_galloc_mtx);
+    return &s->words;
+}
+
+void
+erts_galloc_reset(void)
+{
+    ErtsGallocSite *s;
+    erts_mtx_lock(&erts_galloc_mtx);
+    for (s = erts_galloc_list; s; s = s->lnext)
+        s->words = 0;
+    erts_mtx_unlock(&erts_galloc_mtx);
+}
+
+/* Build a list of {{M,F,A}, Words} for sites with words > 0. Snapshot
+ * under the lock (the runtime increments are lock-free), then build the
+ * term off the snapshot so concurrent increments can't race the heap
+ * sizing. */
+typedef struct { Eterm m, f; Uint a, words; } ErtsGallocSnap;
+
+Eterm
+erts_galloc_sites_term(Process *p)
+{
+    ErtsGallocSite *s;
+    ErtsGallocSnap *snap;
+    Uint n = 0, i, sz;
+    Eterm *hp, res;
+
+    erts_mtx_lock(&erts_galloc_mtx);
+    for (s = erts_galloc_list; s; s = s->lnext)
+        if (s->words > 0)
+            n++;
+    snap = (n ? malloc(n * sizeof(ErtsGallocSnap)) : NULL);
+    i = 0;
+    for (s = erts_galloc_list; s && i < n; s = s->lnext) {
+        if (s->words > 0) {
+            snap[i].m = s->module; snap[i].f = s->function;
+            snap[i].a = s->arity; snap[i].words = s->words;
+            i++;
+        }
+    }
+    n = i;
+    erts_mtx_unlock(&erts_galloc_mtx);
+
+    sz = 0;
+    for (i = 0; i < n; i++) {
+        sz += 2 /*cons*/ + 4 /*{M,F,A}*/ + 3 /*{mfa,words}*/;
+        (void) erts_bld_uint(NULL, &sz, snap[i].words);
+    }
+    hp = (sz ? HAlloc(p, sz) : NULL);
+    res = NIL;
+    for (i = 0; i < n; i++) {
+        Eterm w = erts_bld_uint(&hp, NULL, snap[i].words);
+        Eterm mfa = TUPLE3(hp, snap[i].m, snap[i].f, make_small(snap[i].a));
+        Eterm pair;
+        hp += 4;
+        pair = TUPLE2(hp, mfa, w);
+        hp += 3;
+        res = CONS(hp, pair, res);
+        hp += 2;
+    }
+    if (snap)
+        free(snap);
+    return res;
+}
 #ifdef ERTS_ENABLE_LOCK_CHECK
 ErtsLcPSDLocks erts_psd_required_locks[ERTS_PSD_SIZE];
 #endif
@@ -661,6 +779,7 @@ erts_pre_init_process(void)
         if (ap != NULL && ap[0] == '1')
             erts_alloc_profile_enabled = 1;
     }
+    erts_galloc_init();
 
     erts_tsd_key_create(&sched_data_key, "erts_sched_data_key");
 
