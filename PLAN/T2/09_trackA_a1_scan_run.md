@@ -252,21 +252,50 @@ bookkeeping.
   Remaining soundness item for A1-1b: verify the in-class arm blocks
   carry no side effect between the class test and the self-call (today
   only the call-arg affine/passthrough check guards this).
-- **A1-1b · the `{scan,…}` command, end to end** (next, atomic — these
-  land together or the tree won't build/test). The SSA rewrite that
-  replaces the recognized recursive scan with one scan operation; the
-  `{scan,…}` `bs_match` command in `genop.tab`; emission in
-  `beam_ssa_codegen:bs_translate_instr/1`; loader pass-through in
-  `ops.tab` (both arches); a **scalar** (one byte/iter) JIT handler in
-  `instr_bs.cpp` (both arches), the class-parameterized lift of
-  `emit_t2_json_scan`. Stage behind an off-by-default option first so
-  intermediate commits build. **Benchmark against the *naive* json
-  path** — the pre-SWAR `string/7` single-byte scanner, *not* the
-  hand-unrolled `string_ascii/7` — since A1's value is making naive
-  code reach hand-tuned speed (the hand-unroll becomes unnecessary).
-  Gate: full stdlib/json correctness suite + byte-identical
-  `json:decode` hashes on the nativejson trio; the bytewise layer
-  ≥2.5× isolated on the G-bin bench (`08` P2 bar).
+- **A1-1b · the `bs_scan` instruction, end to end.** A new BEAM
+  instruction `bs_scan Ctx Class Dst Live`, modeled on `bs_ensure`
+  (context→context) for ordering and `bs_get_position` for the JIT
+  context access. Full implementation map (traced 2026-06-15; every
+  touchpoint below confirmed against the `bs_get_position` analog):
+
+  *Compiler:* `beam_ssa.erl` (add `bs_scan` to `cg_prim_op()`);
+  `beam_ssa_codegen.erl` (`classify_heap_need` neutral, `produces_output`
+  true, `cg_instr(bs_scan,…)` → `{bs_scan,Ctx,Class,Dst,Live}`);
+  `genop.tab` (next opcode, `bs_scan/4`); `beam_opcodes.erl`
+  (opcode/opname); `beam_validator.erl` (`vi({bs_scan,…})` — assert
+  `#t_bs_context{}`, produce `#t_integer{}`, keep `mark_current_ms_position`
+  so it orders with other context ops); `beam_disasm.erl`.
+  *Runtime:* `emu/ops.tab` + `emu/bs_instrs.tab` (interpreter:
+  scan `Ctx` start..end against the class, write count to `Dst`, advance
+  `sb->start`); `jit/arm/ops.tab` + `jit/x86/ops.tab`; `jit/{arm,x86}/
+  instr_bs.cpp` (`emit_i_bs_scan` — class-parameterized lift of
+  `emit_t2_json_scan`: load `ErlSubBits.start`/`end`/`base`, scalar byte
+  loop, write back `start`, tag count → `Dst`).
+  *Rewrite* (`beam_ssa_opt.erl`, behind off-by-default `scan_loop`
+  option): for each recognized scan, at loop entry after the context is
+  established insert `Count = bs_scan(Ctx, ClassLit)`, `Len' = Len +
+  Count`, and substitute `Len → Len'` in the entry-dominated region.
+
+  **The critical correctness risk — ordering.** `bs_scan` advances the
+  context *in place*; in-place mutation is invisible to SSA, so the
+  optimizer must not reorder it relative to the byte `bs_match` it
+  precedes. Resolution: `bs_scan` is a context op — it takes the context
+  and the validator's `mark_current_ms_position` ties it into the
+  match-state dataflow (same machinery that orders `bs_get_position`/
+  `bs_set_position` against matches), so it stays pinned. This must be
+  *verified* (a `+JDdump`/disasm check that the scan precedes the match
+  on the corpus) before trusting the gate, and is the single highest-risk
+  item: a reorder = silent miscompilation of binary matching.
+
+  Stage tree-green: (1) define `bs_scan` everywhere + interpreter + JIT
+  (dead, never emitted → build + full suite stay green); (2) the gated
+  rewrite (default off → still green); (3) enable on the json subject,
+  gate. **Benchmark against the *naive* `string/7` path**, not the
+  hand-unrolled `string_ascii/7`. Gate: full stdlib/json suite +
+  byte-identical `json:decode` hashes on the nativejson trio; bytewise
+  ≥2.5× on the G-bin bench. Needs an **emulator rebuild** + the ordering
+  verification; large and miscompilation-sensitive — implement staged,
+  building + testing at each step, not in one shot.
 - **A1-2 · SWAR recipes.** The §3 lane recipes (8 bytes/iter) behind
   the scalar tail. Gate: G-bin full ≥4× isolated scan
   (`08` §7 acceptance bar); hashes unchanged.
