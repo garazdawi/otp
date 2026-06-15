@@ -56,6 +56,37 @@ Grounded in `erl_gc.c` / `erl_vm.h` (read 2026-06-15):
    (`erl_alloc_util.c:7959`) + `instrument:allocations` show the
    shape a BIF + histogram readout should take.
 
+## Implementation status (ARM JIT)
+
+Phase 0 is being built incrementally on aarch64. **Done and tested**
+(`galloc_test.erl`, `galloc_mp.erl`):
+
+- **Two-level gate**: startup flag `erts_alloc_profile_enabled`
+  (env `ERL_ALLOC_PROFILE=1`, read in `erts_pre_init_process`, checked
+  at JIT *emit* time → zero overhead when off) + per-process
+  `Process.galloc_active` (checked at runtime → one
+  predicted-not-taken branch when off, no C calls). Readout/control:
+  `erts_debug:{set,get}_internal_state(alloc_profile, …)`.
+- **JIT-inline coverage** (`emit_gc_test`, arm): inline 3-instruction
+  accumulate of `Nh` into `Process.galloc_words`. Verified exact
+  against `flat_size` for cons / tuples / floats / heap binaries.
+- **C-path coverage** (`ERTS_GALLOC_NOTE` in `HAllocX` and
+  `HeapFragOnlyAlloc`, gated): BIF allocations (`make_tuple`), dynamic
+  maps (`erts_maps_put`), and `gc_bif` arithmetic (bignums). Counts
+  at the allocation → GC-invariant, no HTOP-delta staleness.
+  `HeapOnlyAlloc` deliberately *not* noted (avoids double-counting the
+  test_heap-reserved region). No double-counting confirmed.
+- **Properties verified**: gross-churn semantic (transient garbage
+  counted), per-process isolation, normal operation unaffected when
+  off, correctness through GCs.
+
+**Remaining** (next increments): per-site MFA attribution (the
+counter is currently a per-process *total* — site attribution needs
+either a per-`test_heap`-site counter table or IP recording, then a
+histogram readout keyed by `erts_find_function_from_pc`); a global
+"profile all processes" switch; x86_64 JIT; the BIF can-GC/cannot-GC
+htop-delta variant is moot now that allocation is counted at HAlloc.
+
 ## Phase 0 — event-driven allocation-volume profiler (recommended first)
 
 **Goal**: allocation *volume* by site, **exact, not sampled**. Skips
