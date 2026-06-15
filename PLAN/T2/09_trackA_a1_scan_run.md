@@ -42,8 +42,13 @@ back-edge block is exactly:
 2. `bs_match` with an `{integer}` command of size 8, unit 1 → Byte,
 3. `{succeeded,guard}` on the match (fail → the stop clause),
 4. a **byte-class guard** — one of: a range `Lo =< Byte, Byte =< Hi`
-   (two `{bif,'=<'}`), an equality set `Byte =:= C1; …` , or a single
-   `{bif,'=:='}` — fail → the stop clause,
+   (comparison `{bif,…}`), an equality set `Byte =:= C1; …`, or — the
+   common case for an enumerated printable-ASCII set — a **`switch`** on
+   the byte that the compiler emits as a jump table. The switch is read
+   path-sensitively: an arm is in-class only if it reaches the self-call
+   block, so a function's *other* switch on the same byte (e.g.
+   `number_frac_cont`'s `e`/`E` exponent handling) is correctly ignored
+   (`beam_ssa_opt:scan_switch_invals/4`),
 5. an **advance** of the loop-carried accumulators that is *affine and
    effect-free*: the binary advances by `get_tail`, integer counters
    advance by a literal (`Len + 1`), all other args pass through
@@ -67,19 +72,45 @@ else. That narrowness is the point — A1 is pattern-bound by design
 ## 3. The byte-class lattice
 
 The class is what the SWAR recipe library keys on. v-A1 covers the
-classes that actually occur in the corpus scans:
+classes that actually occur in the corpus scans, derived from either
+comparison guards or a switch's in-class arms (§2.4):
 
-| class | source guard | scalar test | SWAR recipe |
+| class | source | scalar test | SWAR recipe |
 |---|---|---|---|
-| `range(Lo,Hi)` | `Lo =< B, B =< Hi` | `(B-Lo) u<= (Hi-Lo)` | byte-subtract + unsigned-compare lanes |
-| `eq(C)` | `B =:= C` | `B == C` | XOR-zero-byte detect |
-| `notset({C1..Cn}, Lo, Hi)` | plain-ascii: `Lo =< B =< Hi` minus a few `=:=` exclusions | range AND ≠ each C | the `string_ascii` recipe (range lane + per-exclusion zero-byte lanes), already measured |
+| `{range,Lo,Hi}` | `Lo =< B =< Hi`, or a contiguous switch-arm set | `(B-Lo) u<= (Hi-Lo)` | byte-subtract + unsigned-compare lanes |
+| `{set,Vals}` | `B =:= C; …`, or a sparse switch-arm set | one lane per value | XOR-zero-byte detect per value |
+| `{notset,Excl,Lo,Hi}` | a switch-arm set that is a range minus ≤4 holes (plain-ascii) | range AND ≠ each excluded | the `string_ascii` recipe (range lane + per-exclusion zero-byte lanes), already measured |
 
-The proven `emit_t2_json_scan` covers `range('0','9')` (digits) and
-`notset({$",$\\}, 0x20, 0x7F)` (plain ascii). A1 generalizes the
-constants out of the emitter into a class descriptor carried by the
-new command; the recipe set above is closed under what the byte-class
-guards in the corpus produce. Unknown class → bail (§2).
+The proven `emit_t2_json_scan` covers `{range,$0,$9}` (digits) and
+`{notset,[$",$\\],0x20,0x7F}` (plain ascii). The recognizer
+(`scan_canonical_class/1`) canonicalizes a recovered value set into the
+tightest of these three. Unknown / unbounded class → bail (§2).
+
+### What the corpus actually contains (measured)
+
+A census of the recognizer over **all 201 stdlib+kernel modules** (0
+crashes) found 34 scan loops, dominated by exactly these shapes:
+
+- **`json` is the richest single source — 19 functions**: digit scans
+  (`number*`, `{range,48,57}`), the printable-ASCII string scan
+  (`string/7`, `{notset,[$",$\\],32,127}`) on both decode and the
+  encode-side escape scans (`escape_binary`, `escape_all`), and
+  **whitespace skips** (`object_key`, `array_start`, `value`, … —
+  `{set,"\t\n\r "}`), the most pervasive parser idiom.
+- Hand-written parsers elsewhere: `ansi_sgr` (SGR params), `uri_string`
+  path normalization (`remove_dot_segments`/`join1b`, `/`), `erl_tar`
+  octal fields, `re` replacement scanning, `string:bin_search_inv`.
+
+**`string`/`unicode` themselves expose the byte idiom only in
+`bin_search_inv`** (the ASCII fast path). Their real scanners
+(`trim`/`take`/`lexemes`/`slice`) route through `unicode_util:gc/cp` (a
+per-character function call) or variable-width UTF-8 — *not* the
+fixed-byte class idiom. So A1's home is hand-written binary parsers
+(json, and the RabbitMQ MQTT-parse ~14% the profiling flagged), not the
+polymorphic string library. A UTF-8 skip-run and eliminating the
+per-char `unicode_util` call are the adjacent, harder captures the
+string library would need — out of A1's byte-class scope, noted for
+later.
 
 ## 4. The new `{scan,…}` bs_match command
 
@@ -89,7 +120,7 @@ type** rather than a whole new instruction:
 
 ```
 {scan, Class, CounterUnit, CtxDst, CountDst}
-  Class      :: {range,Lo,Hi} | {eq,C} | {notset,[C],Lo,Hi}
+  Class      :: {range,Lo,Hi} | {set,[C]} | {notset,[C],Lo,Hi}
   CounterUnit:: the literal each integer accumulator adds per byte (1)
   CtxDst     :: match context after the run (start advanced)
   CountDst   :: number of bytes consumed (a smallint), for `Len + k`
@@ -133,20 +164,38 @@ bookkeeping.
 
 ## 6. Staging (small functional commits, each compiles + tests clean)
 
-- **A1-0 · recognizer, annotate-only.** New `ssa_opt_scan_loop` pass
-  in `beam_ssa_opt.erl`, registered in `late_epilogue_passes/1` after
-  `ssa_opt_bsm`/before `ssa_opt_bs_ensure`. Detects the §2 shape via
-  `beam_ssa:dominators/2` + back-edge + the affine/class checks;
-  attaches a debug annotation; changes **no** codegen. Gate: a
-  compiler test asserts it fires on `json:number/7`,
-  `number_frac_cont/7`, `string_ascii/7` and *not* on near-miss
-  shapes (effectful body, non-affine advance, unknown class).
-- **A1-1 · scalar scan command, end to end.** Add `{scan,…}` to
-  `genop.tab` command set + `beam_ssa_codegen:bs_translate_instr/1`
-  emission + loader (`ops.tab` both arches) + a **scalar** (one byte
-  per iter) JIT handler. Gate: full stdlib/json correctness suite +
-  byte-identical `json:decode` hashes on the nativejson trio; the
-  bytewise layer ≥2.5× isolated on the G-bin bench (`08` P2 bar).
+- **A1-0 · recognizer, annotate-only. DONE** (`ssa_opt_scan_loop` in
+  `beam_ssa_opt.erl`, registered in `late_epilogue_passes/1` after
+  `ssa_opt_bs_ensure`). Self-tail-recursion is a `call`, not a CFG
+  back-edge, so the matcher is intra-function idiom matching anchored
+  on the self-call (no dominator/loop analysis); it attaches a
+  `scan_loops` function annotation and changes **no** codegen.
+- **A1-0b · switch-class recognition. DONE.** Derives the class from a
+  path-sensitive `switch` (the printable-ASCII enumerated set), not
+  just comparison guards. Verified: fires on json's 19 scan loops with
+  correct classes; recognizer runs over **all 201 stdlib+kernel
+  modules, 0 crashes, 34 scan loops**, no junk false positives. Two
+  soundness gaps to close in A1-1 before any rewrite (both benign while
+  annotate-only): the **comparison** path is not yet path-sensitive
+  (it folds every `>=`/`=<` on the byte regardless of which branch
+  reaches the self-call — inverted ranges already rejected, but it must
+  gain the switch path's reachability test); and recognition does not
+  yet verify **bytes-matched-per-iteration == counter-increment**
+  (`string_ascii/7` matches 8 bytes with `Len+8`; the fused scan must
+  preserve that 1-byte-per-count invariant) nor that in-class arm
+  blocks are side-effect-free between switch and self-call.
+- **A1-1 · scalar scan command, end to end.** First close the A1-0b
+  soundness gaps (path-sensitive comparison classes; bytes==count;
+  empty in-class arm path). Then add `{scan,…}` to the `genop.tab`
+  command set + `beam_ssa_codegen:bs_translate_instr/1` emission +
+  loader (`ops.tab` both arches) + a **scalar** (one byte per iter)
+  JIT handler. **Benchmark against the *naive* json path** — the
+  pre-SWAR `string/7` single-byte scanner, *not* the hand-unrolled
+  `string_ascii/7` — since A1's value is making naive code reach
+  hand-tuned speed (the hand-unroll becomes unnecessary). Gate: full
+  stdlib/json correctness suite + byte-identical `json:decode` hashes
+  on the nativejson trio; the bytewise layer ≥2.5× isolated on the
+  G-bin bench (`08` P2 bar).
 - **A1-2 · SWAR recipes.** The §3 lane recipes (8 bytes/iter) behind
   the scalar tail. Gate: G-bin full ≥4× isolated scan
   (`08` §7 acceptance bar); hashes unchanged.
