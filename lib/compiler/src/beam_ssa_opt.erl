@@ -314,6 +314,7 @@ late_epilogue_passes(Opts) ->
           ?PASS(ssa_opt_redundant_br),
           ?PASS(ssa_opt_merge_blocks),
           ?PASS(ssa_opt_bs_ensure),
+          ?PASS(ssa_opt_scan_loop),
           ?PASS(ssa_opt_try),
           ?PASS(ssa_opt_get_tuple_element),
           ?PASS(ssa_opt_tail_literals),
@@ -333,6 +334,194 @@ passes_1(Ps, Opts0) ->
              {NoName,Name} = keyfind(Name, 2, Negations),
              {NoName,fun(S) -> S end}
          end || {Name,_}=P <- Ps].
+
+%%%
+%%% Track A · A1 — recognize byte-class scan loops.
+%%%
+%%% Recognizes the stereotyped byte-class fast-forward idiom: a
+%%% self-tail-recursive function that matches one byte off a binary
+%%% match context, tests it against a byte class (a range, an equality,
+%%% or an equality set), and on success tail-calls itself advancing the
+%%% context and incrementing affine counters, passing every other
+%%% argument through unchanged. `json:number_frac_cont/7` is the
+%%% canonical shape.
+%%%
+%%% This pass is annotate-only (stage A1-0, PLAN/T2/09_trackA_a1_scan_run.md):
+%%% it attaches a `scan_loops` entry to the function annotation when the
+%%% idiom is found and changes no code generation. Its purpose is to
+%%% validate recognition before the `{scan,...}` bs_match command and
+%%% the fused JIT loop (A1-1/A1-2) are built on top of it. Recognition
+%%% is conservative: any deviation from the idiom leaves the function
+%%% untouched.
+%%%
+%%% Note self-tail-recursion is NOT a CFG back-edge inside the function
+%%% (the block graph is acyclic); the loop is the self `call`. So the
+%%% matcher is intra-function idiom matching anchored on that call, not
+%%% loop/dominator analysis — the run-consuming loop lives in the JIT
+%%% command the later stages emit.
+
+ssa_opt_scan_loop({#opt_st{ssa=Blocks,args=Args,anno=Anno0}=St, FuncDb})
+  when is_map(Blocks) ->
+    case Anno0 of
+        #{func_info := {_Mod,Name,Arity}} ->
+            case scan_find_loops({Name,Arity}, Args, Blocks) of
+                [] ->
+                    {St, FuncDb};
+                Scans ->
+                    {St#opt_st{anno=Anno0#{scan_loops => Scans}}, FuncDb}
+            end;
+        #{} ->
+            {St, FuncDb}
+    end;
+ssa_opt_scan_loop({St, FuncDb}) ->
+    {St, FuncDb}.
+
+scan_find_loops(Self, Args, Blocks) ->
+    Defs = scan_defs(Blocks),
+    Calls = scan_self_calls(Self, Blocks),
+    lists:foldl(fun(Call, Acc) ->
+                        case scan_match(Call, Args, Defs) of
+                            {ok, Scan} -> [Scan | Acc];
+                            none -> Acc
+                        end
+                end, [], Calls).
+
+%% Var -> defining #b_set{}.
+scan_defs(Blocks) ->
+    maps:fold(fun(_L, #b_blk{is=Is}, Acc0) ->
+                      lists:foldl(fun(#b_set{dst=Dst}=I, Acc) ->
+                                          Acc#{Dst => I}
+                                  end, Acc0, Is)
+              end, #{}, Blocks).
+
+scan_self_calls({Name,Arity}, Blocks) ->
+    maps:fold(fun(_L, #b_blk{is=Is}, Acc) ->
+                      [I || #b_set{op=call,
+                                   args=[#b_local{name=#b_literal{val=N},
+                                                  arity=A}|_]}=I <- Is,
+                            N =:= Name, A =:= Arity] ++ Acc
+              end, [], Blocks).
+
+%% Match one self-call against the scan idiom. The call args line up
+%% positionally with the function's formal args.
+scan_match(#b_set{op=call, args=[_Self | CallArgs]}, Args, Defs)
+  when length(CallArgs) =:= length(Args) ->
+    Pairs = lists:zip(Args, CallArgs),
+    %% The match context is the single call arg defined by `bs_match`.
+    case [{I,Ctx} || {I,{_F,Ctx}} <- scan_enumerate(Pairs),
+                     scan_is_op(Ctx, bs_match, Defs)] of
+        [{CtxIx, Ctx}] ->
+            case scan_check_others(Pairs, CtxIx, Defs) of
+                {ok, Counters} ->
+                    case scan_byte_class(Ctx, Defs) of
+                        {ok, Byte, Class} ->
+                            {ok, #{ctx_index => CtxIx,
+                                   byte => Byte,
+                                   class => Class,
+                                   counters => Counters}};
+                        none ->
+                            none
+                    end;
+                none ->
+                    none
+            end;
+        _ ->
+            none
+    end;
+scan_match(_, _, _) ->
+    none.
+
+scan_enumerate(L) ->
+    lists:zip(lists:seq(0, length(L)-1), L).
+
+scan_is_op(Var, Op, Defs) ->
+    case Defs of
+        #{Var := #b_set{op=Op}} -> true;
+        #{} -> false
+    end.
+
+%% Every non-context arg must be its formal (passthrough) or an affine
+%% increment of its formal (a counter). Returns the counter list.
+scan_check_others(Pairs, CtxIx, Defs) ->
+    scan_check_others(scan_enumerate(Pairs), CtxIx, Defs, []).
+
+scan_check_others([{CtxIx,_}|Rest], CtxIx, Defs, Acc) ->
+    scan_check_others(Rest, CtxIx, Defs, Acc);
+scan_check_others([{_Ix,{F,F}}|Rest], CtxIx, Defs, Acc) ->
+    %% Passthrough: same variable in and out.
+    scan_check_others(Rest, CtxIx, Defs, Acc);
+scan_check_others([{Ix,{F,Ca}}|Rest], CtxIx, Defs, Acc) ->
+    case scan_affine_inc(Ca, F, Defs) of
+        {ok, K} -> scan_check_others(Rest, CtxIx, Defs, [{Ix,K}|Acc]);
+        no -> none
+    end;
+scan_check_others([], _CtxIx, _Defs, Acc) ->
+    {ok, lists:reverse(Acc)}.
+
+%% Ca defined by `Formal + Literal` (or `Literal + Formal`)?
+scan_affine_inc(Ca, F, Defs) ->
+    case Defs of
+        #{Ca := #b_set{op={bif,'+'}, args=[F, #b_literal{val=K}]}} -> {ok, K};
+        #{Ca := #b_set{op={bif,'+'}, args=[#b_literal{val=K}, F]}} -> {ok, K};
+        #{} -> no
+    end.
+
+%% The byte is `bs_extract Ctx`; classify the guards applied to it.
+scan_byte_class(Ctx, Defs) ->
+    case [Byte || {Byte, #b_set{op=bs_extract, args=[C]}} <- maps:to_list(Defs),
+                  C =:= Ctx] of
+        [Byte] ->
+            case scan_classify(Byte, Defs) of
+                none -> none;
+                Class -> {ok, Byte, Class}
+            end;
+        _ ->
+            none
+    end.
+
+%% Collect literal comparisons applied to Byte and fold them into a
+%% class. Handles `>=`/`=<` ranges and `=:=` equality sets.
+scan_classify(Byte, Defs) ->
+    Cmps = [scan_normalize(Op, As, Byte)
+            || {_V, #b_set{op={bif,Op}, args=As}} <- maps:to_list(Defs),
+               lists:member(Op, ['>=','=<','>','<','=:=']),
+               lists:member(Byte, As)],
+    scan_fold_class([C || C <- Cmps, C =/= skip]).
+
+%% Normalize to `Byte Op Lit`, flipping Op when Byte is the 2nd arg.
+scan_normalize(Op, [B, #b_literal{val=L}], B) -> {Op, L};
+scan_normalize(Op, [#b_literal{val=L}, B], B) -> {scan_flip(Op), L};
+scan_normalize(_Op, _As, _B) -> skip.
+
+scan_flip('>=') -> '=<';
+scan_flip('=<') -> '>=';
+scan_flip('>')  -> '<';
+scan_flip('<')  -> '>';
+scan_flip('=:=') -> '=:='.
+
+scan_fold_class(Cmps) ->
+    Lo = scan_lower(Cmps),
+    Hi = scan_upper(Cmps),
+    Eqs = [L || {'=:=', L} <- Cmps],
+    if
+        Lo =/= none, Hi =/= none -> {range, Lo, Hi};
+        Eqs =/= [] -> {set, lists:usort(Eqs)};
+        true -> none
+    end.
+
+scan_lower(Cmps) ->
+    Ls = [L || {'>=', L} <- Cmps] ++ [L+1 || {'>', L} <- Cmps],
+    case Ls of
+        [] -> none;
+        _ -> lists:max(Ls)
+    end.
+
+scan_upper(Cmps) ->
+    Hs = [H || {'=<', H} <- Cmps] ++ [H-1 || {'<', H} <- Cmps],
+    case Hs of
+        [] -> none;
+        _ -> lists:min(Hs)
+    end.
 
 %% Builds a function information map with basic information about incoming and
 %% outgoing local calls, as well as whether the function is exported.
