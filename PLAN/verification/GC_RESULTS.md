@@ -69,17 +69,13 @@ driven by the allocation *rate* (387 MB/s of garbage). Cut the rate
 
 Two secondary signals:
 
-- **6 760 major GCs in 12 s** (~9/proc/s) is high for steady-state
-  server processes — major (full-sweep) collections are expensive
-  and shouldn't fire this often unless something forces them. Prime
-  suspect: binary-vheap pressure from the refc MQTT payloads (the
-  256 B messages are off-heap binaries; the binary virtual heap
-  drives its own GC trigger). Worth a `bin_vheap`-specific look —
-  potentially a tuning or policy win independent of the allocation
-  work.
+- **6 760 major GCs in 12 s** (~9/proc/s) — milder than Bandit's
+  storm, and same cause: RabbitMQ's own hibernate / `garbage_collect`
+  calls in the channel/queue/reader/MQTT processes (see the
+  Correction below). Not binary-vheap pressure (falsified there).
 - **Small heaps** (p50 ~20 KB) mean these processes collect very
-  often. `min_heap_size`/`fullsweep_after` tuning for connection
-  processes is a cheap, orthogonal lever on the *frequency* side.
+  often. Bigger `min_heap_size` for connection processes is a cheap
+  lever on the minor-GC *frequency* side (Experiment 3 below).
 
 ### Bandit — same shape, and a major-GC pathology
 
@@ -91,32 +87,93 @@ real sliver of "faster GC / tuning" headroom the broker doesn't
 have.
 
 The standout is the **major-GC rate: 359 510 full sweeps in 12 s
-across 60 procs — a major every ~8 minor GCs, with only 19 %
-old-gen survival.** Full sweeps scan the entire heap *and* old
-generation and are far more expensive than minors; a 1:8 ratio is
-abnormal. The cause is almost certainly **binary virtual-heap
-pressure**: Jason decode/encode churns refc binaries and sub-binaries
-per request (`erts_build_sub_bitstring`, `list_to_binary_copy`,
-`erts_binary_part` were all hot in the perf round), the `bin_vheap`
-trigger fills, and refc-binary reclamation forces a major collection.
-RabbitMQ shows the same signature far milder (1:45, 6 760 majors) —
-its 256 B MQTT payloads are also refc binaries.
+across 60 procs — a major every ~8 minor GCs.** See the Correction
+below: this is **not** a VM trigger — Bandit calls
+`:erlang.garbage_collect()` deliberately, every 5 keepalive requests.
 
-This is a distinct, nameable, possibly high-value target *orthogonal
-to allocation elimination*: the binary-vheap GC-trigger policy
-(`bin_vheap` sizing, `fullsweep_after`, or making small
-serialization outputs heap binaries rather than refc) — a runtime/GC
-investigation that neither the JIT nor compiler escape analysis
-touches. It may be the single cheapest GC win surfaced this session.
+## Correction (validated 2026-06-15) — the major GCs are app-requested
+
+An earlier draft of this file blamed binary virtual-heap pressure for
+the major-GC storm. **That hypothesis is wrong, and was falsified by
+experiment.** The real cause is deliberate application-level GC.
+
+**Experiment 1 — bin_vheap is NOT the cause** (synthetic
+[`binchurn.erl`](binchurn.erl), repo OTP 29, a worker churning 41
+refc sub-binaries + a map per iteration — the Jason pattern):
+
+| `min_bin_vheap_size` | major GCs (4 s) |
+|---|---|
+| default (46 422 w) | 38 929 |
+| 4 194 304 w (90×) | 37 108 |
+
+A 90× bigger binary vheap left the major rate unchanged. Binary-vheap
+pressure does not drive the majors.
+
+**Experiment 2 — `fullsweep_after` is NOT the cause** (same worker):
+setting `fullsweep_after` to its max (65 535) still gave 37 177
+majors. The majors are not generation-count driven; they come from
+the `F_NEED_FULLSWEEP` *escalation* path (`erl_gc.c:808` — a minor
+that can't make room escalates to a full sweep), which is itself a
+function of **heap size**, not binaries.
+
+**Experiment 3 — heap size collapses the escalation majors** (same
+worker):
+
+| `min_heap_size` | minor GCs/s | major GCs (3 s) |
+|---|---|---|
+| 233 w (tiny) | 224 000 | 29 267 |
+| 2 584 w | 88 000 | **4** |
+| 46 422 w | 9 000 | **0** |
+
+Bigger heaps eliminate the escalation majors entirely and cut minor
+frequency ~25×. So *the synthetic's* majors were tiny-heap
+escalation — a real mechanism, but still not Bandit's cause.
+
+**Experiment 4 — the real cause, found by reading the source and
+validated on the real app.** `bandit/http1/handler.ex:28` calls
+`:erlang.garbage_collect()` (a forced full sweep) every
+`gc_every_n_keepalive_requests` keepalive requests — **default 5**.
+Raising that option to 100 000 on the real Bandit workload:
+
+| `gc_every_n_keepalive_requests` | major GCs (12 s, 60 procs) |
+|---|---|
+| 5 (default) | 359 510 |
+| 100 000 (effectively off) | **12 747** — a 28× collapse |
+
+The major-GC storm is Bandit deliberately bounding per-connection
+memory across long-lived keepalive connections. **RabbitMQ does the
+same**: `garbage_collect` appears in `rabbit_channel`,
+`rabbit_amqqueue_process`, `rabbit_reader`, and the MQTT handler (the
+standard hibernate / explicit-GC-to-release-binaries pattern), which
+is why its majors are milder (1:45) — fewer forced points than
+Bandit's every-5-requests.
+
+**Corrected lever picture:**
+
+- **Major GCs are application-requested**, not a VM pathology. They
+  trade CPU for bounded memory in long-lived connection processes,
+  primarily to release retained refc binaries. The lever is *library
+  configuration* (Bandit's `gc_every_n_keepalive_requests`,
+  RabbitMQ's hibernate policy) — a memory-vs-CPU tradeoff, not a VM
+  change. With Bandit's default of 5, a meaningful slice of the
+  measured GC % is self-inflicted and tunable.
+- **Why they force GC at all** loops back to binary retention in
+  long-lived processes — so "make binary handling cheaper / retain
+  less" (the allocation/runtime story) would reduce the *need* for
+  forced GC, which is the deeper, non-config lever.
+- **Minor-GC frequency** is the genuine, non-requested cost, and it
+  is driven by allocation rate + heap sizing (Experiment 3). "Less
+  garbage" + bigger `min_heap_size` for hot processes are the levers
+  there.
 
 ## Reading — which lever, and who pulls it
 
 Both apps agree: **majority-garbage, tiny heaps, frequency-dominated
 GC** (RabbitMQ 82 % garbage, Bandit 61 %). "Less garbage" is the
-primary lever on both; "faster GC" has real but secondary headroom
-only on Bandit (higher survival), and a *third* lever — the
-binary-vheap major-GC trigger — turns out to matter on both and is
-the cheapest to test.
+primary lever for the *minor*-GC cost; the *major*-GC cost is
+application-requested and tuned at the library level (the Correction
+above). "Faster GC" has real but secondary headroom only on Bandit
+(higher survival).
 
 "Less garbage" splits into three sub-projects (ranked by leverage on
 this data):
@@ -130,8 +187,8 @@ this data):
    targets the dominant VM pool, not the 12–21 % code pool.
 2. **Runtime: cheaper allocation / fewer collections** — off-heap or
    shared messages to kill the send-side copy (`copy_struct_x` from
-   the perf round), bigger initial heaps to cut frequency, and the
-   binary-vheap major-GC investigation above.
+   the perf round), and bigger initial heaps to cut minor frequency
+   (Experiment 3: `min_heap_size` cut minor GCs ~25×).
 3. **Library/app: stop generating avoidable garbage** — the
    per-allocation-site worklist that idea #50's *full* instrumentation
    would produce. This generation-granularity tool says the garbage
@@ -146,24 +203,50 @@ is a stronger second-tier motivation than anything the speed gate
 program found, and squarely a compiler/JIT project rather than a
 runtime one.
 
+### Per-site attribution attempt (existing infra) — insufficient
+
+I tried to name the `module:fun/arity` garbage sites with the
+existing **`+M<S>atags code` + `instrument:allocations([per_mfa])`**
+infrastructure (binary/eheap/ETS allocators), which the agent
+investigation showed can attribute `erts_alloc`-backed allocations
+to their origin. Run on both apps under load ([`gc_sites.erl`](gc_sites.erl)):
+
+- **Bandit**: top origins were `code_server`, `Module.ParallelChecker`,
+  `prepare_loading` — Mix.install's persistent compilation data. The
+  request garbage (`Jason.decode`, `Bandit.Adapter:read_req_body`,
+  `unicode:characters_to_binary`) appeared but buried and small.
+- **RabbitMQ**: top origins were ETS tables (`db_tab`/`db_term`) and
+  startup infra (`ra_*`, `rabbit_disk_monitor`, `code_server`). The
+  hot message-path binaries were absent.
+
+**Conclusion: existing infra cannot do garbage attribution.**
+`instrument:allocations` is a *live snapshot* — it reports what's
+allocated *right now*, dominated by long-lived/persistent data (ETS,
+code, startup). Short-lived churning garbage — exactly the 387 MB/s
+we want to attribute — is allocated and freed *between* samples, so
+it's structurally invisible. This is a real limitation, confirmed on
+both apps, not a tuning issue. The cheap path for #2 does not exist.
+
 ### Ranked next experiments (the cheapest first)
 
-1. **Binary-vheap major-GC trigger** (runtime, smallest). Both apps
-   full-sweep far more than expected (Bandit 1:8 major:minor). Price
-   it: vary `bin_vheap`/`fullsweep_after`/`min_bin_vheap_size` on the
-   Bandit leg and measure the major-GC rate and GC busy %. If the
-   majors collapse, this is a near-free win on every binary-heavy
-   server. No JIT, no compiler.
-2. **Full per-allocation-site lifetime histogram (idea #50)** — the
-   instrumentation this run proxied. Now justified: the garbage is
-   short-lived *and* concentrated in `proc_lib` (gen_server/connection)
-   processes, so the per-site histogram would name the exact
-   `module:line` allocation sites to attack. The build cost (VM
-   metadata arrays) is warranted because the lever is confirmed.
+1. **Bandit/RabbitMQ forced-GC tuning** — *already done* for Bandit
+   (`gc_every_n_keepalive_requests`, default 5 → the major storm;
+   raising it cut majors 28×). Actionable now: the default is
+   aggressive for pipelined workloads; a higher default or
+   per-deployment tuning trades a few % CPU for per-connection
+   memory. A library-config win, upstreamable to Bandit, no VM work.
+2. **Full per-allocation-site lifetime histogram (idea #50)** — now
+   *required*, not just justified: the existing-infra path above is
+   structurally insufficient, so naming the churn sites genuinely
+   needs the GC-time per-term instrumentation (metadata arrays +
+   copy-loop walk). It is a large, invasive ERTS change (multi-day,
+   risk in the GC copy path) — to be scoped and built deliberately,
+   not rushed. It remains the prerequisite for the targeted
+   allocation-elimination work below.
 3. **Compiler/JIT escape analysis + unboxing** on the hot per-message
-   / per-request path — the largest but heaviest lever, and the one
-   that redirects the second-tier work at the dominant deployed-server
-   pool.
+   / per-request path — the largest lever, redirecting the
+   second-tier work at the dominant deployed-server pool. Gated on
+   #2 to know which sites to target.
 
 ## Reproduction
 
