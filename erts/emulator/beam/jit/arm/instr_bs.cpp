@@ -277,20 +277,20 @@ void BeamModuleAssembler::emit_bs_scan(const ArgRegister &Ctx,
     const Uint vals[4] = {vpack & 0xff, (vpack >> 8) & 0xff,
                           (vpack >> 16) & 0xff, (vpack >> 24) & 0xff};
 
-    Label loop = a.new_label();
+    Label loop = a.new_label();     /* SWAR 8-byte loop */
+    Label bytewise = a.new_label();  /* scalar tail / fallback */
     Label done = a.new_label();
 
     auto ctx = load_source(Ctx, TMP1);
-    const a64::Gp ctx_reg = ctx.reg;
 
     const a64::Gp base = ARG2;
     const a64::Gp pos = ARG3;
     const a64::Gp endp = ARG4;
     const a64::Gp pos0 = ARG5;
-    const a64::Gp byte = ARG6;
+    const a64::Gp byte = ARG6; /* also the SWAR 8-byte word */
 
-    a.ldur(pos, emit_boxed_val(ctx_reg, start_offset));
-    a.ldur(endp, emit_boxed_val(ctx_reg, end_offset));
+    a.ldur(pos, emit_boxed_val(ctx.reg, start_offset));
+    a.ldur(endp, emit_boxed_val(ctx.reg, end_offset));
     a.mov(pos0, pos);
 
     /* Only scan byte-aligned contexts (the recognizer guarantees this);
@@ -298,10 +298,100 @@ void BeamModuleAssembler::emit_bs_scan(const ArgRegister &Ctx,
     a.tst(pos, imm(7));
     a.b_ne(done);
 
-    a.ldur(base, emit_boxed_val(ctx_reg, base_offset));
+    a.ldur(base, emit_boxed_val(ctx.reg, base_offset));
     a.and_(base, base, imm(~Uint64{ERL_SUB_BITS_FLAG_MASK}));
 
-    a.bind(loop);
+    /* SWAR fast path, eight bytes per iteration. Applies to a range
+     * [lo,hi] with hi<=0x7F, or a notset with hi==0x7F and <=2
+     * exclusions. A chunk that contains any stop byte (or the final
+     * partial chunk) falls through to the bytewise loop, which finds
+     * the exact stop position. SWAR may over-report stops (false
+     * positives are re-checked bytewise) but never misses one. */
+    const bool swar = (kind == 0 && hi <= 0x7F) ||
+                      (kind == 2 && hi == 0x7F && nv <= 2);
+
+    if (swar) {
+        const Uint64 ONES = 0x0101010101010101ull;
+        const Uint64 HIGH = 0x8080808080808080ull;
+        const a64::Gp high = TMP2;
+        const a64::Gp lo_rep = TMP3;
+
+        mov_imm(high, HIGH);
+        mov_imm(lo_rep, ONES * lo);
+
+        /* range: carry-safe upper-bound term, skipped when hi==0x7F
+         * (where >=0x80 already lies outside the class and is caught
+         * by the high-bit term below). */
+        const bool need_upper = (kind == 0 && hi < 0x7F);
+        const a64::Gp low7 = TMP4;
+        const a64::Gp c_hi = TMP5;
+        if (need_upper) {
+            mov_imm(low7, 0x7F7F7F7F7F7F7F7Full);
+            mov_imm(c_hi, ONES * (0x7F - hi));
+        }
+
+        /* notset: replicated exclusion bytes + ONES for haszero. */
+        const a64::Gp ones = TMP6;
+        const a64::Gp vrep0 = TMP4;
+        const a64::Gp vrep1 = TMP5;
+        if (kind == 2) {
+            mov_imm(ones, ONES);
+            if (nv >= 1) {
+                mov_imm(vrep0, ONES * vals[0]);
+            }
+            if (nv >= 2) {
+                mov_imm(vrep1, ONES * vals[1]);
+            }
+        }
+
+        const a64::Gp w = byte;      /* ARG6, 8-byte word */
+        const a64::Gp acc = ARG8;    /* accumulated stop mask */
+        const a64::Gp t = TMP1;      /* address scratch / class temp */
+        const a64::Gp x = SUPER_TMP; /* haszero scratch */
+
+        a.bind(loop);
+        a.add(t, pos, imm(64));
+        a.cmp(t, endp);
+        a.b_hi(bytewise); /* fewer than 8 bytes left */
+        a.lsr(t, pos, imm(3));
+        a.ldr(w, a64::Mem(base, t)); /* 8 bytes, little-endian */
+
+        /* lower mask = ((w - lo_rep) & ~w | w) & HIGH
+         *   (byte high bit set iff byte < lo or byte >= 0x80) */
+        a.sub(acc, w, lo_rep);
+        a.bic(acc, acc, w);
+        a.orr(acc, acc, w);
+        a.and_(acc, acc, high);
+
+        if (need_upper) {
+            /* upper mask = ((w & LOW7) + c_hi) & HIGH
+             *   (byte high bit set iff (byte & 0x7f) > hi) */
+            a.and_(t, w, low7);
+            a.add(t, t, c_hi);
+            a.and_(t, t, high);
+            a.orr(acc, acc, t);
+        }
+
+        if (kind == 2) {
+            for (Uint i = 0; i < nv; i++) {
+                /* haszero(w ^ Vi) = (x - ONES) & ~x & HIGH */
+                a.eor(x, w, (i == 0) ? vrep0 : vrep1);
+                a.sub(t, x, ones);
+                a.bic(t, t, x);
+                a.and_(t, t, high);
+                a.orr(acc, acc, t);
+            }
+        }
+
+        a.cbnz(acc, bytewise); /* stop byte within this chunk */
+        a.add(pos, pos, imm(64));
+        a.b(loop);
+    }
+
+    /* Bytewise loop: scalar per-byte class test. Serves as the SWAR
+     * tail (bounded, <=8 iterations after a SWAR exit) and as the
+     * whole scan when SWAR does not apply. */
+    a.bind(bytewise);
     a.add(TMP2, pos, imm(8));
     a.cmp(TMP2, endp);
     a.b_hi(done); /* fewer than 8 bits left */
@@ -332,10 +422,11 @@ void BeamModuleAssembler::emit_bs_scan(const ArgRegister &Ctx,
     }
 
     a.add(pos, pos, imm(8));
-    a.b(loop);
+    a.b(bytewise);
 
     a.bind(done);
-    a.stur(pos, emit_boxed_val(ctx_reg, start_offset));
+    auto ctxd = load_source(Ctx, TMP1);
+    a.stur(pos, emit_boxed_val(ctxd.reg, start_offset));
 
     a.sub(TMP2, pos, pos0);   /* consumed bits */
     a.lsr(TMP2, TMP2, imm(3)); /* -> bytes */

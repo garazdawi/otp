@@ -359,9 +359,32 @@ bookkeeping.
   ≥2.5× on the G-bin bench. Needs an **emulator rebuild** + the ordering
   verification; large and miscompilation-sensitive — implement staged,
   building + testing at each step, not in one shot.
-- **A1-2 · SWAR recipes.** The §3 lane recipes (8 bytes/iter) behind
-  the scalar tail. Gate: G-bin full ≥4× isolated scan
-  (`08` §7 acceptance bar); hashes unchanged.
+- **A1-2 · SWAR recipes. COMPLETE (2026-06-15), gate met.** The §3
+  lane recipes (8 bytes/iter) behind the scalar tail, in arm
+  `emit_bs_scan`. SWAR fires for `range [lo,hi]` with `hi<=0x7F` and
+  for `notset hi==0x7F` with ≤2 exclusions; everything else falls to
+  the scalar bytewise loop, which doubles as the SWAR tail (the last
+  <8 bytes, and the bounded re-scan after a chunk flags a stop).
+  Recipe per 8-byte chunk: lower mask `((w-lo_rep)&~w|w)&HIGH` (byte
+  <lo or ≥0x80); a **carry-safe** upper term `((w&LOW7)+c_hi)&HIGH`
+  (byte>hi, masked to low 7 bits so no cross-byte carry) when hi<0x7F;
+  plus `haszero(w^Vi)` per exclusion. SWAR over-reports stops (false
+  positives re-checked bytewise) but never misses one — so it is exact.
+  **Correctness:** `json:decode` byte-identical across 5000 round-trips
+  (unchanged); a 16000-case fuzz across all four variants (notset +
+  digit/alpha/ctrl ranges) with bytes ≥0x80 and stops at every chunk
+  offset, scalar-vs-SWAR identical, 0 mismatches. **Speed (isolated,
+  1 MB single-run, `sb.erl`):** printable `notset` **3.06×**
+  (0.90→2.75 GB/s), digit `range` **20.8×** (1.03→21.4 GB/s) — clears
+  the **≥4×** bar (digit) and ~G-bin (notset; the longer accumulator
+  dependency chain on the 2 exclusions caps ILP — a tree-reduce of the
+  sub-masks is the obvious follow-up). **End-to-end json decode flat**
+  (twitter 1.01×, canada 0.98×, citm 1.02×): the scan primitive is now
+  3–20× faster, but on these docs string runs are short and decode is
+  dominated by map/number/structure work, so the total is unmoved. The
+  compelling end-to-end number needs a **scan-dominated** workload with
+  long homogeneous runs (lexing/tokenizing, CSV/TSV, log/protocol
+  framing, base64/hex) — that is the A1 win to showcase next.
 - **A1-3 · encode-side + re-baseline.** `escape_binary_ascii`
   (same `notset` shape, construction side) where cheap; then run the
   §8 re-baseline suite against A1-improved T1 and record the T2
