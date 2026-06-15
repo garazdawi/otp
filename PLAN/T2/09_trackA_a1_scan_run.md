@@ -310,7 +310,29 @@ bookkeeping.
   two-output pattern: `_X = bs_scan …` is the new context, `_Count =
   bs_extract _X`), registered in `beam_ssa_pre_codegen:fix_bs` as a
   context producer so the save captures the post-scan position and the
-  downstream match threads `_X`. That is the remaining A1-1b work. **Benchmark against the *naive* `string/7` path**, not the
+  downstream match threads `_X`. That is the remaining A1-1b work.
+
+  **Fix design, refined (after reading pre_codegen's position tracker).**
+  `bs_restores_is` keys entirely on the context-value chain: each match
+  op reads from its context *argument* and advances the tracked position
+  to its *dst*; backtracking restores to whatever dst was current at the
+  dispatch. `bs_scan` is invisible (yields a count, not a context), so
+  the tracker thinks the position never moved and the restore reverts
+  the advance. The correct fix is a genuine **two-output op** touching
+  five places: (1) the rewrite makes `bs_scan` produce the advanced
+  context `_X` and renames downstream context users `Ctx→_X`, plus
+  `_Count = bs_extract _X`, `Len' = Len + _Count`; (2) `fix_bs` CtxChain
+  `bs_scan` dst → parent; (3) a `bs_restores_is` `bs_scan` clause that
+  advances `SPos[root] := dst`; (4) the count register — `bs_subst_ctx`
+  collapses context vars to the root register, so the count needs its
+  own register via the `bs_combine`→`bs_get` machinery (the intricate
+  part, today specific to adjacent-block `bs_match`); (5) `cg_instr`
+  emits BEAM `bs_scan` with that count register. A real change to core
+  match-context dataflow + codegen — miscompilation-sensitive, do it
+  unhurried with `bs_match_SUITE` at each step. The Stage-2 commit
+  (simple scans working, gated off) is the foundation.
+
+  **Benchmark against the *naive* `string/7` path**, not the
   hand-unrolled `string_ascii/7`. Gate: full stdlib/json suite +
   byte-identical `json:decode` hashes on the nativejson trio; bytewise
   ≥2.5× on the G-bin bench. Needs an **emulator rebuild** + the ordering
