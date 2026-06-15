@@ -414,14 +414,25 @@ scan_match(Lsc, #b_set{op=call, args=[_Self | CallArgs]}, Args, Defs, Blocks, Pr
         [{CtxIx, Ctx}] ->
             case scan_check_others(Pairs, CtxIx, Defs) of
                 {ok, Counters} ->
-                    case scan_byte_class(Ctx, Lsc, Defs, Blocks, Preds) of
-                        {ok, Byte, Class} ->
-                            {ok, #{ctx_index => CtxIx,
-                                   byte => Byte,
-                                   class => Class,
-                                   counters => Counters}};
-                        none ->
-                            none
+                    %% A1-1 targets the single-byte-per-iteration scan:
+                    %% every counter advances by exactly 1, so the byte
+                    %% count equals the run length. This excludes the
+                    %% hand-unrolled multi-byte matchers (e.g.
+                    %% `json:string_ascii/7`, `Len + 8`) whose naive
+                    %% single-byte twin (`string/7`) is the real target.
+                    case lists:all(fun({_,K}) -> K =:= 1 end, Counters) of
+                        false ->
+                            none;
+                        true ->
+                            case scan_byte_class(Ctx, Lsc, Defs, Blocks, Preds) of
+                                {ok, Byte, Class} ->
+                                    {ok, #{ctx_index => CtxIx,
+                                           byte => Byte,
+                                           class => Class,
+                                           counters => Counters}};
+                                none ->
+                                    none
+                            end
                     end;
                 none ->
                     none
@@ -478,16 +489,12 @@ scan_byte_class(Ctx, Lsc, Defs, Blocks, Preds) ->
     case [Byte || {Byte, #b_set{op=bs_extract, args=[C]}} <- maps:to_list(Defs),
                   C =:= Ctx] of
         [Byte] ->
-            case scan_switch_invals(Byte, Lsc, Blocks, Preds) of
-                {ok, InVals} ->
-                    case scan_canonical_class(InVals) of
-                        none -> none;
-                        Class -> {ok, Byte, Class}
-                    end;
+            Anc = scan_ancestors(Lsc, Preds),
+            case scan_constraints(Byte, Anc, Blocks) of
                 bail ->
                     none;
-                none ->
-                    case scan_cmp_class(Byte, Defs) of
+                Cs ->
+                    case scan_fold(Cs) of
                         none -> none;
                         Class -> {ok, Byte, Class}
                     end
@@ -496,13 +503,26 @@ scan_byte_class(Ctx, Lsc, Defs, Blocks, Preds) ->
             none
     end.
 
-%% If the byte is the argument of a `switch` whose arms route in-class
-%% values to the self-call, return those values. `none` => no governing
-%% switch (try comparison guards); `bail` => a switch we cannot model
-%% soundly (non-integer arms, default reaches the self-call, or more
-%% than one governing switch).
-scan_switch_invals(Byte, Lsc, Blocks, Preds) ->
-    Anc = scan_ancestors(Lsc, Preds),
+%% Gather *path-sensitive* constraints on the byte: facts that must hold
+%% for control to reach the self-call. Sources are a `switch` on the
+%% byte and comparison-guard branches. Each guard is oriented by which
+%% side reaches the self-call, so a guard whose success *leaves* the
+%% scan contributes the negated fact — the scan-until-stop polarity
+%% (e.g. `string:bin_search_inv` scanning *until* `\r`, the class is
+%% "every byte except `\r`", not "`\r`"). Returns a constraint list or
+%% `bail`.
+scan_constraints(Byte, Anc, Blocks) ->
+    try
+        scan_switch_constraints(Byte, Anc, Blocks) ++
+            scan_cmp_constraints(Byte, Anc, Blocks)
+    catch
+        throw:bail -> bail
+    end.
+
+%% A `switch` on the byte. Default not reaching => the in-class set is
+%% exactly the reaching arms (`{one_of,...}`); default reaching => the
+%% non-reaching arms are stop bytes (`{must_ne,...}`).
+scan_switch_constraints(Byte, Anc, Blocks) ->
     Switches = [{Def, List}
                 || {_L, #b_blk{last=#b_switch{arg=A, fail=Def, list=List}}}
                        <- maps:to_list(Blocks), A =:= Byte],
@@ -511,25 +531,23 @@ scan_switch_invals(Byte, Lsc, Blocks, Preds) ->
                        lists:any(fun({_,L}) -> sets:is_element(L, Anc) end, List)],
     case Active of
         [] ->
-            none;
+            [];
         [{Def, List}] ->
-            case sets:is_element(Def, Anc) of
-                true ->
-                    %% Default continues the scan: would be a notset over
-                    %% the whole byte range — not modelled yet.
-                    bail;
+            Vals = [V || {#b_literal{val=V}, _} <- List],
+            case lists:all(fun erlang:is_integer/1, Vals) of
                 false ->
+                    throw(bail);
+                true ->
                     InVals = [V || {#b_literal{val=V}, L} <- List,
                                    sets:is_element(L, Anc)],
-                    NonInt = [V || V <- InVals, not is_integer(V)],
-                    if
-                        NonInt =/= [] -> bail;
-                        InVals =:= [] -> none;
-                        true -> {ok, InVals}
+                    case sets:is_element(Def, Anc) of
+                        false -> [{one_of, InVals}];
+                        true  -> [{must_ne, V} || V <- Vals,
+                                                  not lists:member(V, InVals)]
                     end
             end;
         _ ->
-            bail
+            throw(bail)
     end.
 
 %% Blocks that can reach L (L and all its ancestors), by reverse walk.
@@ -565,14 +583,42 @@ scan_canonical_class(Vals0) ->
             end
     end.
 
-%% Collect literal comparisons applied to Byte and fold them into a
-%% class. Handles `>=`/`=<` ranges and `=:=` equality sets.
-scan_cmp_class(Byte, Defs) ->
-    Cmps = [scan_normalize(Op, As, Byte)
-            || {_V, #b_set{op={bif,Op}, args=As}} <- maps:to_list(Defs),
-               lists:member(Op, ['>=','=<','>','<','=:=']),
-               lists:member(Byte, As)],
-    scan_fold_class([C || C <- Cmps, C =/= skip]).
+%% Comparison guards on the byte that gate the self-call, oriented by
+%% reachability: `true` = the guard must hold to reach the self-call,
+%% `false` = it must not (its success path leaves the scan).
+scan_cmp_constraints(Byte, Anc, Blocks) ->
+    lists:flatmap(fun({_L, Blk}) -> scan_cmp_in_blk(Byte, Anc, Blk) end,
+                  maps:to_list(Blocks)).
+
+scan_cmp_in_blk(Byte, Anc, #b_blk{is=Is, last=#b_br{bool=Bool, succ=S, fail=F}}) ->
+    case scan_guard(Bool, Is) of
+        {Op, As} ->
+            case scan_normalize(Op, As, Byte) of
+                skip ->
+                    [];
+                {NOp, Lit} ->
+                    SR = sets:is_element(S, Anc),
+                    FR = sets:is_element(F, Anc),
+                    if
+                        SR, not FR -> scan_cons(NOp, Lit, true);
+                        FR, not SR -> scan_cons(NOp, Lit, false);
+                        true -> []
+                    end
+            end;
+        none ->
+            []
+    end;
+scan_cmp_in_blk(_Byte, _Anc, _Blk) ->
+    [].
+
+%% The single comparison bif on the byte that defines this branch's bool.
+scan_guard(Bool, Is) ->
+    case [{Op, As} || #b_set{dst=D, op={bif,Op}, args=As} <- Is,
+                      D =:= Bool,
+                      lists:member(Op, ['>=','=<','>','<','=:='])] of
+        [G] -> G;
+        _ -> none
+    end.
 
 %% Normalize to `Byte Op Lit`, flipping Op when Byte is the 2nd arg.
 scan_normalize(Op, [B, #b_literal{val=L}], B) -> {Op, L};
@@ -585,34 +631,46 @@ scan_flip('>')  -> '<';
 scan_flip('<')  -> '>';
 scan_flip('=:=') -> '=:='.
 
-%% NB: this comparison path is not yet path-sensitive — it folds every
-%% `>=`/`=<`/`=:=` on the byte regardless of whether that guard gates
-%% the self-call. A1-1 must make it path-sensitive (as the switch path
-%% already is) before the class drives a rewrite. For now we at least
-%% reject an inverted (empty) range, which a non-gating guard pair can
-%% otherwise produce.
-scan_fold_class(Cmps) ->
-    Lo = scan_lower(Cmps),
-    Hi = scan_upper(Cmps),
-    Eqs = [L || {'=:=', L} <- Cmps],
-    if
-        Lo =/= none, Hi =/= none, Lo =< Hi -> {range, Lo, Hi};
-        Eqs =/= [] -> {set, lists:usort(Eqs)};
-        true -> none
-    end.
+%% Turn `Byte Op Lit`, taken (`true`) or negated (`false`), into a
+%% constraint that must hold to reach the self-call.
+scan_cons('>=', L, true)  -> [{must_ge, L}];
+scan_cons('>=', L, false) -> [{must_le, L-1}];
+scan_cons('=<', H, true)  -> [{must_le, H}];
+scan_cons('=<', H, false) -> [{must_ge, H+1}];
+scan_cons('>',  L, true)  -> [{must_ge, L+1}];
+scan_cons('>',  L, false) -> [{must_le, L}];
+scan_cons('<',  H, true)  -> [{must_le, H-1}];
+scan_cons('<',  H, false) -> [{must_ge, H}];
+scan_cons('=:=', C, true)  -> [{must_eq, C}];
+scan_cons('=:=', C, false) -> [{must_ne, C}].
 
-scan_lower(Cmps) ->
-    Ls = [L || {'>=', L} <- Cmps] ++ [L+1 || {'>', L} <- Cmps],
-    case Ls of
-        [] -> none;
-        _ -> lists:max(Ls)
-    end.
-
-scan_upper(Cmps) ->
-    Hs = [H || {'=<', H} <- Cmps] ++ [H-1 || {'<', H} <- Cmps],
-    case Hs of
-        [] -> none;
-        _ -> lists:min(Hs)
+%% Fold path-sensitive constraints into a byte class, or `none`.
+scan_fold(Cs) ->
+    case [V || {one_of, V} <- Cs] of
+        [Vals | _] ->
+            %% A governing switch already enumerates the in-class set;
+            %% remove any additionally-excluded values.
+            Ne = [C || {must_ne, C} <- Cs],
+            scan_canonical_class(Vals -- Ne);
+        [] ->
+            Ges = [L || {must_ge, L} <- Cs],
+            Les = [H || {must_le, H} <- Cs],
+            Eqs = [C || {must_eq, C} <- Cs],
+            Nes = lists:usort([C || {must_ne, C} <- Cs]),
+            Lo = case Ges of [] -> none; _ -> lists:max(Ges) end,
+            Hi = case Les of [] -> none; _ -> lists:min(Les) end,
+            if
+                Eqs =/= [] ->
+                    scan_canonical_class(lists:usort(Eqs) -- Nes);
+                Lo =/= none, Hi =/= none, Lo =< Hi ->
+                    InExcl = [C || C <- Nes, C >= Lo, C =< Hi],
+                    scan_canonical_class(lists:seq(Lo, Hi) -- InExcl);
+                Nes =/= [], Lo =:= none, Hi =:= none, length(Nes) =< 4 ->
+                    %% scan-until-stop: any byte except a small stop set.
+                    {notset, Nes, 0, 255};
+                true ->
+                    none
+            end
     end.
 
 %% Builds a function information map with basic information about incoming and
