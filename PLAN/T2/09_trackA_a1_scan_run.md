@@ -112,7 +112,62 @@ per-char `unicode_util` call are the adjacent, harder captures the
 string library would need — out of A1's byte-class scope, noted for
 later.
 
-## 4. The new `{scan,…}` bs_match command
+## 3b. The fast-forward-hint insight (A1-1b architecture)
+
+The scan op is an **always-safe prefix consume**. The recognized loop
+consumes a run of in-class bytes one at a time; a scan that consumes
+*any prefix* of that run (including zero) and advances the match
+context + counter accordingly leaves the *original loop* to handle
+whatever remains and the exit byte — because the loop body re-reads the
+context position and re-tests the class every iteration. So:
+
+- **No CFG surgery.** The rewrite inserts the scan at loop entry (after
+  `bs_start_match` establishes the context) and the existing
+  self-recursion is left intact: after a maximal scan the very next
+  byte is out-of-class, so the body runs once and exits to the stop
+  clause (the self-call becomes dynamically unreached); after a partial
+  scan the self-call re-enters and the scan fires again. Either way
+  correct, by construction.
+- **The match context advances in place.** A match context is a boxed
+  mutable `ErlSubBits` whose `start` field is the bit position;
+  `emit_t2_json_scan` already advances it with a single
+  `str … offsetof(ErlSubBits,start)`. So the scan only needs to mutate
+  `start` — the subsequent `bs_match` reads the new position
+  automatically, and **no SSA context-variable substitution is needed**.
+  Only the counter (`Len`) must be threaded: `Len' = Len + Count`, then
+  substitute `Len → Len'` in the entry-dominated region.
+
+### Vehicle: the `{scan}` bs_match command (a BIF is blocked)
+
+A BIF was the first instinct (least codegen work) but **it is blocked**,
+confirmed by reading the compiler (2026-06-15):
+
+- A match context **cannot flow into a remote call**.
+  `beam_ssa_bsm.erl:check_context_call/4` returns `{remote_call, Call}`
+  for any `#b_remote{}` callee — the pass exists precisely to stop match
+  contexts "leaking" into instructions that can't handle them
+  (`beam_ssa_bsm.erl:49`). A BIF is a remote call.
+- The save/restore alternative (`bs_get_position`/`bs_set_position`
+  around a BIF taking the underlying binary) needs arithmetic on the
+  *opaque* position term, which isn't available, and adds two ops +
+  a position allocation per run.
+
+So the vehicle is the **`{scan,…}` `bs_match` command** (§4) — and the
+match-context restriction is *why*: the scan runs **inside** the
+`bs_match` machinery, where the context is already in hand and is
+advanced in place (the `ErlSubBits.start` write `emit_t2_json_scan`
+already does), so nothing leaks. The byte `Count` leaves the command as
+an ordinary bs_match output (`CountDst`), exactly like an `{integer,…,
+Dst}` command — that is what lets the SSA rewrite thread it:
+`Len' = Len + CountDst`, then substitute `Len → Len'` (the
+fast-forward-hint above means that, plus the in-place context advance,
+is the *entire* rewrite — no CFG change). Confirmed-feasible pieces
+(investigation): `ErlSubBits` is a boxed, GC-safe, in-place-mutable
+match context (`erl_bits.h:60`); `start` advance is the standard
+pattern (`erl_bits.c:204,314`); a bs_match command already produces
+register outputs. SWAR inside the JIT handler is A1-2.
+
+## 4. The `{scan,…}` bs_match command
 
 Reuse the entire `bs_match` command-list machinery (`08` map: loader,
 JIT command iteration, range registration) by adding **one command
