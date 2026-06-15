@@ -1027,7 +1027,9 @@ vi({bs_scan, Ctx, _Kind, _Range, _VPack, Dst}, Vst0) ->
     %% of a byte class) and sets Dst to the count consumed. The class
     %% operands are plain integer literals; only Ctx and Dst need checks.
     assert_type(#t_bs_context{}, Ctx, Vst0),
-    create_term(#t_integer{}, bs_scan, [Ctx], Dst, Vst0);
+    %% The byte count is always non-negative; this keeps the lower bound
+    %% of any counter the run length is added to (`Len' = Len + Count`).
+    create_term(#t_integer{elements={0,'+inf'}}, bs_scan, [Ctx], Dst, Vst0);
 
 %%
 %% Floating-point instructions (excluding BIFs)

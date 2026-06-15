@@ -320,7 +320,14 @@ late_epilogue_passes(Opts) ->
           ?PASS(ssa_opt_tail_literals),
           ?PASS(ssa_opt_trim_unreachable),
           ?PASS(ssa_opt_unfold_literals),
-          ?PASS(ssa_opt_ranges)],
+          ?PASS(ssa_opt_ranges)] ++
+        %% A1-1b: the scan-loop rewrite is off by default; enable with the
+        %% `scan_loop` option. It runs last so no later pass can reorder
+        %% the inserted bs_scan ahead of the byte match it must precede.
+        case proplists:get_bool(scan_loop, Opts) of
+            true -> [?PASS(ssa_opt_scan_loop_rewrite)];
+            false -> []
+        end,
     passes_1(Ps, Opts).
 
 passes_1(Ps, Opts0) ->
@@ -672,6 +679,105 @@ scan_fold(Cs) ->
                     none
             end
     end.
+
+%%%
+%%% A1-1b: rewrite recognized scan loops to use the bs_scan instruction.
+%%%
+%%% For each recognized scan loop, insert `Count = bs_scan(Ctx, Class)`
+%%% right after the match context is established (before the per-byte
+%%% match), and fold the run length into each unit loop counter
+%%% (`Len' = Len + Count`, renaming Len -> Len'). bs_scan advances the
+%%% context in place, so the existing loop resumes from the new position
+%%% and handles the stop byte — the scan is an always-safe prefix consume
+%%% (PLAN/T2/09_trackA_a1_scan_run.md). Off by default; enabled by the
+%%% `scan_loop` compile option. A miscompiled rewrite would be rejected by
+%%% beam_validator (e.g. use-before-def), not silently accepted.
+
+ssa_opt_scan_loop_rewrite({#opt_st{ssa=Blocks0,args=Args,anno=Anno0,cnt=Cnt0}=St,
+                           FuncDb})
+  when is_map(Blocks0) ->
+    case Anno0 of
+        #{func_info := {_Mod,Name,Arity}} ->
+            case scan_find_loops({Name,Arity}, Args, Blocks0) of
+                [Scan] ->
+                    case scan_rewrite(Scan, Args, Blocks0, Cnt0) of
+                        {Blocks,Cnt} -> {St#opt_st{ssa=Blocks,cnt=Cnt}, FuncDb};
+                        none -> {St, FuncDb}
+                    end;
+                _ ->
+                    %% No scan, or more than one (not handled yet).
+                    {St, FuncDb}
+            end;
+        #{} ->
+            {St, FuncDb}
+    end;
+ssa_opt_scan_loop_rewrite({St, FuncDb}) ->
+    {St, FuncDb}.
+
+scan_rewrite(#{class:=Class, counters:=Counters}, Args, Blocks0, Cnt0) ->
+    case {scan_encode_class(Class), scan_start_match_blocks(Blocks0)} of
+        {{ok,Kind,Range,VPack}, [{L,CtxVar}]} ->
+            CountVar = #b_var{name=Cnt0},
+            {Adds,Rename,Cnt1} =
+                lists:foldl(
+                  fun({Index,1}, {As,Ren,C}) ->
+                          Formal = lists:nth(Index+1, Args),
+                          NewV = #b_var{name=C},
+                          Add = #b_set{op={bif,'+'},dst=NewV,
+                                       args=[Formal,CountVar]},
+                          {[Add|As], Ren#{Formal => NewV}, C+1};
+                     ({_Index,_K}, Acc) ->
+                          Acc
+                  end, {[], #{}, Cnt0+1}, Counters),
+            Labels = beam_ssa:rpo(Blocks0),
+            Blocks1 = beam_ssa:rename_vars(Rename, Labels, Blocks0),
+            Scan = #b_set{op=bs_scan,dst=CountVar,
+                          args=[CtxVar,#b_literal{val=Kind},
+                                #b_literal{val=Range},#b_literal{val=VPack}]},
+            Blocks = scan_insert_after(L, CtxVar, [Scan|lists:reverse(Adds)],
+                                       Blocks1),
+            {Blocks, Cnt1};
+        {_, _} ->
+            none
+    end.
+
+%% Encode a byte class into {ok,Kind,Range,VPack}, or `none` when it has
+%% more than four enumerated values (the packed operand can't hold them).
+scan_encode_class({range,Lo,Hi}) ->
+    {ok, 0, Lo bor (Hi bsl 8), 0};
+scan_encode_class({set,Vals}) ->
+    case scan_pack(Vals) of
+        none -> none;
+        VPack -> {ok, 1, 0, VPack}
+    end;
+scan_encode_class({notset,Excl,Lo,Hi}) ->
+    case scan_pack(Excl) of
+        none -> none;
+        VPack -> {ok, 2, Lo bor (Hi bsl 8), VPack}
+    end.
+
+scan_pack(Vals) when length(Vals) =< 4 ->
+    NV = length(Vals),
+    [V0,V1,V2,V3] = Vals ++ lists:duplicate(4 - NV, 0),
+    V0 bor (V1 bsl 8) bor (V2 bsl 16) bor (V3 bsl 24) bor (NV bsl 32);
+scan_pack(_Vals) ->
+    none.
+
+scan_start_match_blocks(Blocks) ->
+    [{L,Dst} || {L,#b_blk{is=Is}} <- maps:to_list(Blocks),
+                #b_set{op=bs_start_match,dst=Dst} <- Is].
+
+scan_insert_after(L, CtxVar, NewIs, Blocks) ->
+    #b_blk{is=Is0} = Blk = map_get(L, Blocks),
+    Is = scan_insert_is(Is0, CtxVar, NewIs),
+    Blocks#{L := Blk#b_blk{is=Is}}.
+
+scan_insert_is([#b_set{dst=CtxVar}=I | Rest], CtxVar, NewIs) ->
+    [I | NewIs ++ Rest];
+scan_insert_is([I | Rest], CtxVar, NewIs) ->
+    [I | scan_insert_is(Rest, CtxVar, NewIs)];
+scan_insert_is([], _CtxVar, _NewIs) ->
+    [].
 
 %% Builds a function information map with basic information about incoming and
 %% outgoing local calls, as well as whether the function is exported.
