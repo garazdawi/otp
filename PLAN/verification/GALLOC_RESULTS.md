@@ -79,6 +79,51 @@ is the allocation done *by* Bandit's forced GC path
 ([`GC_RESULTS.md`](GC_RESULTS.md) — the deliberate
 `gc_every_n_keepalive_requests`).
 
+## Second app — RabbitMQ MQTT broker (instrumented OTP 28)
+
+RabbitMQ 4.3.1 doesn't boot on OTP 29 (the Horus/Khepri
+`unknown_instruction{line}` blocker), so the same instrumentation
+patch was applied to **OTP 28.5.0.2** (clean apply + a 2-line fixup
+adding the `current_function`/`current_arity` assembler members that
+are beamjit2-branch additions) and built into a release. RabbitMQ
+under MQTT load (75 k msg/s), global-switch profiling, 12 s window:
+
+```
+total 4.5 GB allocated
+
+ 9.38%  rabbit_db_topic_exchange:trie_match_try/9   ← topic routing
+ 6.40%  rabbit_mqtt_packet:parse_packet/4           ┐
+ 4.42%  rabbit_mqtt_packet:parse/2                  │ MQTT protocol
+ 3.13%  rabbit_mqtt_packet:parse_remaining_len/5    ┘ parsing (~14%)
+ 5.62%  mc:set_annotation/3                         ┐ message
+ 2.03%  mc_mqtt:protocol_state/2 ; mc_mqtt:init/1   ┘ containers (~10%)
+ 4.48%  rabbit_mqtt_qos0_queue:deliver/3            ┐ delivery /
+ 3.44%  rabbit_queue_type:-deliver0/4-fun-4-/3      ┘ queue type
+ 2.46%  rabbit_db_topic_exchange:trie_match/7       ┐ more routing
+ 2.17%  rabbit_db_topic_exchange:match/3            ┘ (trie ~14% total)
+ ...    a long flat tail of rabbit_mqtt_* /
+        rabbit_exchange / rabbit_queue_type, each 1–3 %
+```
+
+**The shape is the opposite of Bandit's.** Where the JSON API had one
+dominant allocator (`maps:from_list/1`, 46 %), the broker's allocation
+is **diffuse**: the top function is 9 %, and the rest is a long tail
+of routing, parsing, message-container, and delivery functions each
+contributing a few percent. The allocation *is* the application logic
+— topic-trie routing (~14 %), MQTT protocol parsing (~14 %, a binary
+G-bin shape), message-container construction (`mc`, ~10 %), and the
+delivery path — spread across dozens of `rabbit_*` functions with no
+single lever.
+
+This is exactly the **concentrated-vs-diffuse** distinction that
+decides whether allocation optimization pays: Bandit's
+map-construction pool is a clear target (one function, ~half the
+churn); RabbitMQ's is inherent, distributed message-broker work with
+no hot spot to attack — consistent with the earlier `perf` finding
+that the broker's cost is term-plumbing/routing/ETS, not a single
+function. (Note `rabbit_mqtt_packet:parse_*` ~14 % *is* the binary
+G-bin shape, the one slice a JIT could meaningfully fuse.)
+
 ## Significance
 
 This closes the loop the GC investigation opened. The original
@@ -90,10 +135,29 @@ ser/deser**. The tool that produced this is a working, tested,
 gated heap-allocation profiler in the ARM JIT + runtime, and it runs
 on real applications.
 
+## Bandit vs RabbitMQ — the headline contrast
+
+| | Bandit (JSON API) | RabbitMQ (MQTT broker) |
+|---|---|---|
+| total / 12 s | 18.2 GB | 4.5 GB |
+| top allocator | `maps:from_list/1` **46 %** | `trie_match_try/9` **9 %** |
+| shape | **concentrated** (1 fn ~½ the churn) | **diffuse** (long tail, no hot spot) |
+| nature | map construction + JSON ser/deser | routing + parsing + msg containers |
+| optimization lever | clear (attack `maps:from_list`) | none single; inherent broker work |
+
+The same tool, run on two real deployed servers, shows that "reduce
+allocation" is a sharp, actionable lever for one class (serialization
+APIs: a few functions dominate) and a diffuse, low-yield one for
+another (message brokers: allocation is spread across the routing /
+parsing / delivery logic). That distinction — which only per-function
+attribution on the real app can reveal — is the payoff.
+
 ## Reproduction
 
-Build script `/tmp/otp_build.sh` (git archive → Linux aarch64
-container → configure → make); run script `bandit_galloc.sh` in this
-directory (Elixir + Bandit on the built OTP, global-switch profiling
-under load). The instrumentation is off by default (no
+Bandit: build OTP 29 with the instrumentation (`git archive` → Linux
+aarch64 container → configure → make), then `bandit_galloc.sh`.
+RabbitMQ: the patch applied to OTP 28.5.0.2 (rabbit doesn't boot on
+OTP 29) + a 2-line assembler-member fixup, `make release`, then
+`rabbit_galloc.sh`. Both use the global `alloc_profile_all` switch
+under load. The instrumentation is off by default (no
 `ERL_ALLOC_PROFILE`), zero overhead.
