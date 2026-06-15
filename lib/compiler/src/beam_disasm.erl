@@ -1315,6 +1315,8 @@ resolve_inst({bs_get_position,[Src,Dst,{u,Live}]},_,_,_) ->
     {bs_get_position,Src,Dst,Live};
 resolve_inst({bs_set_position,[Src,Dst]},_,_,_) ->
     {bs_set_position,Src,Dst};
+resolve_inst({bs_scan,[Ctx,{u,Kind},{u,Range},{u,VPack},Dst]},_,_,_) ->
+    {bs_scan,Ctx,Kind,Range,VPack,Dst};
 
 %%
 %% OTP 23.

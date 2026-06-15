@@ -755,3 +755,13 @@ BEAM_FORMAT_NUMBER=0
 ##      if extracting the value fails; otherwise, jump to label Lbl if
 ##      extraction fails.
 191: get_record_field/5
+
+## @spec bs_scan Ctx Kind Range VPack Dst
+## @doc  Fast-forward a run of bytes matching a byte class from the match
+##       context Ctx, advancing its position in place; set Dst to the
+##       number of bytes consumed (a small integer). Kind selects the
+##       class: 0 = range, 1 = set, 2 = notset (range excluding the set).
+##       Range packs Lo|Hi<<8; VPack packs the value set V0|V1<<8|V2<<16|
+##       V3<<24|NumVals<<32. An always-safe prefix consume: a 0-length
+##       run is valid; the original match continues from the new position.
+192: bs_scan/5

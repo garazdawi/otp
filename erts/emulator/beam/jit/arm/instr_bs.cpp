@@ -254,6 +254,97 @@ void BeamModuleAssembler::emit_i_bs_get_position(const ArgRegister &Ctx,
     flush_var(dst);
 }
 
+/*
+ * Track A A1: byte-class scan-run. Advance the match context Ctx past a
+ * maximal run of leading bytes of a byte class (Kind: 0=range Lo..Hi,
+ * 1=set {V0..V(NumVals-1)}, 2=notset = range minus that set), updating
+ * `start` in place, and set Dst to the byte count consumed. The class is
+ * known at code-generation time, so only the relevant test is emitted.
+ * A class-parameterized lift of emit_t2_json_scan's scalar loop.
+ */
+void BeamModuleAssembler::emit_bs_scan(const ArgRegister &Ctx,
+                                       const ArgWord &Kind,
+                                       const ArgWord &Range,
+                                       const ArgWord &VPack,
+                                       const ArgRegister &Dst) {
+    const int start_offset = offsetof(ErlSubBits, start);
+    const int end_offset = offsetof(ErlSubBits, end);
+    const int base_offset = offsetof(ErlSubBits, base_flags);
+
+    const Uint kind = Kind.get();
+    const Uint range = Range.get(), vpack = VPack.get();
+    const Uint lo = range & 0xff, hi = (range >> 8) & 0xff, nv = vpack >> 32;
+    const Uint vals[4] = {vpack & 0xff, (vpack >> 8) & 0xff,
+                          (vpack >> 16) & 0xff, (vpack >> 24) & 0xff};
+
+    Label loop = a.new_label();
+    Label done = a.new_label();
+
+    auto ctx = load_source(Ctx, TMP1);
+    const a64::Gp ctx_reg = ctx.reg;
+
+    const a64::Gp base = ARG2;
+    const a64::Gp pos = ARG3;
+    const a64::Gp endp = ARG4;
+    const a64::Gp pos0 = ARG5;
+    const a64::Gp byte = ARG6;
+
+    a.ldur(pos, emit_boxed_val(ctx_reg, start_offset));
+    a.ldur(endp, emit_boxed_val(ctx_reg, end_offset));
+    a.mov(pos0, pos);
+
+    /* Only scan byte-aligned contexts (the recognizer guarantees this);
+     * otherwise consume nothing. */
+    a.tst(pos, imm(7));
+    a.b_ne(done);
+
+    a.ldur(base, emit_boxed_val(ctx_reg, base_offset));
+    a.and_(base, base, imm(~Uint64{ERL_SUB_BITS_FLAG_MASK}));
+
+    a.bind(loop);
+    a.add(TMP2, pos, imm(8));
+    a.cmp(TMP2, endp);
+    a.b_hi(done); /* fewer than 8 bits left */
+    a.lsr(TMP2, pos, imm(3));
+    a.ldrb(byte.w(), a64::Mem(base, TMP2));
+
+    /* Class test: branch to `done` when the byte is NOT in the class. */
+    if (kind == 0) {
+        a.sub(TMP2, byte, imm(lo));
+        a.cmp(TMP2, imm(hi - lo));
+        a.b_hi(done);
+    } else if (kind == 1) {
+        Label in = a.new_label();
+        for (Uint i = 0; i < nv; i++) {
+            a.cmp(byte, imm(vals[i]));
+            a.b_eq(in);
+        }
+        a.b(done);
+        a.bind(in);
+    } else {
+        a.sub(TMP2, byte, imm(lo));
+        a.cmp(TMP2, imm(hi - lo));
+        a.b_hi(done);
+        for (Uint i = 0; i < nv; i++) {
+            a.cmp(byte, imm(vals[i]));
+            a.b_eq(done);
+        }
+    }
+
+    a.add(pos, pos, imm(8));
+    a.b(loop);
+
+    a.bind(done);
+    a.stur(pos, emit_boxed_val(ctx_reg, start_offset));
+
+    a.sub(TMP2, pos, pos0);   /* consumed bits */
+    a.lsr(TMP2, TMP2, imm(3)); /* -> bytes */
+    a.lsl(TMP2, TMP2, imm(_TAG_IMMED1_SIZE));
+    auto dst = init_destination(Dst, TMP3);
+    a.orr(dst.reg, TMP2, imm(_TAG_IMMED1_SMALL));
+    flush_var(dst);
+}
+
 void BeamModuleAssembler::emit_bs_get_small(const Label &fail,
                                             const ArgRegister &Ctx,
                                             const ArgWord &Live,

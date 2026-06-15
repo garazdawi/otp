@@ -1186,6 +1186,53 @@ bs_get_position.execute(Dst, Live) {
 
 %endif
 
+/*
+ * Track A A1: byte-class scan-run. Advance the match context Ctx past a
+ * maximal run of leading bytes matching a byte class, and set Dst to the
+ * number of bytes consumed. Kind: 0 = range Lo..Hi, 1 = set {V0..V(NV-1)},
+ * 2 = notset (range Lo..Hi excluding {V0..V(NV-1)}). The recognizer only
+ * emits this for byte-aligned contexts; a non-aligned context consumes 0.
+ */
+bs_scan(Ctx, Kind, Range, VPack, Dst) {
+    ErlSubBits *sb = (ErlSubBits*)bitstring_val($Ctx);
+    Uint start = sb->start;
+    Uint count = 0;
+
+    if ((start & 7) == 0) {
+        const byte *base = erl_sub_bits_get_base(sb);
+        Uint pos = start >> 3;
+        Uint endpos = sb->end >> 3;
+        Uint kind = $Kind, range = $Range, vpack = $VPack;
+        Uint lo = range & 0xff, hi = (range >> 8) & 0xff, nv = vpack >> 32;
+        Uint v0 = vpack & 0xff, v1 = (vpack >> 8) & 0xff;
+        Uint v2 = (vpack >> 16) & 0xff, v3 = (vpack >> 24) & 0xff;
+
+        while (pos < endpos) {
+            byte b = base[pos];
+            int in;
+
+            if (kind == 0) {
+                in = (b >= lo && b <= hi);
+            } else if (kind == 1) {
+                in = (b == v0) || (nv > 1 && b == v1) ||
+                     (nv > 2 && b == v2) || (nv > 3 && b == v3);
+            } else {
+                in = (b >= lo && b <= hi) &&
+                     !((b == v0) || (nv > 1 && b == v1) ||
+                       (nv > 2 && b == v2) || (nv > 3 && b == v3));
+            }
+            if (!in) {
+                break;
+            }
+            pos++;
+            count++;
+        }
+        sb->start = start + count * 8;
+    }
+
+    $Dst = make_small(count);
+}
+
 i_bs_start_match3 := i_bs_start_match3.fetch.execute;
 
 i_bs_start_match3.head() {

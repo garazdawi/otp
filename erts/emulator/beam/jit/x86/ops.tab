@@ -991,6 +991,10 @@ i_bs_start_match3 S t j d
     bs_set_position S S
 %endif
 
+# Track A A1: byte-class scan-run. Advances Ctx past a run of bytes of a
+# byte class, setting Dst to the count consumed.
+bs_scan S t t t d
+
 #
 # Utf8/utf16/utf32 support. (R12B-5)
 #

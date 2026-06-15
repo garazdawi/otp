@@ -1277,6 +1277,9 @@ i_bs_start_match3 xy t j d
     bs_set_position xy xy
 %endif
 
+# Track A A1: byte-class scan-run.
+bs_scan xy t t t d
+
 #
 # Utf8/utf16/utf32 support. (R12B-5)
 #

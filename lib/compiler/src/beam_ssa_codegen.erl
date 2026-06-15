@@ -420,6 +420,7 @@ classify_heap_need(bs_init_writable) -> gc;
 classify_heap_need(bs_match_string) -> gc;
 classify_heap_need(bs_create_bin) -> gc;
 classify_heap_need(bs_get_position) -> gc;
+classify_heap_need(bs_scan) -> neutral;
 classify_heap_need(bs_set_position) -> neutral;
 classify_heap_need(bs_skip) -> gc;
 classify_heap_need(bs_start_match) -> gc;
@@ -731,6 +732,7 @@ need_live_anno(Op) ->
         bs_get -> true;
         bs_get_position -> true;
         bs_get_tail -> true;
+        bs_scan -> true;
         bs_start_match -> true;
         bs_skip -> true;
         call -> true;
@@ -2153,6 +2155,9 @@ cg_instr(bs_get_tail, [Src], Dst, Set) ->
 cg_instr(bs_get_position, [Ctx], Dst, Set) ->
     Live = get_live(Set),
     [{bs_get_position,Ctx,Dst,Live}];
+cg_instr(bs_scan, [Ctx,{integer,Kind},{integer,Range},{integer,VPack}],
+         Dst, _Set) ->
+    [{bs_scan,Ctx,Kind,Range,VPack,Dst}];
 cg_instr(executable_line, [{integer,Index}], _Dst, #cg_set{anno=Anno}) ->
     {line,Location} = line(Anno),
     [{executable_line,Location,Index}];

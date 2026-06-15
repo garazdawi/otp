@@ -141,7 +141,8 @@
                       'bs_ensured_match_string' |
                       'bs_ensured_skip' |
                       'bs_get' | 'bs_get_position' | 'bs_match_string' |
-                      'bs_restore' | 'bs_save' | 'bs_set_position' | 'bs_skip' |
+                      'bs_restore' | 'bs_save' | 'bs_scan' |
+                      'bs_set_position' | 'bs_skip' |
                       'copy' | 'match_fail' | 'put_tuple_arity' |
                       'set_tuple_element' | 'succeeded' |
                       'update_record'.

@@ -266,6 +266,29 @@ void BeamModuleAssembler::emit_i_bs_get_position(const ArgRegister &Ctx,
     mov_arg(Dst, tmp_reg);
 }
 
+/*
+ * Track A A1: byte-class scan-run (x86). Not yet accelerated on x86: a
+ * zero-length consume is always safe (bs_scan is a fast-forward *hint* —
+ * the original match consumes the full run regardless), so this returns
+ * count 0 without advancing the context. Correct, just not faster on x86
+ * yet; the real class-specialized loop (lift of the arm emit_bs_scan) is
+ * a follow-up, to be implemented and tested on x86.
+ */
+void BeamModuleAssembler::emit_bs_scan(const ArgRegister &Ctx,
+                                       const ArgWord &Kind,
+                                       const ArgWord &Range,
+                                       const ArgWord &VPack,
+                                       const ArgRegister &Dst) {
+    (void)Ctx;
+    (void)Kind;
+    (void)Range;
+    (void)VPack;
+
+    x86::Gp tmp_reg = alloc_temp_reg();
+    a.mov(tmp_reg, imm(make_small(0)));
+    mov_arg(Dst, tmp_reg);
+}
+
 void BeamModuleAssembler::emit_bs_get_small(const Label &fail,
                                             const ArgRegister &Ctx,
                                             const ArgWord &Live,

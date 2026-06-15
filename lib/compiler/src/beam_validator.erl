@@ -1022,6 +1022,12 @@ vi({bs_set_position, Ctx, Pos}, Vst0) ->
     Vst = override_type(#t_bs_context{tail_unit=Unit}, Ctx, Vst0),
 
     mark_current_ms_position(Ctx, Pos, Vst);
+vi({bs_scan, Ctx, _Kind, _Range, _VPack, Dst}, Vst0) ->
+    %% Advances the match context Ctx in place (consuming a run of bytes
+    %% of a byte class) and sets Dst to the count consumed. The class
+    %% operands are plain integer literals; only Ctx and Dst need checks.
+    assert_type(#t_bs_context{}, Ctx, Vst0),
+    create_term(#t_integer{}, bs_scan, [Ctx], Dst, Vst0);
 
 %%
 %% Floating-point instructions (excluding BIFs)
