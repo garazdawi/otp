@@ -5016,6 +5016,13 @@ BIF_RETTYPE erts_debug_set_internal_state_2(BIF_ALIST_2)
 	    BIF_RET(am_true);
 	}
 
+	if (ERTS_IS_ATOM_STR("alloc_profile_all", BIF_ARG_1)) {
+	    /* Global switch: enable/disable profiling on ALL processes
+	     * (existing + future). */
+	    erts_galloc_set_all(BIF_ARG_2 == am_true);
+	    BIF_RET(am_true);
+	}
+
 	if (ERTS_IS_ATOM_STR("reds_left", BIF_ARG_1)) {
 	    Sint reds;
 	    if (term_to_Sint(BIF_ARG_2, &reds) != 0) {

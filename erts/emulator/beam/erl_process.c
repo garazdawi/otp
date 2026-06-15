@@ -155,6 +155,7 @@ int erts_sched_thread_suggested_stack_size = -1;
 int erts_dcpu_sched_thread_suggested_stack_size = -1;
 int erts_dio_sched_thread_suggested_stack_size = -1;
 int erts_alloc_profile_enabled = 0;
+int erts_galloc_default_active = 0; /* galloc_active value new procs inherit */
 
 /*
  * Heap-allocation profiling: per-function (per-MFA) site counters.
@@ -239,6 +240,22 @@ erts_galloc_reset(void)
     for (s = erts_galloc_list; s; s = s->lnext)
         s->words = 0;
     erts_mtx_unlock(&erts_galloc_mtx);
+}
+
+/* Global switch: enable/disable profiling for every process at once.
+ * Sets the spawn default (so new processes inherit it) and sweeps the
+ * existing process table. galloc_active is a single word; setting it
+ * without the process lock is a benign race for a debug switch. */
+void
+erts_galloc_set_all(int on)
+{
+    int i, max = erts_ptab_max(&erts_proc);
+    erts_galloc_default_active = on ? 1 : 0;
+    for (i = 0; i < max; i++) {
+        Process *p = erts_pix2proc(i);
+        if (p)
+            p->galloc_active = on ? 1 : 0;
+    }
 }
 
 /* Build a list of {{M,F,A}, Words} for sites with words > 0. Snapshot
@@ -12745,7 +12762,7 @@ erl_create_process(Process* parent, /* Parent of process (default group leader).
     p->stop = p->hend - CP_SIZE; /* Reserve place for continuation pointer. */
     p->htop = p->heap;
     p->heap_sz = sz;
-    p->galloc_active = 0;
+    p->galloc_active = erts_galloc_default_active;
     p->galloc_words = 0;
     p->abandoned_heap = NULL;
     p->live_hf_end = ERTS_INVALID_HFRAG_PTR;

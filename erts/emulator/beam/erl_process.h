@@ -124,6 +124,8 @@ extern int erts_alloc_profile_enabled;
 Uint *erts_galloc_get_counter(Eterm module, Eterm function, Uint arity);
 void erts_galloc_reset(void);
 Eterm erts_galloc_sites_term(Process *p);
+void erts_galloc_set_all(int on);   /* global all-processes switch */
+extern int erts_galloc_default_active;
 #define ERTS_SCHED_THREAD_MIN_STACK_SIZE 20	/* Kilo words */
 #define ERTS_SCHED_THREAD_MAX_STACK_SIZE 8192	/* Kilo words */
 
