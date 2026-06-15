@@ -74,12 +74,61 @@ and the machine state is already GC-safe — verified against the JIT):
    address (a codegen constant), mapped to `{M,F,A}` via
    `erts_find_function_from_pc` (`beam_ranges.c:299`) at readout.
 2. **BIF returns** (`emit_i_bif_body_shared`, `instr_bif.cpp:70`):
-   BIFs allocate variably via their own `HAlloc`. HTOP lives in
-   x23 and there is already an `emit_leave_runtime` boundary —
-   snapshot HTOP before the call, diff after, attribute
-   `HTOP_after − HTOP_before` to the BIF's MFA. Covers the
+   BIFs allocate variably via their own `HAlloc`, covering the
    `binary_to_term`/`list_to_binary`/etc. allocators that have no
    preceding `test_heap`.
+
+   **A naive `HTOP_after − HTOP_before` is WRONG when the BIF
+   GCs**: a BIF can garbage-collect internally (the heavy allocators
+   are exactly the ones that do), which resets HTOP and moves the
+   heap, so the stashed `HTOP_before` points into freed/old memory
+   and the diff is meaningless — possibly negative.
+
+   **But the JIT already knows, at codegen, whether a given BIF call
+   site can GC** — it emits different code for the different BIF
+   classes (`emit_i_bif` guard BIFs, `emit_call_light_bif`,
+   `emit_call_bif`, and the `gc_bif` arithmetic path), and the BIF
+   table flags the rest. So the recording mechanism is chosen
+   **statically per call site**, no runtime detection:
+
+   - **BIF cannot GC** (guard BIFs; non-GC light BIFs): the cheap
+     `HTOP_after − HTOP_before` *is* valid — nothing can move the
+     heap under it. Emit the cheap diff (or skip entirely for guard
+     BIFs that provably don't allocate). This is the common, hot
+     case (`call_light_bif` was the hottest JIT symbol in the perf
+     round).
+   - **BIF can GC** (`gc_bif` arithmetic; `call_bif`; GC-capable
+     light BIFs): the diff is unsafe, so use the GC-invariant
+     counter below. These are the minority of sites.
+
+   For the can-GC sites, the correct attribution uses a
+   **GC-invariant cumulative gross-allocation counter** per process,
+   `p->heap_allocated` (new Uint64), monotonic and unaffected by GC:
+
+   - *Maintained at GC* (a few lines in `erl_gc.c`): the only place
+     HTOP decreases is collection. At GC entry, before the reset,
+     `p->heap_allocated += (HTOP − epoch_start)` (the gross words
+     bumped this epoch — survivors *and* dead), then set
+     `epoch_start = HTOP-immediately-after-GC` so survivors, which
+     persist past `epoch_start`, are not re-counted next epoch.
+     (`epoch_start` is a second per-process `Eterm*`; it is *not*
+     `HEAP_START`, since survivors sit between `HEAP_START` and
+     `epoch_start`.) Between GCs, the live value is
+     `p->heap_allocated + (HTOP − epoch_start)`.
+   - BIF allocation = that value's delta across the call — correct
+     through any internal GC, and it measures **gross churn** (every
+     word the BIF bumped, including any it then collected), which is
+     exactly the GC-pressure signal we want, not net.
+
+   Cheaper alternative to the epoch bookkeeping: increment
+   `p->heap_allocated` inside the C `HAlloc`/`HeapOnlyAlloc` macros
+   when instrumentation is on (one add per C-path allocation,
+   monotonic by construction, no GC interaction) — directly covers
+   the can-GC BIFs' allocations; the JIT-inline allocations stay on
+   the per-site counters of (1). Either way, a `gen_gcs`-count
+   compare across each can-GC BIF call is a cheap *assertion* that
+   the chosen mechanism matched reality (cheap-diff sites must show
+   no GC; if one ever does, the static classification was wrong).
 3. **`bs_create_bin` / `bs_*`** heap reservations: same as (1) —
    hook the size-known reservation point.
 
