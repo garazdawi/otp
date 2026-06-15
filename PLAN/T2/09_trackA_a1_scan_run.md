@@ -292,7 +292,28 @@ bookkeeping.
   rewrite (default off → still green); (3) enable on the json subject,
   gate.
 
-  **Status (built 2026-06-15).** Stage 1 DONE + committed (`c665569bbe`):
+  **A1-1b COMPLETE (2026-06-15), gate met.** The scalar `bs_scan`
+  instruction + recognizer + two-output rewrite are implemented,
+  correct, and pass the bytewise speed gate. **Correctness:**
+  `json:decode` byte-identical across 5000 randomized encode/decode
+  round-trips (numbers/floats/escaped+unicode strings/arrays/maps/
+  whitespace) with `scan_loop` on vs off; 198/201 stdlib+kernel modules
+  compile clean. **Speed (isolated bytewise, `scanbench.erl`):**
+  printable-ASCII `notset` scan **2.93×** (0.89→2.61 GB/s), digit
+  `range` scan **4.08×** (1.02→4.17 GB/s) — both clear the **≥2.5×**
+  P2 bar; SWAR (A1-2) lifts further toward G-bin's 5.6×. End-to-end
+  json decode is ~1.03× (scanning is a fraction of decode; matches
+  G-bin's ~6-10% with SWAR). **Known limitation:** 3 branchy/recursive
+  functions (`uri_string:remove_dot_segments/2`, `epp:com/4`,
+  `shell_docs_markdown:strip_list_line/1`) hit a `bs_pos_bsm3`
+  save-placement edge case (a `bs_get_position` lands in a
+  `[op,succeeded]` test block → `cg_test`); a conservative recognizer
+  bail is the remaining crash-safety item before global enable. The
+  two-output fix that made multi-clause json correct: `bs_scan` produces
+  the advanced context (threaded downstream + `bs_extract` for the
+  count), so pre_codegen's position tracker follows the advance.
+
+  **Stage 1 DONE + committed (`c665569bbe`):**
   `bs_scan Ctx Kind Range VPack Dst` defined across genop/ssa/codegen/
   validator/disasm + interpreter + arm JIT (`emit_bs_scan`, class-
   specialized scalar loop) + x86 no-op stub; emulator + compiler build
