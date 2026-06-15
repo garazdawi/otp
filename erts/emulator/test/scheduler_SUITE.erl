@@ -65,7 +65,8 @@
 	 reader_groups/1,
          otp_16446/1,
          simultaneously_change_schedulers_online/1,
-         simultaneously_change_schedulers_online_with_exits/1]).
+         simultaneously_change_schedulers_online_with_exits/1,
+         inline_handoff/1]).
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -85,7 +86,8 @@ all() ->
      reader_groups,
      otp_16446,
      simultaneously_change_schedulers_online,
-     simultaneously_change_schedulers_online_with_exits].
+     simultaneously_change_schedulers_online_with_exits,
+     inline_handoff].
 
 groups() -> 
     [{scheduler_bind, [],
@@ -2048,6 +2050,68 @@ simultaneously_change_schedulers_online_with_exits(Config) when is_list(Config) 
                   PMs),
     erlang:system_flag(schedulers_online, SchedOnline),
     ok.
+
+inline_handoff(Config) when is_list(Config) ->
+    %% The statistics counter must exist and be well-formed.
+    {Arms, Picks} = erlang:statistics(sched_inline_handoffs),
+    true = is_integer(Arms) andalso Arms >= 0,
+    true = is_integer(Picks) andalso Picks >= 0,
+
+    %% +sih false: inline handoff disabled; the counter must never move.
+    none = classify_handoff(inline_handoff_count("+sih false")),
+
+    %% +sih migrate: a woken process is migrated to the waker's run
+    %% queue and armed, but never picked inline (no reduction donation).
+    armed_only = classify_handoff(inline_handoff_count("+sih migrate")),
+
+    %% +sih true (and the default, no flag): a woken process is both
+    %% armed and picked inline on the waker's donated time slice.
+    armed_and_picked = classify_handoff(inline_handoff_count("+sih true")),
+    armed_and_picked = classify_handoff(inline_handoff_count("")),
+
+    ok.
+
+%% Classify an {Arms, Picks} measurement (an unexpected combination,
+%% e.g. picks without arms, fails the function clause as it should).
+classify_handoff({0, 0}) -> none;
+classify_handoff({Arms, 0}) when Arms > 0 -> armed_only;
+classify_handoff({Arms, Picks}) when Arms > 0, Picks > 0 -> armed_and_picked.
+
+inline_handoff_count(Args) ->
+    {ok, Peer, Node} = ?CT_PEER(#{args => string:lexemes(Args, " "),
+                                  env => [{"ERL_FLAGS", false}]}),
+    [Res] = mcall(Node, [fun () -> inline_handoff_pingpong(50000) end]),
+    peer:stop(Peer),
+    Res.
+
+%% Run a tight synchronous ping-pong (send + blocking receive on both
+%% sides), which is the canonical pattern that inline handoff targets,
+%% and return the {Arms, Picks} consumed by it.
+inline_handoff_pingpong(N) ->
+    Self = self(),
+    Resp = spawn_link(fun () -> inline_handoff_responder(Self) end),
+    {A0, P0} = erlang:statistics(sched_inline_handoffs),
+    inline_handoff_loop(Resp, N),
+    {A1, P1} = erlang:statistics(sched_inline_handoffs),
+    unlink(Resp),
+    exit(Resp, kill),
+    {A1 - A0, P1 - P0}.
+
+inline_handoff_responder(Driver) ->
+    receive
+        {Driver, M} ->
+            Driver ! {self(), M},
+            inline_handoff_responder(Driver)
+    end.
+
+inline_handoff_loop(_Resp, 0) ->
+    ok;
+inline_handoff_loop(Resp, N) ->
+    Resp ! {self(), N},
+    receive
+        {Resp, N} -> ok
+    end,
+    inline_handoff_loop(Resp, N - 1).
 
 
 %%
