@@ -791,7 +791,9 @@ ABORT_STUB(send_2)
 ABORT_STUB(seq_trace_output_generic)
 /* ABORT_STUB(size_object_x) — provided by linked .c */
 ABORT_STUB(trace_receive)
-ABORT_STUB(ubif2mfa)
+/* ubif2mfa: only used by ubif_comment for the debug logger,
+ * which cache_tool never enables. Stub returns NULL → comment skipped. */
+void *ubif2mfa(void *uf) { (void)uf; return NULL; }
 ABORT_STUB(ethr_tsd_get)
 
 /* ---- Global literal area (malloc-backed) --------------------

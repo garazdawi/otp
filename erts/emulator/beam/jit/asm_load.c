@@ -542,7 +542,16 @@ int beam_load_emit_op(LoaderState *stp, BeamOp *tmp_op) {
             if (i >= stp->beam.imports.count) {
                 BeamLoadError1(stp, "invalid import table index %d", i);
             } else if (stp->bif_imports[i] == NULL) {
+#ifdef CACHE_TOOL_BUILD
+                /* No real BIF table — emit a sentinel so codegen
+                 * proceeds; the emit wrapper records the symbolic
+                 * MFA from stp->beam.imports.entries[i]. The
+                 * sentinel is the import-table index, recoverable
+                 * by the cache writer when it walks relocations. */
+                curr->val = (BeamInstr)(uintptr_t)(0xb1f0u | (unsigned)i);
+#else
                 BeamLoadError1(stp, "import %d not a BIF", i);
+#endif
             } else {
                 curr->val = (BeamInstr)stp->bif_imports[i]->f;
             }
