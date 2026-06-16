@@ -3526,17 +3526,21 @@ AC_ARG_WITH(gmp,
 
 AS_IF([test "x$with_gmp" = "xyes"],
   [
-    for dir in /usr /usr/pkg /usr/local /usr/local/gmp /usr/lib/gmp /usr/gmp; do
-	AC_CHECK_HEADER($dir/include/gmp.h, ac_cv_gmp=yes, ac_cv_gmp=no)
-	if test $ac_cv_gmp = yes ; then
-	    CFLAGS="$CFLAGS -I$dir/include -L$dir/lib"
-	    LIB_CFLAGS="$LIB_CFLAGS -I$dir/include -L$dir/lib"
-	    AC_DEFINE(HAVE_GMP_H, [1], [Define if you have "gmp.h"])
-	    break
-	fi
-    done
+    AC_CHECK_HEADER(gmp.h, ac_cv_gmp=yes, ac_cv_gmp=no)
+    if test $ac_cv_gmp = no ; then
+        for dir in /usr /usr/pkg /usr/local /usr/local/gmp /usr/lib/gmp /usr/gmp; do
+            AC_CHECK_HEADER($dir/include/gmp.h, ac_cv_gmp=yes, ac_cv_gmp=no)
+            if test $ac_cv_gmp = yes ; then
+                CFLAGS="$CFLAGS -I$dir/include -L$dir/lib"
+                LIB_CFLAGS="$LIB_CFLAGS -I$dir/include -L$dir/lib"
+                break
+            fi
+        done
+    fi
     if test $ac_cv_gmp = no ; then
 	AC_MSG_ERROR([No GNU MP installation found])
+    else
+        AC_DEFINE(HAVE_GMP_H, [1], [Define if you have "gmp.h"])
     fi
     AC_CHECK_LIB(gmp, __gmpz_export)
     # FIXME return ERROR if no lib
