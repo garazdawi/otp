@@ -943,6 +943,28 @@ static const BeamDebugTab *finish_debug_table(LoaderState *stp,
     return debug_tab_ro;
 }
 
+/* IDEAS/07 #1 — JIT-phase profiling. Toggle by uncommenting
+ * PROFILE_JIT_LOAD. Same shape as PROFILE_LOADER in beam_load.c.
+ *
+ * Splits finish_emit into pre-codegen / codegen / post-codegen
+ * phases. Combined with PROFILE_LOADER, this pinpoints the
+ * cacheable cost: load_code time (~34 ms for 100 modules) is
+ * almost entirely cacheable; finish_emit's ~1 ms is the residual
+ * install cost. */
+/* #define PROFILE_JIT_LOAD 1 */
+#ifdef PROFILE_JIT_LOAD
+#include <time.h>
+static unsigned long long jit_prof_pre_codegen_ns = 0;
+static unsigned long long jit_prof_codegen_ns    = 0;
+static unsigned long long jit_prof_post_codegen_ns= 0;
+static unsigned long      jit_prof_modules       = 0;
+static inline unsigned long long jit_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+}
+#endif
+
 int beam_load_finish_emit(LoaderState *stp) {
     const BeamCodeHeader *code_hdr_ro = NULL;
     BeamCodeHeader *code_hdr_rw = NULL;
@@ -950,6 +972,10 @@ int beam_load_finish_emit(LoaderState *stp) {
     char *module_base;
     Sint decoded_size;
     int ret;
+#ifdef PROFILE_JIT_LOAD
+    unsigned long long t_start = jit_now_ns();
+    unsigned long long t_pre_codegen, t_post_codegen, t_done;
+#endif
 
     ret = 0;
 
@@ -1010,12 +1036,20 @@ int beam_load_finish_emit(LoaderState *stp) {
     stp->loc_index_to_cover_id = NULL;
 
     /* Move the code to its final location. */
+#ifdef PROFILE_JIT_LOAD
+    t_pre_codegen = jit_now_ns();
+    jit_prof_pre_codegen_ns += t_pre_codegen - t_start;
+#endif
     beamasm_codegen(stp->ba,
                     &stp->executable_region,
                     &stp->writable_region,
                     stp->load_hdr,
                     &code_hdr_ro,
                     &code_hdr_rw);
+#ifdef PROFILE_JIT_LOAD
+    t_post_codegen = jit_now_ns();
+    jit_prof_codegen_ns += t_post_codegen - t_pre_codegen;
+#endif
 
     stp->on_load = beamasm_get_on_load(stp->ba);
     module_base = beamasm_get_base(stp->ba);
@@ -1135,6 +1169,22 @@ load_error:
                         stp->writable_region,
                         stp->loaded_size);
 
+#ifdef PROFILE_JIT_LOAD
+    t_done = jit_now_ns();
+    jit_prof_post_codegen_ns += t_done - t_post_codegen;
+    jit_prof_modules++;
+    if ((jit_prof_modules % 25) == 0) {
+        fprintf(stderr,
+                "JIT PROFILE: %lu modules: "
+                "pre-codegen=%llu us, codegen=%llu us, post-codegen=%llu us "
+                "(total in finish_emit=%llu us)\n",
+                jit_prof_modules,
+                jit_prof_pre_codegen_ns/1000,
+                jit_prof_codegen_ns/1000,
+                jit_prof_post_codegen_ns/1000,
+                (jit_prof_pre_codegen_ns+jit_prof_codegen_ns+jit_prof_post_codegen_ns)/1000);
+    }
+#endif
     return ret;
 }
 
