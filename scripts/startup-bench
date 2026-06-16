@@ -1,0 +1,290 @@
+#!/usr/bin/env escript
+%% -*- erlang -*-
+
+%% %CopyrightBegin%
+%%
+%% SPDX-License-Identifier: Apache-2.0
+%%
+%% Copyright Ericsson AB 2026. All Rights Reserved.
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%%
+%%     http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
+%%
+%% %CopyrightEnd%
+
+%%%-------------------------------------------------------------------
+%%% Cold-start benchmark harness for IDEAS/07.
+%%%
+%%% Runs a fixed matrix of erl invocations (default / minimal / tiny ×
+%%% jit / emu), N iterations each, captures `-init_debug' phase
+%%% timings (microseconds), reports median + p10 + p90, and emits a
+%%% JSON summary for trend tracking.
+%%%
+%%% Phase timings are taken directly from the running VM (via
+%%% `-init_debug') so they have ~1µs resolution regardless of host OS
+%%% timer resolution. Wall-clock is also reported for context but is
+%%% the noisier measurement.
+%%%
+%%% Usage:
+%%%   ./scripts/startup-bench               # default, 30 iterations
+%%%   ./scripts/startup-bench --iterations 100
+%%%   ./scripts/startup-bench --json out.json
+%%%   ./scripts/startup-bench --erl ../otp/bin/erl  # compare a second build
+%%%
+%%%-------------------------------------------------------------------
+
+-mode(compile).
+
+main(Args) ->
+    Opts = parse_args(Args, default_opts()),
+    Erl  = maps:get(erl, Opts),
+    case file_exists(Erl) of
+        false -> die("erl binary not found: ~s", [Erl]);
+        true  -> ok
+    end,
+    Matrix = build_matrix(Erl, Opts),
+    io:format("== startup-bench, ~p iterations per config ==~n",
+              [maps:get(iterations, Opts)]),
+    io:format("    erl = ~s~n~n", [Erl]),
+    Results = [run_config(Cfg, Opts) || Cfg <- Matrix],
+    print_table(Results),
+    case maps:get(json, Opts, undefined) of
+        undefined -> ok;
+        Path      -> write_json(Path, Results, Opts)
+    end,
+    ok.
+
+%%%-------------------------------------------------------------------
+%%% Option parsing
+%%%-------------------------------------------------------------------
+
+default_opts() ->
+    #{erl        => guess_erl(),
+      iterations => 30,
+      warmups    => 3,
+      json       => undefined,
+      configs    => all}.
+
+parse_args([], Opts) -> Opts;
+parse_args(["--erl", P | T], Opts)       -> parse_args(T, Opts#{erl => P});
+parse_args(["--iterations", N | T], Opts) ->
+    parse_args(T, Opts#{iterations => list_to_integer(N)});
+parse_args(["--warmups", N | T], Opts) ->
+    parse_args(T, Opts#{warmups => list_to_integer(N)});
+parse_args(["--json", P | T], Opts) -> parse_args(T, Opts#{json => P});
+parse_args(["--configs", Cs | T], Opts) ->
+    parse_args(T, Opts#{configs => [list_to_atom(C) || C <- string:split(Cs, ",", all)]});
+parse_args(["--help"|_], _) -> usage(0);
+parse_args([Unknown|_], _) ->
+    io:format(standard_error, "unknown option: ~s~n", [Unknown]),
+    usage(1).
+
+usage(Code) ->
+    io:format("usage: startup-bench [--erl PATH] [--iterations N]\n"
+              "                     [--warmups N] [--json PATH]\n"
+              "                     [--configs cfg1,cfg2,...]\n"
+              "\n"
+              "  --erl PATH       erl binary to test (default: ./bin/erl)\n"
+              "  --iterations N   measured runs per config (default 30)\n"
+              "  --warmups N      warmup runs not counted (default 3)\n"
+              "  --json PATH      write JSON summary to PATH\n"
+              "  --configs ...    comma-separated subset, e.g. jit_default,emu_tiny\n"
+              "                   (default: all)\n"),
+    halt(Code).
+
+guess_erl() ->
+    case os:getenv("STARTUP_BENCH_ERL") of
+        false ->
+            case filelib:is_regular("./bin/erl") of
+                true  -> "./bin/erl";
+                false -> "erl"
+            end;
+        Path -> Path
+    end.
+
+file_exists(F) -> filelib:is_regular(F) orelse os:find_executable(F) =/= false.
+
+die(Fmt, Args) ->
+    io:format(standard_error, "ERROR: " ++ Fmt ++ "~n", Args),
+    halt(2).
+
+%%%-------------------------------------------------------------------
+%%% Matrix definition
+%%%-------------------------------------------------------------------
+
+build_matrix(Erl, Opts) ->
+    All = [
+        {jit_default,        Erl, []},
+        {jit_minimal_nodist, Erl, ["-mode","minimal","-kernel","start_distribution","false"]},
+        {jit_tiny,           Erl, ["-mode","tiny"]},
+        {emu_default,        Erl, ["-emu_flavor","emu"]},
+        {emu_minimal_nodist, Erl, ["-emu_flavor","emu","-mode","minimal",
+                                    "-kernel","start_distribution","false"]},
+        {emu_tiny,           Erl, ["-emu_flavor","emu","-mode","tiny"]}
+    ],
+    case maps:get(configs, Opts) of
+        all  -> All;
+        Subs -> [E || {N,_,_}=E <- All, lists:member(N, Subs)]
+    end.
+
+%%%-------------------------------------------------------------------
+%%% Run one config
+%%%-------------------------------------------------------------------
+
+-record(sample, {phases :: [non_neg_integer()],
+                 phase_sum :: non_neg_integer(),
+                 wall_us :: non_neg_integer()}).
+
+run_config({Name, Erl, Args}, Opts) ->
+    io:format("  ~-22s ", [Name]),
+    %% Warmup runs (not measured).
+    [_ = run_once(Erl, Args) || _ <- lists:seq(1, maps:get(warmups, Opts))],
+    %% Measured runs.
+    Samples = [run_once(Erl, Args) || _ <- lists:seq(1, maps:get(iterations, Opts))],
+    Phases       = [S#sample.phase_sum || S <- Samples],
+    Walls        = [S#sample.wall_us   || S <- Samples],
+    %% Per-phase stats (largest phase = kernel app start typically).
+    MaxPhases    = [lists:max(S#sample.phases) || S <- Samples],
+    Stats = #{name        => Name,
+              args        => Args,
+              n           => length(Samples),
+              phase_sum   => stats(Phases),
+              wall_us     => stats(Walls),
+              max_phase   => stats(MaxPhases)},
+    print_summary(Stats),
+    Stats.
+
+run_once(Erl, Args) ->
+    %% We use -init_debug to print phase timings to stderr, then halt.
+    Cmd = quote(Erl) ++ " " ++ string:join([quote(A) || A <- Args], " ") ++
+          " -init_debug -noshell -eval 'halt(0).' 2>&1",
+    T0 = erlang:monotonic_time(microsecond),
+    Output = os:cmd(Cmd),
+    T1 = erlang:monotonic_time(microsecond),
+    Phases = parse_phases(Output),
+    PhaseSum = lists:sum(Phases),
+    #sample{phases = Phases, phase_sum = PhaseSum, wall_us = T1 - T0}.
+
+quote(S) ->
+    %% Naïve quoting suitable for the controlled args we generate.
+    case lists:any(fun(C) -> C =:= $\s end, S) of
+        true  -> "\"" ++ S ++ "\"";
+        false -> S
+    end.
+
+parse_phases(Output) ->
+    %% -init_debug emits lines like  {done_in_microseconds,N}
+    %% interleaved with {progress, ...} markers. Extract all the N's.
+    parse_phases(Output, []).
+parse_phases([], Acc) -> lists:reverse(Acc);
+parse_phases("{done_in_microseconds," ++ Rest, Acc) ->
+    {N, R2} = read_int(Rest, 0),
+    parse_phases(R2, [N|Acc]);
+parse_phases([_|R], Acc) -> parse_phases(R, Acc).
+
+read_int([C|R], Acc) when C >= $0, C =< $9 -> read_int(R, Acc*10 + (C-$0));
+read_int(R, Acc) -> {Acc, R}.
+
+%%%-------------------------------------------------------------------
+%%% Statistics
+%%%-------------------------------------------------------------------
+
+stats([])     -> #{min=>0, p10=>0, p50=>0, p90=>0, max=>0, mean=>0};
+stats(Xs0) ->
+    Xs = lists:sort(Xs0),
+    N  = length(Xs),
+    #{min  => hd(Xs),
+      p10  => pct(Xs, N, 10),
+      p50  => pct(Xs, N, 50),
+      p90  => pct(Xs, N, 90),
+      max  => lists:last(Xs),
+      mean => lists:sum(Xs) div N}.
+
+pct(Xs, N, P) ->
+    Idx = max(1, min(N, (N * P + 50) div 100)),
+    lists:nth(Idx, Xs).
+
+%%%-------------------------------------------------------------------
+%%% Output
+%%%-------------------------------------------------------------------
+
+print_summary(#{phase_sum := PS, wall_us := W, max_phase := MP}) ->
+    io:format("  sum-phase p50=~5w us  p10=~5w  p90=~5w |"
+              "  max-phase p50=~5w |  wall p50=~5w us~n",
+              [maps:get(p50, PS), maps:get(p10, PS), maps:get(p90, PS),
+               maps:get(p50, MP),
+               maps:get(p50, W)]).
+
+print_table(Results) ->
+    io:format("~n~-22s  ~-8s ~-8s ~-8s | ~-8s | ~-8s~n",
+              ["config", "sum-p50", "sum-p10", "sum-p90", "max-p50", "wall-p50"]),
+    io:format("~s~n", [string:copies("-", 78)]),
+    [io:format("~-22s  ~-8w ~-8w ~-8w | ~-8w | ~-8w~n",
+               [maps:get(name, R),
+                maps:get(p50, maps:get(phase_sum, R)),
+                maps:get(p10, maps:get(phase_sum, R)),
+                maps:get(p90, maps:get(phase_sum, R)),
+                maps:get(p50, maps:get(max_phase, R)),
+                maps:get(p50, maps:get(wall_us, R))])
+     || R <- Results],
+    io:format("~n(times in us; sum-phase = sum of all -init_debug done_in_microseconds)~n").
+
+write_json(Path, Results, Opts) ->
+    Body = json_term({obj, [
+        {<<"meta">>, {obj, [
+            {<<"erl">>,         maps:get(erl, Opts)},
+            {<<"iterations">>,  maps:get(iterations, Opts)},
+            {<<"warmups">>,     maps:get(warmups, Opts)},
+            {<<"timestamp">>,   iso8601(calendar:universal_time())}
+        ]}},
+        {<<"results">>, {arr, [result_obj(R) || R <- Results]}}
+    ]}),
+    ok = file:write_file(Path, Body),
+    io:format("~nwrote ~s~n", [Path]).
+
+result_obj(R) ->
+    {obj, [
+        {<<"name">>,       atom_to_binary(maps:get(name, R), utf8)},
+        {<<"args">>,       {arr, [list_to_binary(A) || A <- maps:get(args, R)]}},
+        {<<"n">>,          maps:get(n, R)},
+        {<<"phase_sum">>,  stats_obj(maps:get(phase_sum, R))},
+        {<<"max_phase">>,  stats_obj(maps:get(max_phase, R))},
+        {<<"wall_us">>,    stats_obj(maps:get(wall_us, R))}
+    ]}.
+
+stats_obj(S) ->
+    {obj, [
+        {<<"min">>,  maps:get(min, S)},
+        {<<"p10">>,  maps:get(p10, S)},
+        {<<"p50">>,  maps:get(p50, S)},
+        {<<"p90">>,  maps:get(p90, S)},
+        {<<"max">>,  maps:get(max, S)},
+        {<<"mean">>, maps:get(mean, S)}
+    ]}.
+
+%% Minimal JSON encoder (binary output, ASCII only — sufficient for
+%% our key/value shapes).
+json_term({obj, KVs}) ->
+    ["{", json_join([[$\", K, "\":", json_term(V)] || {K,V} <- KVs], ","), "}"];
+json_term({arr, Vs}) ->
+    ["[", json_join([json_term(V) || V <- Vs], ","), "]"];
+json_term(B) when is_binary(B) -> [$\", B, $\"];
+json_term(I) when is_integer(I) -> integer_to_binary(I);
+json_term(L) when is_list(L)    -> [$\", L, $\"].
+
+json_join([], _) -> [];
+json_join([X], _) -> [X];
+json_join([X|R], Sep) -> [X, Sep | json_join(R, Sep)].
+
+iso8601({{Y,Mo,D},{H,Mi,S}}) ->
+    io_lib:format("~4..0w-~2..0w-~2..0wT~2..0w:~2..0w:~2..0wZ",
+                  [Y,Mo,D,H,Mi,S]).
