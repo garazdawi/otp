@@ -719,12 +719,34 @@ ABORT_STUB(erts_line_breakpoint_hit__prepare_call)
 /* ABORT_STUB(erts_list_length) — from linked .c */
 /* ABORT_STUB(erts_move_multi_frags) — from linked .c */
 ABORT_STUB(erts_printable_return_address)
-/* erts_snprintf: identical signature to libc snprintf — just forward. */
+/* erts_snprintf: handles libc format specifiers plus %T (Erlang term).
+ * For %T we print the Eterm as a unique hex value — enough for the
+ * JIT's debug label names to stay unique (asmjit rejects duplicates
+ * with kInvalidId, which silently breaks label resolution).
+ *
+ * Rewrites the format inline: %T → ETERM_%lx for the next va_arg.
+ */
 int erts_snprintf(char *buf, size_t sz, const char *fmt, ...) {
+    char rebuilt[1024];
+    size_t out = 0;
+    /* First pass: rewrite %T → ETERM_%lx in the format string. The %T
+     * consumes one va_arg (an Eterm = unsigned long). Other specifiers
+     * pass through unchanged. */
+    for (const char *p = fmt; *p && out < sizeof(rebuilt) - 16; p++) {
+        if (p[0] == '%' && p[1] == 'T') {
+            out += (size_t)snprintf(rebuilt + out, sizeof(rebuilt) - out,
+                                    "ETERM_%%lx");
+            p++;
+        } else {
+            rebuilt[out++] = *p;
+        }
+    }
+    rebuilt[out] = 0;
+
     va_list ap;
     int r;
     va_start(ap, fmt);
-    r = vsnprintf(buf, sz, fmt, ap);
+    r = vsnprintf(buf, sz, rebuilt, ap);
     va_end(ap);
     return r;
 }
@@ -750,9 +772,15 @@ extern struct cache_tool_bif_entry_shape bif_table[];
 #define CACHE_TOOL_BIF_SIZE 1024  /* must be >= real BIF_SIZE (553) */
 
 struct cache_tool_export {
-    void *dispatch_pad[3];  /* matches ErtsDispatchable.addresses[ERTS_NUM_CODE_IX=3] */
+    /* ErtsDispatchable: ERTS_NUM_CODE_IX (=3) pointers, +1 with BEAMASM
+     * (save_calls slot). Build script defines BEAMASM=1, so the real
+     * Export's ErtsDispatchable is 4 pointers wide and bif_number sits
+     * at offset 32, not 24. Getting this wrong made the loader read
+     * 0 from rest_padding for every export, mapping every BIF to
+     * bif_table[0] (abs/1). */
+    void *dispatch_pad[4];
     int bif_number;
-    char rest_padding[256]; /* generous padding so the loader's reads stay inside */
+    char rest_padding[256];
 };
 static struct cache_tool_export cache_tool_exports[CACHE_TOOL_BIF_SIZE];
 static int cache_tool_exports_initialised = 0;
@@ -768,17 +796,13 @@ const void *erts_find_export_entry(unsigned long m, unsigned long f,
                                    unsigned a, int code_ix) {
     (void)code_ix;
     if (!cache_tool_exports_initialised) cache_tool_init_exports();
-    /* Linear scan of bif_table[] — only runs at load time so it's
-     * fine. The real runtime has a proper hash table. */
     for (int i = 0; i < CACHE_TOOL_BIF_SIZE; i++) {
         if (bif_table[i].module == m &&
             bif_table[i].name == f &&
             (unsigned)bif_table[i].arity == a) {
             return &cache_tool_exports[i];
         }
-        if (bif_table[i].module == 0 && bif_table[i].name == 0) {
-            break; /* end of table */
-        }
+        if (bif_table[i].module == 0 && bif_table[i].name == 0) break;
     }
     return NULL;
 }
