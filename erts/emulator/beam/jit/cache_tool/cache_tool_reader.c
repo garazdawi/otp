@@ -225,10 +225,12 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
                                         in->data, in->size);
 
     /* NIL is the canonical "ok" return; anything else is an error
-     * atom. Print the value so we can see what's failing. */
+     * atom. Look up the atom name to see what failed. */
+    extern const char *cache_tool_atom_name(uint64_t);
     fprintf(stderr,
-            "cache_tool: erts_prepare_loading(%s) returned %#lx\n",
-            in->path, (unsigned long)result);
+            "cache_tool: erts_prepare_loading(%s) returned %#lx (%s)\n",
+            in->path, (unsigned long)result,
+            cache_tool_atom_name(result));
     if (result != 0 /*NIL*/) {
         return -2;
     }

@@ -79,25 +79,39 @@ void  erts_free(int type, void *p)               { (void)type; free(p); }
 static const char *atom_strings[MAX_ATOMS];
 static size_t      atom_count;
 
+/* The Eterm encoding for atom values: (index << 6) | 0x0B.
+ * The loader returns these as error atoms, so we need to encode
+ * matching values rather than returning raw indices. */
+#define _TAG_IMMED2_ATOM 0x0B
+#define MAKE_ATOM(idx)   (((uint64_t)(idx) << 6) | _TAG_IMMED2_ATOM)
+#define ATOM_VAL(eterm)  ((uint32_t)((eterm) >> 6))
+
 uint32_t cache_tool_intern_atom_string(const char *str) {
     /* Linear scan for now; build-time tool, doesn't need to be
      * fast. Replace with hash table when atom counts exceed ~1k. */
     for (size_t i = 0; i < atom_count; i++) {
-        if (strcmp(atom_strings[i], str) == 0) return (uint32_t)i;
+        if (strcmp(atom_strings[i], str) == 0)
+            return (uint32_t)MAKE_ATOM(i);
     }
     if (atom_count >= MAX_ATOMS) {
         fprintf(stderr, "cache_tool: atom table overflow\n");
         abort();
     }
     atom_strings[atom_count] = strdup(str);
-    return (uint32_t)atom_count++;
+    return (uint32_t)MAKE_ATOM(atom_count++);
+}
+
+const char *cache_tool_atom_name(uint64_t atom_eterm) {
+    uint32_t idx = ATOM_VAL(atom_eterm);
+    if (idx >= atom_count) return "<out-of-range>";
+    return atom_strings[idx];
 }
 
 /* erts_atom_put is what the loader calls during BEAM atom-chunk
  * parsing. We intercept and route through our indexer; the value
  * we return is opaque to the loader (it just stores it in the
  * atom_value[] for the module). */
-uint32_t erts_atom_put(const uint8_t *name, int len,
+uint64_t erts_atom_put(const uint8_t *name, int len,
                        int enc, int trunc) {
     (void)enc; (void)trunc;
     char buf[256];
@@ -438,6 +452,62 @@ ABORT_STUB(erts_set_gc_state)
  * currently live. For the tool, a single dummy index suffices. */
 uint32_t the_active_code_index = 0;
 uint32_t the_staging_code_index = 0;
+uint64_t erts_init_process_id = 0;     /* THE_NON_VALUE-ish */
+
+/* Various runtime tables — present as zero-init blobs sufficient
+ * for startup to bind. Anything that derefs them at runtime
+ * either errors precisely (good — bug in our codepath) or never
+ * gets called (we never exercise that codepath). */
+char erts_port[1024];
+char erts_proc[1024];
+char erts_node_tab[1024];
+char erts_dist_table[1024];
+uint64_t erts_max_atoms = 65536;
+int erts_no_of_schedulers = 1;
+int erts_no_schedulers = 1;
+int erts_no_dirty_cpu_schedulers = 0;
+int erts_no_dirty_io_schedulers = 0;
+void *erts_default_arg_reg = NULL;
+void *erts_msacc = NULL;
+void *erts_this_dist_entry = NULL;
+void *erts_this_node_sysname = NULL;
+void *erts_default_trace_pattern_flags = NULL;
+int erts_default_trace_pattern_is_on = 0;
+void *erts_default_meta_match_spec = NULL;
+void *erts_default_meta_tracer = NULL;
+void *erts_default_match_spec = NULL;
+void *erts_internal_dist_entry = NULL;
+char erts_this_node_storage[1024];
+
+/* Code-related globals. */
+void *erts_copy_literal_area__ = NULL;
+void *erts_copy_literal_area = NULL;
+void *erts_global_literal_area = NULL;
+int erts_no_of_code_ix = 1;
+char erts_code_loaded[1024];
+char erts_module_table_storage[1024];
+
+/* Misc loader globals. */
+void *erts_total_code_size = NULL;
+int erts_module_instance_default_state = 0;
+char erts_ranges_storage[1024];
+
+/* erl_drv globals. */
+int erts_async_threads = 0;
+int erts_use_kernel_poll = 0;
+void *erts_kp_data = NULL;
+void *erts_nkp_data = NULL;
+
+/* Tracing globals (referenced at startup but never called on our path). */
+void *erts_default_trace_ip_flags = NULL;
+int erts_default_trace_ip_is_on = 0;
+char erts_trace_ip_table_storage[1024];
+
+/* Process registry. */
+char erts_proc_dict_words_storage[1024];
+
+/* DB/ETS globals (some module code might reference). */
+void *erts_db_table_pid = NULL;
 
 /* Atom table — opaque pointer; loader stores atoms via our
  * recording erts_atom_put above, doesn't dereference. */
@@ -558,12 +628,15 @@ ABORT_STUB(erts_load_nif)
 
 /* Process lifecycle — runtime only. */
 ABORT_STUB(erts_cancel_proc_timer)
-ABORT_STUB(erts_cleanup_messages)
-ABORT_STUB(erts_cleanup_offheap)
+/* erts_cleanup_messages / erts_cleanup_offheap — provided by
+ * erl_message.c which is linked in. */
+/* ABORT_STUB(erts_cleanup_messages) */
+/* ABORT_STUB(erts_cleanup_offheap) */
 ABORT_STUB(erts_continue_exit_process)
 ABORT_STUB(erts_do_exit_process)
 ABORT_STUB(erts_hibernate)
-ABORT_STUB(erts_save_message_in_proc)
+/* erts_save_message_in_proc — provided by erl_message.c. */
+/* ABORT_STUB(erts_save_message_in_proc) */
 ABORT_STUB(erts_set_proc_timer_term)
 ABORT_STUB(erts_suspend_process_on_pending_purge_lambda)
 ABORT_STUB(erts_sanitize_freason)
@@ -571,15 +644,17 @@ ABORT_STUB(erts_sanitize_freason)
 /* Comparison + hash — runtime only. */
 ABORT_STUB(erts_cmp_compound)
 
-/* Decoder — external term format. */
-ABORT_STUB(erts_decode_ext)
-ABORT_STUB(erts_decode_ext_size)
+/* Decoder — external term format. Provided by external.c which
+ * is linked in directly. */
+/* ABORT_STUB(erts_decode_ext) */
+/* ABORT_STUB(erts_decode_ext_size) */
 
 /* Loader's actual happy path — TODO: real implementations. */
 ABORT_STUB(erts_export_put)
-ABORT_STUB(erts_factory_close)
-ABORT_STUB(erts_factory_dummy_init)
-ABORT_STUB(erts_factory_heap_frag_init)
+/* factory_* — provided by erl_message.c which is linked in. */
+/* ABORT_STUB(erts_factory_close) */
+/* ABORT_STUB(erts_factory_dummy_init) */
+/* ABORT_STUB(erts_factory_heap_frag_init) */
 ABORT_STUB(erts_find_export_entry)
 ABORT_STUB(erts_find_function)
 ABORT_STUB(erts_fun_entry_put)
@@ -682,6 +757,22 @@ void *exp_receive = NULL;
 void *exp_timeout = NULL;
 void *export_list[1] = { NULL };
 uint32_t export_list_size = 0;
+
+/* BIF trap exports — referenced as &name. Stubs as zeroed
+ * Export-sized blobs (real size is ~256 bytes; pad generously). */
+char bif_return_trap_export[512];
+char bif_continue_exit_trap_export[512];
+char bif_trap_export[512];
+
+/* zlib callbacks — used by external term format decoder. */
+void *erl_zlib_zalloc_callback(void *opaque, unsigned items, unsigned size) {
+    (void)opaque;
+    return calloc(items, size);
+}
+void erl_zlib_zfree_callback(void *opaque, void *ptr) {
+    (void)opaque;
+    free(ptr);
+}
 
 /* Atom builder — used only at boot. */
 ABORT_STUB(am_atom_put)
