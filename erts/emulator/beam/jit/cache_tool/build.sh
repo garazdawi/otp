@@ -114,8 +114,12 @@ CXX_SRCS=(
 # because the loader's happy path actually calls into it.
 EXTRA_C_SRCS=(
     "$ROOT/erts/emulator/$ARCH/opt/jit/beam_opcodes.c" # gen_opc, opc, tag_to_letter, erts_transform_engine
-    "$ROOT/erts/emulator/beam/external.c"             # erts_decode_ext, erts_decode_ext_size
+    "$ROOT/erts/emulator/beam/external.c"             # erts_decode_ext*
+    "$ROOT/erts/emulator/beam/erl_map.c"              # erts_validate_and_sort_flatmap
     "$ROOT/erts/emulator/beam/erl_message.c"          # erts_factory_*
+    "$ROOT/erts/emulator/beam/erl_bits.c"             # erts_wrap_refc_bitstring, erts_bs_*
+    "$ROOT/erts/emulator/beam/copy.c"                 # size_object_x, eq, copy_struct_x
+    "$ROOT/erts/emulator/beam/utils.c"                # make_hash2
 )
 C_SRCS+=("${EXTRA_C_SRCS[@]}")
 

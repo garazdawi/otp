@@ -286,9 +286,37 @@ void erts_exit(int code, const char *fmt, ...) {
 }
 
 /* ---- Logging ------------------------------------------------- */
-/* erts_create_logger_dsbuf, erts_send_error_to_logger,
- * erts_dsprintf, erts_vdsprintf, erts_fprintf — provided by
- * utils.c which is linked in directly. */
+
+void *erts_create_logger_dsbuf(void) {
+    /* Loader uses this for error reporting. Return a tiny stub
+     * "dsbuf" — a FILE* underneath, since we route to stderr. */
+    return stderr;
+}
+
+int erts_dsprintf(void *dsbuf, const char *fmt, ...) {
+    (void)dsbuf; (void)fmt;
+    /* TODO: route through a small recording buffer that gets
+     * dumped on error. For now no-op (errors during compile
+     * are rare; if they happen they show as load failures). */
+    return 0;
+}
+
+int erts_vdsprintf(void *dsbuf, const char *fmt, void *args) {
+    (void)dsbuf; (void)fmt; (void)args;
+    return 0;
+}
+
+int erts_fprintf(void *fp, const char *fmt, ...) {
+    /* Route to real fprintf; the loader's "fp" is typically NULL
+     * (silent) or stderr. */
+    (void)fp; (void)fmt;
+    return 0;
+}
+
+void erts_send_error_to_logger(void *gl, void *dsbuf) {
+    (void)gl;
+    fprintf(stderr, "cache_tool: loader error reported\n");
+}
 
 /* ---- MD5 (used for BEAM file integrity) ---------------------- */
 
@@ -348,21 +376,21 @@ void erts_magic_ref_remove_bin(void *ref) {
     }
 
 /* Binary syntax — emitted code calls these at runtime. */
-/* ABORT_STUB(erts_bs_append_checked) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_get_binary_2) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_get_float_2) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_get_integer_2) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_get_utf16) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_init_writable) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_private_append_checked) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_put_binary) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_put_float) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_put_integer_be) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_put_integer_le) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_put_utf16) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_put_utf8) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_skip_bits2) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_start_match_3) — provided by erl_bits.c */
+ABORT_STUB(erts_bs_append_checked)
+ABORT_STUB(erts_bs_get_binary_2)
+ABORT_STUB(erts_bs_get_float_2)
+ABORT_STUB(erts_bs_get_integer_2)
+ABORT_STUB(erts_bs_get_utf16)
+ABORT_STUB(erts_bs_init_writable)
+ABORT_STUB(erts_bs_private_append_checked)
+ABORT_STUB(erts_bs_put_binary)
+ABORT_STUB(erts_bs_put_float)
+ABORT_STUB(erts_bs_put_integer_be)
+ABORT_STUB(erts_bs_put_integer_le)
+ABORT_STUB(erts_bs_put_utf16)
+ABORT_STUB(erts_bs_put_utf8)
+ABORT_STUB(erts_bs_skip_bits2)
+ABORT_STUB(erts_bs_start_match_3)
 
 /* Process / signal queue / scheduler — runtime only. */
 ABORT_STUB(erts_proc_lock_failed)
@@ -410,8 +438,6 @@ ABORT_STUB(erts_global_literals_data_unlock)
 ABORT_STUB(erts_set_pd)
 ABORT_STUB(erts_set_gc_state)
 
-void *erts_error_logger_warnings;
-void *erts_sched_local_random_nosched_state;
 #undef ABORT_STUB
 
 /* ----------------------------------------------------------------
@@ -483,7 +509,6 @@ char erts_proc_dict_words_storage[1024];
 
 /* DB/ETS globals (some module code might reference). */
 void *erts_db_table_pid = NULL;
-void *erts_literals_start;
 
 /* More globals likely referenced at startup. */
 uint64_t erts_literals_size = 0;
@@ -589,17 +614,9 @@ void *bif_trap_exports__[1] = { NULL };
         abort(); \
     }
 
-/* Atom table — real implementations for loader error paths. */
-int erts_atom_get_name(uint64_t atom, const uint8_t **name, size_t *len) {
-    uint32_t idx = (uint32_t)(atom >> 6);
-    if (idx >= atom_count) { *name = (const uint8_t*)"?"; *len = 1; return 0; }
-    *name = (const uint8_t *)atom_strings[idx];
-    *len = strlen(atom_strings[idx]);
-    return 1;
-}
-uint64_t erts_atom_to_string(uint64_t atom, void *factory) {
-    (void)atom; (void)factory; return 0;  /* NIL */
-}
+/* Atom table — loader will need real impls (record symbolically). */
+ABORT_STUB(erts_atom_get_name)
+ABORT_STUB(erts_atom_to_string)
 
 /* Allocator wrappers we haven't covered. */
 ABORT_STUB(erts_alcu_enable_code_atags)
@@ -608,16 +625,16 @@ ABORT_STUB(erts_alloc_enomem)
 /* UTF-8 / Unicode — loader uses some for module names. */
 ABORT_STUB(erts_analyze_utf8)
 ABORT_STUB(erts_make_list_from_utf8_buf)
-/* ABORT_STUB(erts_unicode_list_to_buf) — from linked .c */
+ABORT_STUB(erts_unicode_list_to_buf)
 ABORT_STUB(erts_bin_bytes_to_list)
 
 /* Binary syntax helpers (the remaining ones). */
-/* ABORT_STUB(erts_bs_put_binary_all) — provided by erl_bits.c */
-/* ABORT_STUB(erts_bs_put_string) — provided by erl_bits.c */
-/* ABORT_STUB(erts_build_sub_bitstring) — provided by erl_bits.c */
-/* ABORT_STUB(erts_wrap_refc_bitstring) — provided by erl_bits.c */
-/* ABORT_STUB(erts_cmp_bits__) — provided by erl_bits.c */
-/* ABORT_STUB(erts_copy_bits_fwd) — provided by erl_bits.c */
+ABORT_STUB(erts_bs_put_binary_all)
+ABORT_STUB(erts_bs_put_string)
+ABORT_STUB(erts_build_sub_bitstring)
+ABORT_STUB(erts_wrap_refc_bitstring)
+ABORT_STUB(erts_cmp_bits__)
+ABORT_STUB(erts_copy_bits_fwd)
 
 /* Bit operations — runtime arithmetic. */
 ABORT_STUB(erts_band)
@@ -653,7 +670,7 @@ ABORT_STUB(erts_suspend_process_on_pending_purge_lambda)
 ABORT_STUB(erts_sanitize_freason)
 
 /* Comparison + hash — runtime only. */
-/* ABORT_STUB(erts_cmp_compound) — provided by linked .c */
+ABORT_STUB(erts_cmp_compound)
 
 /* Decoder — external term format. Provided by external.c which
  * is linked in directly. */
@@ -699,17 +716,17 @@ ABORT_STUB(erts_gc_update_map_exact)
 ABORT_STUB(erts_generic_breakpoint)
 ABORT_STUB(erts_global_literal_allocate)
 ABORT_STUB(erts_global_literal_register)
-/* ABORT_STUB(erts_heap_alloc) — from linked .c */
+ABORT_STUB(erts_heap_alloc)
 ABORT_STUB(erts_line_breakpoint_hit__cleanup)
 ABORT_STUB(erts_line_breakpoint_hit__prepare_call)
-/* ABORT_STUB(erts_list_length) — from linked .c */
-/* ABORT_STUB(erts_move_multi_frags) — from linked .c */
+ABORT_STUB(erts_list_length)
+ABORT_STUB(erts_move_multi_frags)
 ABORT_STUB(erts_printable_return_address)
 ABORT_STUB(erts_snprintf)
 ABORT_STUB(erts_get_scheduler_data)
 ABORT_STUB(erts_system_monitor_long_msgq_off)
 ABORT_STUB(erts_system_monitor_long_schedule)
-/* ABORT_STUB(erts_timestamp_millis) — from linked .c */
+ABORT_STUB(erts_timestamp_millis)
 ABORT_STUB(erts_trace_return)
 ABORT_STUB(erts_trapping_length_1)
 
@@ -736,8 +753,8 @@ ABORT_STUB(call_error_handler)
 ABORT_STUB(check_monitor_long_schedule)
 ABORT_STUB(copy_in_registers)
 ABORT_STUB(copy_out_registers)
-/* ABORT_STUB(copy_struct_x) — provided by linked .c */
-/* ABORT_STUB(eq) — provided by linked .c */
+ABORT_STUB(copy_struct_x)
+ABORT_STUB(eq)
 ABORT_STUB(erl_assert_error)
 ABORT_STUB(erl_create_local_native_record)
 ABORT_STUB(erl_create_native_record)
@@ -752,13 +769,13 @@ ABORT_STUB(get_map_element)
 ABORT_STUB(get_map_element_hash)
 ABORT_STUB(get_tracer_ref_from_weak_id)
 ABORT_STUB(handle_error)
-/* ABORT_STUB(make_hash2) — provided by linked .c */
+ABORT_STUB(make_hash2)
 ABORT_STUB(monitor_long_msgq_off)
 ABORT_STUB(raw_raise)
 ABORT_STUB(save_calls)
 ABORT_STUB(send_2)
 ABORT_STUB(seq_trace_output_generic)
-/* ABORT_STUB(size_object_x) — provided by linked .c */
+ABORT_STUB(size_object_x)
 ABORT_STUB(trace_receive)
 ABORT_STUB(ubif2mfa)
 ABORT_STUB(ethr_tsd_get)
