@@ -265,12 +265,108 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
     memcpy(out->code, code_blob, code_blob_size);
     out->code_size = code_blob_size;
 
-    /* Copy the reloc list into out->relocs. */
+    /* Copy the reloc list into out->relocs and translate each entry's
+     * symbolic_ref from a (BIF-table-local) value to an index in a
+     * per-module string table.
+     *
+     * ATOM relocs hold the low 32 bits of the atom Eterm. Translate
+     *   to a string name via the runtime's atom table.
+     * BIF / EXPORT relocs hold an import-table index. Translate to a
+     *   "Mod:Func/Arity" string via the BeamFile we extracted. */
     if (relocs && relocs->count > 0) {
+        const void *beam_file = NULL;
+        cache_tool_extract_from_loader(magic, NULL, NULL, &beam_file, NULL);
+
         out->reloc_count = relocs->count;
         out->relocs = malloc(relocs->count * sizeof(BeamJitReloc));
         memcpy(out->relocs, relocs->entries,
                relocs->count * sizeof(BeamJitReloc));
+
+        /* Lazy per-module string tables — interned on first occurrence,
+         * the reloc's symbolic_ref is rewritten to the table index. */
+        size_t atom_cap = 64, mfa_cap = 64;
+        out->atom_strings = malloc(atom_cap * sizeof(const char *));
+        out->mfa_strings  = malloc(mfa_cap  * sizeof(const char *));
+
+        extern size_t cache_tool_atom_name_bytes(uint32_t, const char **);
+        extern size_t cache_tool_import_mfa_string(const void *,
+                                                   uint32_t,
+                                                   char *, size_t);
+
+        for (size_t i = 0; i < out->reloc_count; i++) {
+            BeamJitReloc *r = &out->relocs[i];
+            char buf[512];
+            const char *src = NULL;
+            size_t src_len = 0;
+            const char ***tbl  = NULL;
+            size_t      *count = NULL;
+            size_t      *cap   = NULL;
+
+            switch (r->kind) {
+            case BEAM_JIT_RELOC_ATOM: {
+                const char *bytes;
+                size_t nbytes = cache_tool_atom_name_bytes(r->symbolic_ref,
+                                                           &bytes);
+                if (nbytes && nbytes < sizeof(buf)) {
+                    memcpy(buf, bytes, nbytes);
+                    buf[nbytes] = 0;
+                    src = buf;
+                    src_len = nbytes;
+                }
+                tbl = &out->atom_strings;
+                count = &out->atom_count;
+                cap = &atom_cap;
+                break;
+            }
+            case BEAM_JIT_RELOC_BIF:
+            case BEAM_JIT_RELOC_EXPORT:
+                if ((r->symbolic_ref & 0xffff0000u) == 0xffff0000u) {
+                    /* emit_send sentinel — known BIF index, no MFA from
+                     * import table. Encode as "<bif:N>" so the cache
+                     * loader can resolve via the runtime bif_table. */
+                    snprintf(buf, sizeof(buf),
+                             "<bif:%u>", r->symbolic_ref & 0xffff);
+                    src = buf;
+                    src_len = strlen(buf);
+                } else if (cache_tool_import_mfa_string(beam_file,
+                                                       r->symbolic_ref,
+                                                       buf, sizeof(buf))) {
+                    src = buf;
+                    src_len = strlen(buf);
+                }
+                tbl = &out->mfa_strings;
+                count = &out->mfa_count;
+                cap = &mfa_cap;
+                break;
+            default:
+                continue;
+            }
+
+            if (!src) {
+                r->symbolic_ref = 0xffffffffu; /* mark unresolved */
+                continue;
+            }
+
+            /* Intern in the per-module string table. Dedup is linear —
+             * O(n²) but n stays in the hundreds for preloaded modules. */
+            uint32_t found = 0xffffffffu;
+            for (size_t j = 0; j < *count; j++) {
+                if (strcmp((*tbl)[j], src) == 0) {
+                    found = (uint32_t)j;
+                    break;
+                }
+            }
+            if (found == 0xffffffffu) {
+                if (*count == *cap) {
+                    *cap *= 2;
+                    *tbl = realloc(*tbl, *cap * sizeof(const char *));
+                }
+                (*tbl)[*count] = strdup(src);
+                found = (uint32_t)(*count)++;
+                (void)src_len;
+            }
+            r->symbolic_ref = found;
+        }
     }
 
     return 0;

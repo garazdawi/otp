@@ -69,6 +69,37 @@ void cache_tool_extract_from_loader(Binary *magic,
     if (relocs_ptr)    *relocs_ptr = stp->ba ? beamasm_get_relocs(stp->ba)
                                              : NULL;
 }
+
+/* Look up the byte-string name of an atom by its Eterm value (lower
+ * 32 bits — the upper bits are zero for atoms with index < 2^26).
+ * Used by the cache_tool to translate ATOM relocs' symbolic_ref into
+ * a string for the cache file's atom string table. */
+size_t cache_tool_atom_name_bytes(uint32_t atom_eterm_low32,
+                                  const char **out_bytes) {
+    Atom *atom = atom_tab(atom_val((Eterm)atom_eterm_low32));
+    *out_bytes = (const char *)erts_atom_get_name(atom);
+    return atom->len;
+}
+
+/* Look up the {module, function, arity} of an import-table entry by
+ * its index in the BeamFile parsed during load. The MFA atoms are
+ * resolved to strings via atom_tab; arity is a small unsigned int.
+ * Caller passes a buffer; we write "M:F/A" into it and return the
+ * written length (or 0 if the index is out of range). */
+size_t cache_tool_import_mfa_string(const void *beam_file,
+                                    uint32_t import_idx,
+                                    char *buf, size_t buf_sz) {
+    const BeamFile *bf = (const BeamFile *)beam_file;
+    if (import_idx >= (uint32_t)bf->imports.count) return 0;
+    const BeamFile_ImportEntry *e = &bf->imports.entries[import_idx];
+    Atom *m = atom_tab(atom_val(e->module));
+    Atom *f = atom_tab(atom_val(e->function));
+    int n = snprintf(buf, buf_sz, "%.*s:%.*s/%u",
+                     (int)m->len, (const char *)erts_atom_get_name(m),
+                     (int)f->len, (const char *)erts_atom_get_name(f),
+                     e->arity);
+    return n > 0 && (size_t)n < buf_sz ? (size_t)n : 0;
+}
 #endif
 
 int beam_load_prepare_emit(LoaderState *stp) {
