@@ -678,6 +678,26 @@ void BeamModuleAssembler::emit_call_light_bif(const ArgWord &Bif,
     a.bind(entry);
 
     mov_arg(ARG4, Exp);
+
+    /* IDEAS/07 #1 — illustrative reloc-aware variant. The bare
+     * `a.mov(RET, imm(Bif.get()))` below bakes the BIF function
+     * pointer into the emitted code. For the persistent JIT cache,
+     * the same emit needs to also record that the immediate at
+     * offset (a.offset() - 8) is a BIF reference identified by the
+     * import entry's MFA (so the loader can re-resolve it for the
+     * VM that mmaps the cached code).
+     *
+     * The full migration replaces this with:
+     *
+     *   uint32_t mfa_str_idx = intern_mfa_string(
+     *           &beam->imports.entries[Exp.get()]);
+     *   emit_mov_bif(RET, (void *)Bif.get(), mfa_str_idx);
+     *
+     * which expands to the same `a.mov(RET, imm(Bif.get()))` *plus*
+     * a `record_reloc(off-8, BEAM_JIT_RELOC_BIF, 8, mfa_str_idx)`
+     * call. With caching disabled the helper compiles down to the
+     * bare mov so there's no codegen change at all.
+     */
     a.mov(RET, imm(Bif.get()));
     a.lea(ARG3, x86::qword_ptr(entry));
 
