@@ -5648,7 +5648,13 @@ check_format_string(Fmt, Strict) ->
     extract_sequences(Fmt, [], Strict).
 
 extract_sequences(Fmt, Need0, Strict) ->
-    case string:find(Fmt, [$~]) of
+    %% Find the next $~ in the format string. Format strings are flat
+    %% lists of integers at this point (atoms and binaries are converted
+    %% in check_format_string/2). A direct list walk avoids loading
+    %% unicode_util via string:find/2 → string:prefix_1/2, which is on
+    %% the cold-start critical path (erl -noshell -eval triggers
+    %% erl_lint:format_function which used to land here).
+    case find_tilde(Fmt) of
         nomatch -> {ok,lists:reverse(Need0)};         %That's it
         [$~|Fmt1] ->
             case extract_sequence(1, Fmt1, Need0, Strict) of
@@ -5656,6 +5662,10 @@ extract_sequences(Fmt, Need0, Strict) ->
                 Error -> Error
             end
     end.
+
+find_tilde([$~|_]=Cs) -> Cs;
+find_tilde([_|Cs]) -> find_tilde(Cs);
+find_tilde([]) -> nomatch.
 
 extract_sequence(1, [$-,C|Fmt], Need, Strict)
   when is_integer(C), C >= $0, C =< $9 ->

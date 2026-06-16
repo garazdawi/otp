@@ -1804,6 +1804,28 @@ take_tc(Bin, N, {GCs,_,_}=Seps0) when is_binary(Bin) ->
             end
     end.
 
+%% Single-char pattern, ASCII subject head — the grapheme boundary is
+%% guaranteed to be between CP and the next codepoint as long as that
+%% next codepoint is also ASCII (combining marks are >= 0x300, well
+%% above 0x7F). This avoids loading unicode_util for the dominant case
+%% of single-byte ASCII pattern lookups (find a "/", ".", "~", "\n", …).
+prefix_1([CP], [GC]) when is_integer(CP), is_integer(GC),
+                          CP < 128, GC < 128 ->
+    case CP =:= GC of true -> []; false -> nomatch end;
+prefix_1([CP, Next | _] = Cs0, [GC])
+  when is_integer(CP), is_integer(GC), is_integer(Next),
+       CP < 128, GC < 128, Next < 128 ->
+    case CP =:= GC of true -> tl(Cs0); false -> nomatch end;
+prefix_1(<<CP, Next, _/binary>> = Cs0, [GC])
+  when is_integer(GC), CP < 128, GC < 128, Next < 128 ->
+    %% Binary subject, ASCII byte followed by ASCII byte: no UTF-8
+    %% continuation possible (continuation bytes are 0x80-0xBF, combining
+    %% marks start at 0xCC). Safe to byte-compare without unicode_util.
+    <<_, Rest/binary>> = Cs0,
+    case CP =:= GC of true -> Rest; false -> nomatch end;
+prefix_1(<<CP>>, [GC])
+  when is_integer(GC), CP < 128, GC < 128 ->
+    case CP =:= GC of true -> <<>>; false -> nomatch end;
 prefix_1(Cs0, [GC]) ->
     case unicode_util:gc(Cs0) of
         [GC|Cs] -> Cs;
