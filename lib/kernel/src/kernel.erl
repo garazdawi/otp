@@ -110,6 +110,18 @@ init([]) ->
              type => worker,
              modules => [code]},
 
+    %% Parallel-warm modules pulled in by the lazy-load chain during
+    %% later kernel_sup children. Acks the supervisor immediately and
+    %% runs the loads in the background — race-safe because
+    %% code:ensure_loaded/1 is idempotent. See IDEAS/07 #13/#14.
+    Preload = #{id => kernel_preload,
+                start => {proc_lib, start_link,
+                          [?MODULE, ?FUNCTION_NAME, [preload]]},
+                restart => transient,
+                shutdown => 1000,
+                type => worker,
+                modules => [?MODULE]},
+
     File = #{id => file_server_2,
              start => {file_server, start_link, []},
              restart => permanent,
@@ -193,7 +205,7 @@ init([]) ->
     case init:get_argument(mode) of
         {ok, [["minimal"]|_]} ->
             {ok, {SupFlags,
-                  [Code, StdError | EarlyFile] ++
+                  [Code, Preload, StdError | EarlyFile] ++
                       [OnLoad | LateFile] ++
                       [SigSrv | Peer] ++
                       [User, LoggerSup, Config, SafeSup]}};
@@ -215,12 +227,34 @@ init([]) ->
             CompileServer = start_compile_server(),
 
             {ok, {SupFlags,
-                  [Code, StdError | EarlyFile] ++
+                  [Code, Preload, StdError | EarlyFile] ++
                       [OnLoad, InetDb | DistChildren] ++ LateFile ++
                       [SigSrv | Peer] ++
                       [User, LoggerSup, Config, SafeSup] ++
                       Timer ++ CompileServer}}
     end;
+init(preload) ->
+    %% Ack immediately so the supervisor moves on to the next child
+    %% while we pre-warm the lazy-load chain in parallel. code_server
+    %% is up (it is the previous child), so code:ensure_loaded works.
+    proc_lib:init_ack({ok, self()}),
+    Modules = preload_modules(),
+    NSched = max(1, erlang:system_info(schedulers_online)),
+    Self = self(),
+    Refs = [begin
+                Ref = make_ref(),
+                _ = spawn(
+                      fun() ->
+                              lists:foreach(
+                                fun(M) -> _ = code:ensure_loaded(M) end,
+                                Chunk),
+                              Self ! Ref
+                      end),
+                Ref
+            end || Chunk <- chunk(Modules, NSched)],
+    lists:foreach(fun(Ref) -> receive Ref -> ok end end, Refs),
+    %% Done — transient child exits normally.
+    ok;
 init(on_load) ->
     %% Run the on_load handlers for all modules that have been
     %% loaded so far. Running them at this point means that
@@ -366,6 +400,32 @@ start_compile_server() ->
         _ ->
             []
     end.
+
+%%-----------------------------------------------------------------
+%% Modules pulled in by the lazy-load chain during later kernel_sup
+%% children init. Identified from strace tail of
+%% `erl -noshell -eval halt(0).'.
+%%-----------------------------------------------------------------
+preload_modules() ->
+    [file_server, file_io_server, raw_file_io, prim_zip,
+     user_drv, user_sup, prim_tty, group,
+     edlin, edlin_key, edlin_context, edlin_expand,
+     io, io_lib, io_lib_format, c,
+     logger_sup, logger_handler_watcher,
+     logger_std_h, logger_h_common, logger_formatter,
+     erl_signal_handler,
+     erl_anno, erl_scan, orddict, ordsets, sets,
+     erl_internal, otp_internal, erpc, peer,
+     supervisor_bridge, sys, gen_statem].
+
+chunk(List, N) ->
+    Per = max(1, (length(List) + N - 1) div N),
+    chunk1(List, Per).
+chunk1([], _) -> [];
+chunk1(L, Per) when length(L) =< Per -> [L];
+chunk1(L, Per) ->
+    {Head, Tail} = lists:split(Per, L),
+    [Head | chunk1(Tail, Per)].
 
 %%-----------------------------------------------------------------
 %% The change of the distributed parameter is taken care of here
