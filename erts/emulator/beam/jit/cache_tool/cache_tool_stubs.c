@@ -50,6 +50,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 #include "cache_tool.h"
 
@@ -107,18 +108,8 @@ const char *cache_tool_atom_name(uint64_t atom_eterm) {
     return atom_strings[idx];
 }
 
-/* erts_atom_put is what the loader calls during BEAM atom-chunk
- * parsing. We intercept and route through our indexer; the value
- * we return is opaque to the loader (it just stores it in the
- * atom_value[] for the module). */
-uint64_t erts_atom_put(const uint8_t *name, int len,
-                       int enc, int trunc) {
-    (void)enc; (void)trunc;
-    char buf[256];
-    int n = len < (int)sizeof(buf)-1 ? len : (int)sizeof(buf)-1;
-    memcpy(buf, name, n); buf[n] = 0;
-    return cache_tool_intern_atom_string(buf);
-}
+/* erts_atom_put provided by atom.c (linked in). cache_tool_*
+ * is now just for our own dedup/lookup. */
 
 /* ----------------------------------------------------------------
  * BIF / export resolution: recording stubs.
@@ -215,12 +206,18 @@ CacheArch arch_from_string(const char *s) {
     return CACHE_ARCH_UNKNOWN;
 }
 
+extern void init_atom_table(void);
+
 int cache_tool_init(const char *target_arch) {
     /* Initialise asmjit's CodeHolder template for the target arch.
      * Initialise the loader's static state (atom 0 reserved, etc.).
      * Build the BeamGlobalAssembler fragments for this arch so
      * per-module emit can reference them. */
     (void)target_arch;
+    /* Real atom registry — sets up atom_table_lock (via the no-op
+     * ethr_rwmutex_* stubs below) and seeds the static atoms from
+     * erl_atom_names[]. */
+    init_atom_table();
     return 0;
 }
 
@@ -281,7 +278,12 @@ void *erts_realloc_n_enomem(int type, void *p, size_t sz) {
 }
 
 void erts_exit(int code, const char *fmt, ...) {
-    fprintf(stderr, "cache_tool: erts_exit(%d): %s\n", code, fmt);
+    va_list ap;
+    fprintf(stderr, "cache_tool: erts_exit(%d): ", code);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
     exit(code);
 }
 
@@ -412,6 +414,11 @@ ABORT_STUB(erts_set_gc_state)
 
 void *erts_error_logger_warnings;
 void *erts_sched_local_random_nosched_state;
+/* int per erl_vm.h:264 — atom-table size limit. The runtime default
+ * is 1 M; for the compile pipeline we only need it large enough for
+ * the modules being processed (preloaded set is well under 1 K). */
+int erts_atom_table_size = 1 << 20;
+void *erts_is_crash_dumping_key;
 #undef ABORT_STUB
 
 /* ----------------------------------------------------------------
@@ -437,7 +444,7 @@ char erts_port[1024];
 char erts_proc[1024];
 char erts_node_tab[1024];
 char erts_dist_table[1024];
-uint64_t erts_max_atoms = 65536;
+/* erts_max_atoms in atom.c */
 int erts_no_of_schedulers = 1;
 int erts_no_schedulers = 1;
 int erts_no_dirty_cpu_schedulers = 0;
@@ -512,9 +519,12 @@ void *erts_async_max_no = NULL;
 char erts_runtime_data[4096];
 char erts_runq_supervision_data[1024];
 
-/* Atom table — opaque pointer; loader stores atoms via our
- * recording erts_atom_put above, doesn't dereference. */
-void *erts_atom_table = NULL;
+/* erl_atom_names: array of well-known atoms baked into the runtime.
+ * For the tool we provide an empty array; atom.c will allocate atom
+ * 0 (the empty atom) and grow from there. */
+char *erl_atom_names[] = { NULL };
+
+/* erts_atom_table provided by atom.c */
 
 /* Whether the system is fully initialised — pretend it is. */
 int erts_initialized = 1;
@@ -589,16 +599,15 @@ void *bif_trap_exports__[1] = { NULL };
         abort(); \
     }
 
-/* Atom table — real implementations for loader error paths. */
-int erts_atom_get_name(uint64_t atom, const uint8_t **name, size_t *len) {
-    uint32_t idx = (uint32_t)(atom >> 6);
-    if (idx >= atom_count) { *name = (const uint8_t*)"?"; *len = 1; return 0; }
-    *name = (const uint8_t *)atom_strings[idx];
-    *len = strlen(atom_strings[idx]);
-    return 1;
-}
-uint64_t erts_atom_to_string(uint64_t atom, void *factory) {
-    (void)atom; (void)factory; return 0;  /* NIL */
+/* erts_atom_get_name now provided by atom.c.
+ * erts_atom_to_string lives in erl_unicode.c (not linked) — stub:
+ * the loader uses it to build the source-file string for line
+ * info; returning NIL leaves the line chunk's filename entry empty. */
+#define NIL_TERM 0x3BUL
+unsigned long erts_atom_to_string(unsigned long **hpp, unsigned long atom,
+                                  unsigned long tail) {
+    (void)hpp; (void)atom; (void)tail;
+    return NIL_TERM;
 }
 
 /* Allocator wrappers we haven't covered. */
@@ -606,7 +615,7 @@ ABORT_STUB(erts_alcu_enable_code_atags)
 ABORT_STUB(erts_alloc_enomem)
 
 /* UTF-8 / Unicode — loader uses some for module names. */
-ABORT_STUB(erts_analyze_utf8)
+/* erts_analyze_utf8 + _x: real ASCII-only impl below */
 ABORT_STUB(erts_make_list_from_utf8_buf)
 /* ABORT_STUB(erts_unicode_list_to_buf) — from linked .c */
 ABORT_STUB(erts_bin_bytes_to_list)
@@ -666,7 +675,7 @@ ABORT_STUB(erts_export_put)
 /* ABORT_STUB(erts_factory_close) */
 /* ABORT_STUB(erts_factory_dummy_init) */
 /* ABORT_STUB(erts_factory_heap_frag_init) */
-ABORT_STUB(erts_find_export_entry)
+/* erts_find_export_entry: real stub below (returns NULL) */
 ABORT_STUB(erts_find_function)
 ABORT_STUB(erts_fun_entry_put)
 ABORT_STUB(erts_get_module)
@@ -697,15 +706,32 @@ ABORT_STUB(erts_gc_update_map_exact)
 
 /* Misc runtime — abort. */
 ABORT_STUB(erts_generic_breakpoint)
-ABORT_STUB(erts_global_literal_allocate)
-ABORT_STUB(erts_global_literal_register)
+/* erts_global_literal_allocate + register: malloc-backed below */
 /* ABORT_STUB(erts_heap_alloc) — from linked .c */
 ABORT_STUB(erts_line_breakpoint_hit__cleanup)
 ABORT_STUB(erts_line_breakpoint_hit__prepare_call)
 /* ABORT_STUB(erts_list_length) — from linked .c */
 /* ABORT_STUB(erts_move_multi_frags) — from linked .c */
 ABORT_STUB(erts_printable_return_address)
-ABORT_STUB(erts_snprintf)
+/* erts_snprintf: identical signature to libc snprintf — just forward. */
+int erts_snprintf(char *buf, size_t sz, const char *fmt, ...) {
+    va_list ap;
+    int r;
+    va_start(ap, fmt);
+    r = vsnprintf(buf, sz, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+/* erts_find_export_entry: cache_tool has no export table, every
+ * lookup misses. The loader treats that as "external function" and
+ * records a symbolic reference instead of resolving — exactly the
+ * behaviour we want for cache generation. */
+const void *erts_find_export_entry(unsigned long m, unsigned long f,
+                                   unsigned a, int code_ix) {
+    (void)m; (void)f; (void)a; (void)code_ix;
+    return NULL;
+}
 ABORT_STUB(erts_get_scheduler_data)
 ABORT_STUB(erts_system_monitor_long_msgq_off)
 ABORT_STUB(erts_system_monitor_long_schedule)
@@ -727,8 +753,8 @@ ABORT_STUB(apply)
 ABORT_STUB(beam_catches_cons)
 ABORT_STUB(beam_catches_init)
 ABORT_STUB(beam_make_current_old)
-ABORT_STUB(beam_types_decode_extra)
-ABORT_STUB(beam_types_decode_type)
+/* ABORT_STUB(beam_types_decode_extra) — from beam_types.c */
+/* ABORT_STUB(beam_types_decode_type) — from beam_types.c */
 ABORT_STUB(big_to_double)
 ABORT_STUB(build_stacktrace)
 ABORT_STUB(bytes_to_big)
@@ -763,6 +789,94 @@ ABORT_STUB(trace_receive)
 ABORT_STUB(ubif2mfa)
 ABORT_STUB(ethr_tsd_get)
 
+/* ---- Global literal area (malloc-backed) --------------------
+ *
+ * Atoms in the loader stash their name binaries in the "global
+ * literal area" — a per-process-group region the GC never
+ * touches. The cache tool doesn't GC anything, so each
+ * allocation is just a fresh malloc; the ohp out param points
+ * at a single shared head (never traversed).
+ */
+struct erl_off_heap_header;
+static struct erl_off_heap_header *cache_tool_ohp_head = NULL;
+
+unsigned long *erts_global_literal_allocate(unsigned long sz,
+                                            struct erl_off_heap_header ***ohp) {
+    if (ohp) *ohp = &cache_tool_ohp_head;
+    return (unsigned long *)calloc(sz, sizeof(unsigned long));
+}
+
+void erts_global_literal_register(unsigned long *variable) {
+    (void)variable;
+}
+
+/* ---- UTF-8 analyzer (ASCII-only fast path) -------------------
+ *
+ * The real impl lives in erl_unicode.c, which pulls in a lot.
+ * Atom names from BEAM files are overwhelmingly ASCII; a
+ * pessimistic ASCII-only stub is enough for the compile pipeline.
+ * Any byte with the high bit set returns ERTS_UTF8_ERROR.
+ */
+#define ERTS_UTF8_OK_LOCAL 0
+#define ERTS_UTF8_ERROR_LOCAL 2
+#define ERTS_UTF8_OK_MAX_CHARS_LOCAL 4
+
+typedef long Sint;
+int erts_analyze_utf8_x(const unsigned char *source, unsigned long size,
+                        const unsigned char **err_pos,
+                        unsigned long *num_chars,
+                        int *left,
+                        Sint *num_latin1_chars,
+                        unsigned long max_chars) {
+    unsigned long n = 0;
+    Sint latin1 = 0;
+    for (unsigned long i = 0; i < size; i++) {
+        if (source[i] & 0x80) {
+            if (err_pos) *err_pos = source + i;
+            return ERTS_UTF8_ERROR_LOCAL;
+        }
+        n++;
+        latin1++;
+        if (max_chars && n == max_chars && i + 1 < size) {
+            if (num_chars) *num_chars = n;
+            if (num_latin1_chars) *num_latin1_chars = latin1;
+            if (err_pos) *err_pos = source + i + 1;
+            return ERTS_UTF8_OK_MAX_CHARS_LOCAL;
+        }
+    }
+    if (num_chars) *num_chars = n;
+    if (num_latin1_chars) *num_latin1_chars = latin1;
+    if (left) *left = 0;
+    if (err_pos) *err_pos = source + size;
+    return ERTS_UTF8_OK_LOCAL;
+}
+
+int erts_analyze_utf8(const unsigned char *source, unsigned long size,
+                      const unsigned char **err_pos,
+                      unsigned long *num_chars, int *left) {
+    return erts_analyze_utf8_x(source, size, err_pos, num_chars, left, NULL, 0);
+}
+
+/* ---- rwmutex no-ops -----------------------------------------
+ *
+ * cache_tool is single-threaded; the atom_table_lock and any
+ * other rwmtx the loader path acquires never have real
+ * contention. Stub the ethr leaf calls to no-ops so the
+ * inlined erts_rwmtx_* wrappers in atom.c (etc.) succeed
+ * without touching uninitialised lock state.
+ *
+ * These are the same signatures as ethr_mutex.h declares.
+ */
+int  ethr_rwmutex_set_reader_group(int x)       { (void)x; return 0; }
+int  ethr_rwmutex_init_opt(void *m, void *opt)  { (void)m; (void)opt; return 0; }
+int  ethr_rwmutex_destroy(void *m)              { (void)m; return 0; }
+int  ethr_rwmutex_tryrlock(void *m)             { (void)m; return 0; }
+int  ethr_rwmutex_tryrwlock(void *m)            { (void)m; return 0; }
+void ethr_rwmutex_rlock(void *m)                { (void)m; }
+void ethr_rwmutex_runlock(void *m)              { (void)m; }
+void ethr_rwmutex_rwlock(void *m)               { (void)m; }
+void ethr_rwmutex_rwunlock(void *m)             { (void)m; }
+
 /* Exception frames + receive markers — runtime only. */
 void *exp_receive = NULL;
 void *exp_timeout = NULL;
@@ -785,8 +899,8 @@ void erl_zlib_zfree_callback(void *opaque, void *ptr) {
     free(ptr);
 }
 
-/* Atom builder — used only at boot. */
-ABORT_STUB(am_atom_put)
+/* am_atom_put — provided by atom.c (linked in). */
+/* ABORT_STUB(am_atom_put) */
 
 /* Global literals — for the tool, sentinel values. The runtime
  * cache loader will resolve real Eterm values when patching. */
