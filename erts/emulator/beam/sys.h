@@ -738,6 +738,14 @@ typedef struct preload {
     char *name;			/* Name of module */
     int  size;			/* Size of code */
     unsigned char* code;	/* Code pointer */
+    /* IDEAS/07 #1 — Optional pre-compiled JIT cache for the module.
+     * NULL/0 means "no cache, compile from `code'". When non-NULL,
+     * load_preloaded() can use the cached form instead of running
+     * the loader. Format: see beam_jit_cache.h.
+     * Today these are NULL — the slots reserve space in preload.c
+     * and the boot path is unchanged. */
+    int  jit_cache_size;
+    unsigned char* jit_cache;
 } Preload;
 
 /*

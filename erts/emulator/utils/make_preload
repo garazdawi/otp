@@ -87,7 +87,14 @@ foreach $file (@ARGV) {
 	$_ = beam_strip($_, $file);
 	close(FILE);
 	
-	push(@modules, "  {\"$module\", " . length($_) . ", preloaded_$module},\n");
+	# IDEAS/07 #1 — extend each entry with a JIT cache slot.
+	# Today these are NULL/0; populated by a future build-time
+	# step that runs the JIT on each preloaded module and serialises
+	# the result (code blob + reloc list) into preloaded_jc_<mod>.
+	push(@modules, "  {\"$module\", " . length($_)
+	                . ", preloaded_$module"
+	                . ", 0, 0 /* jit_cache_size, jit_cache */"
+	                . "},\n");
 	print "const unsigned preloaded_size_$module = ", length($_), ";\n";
 	print "const unsigned char preloaded_$module", "[] = {\n";
 	for ($i = 0; $i < length($_); $i++) {
@@ -123,11 +130,14 @@ if ($gen_rc) {
     print "   char* name;\n";
     print "   int size;\n";
     print "   const unsigned char* code;\n";
+    # IDEAS/07 #1 — JIT cache slots; populated by a future build step.
+    print "   int jit_cache_size;\n";
+    print "   const unsigned char* jit_cache;\n";
     print "} pre_loaded[] = {\n";
     foreach (@modules) {
 	print;
     }
-    print "  {0, 0, 0}\n";
+    print "  {0, 0, 0, 0, 0}\n";
     print "};\n";
 }
 

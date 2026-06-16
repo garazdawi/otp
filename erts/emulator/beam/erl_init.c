@@ -504,7 +504,15 @@ get_arg(char* rest, char* next, int* ip)
     return rest;
 }
 
-static void 
+/* IDEAS/07 #1 — preloaded module JIT cache prototype.
+ * Per-module profile of load_preloaded. Off by default; toggle
+ * PROFILE_PRELOAD below to dump timings to stderr at boot. */
+/* #define PROFILE_PRELOAD 1 */
+#ifdef PROFILE_PRELOAD
+#include <time.h>
+#endif
+
+static void
 load_preloaded(void)
 {
     int i;
@@ -514,24 +522,67 @@ load_preloaded(void)
     byte* code;
     char* name;
     int length;
+#ifdef PROFILE_PRELOAD
+    struct timespec t0, t_each0, t_each1, t1;
+    unsigned long long total_us = 0, per_module_us[64];
+    int per_module_count = 0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+#endif
 
     if ((preload_p = sys_preloaded()) == NULL) {
 	return;
     }
     i = 0;
     while ((name = preload_p[i].name) != NULL) {
+#ifdef PROFILE_PRELOAD
+        clock_gettime(CLOCK_MONOTONIC, &t_each0);
+#endif
 	length = preload_p[i].size;
 	module_name = erts_atom_put((byte *) name, sys_strlen(name), ERTS_ATOM_ENC_LATIN1, 1);
 	if ((code = sys_preload_begin(&preload_p[i])) == 0)
 	    erts_exit(ERTS_ERROR_EXIT, "Failed to find preloaded code for module %s\n",
 		     name);
+        /* IDEAS/07 #1 — preloaded JIT cache dispatch.
+         *
+         * If the preload entry has a jit_cache attached, the
+         * build-time step has serialised the JIT output (code blob +
+         * relocs + literal pool) for this module. The loader can
+         * install it directly, skipping the per-op transform +
+         * specific-selection + asmjit-emit work.
+         *
+         * Today no preload entry has a cache (all jit_cache slots
+         * are NULL); the placeholder branch falls through to the
+         * regular loader. When the build-time step is implemented,
+         * this hook is where the cached-load path plugs in. */
+        if (preload_p[i].jit_cache != NULL) {
+            /* TODO: erts_preload_module_from_cache(...) */
+            /* falls through to regular loader for now */
+        }
 	res = erts_preload_module(NULL, 0, NIL, &module_name, code, length);
 	sys_preload_end(&preload_p[i]);
 	if (res != NIL)
 	    erts_exit(ERTS_ERROR_EXIT,"Failed loading preloaded module %s (%T)\n",
 		     name, res);
+#ifdef PROFILE_PRELOAD
+        clock_gettime(CLOCK_MONOTONIC, &t_each1);
+        if (per_module_count < 64) {
+            unsigned long long ns =
+                (t_each1.tv_sec - t_each0.tv_sec) * 1000000000ULL +
+                (t_each1.tv_nsec - t_each0.tv_nsec);
+            per_module_us[per_module_count++] = ns / 1000;
+            fprintf(stderr, "  PRELOAD %-36s %5llu us  %6d bytes\n",
+                    name, ns/1000, length);
+        }
+#endif
 	i++;
     }
+#ifdef PROFILE_PRELOAD
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    total_us = (t1.tv_sec - t0.tv_sec) * 1000000ULL +
+               (t1.tv_nsec - t0.tv_nsec) / 1000;
+    fprintf(stderr, "PRELOAD TOTAL: %d modules, %llu us\n",
+            per_module_count, total_us);
+#endif
 }
 
 /* be helpful (or maybe downright rude:-) */
