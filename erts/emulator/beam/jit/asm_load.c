@@ -44,6 +44,25 @@
 
 static void init_label(Label *lp);
 
+#ifdef CACHE_TOOL_BUILD
+/* Expose the assembled-code blob and key tables from the LoaderState
+ * for the cache_tool. Called after erts_prepare_loading returns NIL —
+ * stp->executable_region holds the JIT'd native code from
+ * beamasm_codegen, stp->loaded_size is its size, and stp->beam.* holds
+ * the parsed atom/import/export tables we'll need for symbolic relocs.
+ * The struct shape changes between OTP releases, so this lives next to
+ * the loader rather than as a public header. */
+void cache_tool_extract_from_loader(Binary *magic,
+                                    const void **code_ptr,
+                                    unsigned *code_size,
+                                    const void **beam_file_ptr) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    if (code_ptr)      *code_ptr = stp->executable_region;
+    if (code_size)     *code_size = stp->loaded_size;
+    if (beam_file_ptr) *beam_file_ptr = &stp->beam;
+}
+#endif
+
 int beam_load_prepare_emit(LoaderState *stp) {
     BeamCodeHeader *hdr;
     int i;

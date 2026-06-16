@@ -239,12 +239,29 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
         return -2;
     }
 
-    /* TODO: extract the assembled code + reloc list from the
-     * LoaderState. For now, the placeholder code from before
-     * — at least we know the loader ran. */
-    out->code = malloc(in->size);
-    memcpy(out->code, in->data, in->size);
-    out->code_size = in->size;
+    /* Pull the assembled native code out of the LoaderState. After
+     * erts_prepare_loading returns NIL, stp->executable_region points
+     * at a freshly mmap'd JIT region holding the compiled module.
+     * For now we just snapshot the bytes — the symbolic-reloc stream
+     * (the part that makes this a portable cache rather than a
+     * baked-in code dump) is the next layer. */
+    extern void cache_tool_extract_from_loader(Binary *magic,
+                                               const void **code_ptr,
+                                               unsigned *code_size,
+                                               const void **beam_file_ptr);
+    const void *code_blob = NULL;
+    unsigned code_blob_size = 0;
+    cache_tool_extract_from_loader(magic, &code_blob, &code_blob_size, NULL);
+    if (!code_blob || code_blob_size == 0) {
+        fprintf(stderr,
+                "cache_tool: LoaderState has no executable region "
+                "(loaded_size=%u, region=%p)\n",
+                code_blob_size, code_blob);
+        return -3;
+    }
+    out->code = malloc(code_blob_size);
+    memcpy(out->code, code_blob, code_blob_size);
+    out->code_size = code_blob_size;
 
     return 0;
 }
