@@ -376,15 +376,30 @@ bookkeeping.
   offset, scalar-vs-SWAR identical, 0 mismatches. **Speed (isolated,
   1 MB single-run, `sb.erl`):** printable `notset` **3.06×**
   (0.90→2.75 GB/s), digit `range` **20.8×** (1.03→21.4 GB/s) — clears
-  the **≥4×** bar (digit) and ~G-bin (notset; the longer accumulator
-  dependency chain on the 2 exclusions caps ILP — a tree-reduce of the
-  sub-masks is the obvious follow-up). **End-to-end json decode flat**
-  (twitter 1.01×, canada 0.98×, citm 1.02×): the scan primitive is now
-  3–20× faster, but on these docs string runs are short and decode is
-  dominated by map/number/structure work, so the total is unmoved. The
-  compelling end-to-end number needs a **scan-dominated** workload with
-  long homogeneous runs (lexing/tokenizing, CSV/TSV, log/protocol
-  framing, base64/hex) — that is the A1 win to showcase next.
+  the **≥4×** bar (digit) and ~G-bin (notset). The notset path is
+  **throughput-bound** at ~14 ALU ops/8 bytes, not latency-bound: an
+  ILP tree-reduce of the 2 exclusion sub-masks was tried and measured
+  **neutral** (register renaming already overlaps the chains), so it
+  was reverted — fewer ops, not more ILP, is the only lever left, and
+  no cheap SWAR fusion exists for two arbitrary exclusion bytes. **End-
+  to-end json decode flat** (twitter 1.01×, canada 0.98×, citm 1.02×):
+  the scan primitive is now 3–20× faster, but on these docs string runs
+  are short and decode is dominated by map/number/structure work.
+
+  **Showcase (scan-dominated workloads, `lex_scan_showcase.erl`).**
+  Where scanning *is* the work, the win lands and **scales with run
+  length** toward the isolated ceiling:
+  | workload | run len | speedup | GB/s |
+  |---|---|---|---|
+  | log wc (printable lines, range 0x20–0x7E) | ~120 B | **3.7×** | 0.85→3.1 |
+  | numeric tokens (12–20-digit IDs) | ~17 B | 1.2× | 0.31→0.37 |
+  | big-int parse (200–800-digit, range 0x30–0x39) | ~500 B | **6.7×** | 0.91→6.2 |
+  All results identical stock-vs-scan. Short runs stay framing-bound
+  (per-token sub-binary + recursion dwarfs the scan); long runs (log
+  lines, serialized big integers — crypto/financial/scientific) is
+  where A1+SWAR pays off end-to-end. **The A1 value statement: any
+  byte-class scan over long runs — line/field lexing, big-number
+  ingestion, printable validation — gets 3–7× end-to-end today.**
 - **A1-3 · encode-side + re-baseline.** `escape_binary_ascii`
   (same `notset` shape, construction side) where cheap; then run the
   §8 re-baseline suite against A1-improved T1 and record the T2
