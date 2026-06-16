@@ -207,6 +207,7 @@ CacheArch arch_from_string(const char *s) {
 }
 
 extern void init_atom_table(void);
+extern void beamasm_init(void);
 
 int cache_tool_init(const char *target_arch) {
     /* Initialise asmjit's CodeHolder template for the target arch.
@@ -218,6 +219,10 @@ int cache_tool_init(const char *target_arch) {
      * ethr_rwmutex_* stubs below) and seeds the static atoms from
      * erl_atom_names[]. */
     init_atom_table();
+    /* Real JIT init — creates the global BeamGlobalAssembler with
+     * the shared code fragments (i_func_info_shared, error
+     * trampolines, etc.) that the module assembler references. */
+    beamasm_init();
     return 0;
 }
 

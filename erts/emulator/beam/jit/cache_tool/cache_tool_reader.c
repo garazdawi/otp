@@ -214,10 +214,14 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
     }
 
     /* Intern the module name as an atom for the loader to compare
-     * against the .beam's internal name. The recording stub does
-     * this. */
-    extern uint32_t cache_tool_intern_atom_string(const char *);
-    Eterm module_atom = (Eterm)cache_tool_intern_atom_string(name);
+     * against the .beam's internal name. Use the real atom table
+     * (linked from atom.c) so the value matches what the loader's
+     * own erts_atom_put on the .beam's atom chunk will return. */
+    extern Eterm erts_atom_put(const unsigned char *name, long len,
+                               int enc, int trunc);
+    Eterm module_atom = erts_atom_put((const unsigned char *)name,
+                                      (long)strlen(name),
+                                      2 /* ERTS_ATOM_ENC_UTF8 */, 0);
 
     Eterm result = erts_prepare_loading(magic, NULL /*c_p*/,
                                         0 /*NIL group_leader*/,
