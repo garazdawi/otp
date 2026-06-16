@@ -70,6 +70,7 @@ C_SRCS=(
     "main.c"
     "cache_writer.c"
     "cache_tool_stubs.c"
+    "cache_tool_bif_stubs.c"
     "cache_tool_reader.c"
     "$ROOT/erts/emulator/beam/beam_load.c"
     "$ROOT/erts/emulator/beam/beam_file.c"
@@ -124,6 +125,8 @@ EXTRA_C_SRCS=(
     "$ROOT/erts/emulator/beam/atom.c"                 # real atom table
     "$ROOT/erts/emulator/beam/index.c"                # erts_index_init/lookup, used by atom_tab
     "$ROOT/erts/emulator/beam/hash.c"                 # hash_init/put/get, used by index.c
+    "$ROOT/erts/emulator/$ARCH/opt/jit/erl_bif_table.c" # static bif_table[BIF_SIZE]; sentinel .f filled by cache_tool_init
+    "$ROOT/erts/emulator/$ARCH/opt/jit/erl_atom_table.c" # erl_atom_names[] in the order am_* macros expect
 )
 C_SRCS+=("${EXTRA_C_SRCS[@]}")
 

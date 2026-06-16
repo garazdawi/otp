@@ -524,10 +524,11 @@ void *erts_async_max_no = NULL;
 char erts_runtime_data[4096];
 char erts_runq_supervision_data[1024];
 
-/* erl_atom_names: array of well-known atoms baked into the runtime.
- * For the tool we provide an empty array; atom.c will allocate atom
- * 0 (the empty atom) and grow from there. */
-char *erl_atom_names[] = { NULL };
+/* erl_atom_names: now provided by linked-in erl_atom_table.c
+ * (auto-generated, ~700 entries). Required so that the am_*
+ * macros in bif_table.c (am_erlang = make_atom(243), etc.)
+ * resolve to atoms that match what erts_atom_put returns when
+ * the BEAM file's atom chunk gets parsed. */
 
 /* erts_atom_table provided by atom.c */
 
@@ -575,9 +576,9 @@ void *erts_no_line_info = NULL;
 /* BIF table — empty. The emitter looks up symbolic MFAs; with
  * recording stubs (emit_mov_bif) the actual table is never
  * read on the compile path. */
-struct dummy_bif_entry { void *fn; uint32_t arity; const char *mfa; };
-const struct dummy_bif_entry bif_table[1] = {{NULL, 0, NULL}};
-void *bif_trap_exports__[1] = { NULL };
+/* bif_table and bif_trap_exports__: real table linked from
+ * generated erl_bif_table.c. cache_tool_init walks bif_table[]
+ * and overwrites each .f / .impl with a unique sentinel. */
 
 /* gen_opc / opc / tag_to_letter — provided by generated
  * beam_opcodes.c; build script links it in. */
@@ -728,13 +729,57 @@ int erts_snprintf(char *buf, size_t sz, const char *fmt, ...) {
     return r;
 }
 
-/* erts_find_export_entry: cache_tool has no export table, every
- * lookup misses. The loader treats that as "external function" and
- * records a symbolic reference instead of resolving — exactly the
- * behaviour we want for cache generation. */
+/* erts_find_export_entry: scan bif_table[] for a matching MFA
+ * and return a pre-built Export-shaped sentinel whose bif_number
+ * matches the index. The loader's asm_load.c reads only
+ * export->bif_number, so we only need the int at the right
+ * offset; everything else stays zero.
+ *
+ * Layout must match Export from export.h:
+ *   ErtsDispatchable dispatch;   // ERTS_NUM_CODE_IX (=3) pointers
+ *   int bif_number;
+ *   ... (other fields we leave zero)
+ */
+struct cache_tool_bif_entry_shape {
+    unsigned long module, name;
+    int arity;
+    void *f, *impl;
+    int kind;
+};
+extern struct cache_tool_bif_entry_shape bif_table[];
+#define CACHE_TOOL_BIF_SIZE 1024  /* must be >= real BIF_SIZE (553) */
+
+struct cache_tool_export {
+    void *dispatch_pad[3];  /* matches ErtsDispatchable.addresses[ERTS_NUM_CODE_IX=3] */
+    int bif_number;
+    char rest_padding[256]; /* generous padding so the loader's reads stay inside */
+};
+static struct cache_tool_export cache_tool_exports[CACHE_TOOL_BIF_SIZE];
+static int cache_tool_exports_initialised = 0;
+
+static void cache_tool_init_exports(void) {
+    for (int i = 0; i < CACHE_TOOL_BIF_SIZE; i++) {
+        cache_tool_exports[i].bif_number = i;
+    }
+    cache_tool_exports_initialised = 1;
+}
+
 const void *erts_find_export_entry(unsigned long m, unsigned long f,
                                    unsigned a, int code_ix) {
-    (void)m; (void)f; (void)a; (void)code_ix;
+    (void)code_ix;
+    if (!cache_tool_exports_initialised) cache_tool_init_exports();
+    /* Linear scan of bif_table[] — only runs at load time so it's
+     * fine. The real runtime has a proper hash table. */
+    for (int i = 0; i < CACHE_TOOL_BIF_SIZE; i++) {
+        if (bif_table[i].module == m &&
+            bif_table[i].name == f &&
+            (unsigned)bif_table[i].arity == a) {
+            return &cache_tool_exports[i];
+        }
+        if (bif_table[i].module == 0 && bif_table[i].name == 0) {
+            break; /* end of table */
+        }
+    }
     return NULL;
 }
 ABORT_STUB(erts_get_scheduler_data)
@@ -787,7 +832,8 @@ ABORT_STUB(handle_error)
 ABORT_STUB(monitor_long_msgq_off)
 ABORT_STUB(raw_raise)
 ABORT_STUB(save_calls)
-ABORT_STUB(send_2)
+/* send_2 provided by erl_bif_table.c (the actual BIF function
+ * symbol is undefined at link, resolves to NULL via dynamic_lookup) */
 ABORT_STUB(seq_trace_output_generic)
 /* ABORT_STUB(size_object_x) — provided by linked .c */
 ABORT_STUB(trace_receive)
