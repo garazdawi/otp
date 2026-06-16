@@ -157,20 +157,36 @@ void cache_tool_free_input(BeamInput *in) {
 }
 
 /* ----------------------------------------------------------------
- * Placeholder compile_module.
+ * Real compile_module — invokes the loader pipeline.
  *
- * Until the real loader is linked in, produce a fake CompiledModule
- * containing the BEAM bytes verbatim as "code". This exercises the
- * full read → CompiledModule → write pipeline; the cache file
- * produced is valid for the format but contains BEAM bytecode where
- * machine code should be — the runtime loader would reject it (or,
- * with a follow-up patch, fall through to load the BEAM via the
- * regular path).
+ * Calls erts_prepare_loading which runs the BEAM parser +
+ * transform engine + asmjit emit. Then extracts the assembled
+ * code blob + reloc list (TODO) + literal pool from the LoaderState.
  *
- * Real implementation: invoke the loader (beam_load.c) → asmjit
- * emitters; collect the resulting code blob + reloc list + literal
- * pool.
+ * The dyld runtime errors drive what stubs still need real
+ * implementations: each first-call failure tells us exactly
+ * which runtime hook the loader's happy path reached. We
+ * implement them one at a time.
+ *
+ * Until the relocation infrastructure is wired in (emit_mov_*
+ * recording calls in all instr_*.cpp sites), the code blob has
+ * BIF pointers and atom values baked in for THIS tool's
+ * process — useful for proving the pipeline works end-to-end
+ * but not yet portable across VMs.
  * ---------------------------------------------------------------- */
+
+/* Forward decls — these live in the runtime sources we linked in. */
+typedef struct binary { char data[1]; } Binary;
+typedef uintptr_t Eterm;
+extern Binary *erts_alloc_loader_state(void);
+extern Eterm erts_prepare_loading(Binary *magic, void *c_p,
+                                  Eterm group_leader, Eterm *modp,
+                                  const uint8_t *code, size_t size);
+
+/* LoaderState lives behind a magic-binary wrapper in the runtime.
+ * The cache_tool's stubbed erts_create_magic_binary (in stubs.c)
+ * returns a malloc'd Binary*; we just need to fish the data out. */
+extern void *ERTS_MAGIC_BIN_DATA_stub(Binary *b);  /* implemented in stubs */
 
 int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
     memset(out, 0, sizeof(*out));
@@ -187,16 +203,43 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
 
     memcpy(out->beam_sha256, in->sha256, 32);
 
-    /* Placeholder: copy BEAM bytes into the "code" slot. The cache
-     * format reader will see a code blob of the right shape but
-     * without actual machine code; for the no-op MVP that's fine
-     * — runtime falls through to the BEAM loader on cache-miss. */
+    /* Drive the real loader. erts_alloc_loader_state creates the
+     * LoaderState; erts_prepare_loading runs decode + transform +
+     * specific selection + asmjit emit; on success, the LoaderState
+     * has the assembled code ready to extract. */
+    Binary *magic = erts_alloc_loader_state();
+    if (!magic) {
+        fprintf(stderr, "cache_tool: erts_alloc_loader_state returned NULL\n");
+        return -1;
+    }
+
+    /* Intern the module name as an atom for the loader to compare
+     * against the .beam's internal name. The recording stub does
+     * this. */
+    extern uint32_t cache_tool_intern_atom_string(const char *);
+    Eterm module_atom = (Eterm)cache_tool_intern_atom_string(name);
+
+    Eterm result = erts_prepare_loading(magic, NULL /*c_p*/,
+                                        0 /*NIL group_leader*/,
+                                        &module_atom,
+                                        in->data, in->size);
+
+    /* NIL is the canonical "ok" return; anything else is an error
+     * atom. Print the value so we can see what's failing. */
+    fprintf(stderr,
+            "cache_tool: erts_prepare_loading(%s) returned %#lx\n",
+            in->path, (unsigned long)result);
+    if (result != 0 /*NIL*/) {
+        return -2;
+    }
+
+    /* TODO: extract the assembled code + reloc list from the
+     * LoaderState. For now, the placeholder code from before
+     * — at least we know the loader ran. */
     out->code = malloc(in->size);
     memcpy(out->code, in->data, in->size);
     out->code_size = in->size;
 
-    /* No relocs, no atoms, no literals yet — the real compile
-     * path populates these from the loader's output. */
     return 0;
 }
 

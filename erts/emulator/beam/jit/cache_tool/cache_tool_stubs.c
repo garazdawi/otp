@@ -452,9 +452,34 @@ int erts_coverage_mode = 0;
 /* Debugger flags — disable. */
 uint32_t erts_debugger_flags = 0;
 
-/* Allocator table — opaque; the loader's calls to
- * erts_alloc_n_enomem etc. don't need to read it. */
-void *erts_allctrs = NULL;
+/* Allocator table — the loader's erts_alloc_fnf inline function
+ * dispatches through this. Provide a real malloc-backed table so
+ * `(*erts_allctrs[type].alloc)(extra, size)` works correctly.
+ *
+ * Each entry has (alloc, realloc, free, extra). Our impls ignore
+ * the type/extra and just route to malloc.
+ */
+static void *stub_alloc(int type, void *extra, size_t sz) {
+    (void)type; (void)extra; return malloc(sz);
+}
+static void *stub_realloc(int type, void *extra, void *p, size_t sz) {
+    (void)type; (void)extra; return realloc(p, sz);
+}
+static void stub_free(int type, void *extra, void *p) {
+    (void)type; (void)extra; free(p);
+}
+
+struct stub_allctr {
+    void *(*alloc)  (int, void*, size_t);
+    void *(*realloc)(int, void*, void*, size_t);
+    void  (*free)   (int, void*, void*);
+    void  *extra;
+};
+
+/* ERTS_ALC_A_MAX = 12; size is +1 for the sentinel. */
+struct stub_allctr erts_allctrs[13] = {
+    [0 ... 12] = { stub_alloc, stub_realloc, stub_free, NULL },
+};
 
 /* Magic-binary destructor list, no-op. */
 void *erts_no_line_info = NULL;
