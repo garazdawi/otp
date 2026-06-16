@@ -463,7 +463,7 @@ BOOTSTRAP_COMPILER  =  $(BOOTSTRAP_TOP)/primary_compiler
 # otp.mk is only used to figure out if we are doing PGO or not
 include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
-.PHONY: emulator libs kernel preloaded system
+.PHONY: emulator libs kernel preloaded system startup-bench
 
 ifeq ($(USE_PGO), true)
 PROFILE=use
@@ -482,6 +482,28 @@ epmd_test:
 	$(make_verbose)cd erts/epmd && ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
 system_test:
 	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
+
+## Cold-start benchmark — runs a matrix of erl invocations and
+## reports per-phase microsecond timings (median + p10/p90). See
+## scripts/startup-bench --help for options.
+##
+## Optional vars:
+##   ITERATIONS=N   measured runs per config (default 30)
+##   COMPARE_ERL=P  also run against the erl at P; useful for
+##                  comparing this build to ../otp/bin/erl
+##   JSON=file.json write a JSON summary
+startup-bench:
+	$(V_at)$(ERL_TOP)/scripts/startup-bench \
+	    --erl $(ERL_TOP)/bin/erl \
+	    $(if $(ITERATIONS),--iterations $(ITERATIONS)) \
+	    $(if $(JSON),--json $(JSON))
+ifdef COMPARE_ERL
+	@echo "--- comparison: $(COMPARE_ERL) ---"
+	$(V_at)$(ERL_TOP)/scripts/startup-bench \
+	    --erl $(COMPARE_ERL) \
+	    $(if $(ITERATIONS),--iterations $(ITERATIONS)) \
+	    $(if $(JSON),--json $(JSON).cmp)
+endif
 
 emulator: $(PROFILE_EMU_DEPS)
 	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
