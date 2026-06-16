@@ -216,19 +216,30 @@ init([]) ->
 		    _ -> start_distribution()
 		end,
 
-            InetDb = #{id => inet_db,
-                       start => {inet_db, start_link, []},
-                       restart => permanent,
-                       shutdown => 2000,
-                       type => worker,
-                       modules => [inet_db]},
+            %% inet_db is lazy-started by inet_db:ensure_started/0 only
+            %% when distribution is disabled. Unconditional lazy-start
+            %% is blocked by hidden ETS readers in inet_db:db_get/1 —
+            %% callers (inet, gen_tcp) read from the inet_db ETS table
+            %% directly and don't tolerate the table being absent
+            %% (default-undefined leaks into list contexts). Fixing that
+            %% is a separate refactor.
+            InetDb = case application:get_env(kernel, start_distribution) of
+                         {ok, false} -> [];
+                         _ ->
+                             [#{id => inet_db,
+                                start => {inet_db, start_link, []},
+                                restart => permanent,
+                                shutdown => 2000,
+                                type => worker,
+                                modules => [inet_db]}]
+                     end,
 
             Timer = start_timer(),
             CompileServer = start_compile_server(),
 
             {ok, {SupFlags,
                   [Code, Preload, StdError | EarlyFile] ++
-                      [OnLoad, InetDb | DistChildren] ++ LateFile ++
+                      [OnLoad] ++ InetDb ++ DistChildren ++ LateFile ++
                       [SigSrv | Peer] ++
                       [User, LoggerSup, Config, SafeSup] ++
                       Timer ++ CompileServer}}

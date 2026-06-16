@@ -40,6 +40,7 @@
 
 %% External exports
 -export([start/0, start_link/0, stop/0, reset/0, clear_cache/0]).
+-export([supervision_child_spec/0, ensure_started/0]).
 -export([add_rr/1,add_rr/5,del_rr/4]).
 -export([add_ns/1,add_ns/2, ins_ns/1, ins_ns/2,
 	 del_ns/2, del_ns/1]).
@@ -123,8 +124,40 @@ start_link() ->
 	{ok, _Pid}=Ok -> inet_config:init(), Ok;
 	Error -> Error
     end.
-	       
-call(Req) -> 
+
+%% Child spec used by lazy-start path (see ensure_started/0). The same
+%% spec ships in kernel.erl for invocations that need inet eagerly
+%% (e.g. distribution), but stripped-down boots wait until the first
+%% inet call.
+supervision_child_spec() ->
+    #{id => inet_db,
+      start => {inet_db, start_link, []},
+      restart => permanent,
+      shutdown => 2000,
+      type => worker,
+      modules => [inet_db]}.
+
+ensure_started() ->
+    case whereis(inet_db) of
+        Pid when is_pid(Pid) -> ok;
+        undefined ->
+            case supervisor:start_child(kernel_safe_sup,
+                                        supervision_child_spec()) of
+                {ok, _} -> ok;
+                {error, {already_started, _}} -> ok;
+                {error, already_present} ->
+                    case whereis(inet_db) of
+                        Pid when is_pid(Pid) -> ok;
+                        undefined ->
+                            {ok, _} = supervisor:restart_child(
+                                        kernel_safe_sup, inet_db),
+                            ok
+                    end
+            end
+    end.
+
+call(Req) ->
+    ensure_started(),
     gen_server:call(inet_db, Req, infinity).
 
 stop() ->
