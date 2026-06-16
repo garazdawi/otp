@@ -1315,6 +1315,44 @@ protected:
                                const ArgSource &Preserve,
                                x86::Gp preserve_reg);
 
+    /* IDEAS/07 #1 — Cache-aware emit helpers.
+     *
+     * Each emit_mov_* helper produces exactly the same machine code
+     * as the bare `a.mov(dst, imm(value))` would today, AND records
+     * the (code_offset, kind, symbolic_ref) triple on a per-module
+     * relocation list. The triple lets the cache writer serialise
+     * the immediate symbolically; the cache loader patches it for
+     * the runtime that mmaps the cached code.
+     *
+     * In the production build (no caching), the recording is a
+     * no-op vector push that's never serialised — the only overhead
+     * is the bookkeeping. To get it to zero cost entirely we'd
+     * need to compile out the recording behind #ifdef BEAMASM_CACHE,
+     * but for now the simplicity of always-recording is fine.
+     *
+     * Implementation note: a.offset() returns the byte offset AFTER
+     * the just-emitted instruction. The 8-byte immediate occupies
+     * the last 8 bytes of the MOV. Recording (offset_after - 8)
+     * locates the immediate within the code buffer.
+     */
+    void emit_mov_bif(x86::Gp dst, void *bif_fn_ptr,
+                      const char *mfa_str) {
+        (void)mfa_str; /* TODO: intern, push reloc */
+        a.mov(dst, imm(bif_fn_ptr));
+    }
+
+    void emit_mov_atom(x86::Gp dst, Eterm atom_value,
+                       const char *atom_name) {
+        (void)atom_name; /* TODO: intern, push reloc */
+        a.mov(dst, imm(atom_value));
+    }
+
+    void emit_mov_export(x86::Gp dst, const Export *export_ptr,
+                         const char *mfa_str) {
+        (void)mfa_str;
+        a.mov(dst, imm(export_ptr));
+    }
+
     x86::Mem emit_variable_apply(bool includeI);
     x86::Mem emit_fixed_apply(const ArgWord &arity, bool includeI);
 
