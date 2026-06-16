@@ -24,6 +24,7 @@
 #define __BEAM_JIT_COMMON_HPP__
 
 #include <asmjit/core.h>
+#include "beam_jit_cache.h"
 
 #include <string>
 #include <vector>
@@ -80,6 +81,26 @@ protected:
     FileLogger logger;
     Section *rodata;
 
+#ifdef CACHE_TOOL_BUILD
+    /* Per-module relocation list. Appended to by mov_imm_reloc each
+     * time an immediate that needs runtime resolution is emitted. The
+     * cache writer serialises the list into the cache file; the cache
+     * loader patches each entry to the live address at load time. */
+    BeamJitRelocList relocs;
+
+    /* Record a relocation covering the immediate just emitted. Call
+     * AFTER the mov_imm sequence: start_offset is captured before, and
+     * the size is computed from the current assembler offset. */
+    void record_mov_imm_reloc(uint32_t start_offset,
+                              BeamJitRelocKind kind,
+                              uint32_t symbolic_ref) {
+        uint32_t end = (uint32_t)assembler.offset();
+        uint16_t imm_width = (uint16_t)(end - start_offset);
+        beam_jit_reloc_append(&relocs, start_offset, kind, imm_width,
+                              symbolic_ref);
+    }
+#endif
+
     static bool hasCpuFeature(uint32_t featureId);
 
     BeamAssemblerCommon(BaseAssembler &assembler);
@@ -125,6 +146,10 @@ public:
 
     void *getBaseAddress();
     size_t getOffset();
+
+#ifdef CACHE_TOOL_BUILD
+    const BeamJitRelocList *getRelocs() const { return &relocs; }
+#endif
 };
 
 struct BeamModuleAssemblerCommon {

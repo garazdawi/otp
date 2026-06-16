@@ -35,6 +35,9 @@
 #include "erl_record.h"
 
 #include "beam_asm.h"
+#ifdef CACHE_TOOL_BUILD
+#  include "beam_jit_cache.h"
+#endif
 
 #ifdef ADDRESS_SANITIZER
 #    include <sanitizer/lsan_interface.h>
@@ -45,6 +48,8 @@
 static void init_label(Label *lp);
 
 #ifdef CACHE_TOOL_BUILD
+extern const BeamJitRelocList *beamasm_get_relocs(void *instance);
+
 /* Expose the assembled-code blob and key tables from the LoaderState
  * for the cache_tool. Called after erts_prepare_loading returns NIL —
  * stp->executable_region holds the JIT'd native code from
@@ -55,11 +60,14 @@ static void init_label(Label *lp);
 void cache_tool_extract_from_loader(Binary *magic,
                                     const void **code_ptr,
                                     unsigned *code_size,
-                                    const void **beam_file_ptr) {
+                                    const void **beam_file_ptr,
+                                    const BeamJitRelocList **relocs_ptr) {
     LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
     if (code_ptr)      *code_ptr = stp->executable_region;
     if (code_size)     *code_size = stp->loaded_size;
     if (beam_file_ptr) *beam_file_ptr = &stp->beam;
+    if (relocs_ptr)    *relocs_ptr = stp->ba ? beamasm_get_relocs(stp->ba)
+                                             : NULL;
 }
 #endif
 

@@ -667,6 +667,13 @@ extern "C"
         return ba->patchCatches(rw_base);
     }
 
+#ifdef CACHE_TOOL_BUILD
+    const BeamJitRelocList *beamasm_get_relocs(void *instance) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return ba->getRelocs();
+    }
+#endif
+
     void beamasm_patch_import(void *instance,
                               char *rw_base,
                               int index,

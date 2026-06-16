@@ -559,7 +559,15 @@ protected:
         if (Spec & Update::eCodeIndex) {
             /* Updates the local copy of the active code index, retaining
              * save_calls if active. */
+#ifdef CACHE_TOOL_BUILD
+            uint32_t reloc_start = (uint32_t)a.offset();
+#endif
             mov_imm(SUPER_TMP, &the_active_code_index);
+#ifdef CACHE_TOOL_BUILD
+            record_mov_imm_reloc(reloc_start,
+                                 BEAM_JIT_RELOC_VM_STATIC,
+                                 BEAM_JIT_VM_STATIC_ACTIVE_CODE_INDEX);
+#endif
             a.ldr(SUPER_TMP.w(), a64::Mem(SUPER_TMP));
             a.cmp(active_code_ix, imm(ERTS_SAVE_CALLS_CODE_IX));
             a.csel(active_code_ix,

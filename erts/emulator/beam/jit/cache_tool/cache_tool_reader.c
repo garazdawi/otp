@@ -239,19 +239,21 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
         return -2;
     }
 
-    /* Pull the assembled native code out of the LoaderState. After
-     * erts_prepare_loading returns NIL, stp->executable_region points
-     * at a freshly mmap'd JIT region holding the compiled module.
-     * For now we just snapshot the bytes — the symbolic-reloc stream
-     * (the part that makes this a portable cache rather than a
-     * baked-in code dump) is the next layer. */
+    /* Pull the assembled native code AND the symbolic-relocation list
+     * out of the LoaderState. After erts_prepare_loading returns NIL,
+     * stp->executable_region points at the JIT'd code blob, and the
+     * BeamModuleAssembler holds the relocs accumulated during emit
+     * (one per converted call site). */
     extern void cache_tool_extract_from_loader(Binary *magic,
                                                const void **code_ptr,
                                                unsigned *code_size,
-                                               const void **beam_file_ptr);
+                                               const void **beam_file_ptr,
+                                               const BeamJitRelocList **relocs_ptr);
     const void *code_blob = NULL;
     unsigned code_blob_size = 0;
-    cache_tool_extract_from_loader(magic, &code_blob, &code_blob_size, NULL);
+    const BeamJitRelocList *relocs = NULL;
+    cache_tool_extract_from_loader(magic, &code_blob, &code_blob_size,
+                                   NULL, &relocs);
     if (!code_blob || code_blob_size == 0) {
         fprintf(stderr,
                 "cache_tool: LoaderState has no executable region "
@@ -262,6 +264,14 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
     out->code = malloc(code_blob_size);
     memcpy(out->code, code_blob, code_blob_size);
     out->code_size = code_blob_size;
+
+    /* Copy the reloc list into out->relocs. */
+    if (relocs && relocs->count > 0) {
+        out->reloc_count = relocs->count;
+        out->relocs = malloc(relocs->count * sizeof(BeamJitReloc));
+        memcpy(out->relocs, relocs->entries,
+               relocs->count * sizeof(BeamJitReloc));
+    }
 
     return 0;
 }

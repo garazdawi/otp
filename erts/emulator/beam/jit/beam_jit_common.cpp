@@ -46,6 +46,9 @@ static std::string getAtom(Eterm atom) {
 
 BeamAssemblerCommon::BeamAssemblerCommon(BaseAssembler &assembler_)
         : assembler(assembler_), code() {
+#ifdef CACHE_TOOL_BUILD
+    beam_jit_reloc_list_init(&relocs);
+#endif
     /* Setup with default code info */
     Error err = code.init(Environment::host());
     ERTS_ASSERT(err == Error::kOk && "Failed to init codeHolder");
@@ -73,6 +76,9 @@ BeamAssemblerCommon::~BeamAssemblerCommon() {
     if (logger.file()) {
         fclose(logger.file());
     }
+#ifdef CACHE_TOOL_BUILD
+    beam_jit_reloc_list_free(&relocs);
+#endif
 }
 
 void *BeamAssemblerCommon::getBaseAddress() {

@@ -76,6 +76,7 @@ C_SRCS=(
     "$ROOT/erts/emulator/beam/beam_file.c"
     "$ROOT/erts/emulator/beam/beam_transform_helpers.c"
     "$ROOT/erts/emulator/beam/jit/asm_load.c"
+    "$ROOT/erts/emulator/beam/jit/beam_jit_cache.c"   # reloc list primitives
 )
 
 # asmjit library — compile in directly (62 source files).
