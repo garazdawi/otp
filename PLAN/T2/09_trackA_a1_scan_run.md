@@ -1,5 +1,44 @@
 # Track A · A1 — the binary scan-run capture
 
+> ## ⚖️ Disposition (2026-06-16): proven prototype — **do not merge as-is**
+>
+> A1 is **built, correct, and measured**. Keep the branch + this spec as
+> the experiment of record; **do not** merge the compile-time recognizer
+> or the new `bs_scan` instruction to master. The verdict, after the
+> SWAR work and the scan-dominated showcase:
+>
+> - **It works where scanning is the work.** End-to-end speedup obeys a
+>   clean run-length law: 1.2× (17 B numeric tokens) → 3.7× (120 B log
+>   lines) → 6.7× (500 B big integers), toward a ~21× isolated ceiling.
+>   Correct across 5000 json round-trips + 16000 fuzz cases, 0 mismatches.
+> - **But it misses its own motivator.** json decode — the workload that
+>   justified A1 — is **flat** (±2%): scanning is a small fraction of
+>   decode, and real json string runs are short.
+> - **The cost is permanent and the risk is high.** A new public BEAM
+>   instruction across the whole pipeline; a *fragile* `pre_codegen`
+>   interaction whose `bs_pos_bsm3` edge case was never fixed, only
+>   bailed out of (`>6 bs-op` heuristic → silently declines on 3 stdlib
+>   modules); miscompilation exposure on the hottest path in the VM; and
+>   per-arch SWAR assembly to keep correct as binary-match infra evolves.
+> - **The winners overlap existing fast paths.** Delimiter splits (log
+>   `wc` on `\n`) already have a C BIF (`binary:split/3`). The genuine
+>   residual is *long-run byte-class* scans (digits/alpha) inline in a
+>   parser where a BIF won't do — a narrow intersection.
+>
+> **Recommendation.** The real output here is *knowledge* (the recipe,
+> the ceiling, the run-length law, the correctness contract). Productize
+> that — if a real workload demands it — **at the T2 runtime tier**
+> (profile-gated so it only fires on proven-hot loops; side-exit-safe so
+> a mis-recognition falls back to T1 instead of miscompiling), or by
+> SWAR-ing the existing binary primitives. Both carry far less permanent
+> weight than a compile-time pass over all code. **Flip condition:** real
+> field workloads that are hand-written long-run byte-class scanners with
+> no BIF alternative — then pursue, but via T2, not this pass.
+>
+> Artifacts: `emit_bs_scan` (arm) at `e4e0568403`; showcase
+> `../verification/lex_scan_showcase.erl`; isolated `sb.erl` + fuzz
+> `scanfuzz.erl`. x86 `emit_bs_scan` remains a no-op stub.
+
 > **Implementation spec for the first build step.** Productionizes the
 > G-bin experiment (`../verification/GBIN_OUTCOME.md`, measured 5.6×)
 > into a real, always-on compiler+runtime capability — no T2 tier, no
