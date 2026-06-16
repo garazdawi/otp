@@ -414,6 +414,53 @@ void beam_load_report_error(int line, LoaderState* context, char *fmt,...)
     erts_send_error_to_logger(context->group_leader, dsbufp);
 }
 
+/* Profiling counters (IDEAS/07 — loader transform profiling).
+ * Toggle by uncommenting PROFILE_LOADER below. Prints to stderr
+ * every 25 modules loaded so we get a running view during boot.
+ * Off by default; enable temporarily when investigating loader cost. */
+/* #define PROFILE_LOADER 1 */
+#ifdef PROFILE_LOADER
+#include <time.h>
+static unsigned long long prof_total_load_ns = 0;
+static unsigned long long prof_total_te_ns   = 0;
+static unsigned long      prof_te_calls      = 0;
+static unsigned long      prof_te_ok         = 0;
+static unsigned long      prof_te_fail       = 0;
+static unsigned long      prof_te_short      = 0;
+static unsigned long      prof_modules       = 0;
+
+static inline unsigned long long prof_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+}
+
+static inline int prof_te(LoaderState *stp) {
+    unsigned long long t0 = prof_now_ns();
+    int r = erts_transform_engine(stp);
+    prof_total_te_ns += prof_now_ns() - t0;
+    prof_te_calls++;
+    if (r == TE_OK) prof_te_ok++;
+    else if (r == TE_FAIL) prof_te_fail++;
+    else prof_te_short++;
+    return r;
+}
+#define PROF_TE(stp) prof_te(stp)
+
+void erts_loader_prof_report(void) {
+    fprintf(stderr,
+            "LOADER PROFILE: %lu modules, "
+            "load=%llu us, transforms=%llu us "
+            "(calls=%lu ok=%lu fail=%lu short=%lu)\n",
+            prof_modules,
+            prof_total_load_ns / 1000,
+            prof_total_te_ns / 1000,
+            prof_te_calls, prof_te_ok, prof_te_fail, prof_te_short);
+}
+#else
+#define PROF_TE(stp) erts_transform_engine(stp)
+#endif
+
 static int load_code(LoaderState* stp)
 {
     BeamOp* last_op = NULL;
@@ -423,6 +470,11 @@ static int load_code(LoaderState* stp)
     BeamOp *tmp_op;
 
     int num_specific;
+
+#ifdef PROFILE_LOADER
+    unsigned long long load_start = prof_now_ns();
+    prof_modules++;
+#endif
 
     op_reader = beamfile_get_code(&stp->beam, &stp->op_allocator);
 
@@ -463,7 +515,7 @@ static int load_code(LoaderState* stp)
                  */
                 goto get_next_instr;
             }
-            switch (erts_transform_engine(stp)) {
+            switch (PROF_TE(stp)) {
             case TE_FAIL:
                 /*
                  * No transformation found. stp->genop != NULL and
@@ -672,11 +724,19 @@ static int load_code(LoaderState* stp)
     beamcodereader_close(op_reader);
     beamopallocator_dtor(&stp->op_allocator);
 
+#ifdef PROFILE_LOADER
+    prof_total_load_ns += prof_now_ns() - load_start;
+    /* Print every 25 modules so we get a running view during boot. */
+    if ((prof_modules % 25) == 0) erts_loader_prof_report();
+#endif
     return beam_load_finish_emit(stp);
 
 load_error:
     beamcodereader_close(op_reader);
     beamopallocator_dtor(&stp->op_allocator);
+#ifdef PROFILE_LOADER
+    prof_total_load_ns += prof_now_ns() - load_start;
+#endif
     return 0;
 }
 
