@@ -1,0 +1,168 @@
+#
+# %CopyrightBegin%
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright Ericsson AB 2026. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# %CopyrightEnd%
+#
+
+# Build rules for beam_jit_compile — the standalone JIT cache
+# producer described in IDEAS/07 §1c.
+#
+# NOT FUNCTIONAL YET — file sketches the intended build pattern.
+# Pieces marked TODO need to be filled in once the stubs in
+# cache_tool_stubs.c are complete enough to link.
+
+# ----------------------------------------------------------------
+# Inputs
+# ----------------------------------------------------------------
+
+# Source files unique to the tool.
+CACHE_TOOL_OWN_SRCS = \
+	$(ERL_TOP)/erts/emulator/beam/jit/cache_tool/main.c \
+	$(ERL_TOP)/erts/emulator/beam/jit/cache_tool/cache_tool_stubs.c \
+	$(ERL_TOP)/erts/emulator/beam/jit/cache_tool/cache_writer.c
+
+# Source files shared with beam.jit. Built into the tool unmodified
+# — the stubs above replace the runtime entry points these call into.
+CACHE_TOOL_SHARED_SRCS = \
+	$(ERL_TOP)/erts/emulator/beam/beam_load.c \
+	$(ERL_TOP)/erts/emulator/beam/beam_transform_helpers.c \
+	$(ERL_TOP)/erts/emulator/beam/beamfile.c \
+	$(ERL_TOP)/erts/emulator/beam/jit/asm_load.c \
+	$(ERL_TOP)/erts/emulator/beam/jit/beam_jit_common.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/beam_jit_bs.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/beam_jit_metadata.cpp
+
+# Per-arch emitter sources. The TOOL is built for the host but can
+# emit code for any supported target arch by linking in the right
+# emitter source. For a v1, build separate tool binaries per target
+# arch:
+#
+#   beam_jit_compile-x86_64
+#   beam_jit_compile-aarch64
+#
+# The build system picks the right one based on the target.
+CACHE_TOOL_X86_64_SRCS = \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/beam_asm_module.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/beam_asm_global.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_arith.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_bif.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_bs.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_call.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_common.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_float.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_fun.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_guard_bifs.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_map.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_msg.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_records.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_select.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/instr_trace.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/x86/process_main.cpp
+
+CACHE_TOOL_AARCH64_SRCS = \
+	$(ERL_TOP)/erts/emulator/beam/jit/arm/beam_asm_module.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/arm/beam_asm_global.cpp \
+	$(ERL_TOP)/erts/emulator/beam/jit/arm/instr_arith.cpp
+	# ... and the rest of jit/arm/instr_*.cpp
+
+# Header search path: same as beam.jit
+CACHE_TOOL_CFLAGS = \
+	$(EMULATOR_INC_FLAGS) \
+	-I$(ERL_TOP)/erts/emulator/beam \
+	-I$(ERL_TOP)/erts/emulator/beam/jit \
+	-I$(ERL_TOP)/erts/emulator/beam/jit/cache_tool \
+	-I$(ERL_TOP)/erts/emulator/asmjit/src \
+	-DCACHE_TOOL_BUILD=1
+
+# Inject the build-time cache key components.
+CACHE_TOOL_CFLAGS += \
+	-DERTS_VSN_DEFAULT='"$(SYSTEM_VSN)"' \
+	-DJIT_VSN_DEFAULT='"$(shell git rev-parse --short=12 HEAD)"' \
+	-DCFLAGS_HASH_DEFAULT='"$(shell echo $(CACHE_TOOL_CFLAGS) | $(MD5_CMD))"'
+
+# ----------------------------------------------------------------
+# Outputs
+# ----------------------------------------------------------------
+
+# Host-runnable tool. The tool's host arch may differ from its
+# target arch (cross-compilation case).
+CACHE_TOOL_HOST_BIN = \
+	$(ERL_TOP)/bin/$(BUILD_TARGET)/beam_jit_compile-$(TARGET_ARCH)
+
+ifndef NO_JIT_CACHE
+all: $(CACHE_TOOL_HOST_BIN) bin/boot.jitcache
+endif
+
+# ----------------------------------------------------------------
+# Build rules (sketch)
+# ----------------------------------------------------------------
+
+# TODO: per-arch source selection.
+ifeq ($(TARGET_ARCH),x86_64)
+CACHE_TOOL_ARCH_SRCS = $(CACHE_TOOL_X86_64_SRCS)
+else ifeq ($(TARGET_ARCH),aarch64)
+CACHE_TOOL_ARCH_SRCS = $(CACHE_TOOL_AARCH64_SRCS)
+else
+$(error unsupported TARGET_ARCH=$(TARGET_ARCH))
+endif
+
+CACHE_TOOL_OBJS = $(CACHE_TOOL_OWN_SRCS:.c=.o) \
+                  $(CACHE_TOOL_SHARED_SRCS:.c=.o) \
+                  $(CACHE_TOOL_ARCH_SRCS:.cpp=.o)
+
+$(CACHE_TOOL_HOST_BIN): $(CACHE_TOOL_OBJS) $(ASMJIT_LIB)
+	$(CXX) $(CACHE_TOOL_CFLAGS) -o $@ $(CACHE_TOOL_OBJS) $(ASMJIT_LIB) $(LDFLAGS)
+
+# Produce the bundled boot cache.
+BOOT_CACHE_MODULES = \
+	$(ERL_TOP)/erts/preloaded/ebin/erts_code_purger.beam \
+	$(ERL_TOP)/erts/preloaded/ebin/erlang.beam \
+	$(ERL_TOP)/erts/preloaded/ebin/init.beam \
+	$(ERL_TOP)/erts/preloaded/ebin/erl_prim_loader.beam
+	# ... and the rest of erts/preloaded/ebin/*.beam,
+	# plus mandatory_modules() from systools_make.
+
+bin/boot.jitcache: $(CACHE_TOOL_HOST_BIN) $(BOOT_CACHE_MODULES)
+	$(CACHE_TOOL_HOST_BIN) \
+	    --arch $(TARGET_ARCH) \
+	    --bundle \
+	    --out $@.tmp \
+	    $(BOOT_CACHE_MODULES)
+	mv $@.tmp $@
+
+# ----------------------------------------------------------------
+# CI sanity test: byte-equivalence between tool output and the
+# runtime's PROFILE_JIT_DUMP variant. Catches stub drift.
+# ----------------------------------------------------------------
+
+.PHONY: test-jit-cache-equivalence
+test-jit-cache-equivalence: $(CACHE_TOOL_HOST_BIN) $(ERL_TOP)/bin/erl
+	$(CACHE_TOOL_HOST_BIN) --arch $(TARGET_ARCH) --out /tmp/tool.jc \
+	    $(ERL_TOP)/erts/preloaded/ebin/init.beam
+	$(ERL_TOP)/bin/erl +JD /tmp/runtime.jc \
+	    -noshell -eval 'halt(0).'
+	$(ERL_TOP)/scripts/jit-cache-diff /tmp/tool.jc /tmp/runtime.jc
+
+# ----------------------------------------------------------------
+# Clean
+# ----------------------------------------------------------------
+
+.PHONY: clean
+clean:
+	rm -f $(CACHE_TOOL_OBJS) $(CACHE_TOOL_HOST_BIN) bin/boot.jitcache
