@@ -58,9 +58,14 @@
  *
  * Both consumers live in a separate translation unit; this header
  * is the shared schema.
+ *
+ * Header is standalone — only stdint/stddef. Usable by both the
+ * runtime (which pulls in sys.h elsewhere) and the standalone
+ * cache_tool (which has no OTP runtime context).
  */
 
-#include "sys.h"
+#include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
