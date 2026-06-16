@@ -423,6 +423,12 @@ void *erts_sched_local_random_nosched_state;
  * is 1 M; for the compile pipeline we only need it large enough for
  * the modules being processed (preloaded set is well under 1 K). */
 int erts_atom_table_size = 1 << 20;
+/* Sanity counter incremented by the arm/beam_asm.hpp mov_imm template
+ * on every emit. Used during development to verify that the recording
+ * infrastructure is reached by per-module emit. After init.beam:
+ * ~1300 mov_imm calls per compile, of which the instrumented sites
+ * (see record_mov_imm_reloc usage) record into the reloc list. */
+unsigned long cache_tool_mov_imm_count = 0;
 void *erts_is_crash_dumping_key;
 #undef ABORT_STUB
 

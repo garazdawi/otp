@@ -736,6 +736,14 @@ protected:
         } else {
             a.mov(to, follow_size(ZERO, to));
         }
+#ifdef CACHE_TOOL_BUILD
+        /* Sanity counter: every mov_imm call goes through here. Tells
+         * us whether the per-module emit even reaches mov_imm — if it
+         * does, every untagged immediate is a candidate for symbolic
+         * recording. */
+        extern unsigned long cache_tool_mov_imm_count;
+        cache_tool_mov_imm_count++;
+#endif
     }
 
     void mov_imm(a64::Gp to, std::nullptr_t value) {
