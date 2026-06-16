@@ -94,6 +94,7 @@
 	     user_sup,
              prim_tty,
              prim_tty_sighandler,
+             prim_tty_writer,
              disk_log,
              disk_log_1,
              disk_log_server,
