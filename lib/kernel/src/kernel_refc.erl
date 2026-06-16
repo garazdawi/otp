@@ -25,7 +25,7 @@
 -behaviour(gen_server).
 
 %% External exports
--export([start_link/0, scheduler_wall_time/1]).
+-export([start_link/0, scheduler_wall_time/1, supervision_child_spec/0]).
 %% Internal exports
 -export([init/1, handle_info/2, terminate/2]).
 -export([handle_call/3, handle_cast/2, code_change/3]).
@@ -34,14 +34,48 @@
 %%% This module implements a process that handles reference counters for
 %%% various erts or other kernel resources which needs reference counting.
 %%%
+%%% Started lazily under kernel_safe_sup the first time
+%%% scheduler_wall_time/1 is called. The vast majority of VM invocations
+%%% never enable scheduler_wall_time, so paying ~300 µs of gen_server
+%%% start at boot is wasted.
+%%%
 %%% Should not be documented nor used directly by user applications.
 %%%-----------------------------------------------------------------
 start_link() ->
     gen_server:start_link({local,kernel_refc}, kernel_refc, [], []).
 
+supervision_child_spec() ->
+    #{id => kernel_refc,
+      start => {kernel_refc, start_link, []},
+      restart => permanent,
+      shutdown => 2000,
+      type => worker,
+      modules => [kernel_refc]}.
+
 -spec scheduler_wall_time(boolean()) -> boolean().
 scheduler_wall_time(Bool) ->
+    ensure_started(),
     gen_server:call(kernel_refc, {scheduler_wall_time, self(), Bool}, infinity).
+
+ensure_started() ->
+    case whereis(kernel_refc) of
+        Pid when is_pid(Pid) -> ok;
+        undefined ->
+            case supervisor:start_child(kernel_safe_sup,
+                                        supervision_child_spec()) of
+                {ok, _Pid} -> ok;
+                {error, {already_started, _Pid}} -> ok;
+                {error, already_present} ->
+                    %% Lost the race; the start is in progress. Wait for it.
+                    case whereis(kernel_refc) of
+                        Pid when is_pid(Pid) -> ok;
+                        undefined ->
+                            {ok, _} = supervisor:restart_child(
+                                        kernel_safe_sup, kernel_refc),
+                            ok
+                    end
+            end
+    end.
 
 %%-----------------------------------------------------------------
 %% Callback functions from gen_server

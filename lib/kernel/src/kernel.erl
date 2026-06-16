@@ -100,12 +100,8 @@ init([]) ->
                type => worker,
                modules => [kernel_config]},
 
-    RefC = #{id => kernel_refc,
-             start => {kernel_refc, start_link, []},
-             restart => permanent,
-             shutdown => 2000,
-             type => worker,
-             modules => [kernel_refc]},
+    %% kernel_refc is lazy-started on first use (see kernel_refc.erl).
+    %% It only counts scheduler_wall_time enables, which most VMs never do.
 
     Code = #{id => code_server,
              start => {code, start_link, []},
@@ -200,7 +196,7 @@ init([]) ->
                   [Code, StdError | EarlyFile] ++
                       [OnLoad | LateFile] ++
                       [SigSrv | Peer] ++
-                      [User, LoggerSup, Config, RefC, SafeSup]}};
+                      [User, LoggerSup, Config, SafeSup]}};
         _ ->
             DistChildren =
 		case application:get_env(kernel, start_distribution) of
@@ -222,7 +218,7 @@ init([]) ->
                   [Code, StdError | EarlyFile] ++
                       [OnLoad, InetDb | DistChildren] ++ LateFile ++
                       [SigSrv | Peer] ++
-                      [User, LoggerSup, Config, RefC, SafeSup] ++
+                      [User, LoggerSup, Config, SafeSup] ++
                       Timer ++ CompileServer}}
     end;
 init(on_load) ->
