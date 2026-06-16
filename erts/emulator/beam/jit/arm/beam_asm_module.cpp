@@ -535,6 +535,17 @@ void BeamModuleAssembler::emit_i_func_info(const ArgWord &Label,
 
     ASSERT(a.offset() % sizeof(UWord) == 0);
     a.embed(&info.gen_bp, sizeof(info.gen_bp));
+#ifdef CACHE_TOOL_BUILD
+    /* Two atom slots in the embedded ErtsCodeMFA — module at offset 0,
+     * function at offset 8. The symbolic_ref stores the lower 32 bits
+     * of the atom Eterm; the cache extractor translates to a string
+     * name via the runtime's atom table. */
+    uint32_t mfa_off = (uint32_t)a.offset();
+    record_fixed_reloc(mfa_off + 0, BEAM_JIT_RELOC_ATOM, 8,
+                       (uint32_t)info.mfa.module);
+    record_fixed_reloc(mfa_off + 8, BEAM_JIT_RELOC_ATOM, 8,
+                       (uint32_t)info.mfa.function);
+#endif
     a.embed(&info.mfa, sizeof(info.mfa));
 }
 

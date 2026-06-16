@@ -599,8 +599,26 @@ void BeamModuleAssembler::emit_call_light_bif(const ArgWord &Bif,
 
     a.bind(entry);
 
+#ifdef CACHE_TOOL_BUILD
+    uint32_t exp_start = (uint32_t)a.offset();
+#endif
     mov_arg(ARG4, Exp);
+#ifdef CACHE_TOOL_BUILD
+    /* ARG4 holds a pointer to the Export entry for this BIF; the
+     * symbolic_ref is the import-table index, which the cache
+     * extractor translates to an "M:F/A" string before writing. */
+    record_mov_imm_reloc(exp_start, BEAM_JIT_RELOC_EXPORT,
+                         (uint32_t)Exp.get());
+    uint32_t bif_start = (uint32_t)a.offset();
+#endif
     mov_arg(ARG8, Bif);
+#ifdef CACHE_TOOL_BUILD
+    /* ARG8 holds the BIF C function pointer. Same import index
+     * uniquely identifies which BIF — the loader can derive the
+     * function pointer from the runtime's bif_table. */
+    record_mov_imm_reloc(bif_start, BEAM_JIT_RELOC_BIF,
+                         (uint32_t)Exp.get());
+#endif
     a.adr(ARG3, entry);
 
     if (logger.file()) {
@@ -617,8 +635,28 @@ void BeamModuleAssembler::emit_send() {
      * do it in the loader. */
     a.bind(entry);
 
+#ifdef CACHE_TOOL_BUILD
+    /* embed_constant puts the value in a deferred literal pool — the
+     * actual pointer bytes get written later when the pool flushes.
+     * The ldr emits a PC-relative load whose offset gets backpatched
+     * at pool-flush time. We record the LDR offset and tag it with
+     * the well-known BIF index; the cache loader rewrites the
+     * literal pool slot rather than the ldr instruction. */
+    uint32_t send_exp_ldr = (uint32_t)a.offset();
+#endif
     a.ldr(ARG4, embed_constant(BIF_TRAP_EXPORT(BIF_send_2), disp32K));
+#ifdef CACHE_TOOL_BUILD
+    record_fixed_reloc(send_exp_ldr, BEAM_JIT_RELOC_EXPORT, 4,
+                       /* sentinel: BIF_send_2 index — the cache loader
+                        * knows this is the send/2 trap export */
+                       0xffff0000u | BIF_send_2);
+    uint32_t send_fn_ldr = (uint32_t)a.offset();
+#endif
     a.ldr(ARG8, embed_constant(send_2, disp32K));
+#ifdef CACHE_TOOL_BUILD
+    record_fixed_reloc(send_fn_ldr, BEAM_JIT_RELOC_BIF, 4,
+                       0xffff0000u | BIF_send_2);
+#endif
     a.adr(ARG3, entry);
 
     fragment_call(ga->get_call_light_bif_shared());

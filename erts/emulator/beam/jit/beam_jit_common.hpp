@@ -99,6 +99,16 @@ protected:
         beam_jit_reloc_append(&relocs, start_offset, kind, imm_width,
                               symbolic_ref);
     }
+
+    /* Record a fixed-width relocation at a known offset. Used for
+     * a.embed() sites where the byte layout is known (e.g. the
+     * module/function atom slots inside an embedded ErtsCodeMFA). */
+    void record_fixed_reloc(uint32_t offset,
+                            BeamJitRelocKind kind,
+                            uint16_t width,
+                            uint32_t symbolic_ref) {
+        beam_jit_reloc_append(&relocs, offset, kind, width, symbolic_ref);
+    }
 #endif
 
     static bool hasCpuFeature(uint32_t featureId);
