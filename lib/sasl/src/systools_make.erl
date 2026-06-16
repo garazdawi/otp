@@ -1573,7 +1573,44 @@ mandatory_modules() ->
      logger_simple_h,
      lists,
      proc_lib,
-     supervisor
+     supervisor,
+
+     %% Extended set (IDEAS/07 #14): modules pulled in by the lazy-load
+     %% chain during kernel_sup children init. Adding them to the
+     %% mandatory primLoad batch loads them in parallel up front (via
+     %% init:do_load_modules/3) instead of serially when each child's
+     %% init/1 needs them.
+     c,
+     edlin,
+     edlin_context,
+     edlin_expand,
+     edlin_key,
+     erl_anno,
+     erl_internal,
+     erl_scan,
+     erl_signal_handler,
+     erpc,
+     gen_statem,
+     group,
+     io,
+     io_lib,
+     io_lib_format,
+     logger_formatter,
+     logger_h_common,
+     logger_handler_watcher,
+     logger_std_h,
+     logger_sup,
+     orddict,
+     ordsets,
+     otp_internal,
+     peer,
+     prim_tty,
+     raw_file_io,
+     sets,
+     supervisor_bridge,
+     sys,
+     user_drv,
+     user_sup
     ].
 
 %%______________________________________________________________________
