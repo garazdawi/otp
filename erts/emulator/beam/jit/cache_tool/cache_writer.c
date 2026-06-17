@@ -208,7 +208,10 @@ int cache_writer_emit_module(CacheWriter *w, const CompiledModule *cm) {
     uint32_t fc = (uint32_t)cm->func_count;
     fwrite(&fc, 4, 1, w->fp);
     for (size_t i = 0; i < cm->func_count; i++) {
-        fwrite(&cm->funcs[i].name_str_idx, 4, 1, w->fp);
+        uint32_t name_idx = cm->funcs[i].name
+            ? strtab_intern(w, cm->funcs[i].name)
+            : 0xffffffffu;  /* sentinel: function name unknown */
+        fwrite(&name_idx,                  4, 1, w->fp);
         fwrite(&cm->funcs[i].arity,        4, 1, w->fp);
         fwrite(&cm->funcs[i].code_offset,  4, 1, w->fp);
     }

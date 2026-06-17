@@ -283,10 +283,8 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
             cache_tool_function_at(magic, i, &off, &ar, nbuf, sizeof(nbuf));
             out->funcs[i].code_offset = off;
             out->funcs[i].arity = ar;
-            /* name_str_idx 0 — the writer interns each function name
-             * separately and would assign the real index. For our
-             * round-trip we don't read these back yet. */
-            out->funcs[i].name_str_idx = 0;
+            out->funcs[i].name = nbuf[0] ? strdup(nbuf) : NULL;
+            out->funcs[i].name_str_idx = 0;  /* set by writer */
         }
     }
 
@@ -474,6 +472,9 @@ void cache_tool_free_compiled(CompiledModule *cm) {
     free((void *)cm->mfa_strings);
     free(cm->literal_blob);
     free(cm->literal_relocs);
+    for (size_t i = 0; i < cm->func_count; i++) {
+        free(cm->funcs[i].name);
+    }
     free(cm->funcs);
     memset(cm, 0, sizeof(*cm));
 }

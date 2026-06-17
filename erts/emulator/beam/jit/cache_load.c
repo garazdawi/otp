@@ -196,19 +196,12 @@ int erts_load_cache_module(LoaderState *stp, BeamJitCache *cache,
                     "  cache load: size mismatch — asmjit %u, cache %zu\n",
                     (unsigned)stp->loaded_size, (size_t)m->code_size);
         }
-        const char *dump_mod = getenv("ERL_CACHE_DUMP_RUNTIME");
-        if (dump_mod && m->name && strcmp(m->name, dump_mod) == 0) {
-            char path[256];
-            snprintf(path, sizeof(path), "/tmp/runtime_%s.bin", m->name);
-            FILE *f = fopen(path, "wb");
-            if (f) {
-                fwrite(stp->writable_region, 1, stp->loaded_size, f);
-                fclose(f);
-                fprintf(stderr,
-                        "  wrote runtime asmjit code (%u bytes) to %s\n",
-                        (unsigned)stp->loaded_size, path);
-            }
-        }
+        /* The overlay path needs identical byte sizes. Modules
+         * whose asmjit emit takes a different total length from the
+         * cache (asmjit picks shortest mov-imm encoding for the live
+         * value; cache_tool's process sees a different value, so
+         * lengths diverge for atoms, BIF table entries, host static
+         * MFA pointers, etc.) fall through to the regular loader. */
         return -1;
     }
 

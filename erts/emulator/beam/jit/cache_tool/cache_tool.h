@@ -118,9 +118,13 @@ typedef struct {
     /* Func / export / import tables — offsets into the code blob,
      * plus string-table indices for symbolic identity. */
     struct {
-        uint32_t name_str_idx;
+        uint32_t name_str_idx;  /* bundle strtab index, set at write */
         uint32_t arity;
         uint32_t code_offset;
+        char    *name;          /* owned C string. Reader sets this from
+                                 * exports/locals scan; writer interns
+                                 * into bundle strtab. NULL when the
+                                 * label isn't in either table. */
     } *funcs;
     size_t func_count;
 
