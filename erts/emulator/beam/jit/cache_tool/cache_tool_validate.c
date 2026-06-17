@@ -120,6 +120,22 @@ static void *hk_fragment_addr_for_name(void *ctx, const char *name) {
     return cache_tool_fragment_addr(name);
 }
 
+/* Validator-only literal resolver: ctx carries a freshly-loaded
+ * BeamFile (via cache_tool_compile_module's path) whose
+ * static_literals table has Eterms valid in *this* process. */
+struct ValidateCtx {
+    /* Loader binary kept alive for the duration of the validate; its
+     * stp->beam.static_literals[idx].value is the live literal Eterm. */
+    void *magic;
+};
+
+extern uintptr_t cache_tool_literal_eterm_at(void *magic, uint32_t idx);
+
+static uintptr_t hk_literal_eterm_for_index(void *ctx, uint32_t idx) {
+    struct ValidateCtx *v = (struct ValidateCtx *)ctx;
+    return cache_tool_literal_eterm_at(v->magic, idx);
+}
+
 static void *hk_vm_static_for_id(void *ctx, uint32_t which) {
     (void)ctx;
     /* For the cache_tool's process, the well-known runtime statics
@@ -152,14 +168,37 @@ int cache_tool_validate(const char *jc_path, const char *module_name,
         return 3;
     }
 
+    /* Compile the .beam fresh FIRST so we have a populated literal
+     * table to resolve RELOC_LITERAL against. The validate path
+     * derives the .beam path conventionally from the module name. */
+    char beam_path[1024];
+    snprintf(beam_path, sizeof(beam_path),
+             "erts/preloaded/ebin/%s.beam", module_name);
+    BeamInput in;
+    int beam_rc = cache_tool_read_beam(beam_path, &in);
+    if (beam_rc != 0) {
+        fprintf(stderr, "validate: cannot read %s (%d)\n", beam_path, beam_rc);
+        beam_jit_cache_close(cache);
+        return 0;
+    }
+    CompiledModule cm = {0};
+    if (cache_tool_compile_module(&in, &cm) != 0) {
+        fprintf(stderr, "validate: fresh-compile failed\n");
+        cache_tool_free_input(&in);
+        beam_jit_cache_close(cache);
+        return 0;
+    }
+
+    struct ValidateCtx vctx = { .magic = cm.loader_magic };
     BeamJitCacheHostHooks hooks = {
-        .ctx                    = NULL,
-        .atom_eterm_for_name    = hk_atom_eterm_for_name,
-        .export_ptr_for_mfa     = hk_export_ptr_for_mfa,
-        .bif_fn_for_mfa         = hk_bif_fn_for_mfa,
-        .bif_fn_for_index       = hk_bif_fn_for_index,
-        .vm_static_for_id       = hk_vm_static_for_id,
-        .fragment_addr_for_name = hk_fragment_addr_for_name,
+        .ctx                     = &vctx,
+        .atom_eterm_for_name     = hk_atom_eterm_for_name,
+        .export_ptr_for_mfa      = hk_export_ptr_for_mfa,
+        .bif_fn_for_mfa          = hk_bif_fn_for_mfa,
+        .bif_fn_for_index        = hk_bif_fn_for_index,
+        .vm_static_for_id        = hk_vm_static_for_id,
+        .fragment_addr_for_name  = hk_fragment_addr_for_name,
+        .literal_eterm_for_index = hk_literal_eterm_for_index,
     };
 
     void *code = NULL;
@@ -169,40 +208,10 @@ int cache_tool_validate(const char *jc_path, const char *module_name,
     if (rc != 0) {
         fprintf(stderr, "validate: load_module(%s) returned %d\n",
                 module_name, rc);
+        cache_tool_free_compiled(&cm);
+        cache_tool_free_input(&in);
         beam_jit_cache_close(cache);
         return 4;
-    }
-
-    /* Re-compile the same module fresh, extract the assembled code,
-     * and byte-compare against the cache→load→patch result. Since we
-     * resolved every reloc against the same live VM that produced the
-     * cache file, the two should be byte-identical. */
-    extern int cache_tool_compile_module(const BeamInput *in,
-                                         CompiledModule *out);
-    /* The validate path only has the cache file, not the .beam — so
-     * load the corresponding preloaded .beam. The cache filename is
-     * conventionally <name>.jc adjacent to <name>.beam. */
-    char beam_path[1024];
-    snprintf(beam_path, sizeof(beam_path),
-             "erts/preloaded/ebin/%s.beam", module_name);
-    BeamInput in;
-    int beam_rc = cache_tool_read_beam(beam_path, &in);
-    if (beam_rc != 0) {
-        fprintf(stderr, "validate: cannot read %s (%d), "
-                        "skipping byte-equivalence check\n",
-                beam_path, beam_rc);
-        free(code);
-        beam_jit_cache_close(cache);
-        return 0;
-    }
-    CompiledModule cm = {0};
-    int cc_rc = cache_tool_compile_module(&in, &cm);
-    if (cc_rc != 0) {
-        fprintf(stderr, "validate: re-compile failed (%d)\n", cc_rc);
-        cache_tool_free_input(&in);
-        free(code);
-        beam_jit_cache_close(cache);
-        return 0;
     }
 
     size_t cmp_size = code_size < cm.code_size ? code_size : cm.code_size;

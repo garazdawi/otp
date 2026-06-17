@@ -127,6 +127,12 @@ typedef struct {
     /* on_load chunk presence (the actual handler runs at load
      * time as today; cache just records "this module has one"). */
     int has_on_load;
+
+    /* Opaque magic-binary handle for the loader state. Kept alive by
+     * the compile path so the validator can resolve per-module data
+     * (literal Eterms, fragment names) against the same loader run
+     * that produced the code blob. Owned by the CompiledModule. */
+    void *loader_magic;
 } CompiledModule;
 
 int  cache_tool_compile_module(const BeamInput *in, CompiledModule *out);

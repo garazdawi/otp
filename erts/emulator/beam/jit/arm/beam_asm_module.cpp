@@ -1006,6 +1006,18 @@ void BeamModuleAssembler::emit_constant(const Constant &constant) {
         case ArgVal::Type::Literal: {
             auto index = value.as<ArgLiteral>().get();
             literals[index].patches.push_back({anchor, 0, 0});
+#ifdef CACHE_TOOL_BUILD
+            /* Record where the literal pointer lands so the cache
+             * loader can rewrite it to the live VM's literal Eterm.
+             * Some ArgLiterals carry sentinel negative indices for
+             * special "kinds" — exclude those, the loader's literal
+             * table has nothing to look up. */
+            if (index >= 0 && index < (Sint)literals.size()) {
+                record_fixed_reloc((uint32_t)a.offset(),
+                                   BEAM_JIT_RELOC_LITERAL, 8,
+                                   (uint32_t)index);
+            }
+#endif
             a.embed_uint64(LLONG_MAX);
             break;
         }

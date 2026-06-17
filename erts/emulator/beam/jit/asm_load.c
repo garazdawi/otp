@@ -90,6 +90,19 @@ const char *cache_tool_fragment_name_at(Binary *magic, uint32_t idx) {
     return stp->ba ? beamasm_get_fragment_name(stp->ba, idx) : NULL;
 }
 
+/* Look up a literal's live Eterm by its per-module index. Used by the
+ * validator's host hook to patch RELOC_LITERAL entries. */
+uintptr_t cache_tool_literal_eterm_at(Binary *magic, uint32_t idx) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    if (idx >= (uint32_t)stp->beam.static_literals.count) return 0;
+    return (uintptr_t)stp->beam.static_literals.entries[idx].value;
+}
+
+int cache_tool_literal_count(Binary *magic) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    return stp->beam.static_literals.count;
+}
+
 /* Look up the {module, function, arity} of an import-table entry by
  * its index in the BeamFile parsed during load. The MFA atoms are
  * resolved to strings via atom_tab; arity is a small unsigned int.

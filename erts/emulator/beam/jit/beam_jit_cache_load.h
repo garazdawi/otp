@@ -59,6 +59,12 @@ typedef struct {
     /* For RELOC_FRAGMENT_BRANCH "<frag:NAME>": live address of that
      * BeamGlobalAssembler fragment in the current process. */
     void *(*fragment_addr_for_name)(void *ctx, const char *name);
+    /* For RELOC_LITERAL: per-module literal index → live Eterm of
+     * the literal in the current process. For the runtime, this
+     * resolves via the cache's serialised literal blob; for the
+     * validator, by re-reading the BEAM file and looking up index
+     * in beam->static_literals. */
+    uintptr_t (*literal_eterm_for_index)(void *ctx, uint32_t index);
 } BeamJitCacheHostHooks;
 
 BeamJitCache *beam_jit_cache_open(const char *path);

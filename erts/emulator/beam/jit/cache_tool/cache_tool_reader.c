@@ -239,6 +239,8 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
         return -2;
     }
 
+    out->loader_magic = magic;
+
     /* Pull the assembled native code AND the symbolic-relocation list
      * out of the LoaderState. After erts_prepare_loading returns NIL,
      * stp->executable_region points at the JIT'd code blob, and the
@@ -358,6 +360,12 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
                 cap = &mfa_cap;
                 break;
             }
+            case BEAM_JIT_RELOC_LITERAL:
+                /* Pass through: symbolic_ref already carries the
+                 * literal's per-module index. The cache writer
+                 * serialises the literal blob separately; the loader
+                 * uses the index to look up the live Eterm. */
+                continue;
             default:
                 continue;
             }
