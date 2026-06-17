@@ -839,9 +839,9 @@ ABORT_STUB(beam_catches_init)
 ABORT_STUB(beam_make_current_old)
 /* ABORT_STUB(beam_types_decode_extra) — from beam_types.c */
 /* ABORT_STUB(beam_types_decode_type) — from beam_types.c */
-ABORT_STUB(big_to_double)
+/* big_to_double: provided by linked big.c */
 ABORT_STUB(build_stacktrace)
-ABORT_STUB(bytes_to_big)
+/* bytes_to_big: provided by linked big.c */
 ABORT_STUB(call_error_handler)
 ABORT_STUB(check_monitor_long_schedule)
 ABORT_STUB(copy_in_registers)

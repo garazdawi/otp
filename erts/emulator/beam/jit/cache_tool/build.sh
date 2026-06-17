@@ -124,6 +124,8 @@ EXTRA_C_SRCS=(
     "$ROOT/erts/emulator/beam/erl_bits.c"             # erts_wrap_refc_bitstring, erts_bs_*
     "$ROOT/erts/emulator/beam/copy.c"                 # size_object_x, eq, copy_struct_x
     "$ROOT/erts/emulator/beam/utils.c"                # make_hash2
+    "$ROOT/erts/emulator/beam/big.c"                  # bytes_to_big (and friends)
+    "$ROOT/erts/emulator/beam/erl_term_hashing.c"     # erts_map_hash, make_internal_hash
     "$ROOT/erts/emulator/beam/beam_types.c"           # beam_types_decode_type
     "$ROOT/erts/emulator/beam/atom.c"                 # real atom table
     "$ROOT/erts/emulator/beam/index.c"                # erts_index_init/lookup, used by atom_tab

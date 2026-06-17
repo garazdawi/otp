@@ -152,7 +152,7 @@ unsigned long erts_internal_abort_pending_connection_2(void *p, unsigned long *a
 unsigned long erts_internal_atomics_new_2(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
 unsigned long erts_internal_beamfile_chunk_2(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
 unsigned long erts_internal_beamfile_module_md5_1(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
-unsigned long erts_internal_binary_to_integer_2(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
+/* erts_internal_binary_to_integer_2: provided by linked big.c */
 unsigned long erts_internal_check_dirty_process_code_2(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
 unsigned long erts_internal_check_process_code_1(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
 unsigned long erts_internal_cmp_term_2(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
@@ -179,7 +179,7 @@ unsigned long erts_internal_group_leader_3(void *p, unsigned long *args, void *i
 unsigned long erts_internal_is_process_alive_2(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
 unsigned long erts_internal_is_process_executing_dirty_1(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
 unsigned long erts_internal_is_system_process_1(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
-unsigned long erts_internal_list_to_integer_2(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
+/* erts_internal_list_to_integer_2: provided by linked big.c */
 unsigned long erts_internal_new_connection_1(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
 unsigned long erts_internal_no_aux_work_threads_0(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
 unsigned long erts_internal_notify_breakpoint_hit_3(void *p, unsigned long *args, void *i) { (void)p; (void)args; (void)i; return 0; }
