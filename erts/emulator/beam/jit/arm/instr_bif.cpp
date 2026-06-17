@@ -636,26 +636,19 @@ void BeamModuleAssembler::emit_send() {
     a.bind(entry);
 
 #ifdef CACHE_TOOL_BUILD
-    /* embed_constant puts the value in a deferred literal pool — the
-     * actual pointer bytes get written later when the pool flushes.
-     * The ldr emits a PC-relative load whose offset gets backpatched
-     * at pool-flush time. We record the LDR offset and tag it with
-     * the well-known BIF index; the cache loader rewrites the
-     * literal pool slot rather than the ldr instruction. */
-    uint32_t send_exp_ldr = (uint32_t)a.offset();
-#endif
+    /* Defer the reloc until the literal pool flush — the recorded
+     * offset will point at the embedded constant's bytes (where the
+     * loader needs to patch), not at the LDR instruction. */
+    a.ldr(ARG4, embed_constant_with_reloc(BIF_TRAP_EXPORT(BIF_send_2),
+                                          disp32K,
+                                          BEAM_JIT_RELOC_EXPORT,
+                                          0xffff0000u | BIF_send_2));
+    a.ldr(ARG8, embed_constant_with_reloc(send_2, disp32K,
+                                          BEAM_JIT_RELOC_BIF,
+                                          0xffff0000u | BIF_send_2));
+#else
     a.ldr(ARG4, embed_constant(BIF_TRAP_EXPORT(BIF_send_2), disp32K));
-#ifdef CACHE_TOOL_BUILD
-    record_fixed_reloc(send_exp_ldr, BEAM_JIT_RELOC_EXPORT, 4,
-                       /* sentinel: BIF_send_2 index — the cache loader
-                        * knows this is the send/2 trap export */
-                       0xffff0000u | BIF_send_2);
-    uint32_t send_fn_ldr = (uint32_t)a.offset();
-#endif
     a.ldr(ARG8, embed_constant(send_2, disp32K));
-#ifdef CACHE_TOOL_BUILD
-    record_fixed_reloc(send_fn_ldr, BEAM_JIT_RELOC_BIF, 4,
-                       0xffff0000u | BIF_send_2);
 #endif
     a.adr(ARG3, entry);
 

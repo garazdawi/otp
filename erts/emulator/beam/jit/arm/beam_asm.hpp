@@ -963,6 +963,18 @@ class BeamModuleAssembler : public BeamAssembler,
      * documented to be safe as long as we only insert elements. */
     std::unordered_multimap<ArgVal, const Constant, ArgVal::Hash> _constants;
 
+#ifdef CACHE_TOOL_BUILD
+    /* Side-table for deferring relocation records on values that go
+     * through embed_constant. Keyed by the anchor label's id, looked
+     * up by emit_constant at pool-flush time so the recorded reloc
+     * offset points at the embedded bytes, not the LDR instruction. */
+    struct PendingConstantReloc {
+        uint16_t kind;          /* BeamJitRelocKind */
+        uint32_t symbolic_ref;
+    };
+    std::unordered_map<uint32_t, PendingConstantReloc> _constant_relocs;
+#endif
+
     /* Label::id() -> Veneer
      *
      * `_pending_veneers` points directly into this container. */
@@ -1427,6 +1439,22 @@ protected:
     a64::Mem embed_constant(T data, enum Displacement disp) {
         return embed_constant(ArgWord((UWord)data), disp);
     }
+
+#ifdef CACHE_TOOL_BUILD
+    /* embed_constant + record a deferred reloc. The recorded reloc's
+     * offset isn't known until pool flush, so we stash {kind, sym_ref}
+     * keyed by the returned label's id; emit_constant looks it up when
+     * the constant's bytes actually get bound. Use this from per-module
+     * emit sites that bake pointers via embed_constant (e.g. emit_send). */
+    template<typename T>
+    a64::Mem embed_constant_with_reloc(T data, enum Displacement disp,
+                                       BeamJitRelocKind kind,
+                                       uint32_t symbolic_ref) {
+        a64::Mem m = embed_constant(data, disp);
+        _constant_relocs[m.base_id()] = { (uint16_t)kind, symbolic_ref };
+        return m;
+    }
+#endif
 
     /* Binds a label and all related veneers that are within reach of it. */
     void bind_veneer_target(const Label &target);

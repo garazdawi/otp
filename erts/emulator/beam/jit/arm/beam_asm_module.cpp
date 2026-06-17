@@ -953,6 +953,20 @@ void BeamModuleAssembler::emit_constant(const Constant &constant) {
     a.align(AlignMode::kData, 8);
     a.bind(anchor);
 
+#ifdef CACHE_TOOL_BUILD
+    /* If embed_constant_with_reloc deferred a relocation on this
+     * anchor, the constant's bytes are about to be embedded — emit
+     * the reloc now with the bound offset. */
+    auto it_reloc = _constant_relocs.find(anchor.id());
+    if (it_reloc != _constant_relocs.end()) {
+        record_fixed_reloc((uint32_t)a.offset(),
+                           (BeamJitRelocKind)it_reloc->second.kind,
+                           8,
+                           it_reloc->second.symbolic_ref);
+        _constant_relocs.erase(it_reloc);
+    }
+#endif
+
     ASSERT(!value.isRegister());
 
     if (value.isImmed()) {
