@@ -864,7 +864,19 @@ void BeamModuleAssembler::emit_call_bif_mfa(const ArgAtom &M,
             e->info.mfa.module,
             e->info.mfa.function,
             A.get());
+#ifdef CACHE_TOOL_BUILD
+    /* func is bif_table[i].f — process-specific. Force the 16-byte
+     * MOVZ+MOVK*3 form and record a BIF reloc with the BIF table
+     * index so the loader patches with the live entry. */
+    {
+        uint32_t reloc_start = (uint32_t)a.offset();
+        mov_imm_full(ARG4, func);
+        record_mov_imm_reloc(reloc_start, BEAM_JIT_RELOC_BIF,
+                             0xffff0000u | (uint32_t)e->bif_number);
+    }
+#else
     a.mov(ARG4, imm(func));
+#endif
 
     a.b(resolve_fragment(ga->get_call_bif_shared(), disp128MB));
 }

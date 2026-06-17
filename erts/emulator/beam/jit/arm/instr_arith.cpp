@@ -1026,7 +1026,23 @@ void BeamModuleAssembler::emit_div_rem(const ArgLabel &Fail,
             fragment_call(ga->get_int_div_rem_guard_shared());
             a.b_eq(resolve_beam_label(Fail, disp1MB));
         } else {
+#ifdef CACHE_TOOL_BUILD
+            {
+                uint32_t reloc_start = (uint32_t)a.offset();
+                mov_imm_full(ARG4, error_mfa);
+                ::Dl_info info;
+                if (::dladdr((const void *)error_mfa, &info)
+                    && info.dli_sname
+                    && (uintptr_t)info.dli_saddr == (uintptr_t)error_mfa) {
+                    uint32_t idx = (uint32_t)runtime_fns.size();
+                    runtime_fns.push_back(strdup(info.dli_sname));
+                    record_mov_imm_reloc(reloc_start,
+                                         BEAM_JIT_RELOC_RUNTIME_FN, idx);
+                }
+            }
+#else
             a.mov(ARG4, imm(error_mfa));
+#endif
             fragment_call(ga->get_int_div_rem_body_shared());
         }
 

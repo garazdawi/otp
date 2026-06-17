@@ -637,13 +637,13 @@ void BeamModuleAssembler::emit_int_code_end() {
         bind_veneer_target(pair.second);
 
 #ifdef CACHE_TOOL_BUILD
-        /* The dispatch table bakes a live fragment fptr into a mov-imm
-         * sequence. asmjit would pick the shortest encoding (which
-         * varies per process — making both the code size and bytes
-         * non-deterministic), and nothing would record the address for
-         * the loader to patch. Force the full 16-byte MOVZ+MOVK*3 form
-         * and record a FRAGMENT_BRANCH-kind reloc with imm_width=16 so
-         * the loader's generic MOVZ+MOVK*N patcher rewrites the slot. */
+        /* The dispatch table bakes a live fptr into a mov-imm sequence.
+         * Force the full 16-byte MOVZ+MOVK*3 form so size is constant,
+         * then record either a FRAGMENT_BRANCH reloc (if the fptr is
+         * one of BGA's named fragments) or a RUNTIME_FN reloc (if it's
+         * a regular C function reachable via dladdr — happens because
+         * the secondary runtime_call/fragment_call helpers stuff non-
+         * BGA function pointers into _dispatchTable too). */
         const char *frag_name = ga->name_for_fragment_addr((void *)pair.first);
         uint32_t reloc_start = (uint32_t)a.offset();
         mov_imm_full(SUPER_TMP, pair.first);
@@ -653,6 +653,18 @@ void BeamModuleAssembler::emit_int_code_end() {
             record_mov_imm_reloc(reloc_start,
                                  BEAM_JIT_RELOC_FRAGMENT_BRANCH,
                                  0xfffe0000u | idx);
+        } else {
+            ::Dl_info info;
+            if (::dladdr((void *)pair.first, &info) && info.dli_sname) {
+                uint32_t idx = (uint32_t)runtime_fns.size();
+                runtime_fns.push_back(strdup(info.dli_sname));
+                record_mov_imm_reloc(reloc_start,
+                                     BEAM_JIT_RELOC_RUNTIME_FN,
+                                     idx);
+            } else if (getenv("CACHE_TOOL_TRACE_DT")) {
+                fprintf(stderr, "  dispatch table: no name + no dladdr "
+                                "for fptr %p\n", (void *)pair.first);
+            }
         }
 #else
         a.mov(SUPER_TMP, imm(pair.first));
@@ -1031,6 +1043,22 @@ void BeamModuleAssembler::emit_constant(const Constant &constant) {
     if (value.isImmed()) {
         a.embed_uint64(value.as<ArgImmed>().get());
     } else if (value.isWord()) {
+#ifdef CACHE_TOOL_BUILD
+        /* ArgWord constants in the pool often hold host-static
+         * pointers (ErtsCodeMFA*, function pointers, etc.). Try
+         * dladdr to recover a symbol name and record a RUNTIME_FN
+         * reloc so the loader can re-resolve via dlsym. Falls back
+         * to an unrecorded raw embed if the value isn't a symbol. */
+        uint64_t w = (uint64_t)value.as<ArgWord>().get();
+        ::Dl_info info;
+        if (::dladdr((void *)w, &info) && info.dli_sname
+            && (uintptr_t)info.dli_saddr == w) {
+            uint32_t off = (uint32_t)a.offset();
+            uint32_t idx = (uint32_t)runtime_fns.size();
+            runtime_fns.push_back(strdup(info.dli_sname));
+            record_fixed_reloc(off, BEAM_JIT_RELOC_RUNTIME_FN, 8, idx);
+        }
+#endif
         a.embed_uint64(value.as<ArgWord>().get());
     } else if (value.isLabel()) {
 #ifdef CACHE_TOOL_BUILD

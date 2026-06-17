@@ -694,6 +694,11 @@ extern "C"
         return bga->addr_for_fragment_name(name);
     }
 
+    void cache_tool_dump_fragments() {
+        if (!bga) { fprintf(stderr, "  (no bga)\n"); return; }
+        bga->cache_tool_dump_fragments();
+    }
+
     /* Per-module label offset within the assembled code blob, looked
      * up via the BeamLabel number. */
     unsigned beamasm_label_offset(void *instance, unsigned label) {
