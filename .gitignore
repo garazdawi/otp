@@ -31,7 +31,7 @@ erts/preloaded/src/deps/
 #
 /bootstrap/lib/compiler/egen
 /bootstrap/lib/stdlib/egen
-/lib/stdlib/src/unicode_util.erl
+/lib/stdlib/src/unicode_util_gen.hrl
 
 # Compiler derivatives
 #

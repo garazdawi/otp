@@ -150,7 +150,7 @@ HRL_FILES= \
 	../include/qlc.hrl \
 	../include/zip.hrl
 
-INTERNAL_HRL_FILES= dets.hrl erl_tar.hrl otp_internal.hrl json.hrl swar_ascii.hrl
+INTERNAL_HRL_FILES= dets.hrl erl_tar.hrl otp_internal.hrl json.hrl swar_ascii.hrl unicode_util.hrl unicode_util_gen.hrl
 
 ERL_FILES= $(MODULES:%=%.erl)
 
@@ -242,7 +242,7 @@ $(APP_TARGET): $(APP_SRC) ../vsn.mk
 $(APPUP_TARGET): $(APPUP_SRC) ../vsn.mk
 	$(vsn_verbose)sed -e 's;%VSN%;$(VSN);' $< > $@
 
-unicode_util.erl: ../uc_spec/*
+unicode_util_gen.hrl: ../uc_spec/*
 	escript$(EXE_SUFFIX) ../uc_spec/gen_unicode_mod.escript
 
 # ----------------------------------------------------

@@ -28,7 +28,7 @@
 -compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -record(cp, {name, class, dec, comp, cs, cat}).
--define(MOD, "unicode_util").
+-define(MOD, "unicode_util_gen").
 
 main(Args) ->
     %%  Parse main table
@@ -78,7 +78,7 @@ main(Args) ->
                       _ -> false
                   end,
 
-    {ok, Out} = file:open(?MOD++".erl", [write]),
+    {ok, Out} = file:open(?MOD++".hrl", [write]),
     gen_file(Out, Data, ExclData, maps:from_list(Props), WideCs, UpdateTests),
     ok = file:close(Out),
     ok.
@@ -258,9 +258,7 @@ is_default_width(Index, WD) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 gen_file(Fd, Data, ExclData, Props, WideCs, UpdateTests) ->
-    gen_header(Fd),
-    gen_static(Fd),
-    gen_norm(Fd),
+    gen_header(Fd),    
     gen_props(Fd, Props, Data),
     gen_gc(Fd, Props),
     gen_compose_pairs(Fd, ExclData, Data),
@@ -274,390 +272,8 @@ gen_header(Fd) ->
 %%
 %% this file is generated do not modify
 %% see ../uc_spec/gen_unicode_mod.escript
-
--module(unicode_util).
--moduledoc false.
--export([gc_1/2]).
--export([nfd/1, nfc/1, nfkd/1, nfkc/1]).
--export([pattern_whitespace/0, is_whitespace/1]).
--export([uppercase/1, lowercase/1, titlecase/1, casefold/1]).
-
--export([spec_version/0, lookup/1, category/1, get_case/1]).
--export([is_wide/1]).
--export([is_other_id_start/1, is_other_id_continue/1, is_letter_not_pattern_syntax/1]).
--compile({inline, [class/1]}).
--compile(nowarn_unused_vars).
--dialyzer({no_improper_lists, [gc_prepend/2]}).
--import(string, [cp/1, gc/1]).
--type gc() :: char()|[char()].
--type category() ::
-     {letter,uppercase} |
-     {letter,lowercase} |
-     {letter,titlecase} |
-     {mark,non_spacing} |
-     {mark,spacing_combining} |
-     {mark,enclosing} |
-     {number,decimal} |
-     {number,letter} |
-     {number,other} |
-     {separator,space} |
-     {separator,line} |
-     {separator,paragraph} |
-     {other,control} |
-     {other,format} |
-     {other,surrogate} |
-     {other,private} |
-     {other,not_assigned} |
-     {letter,modifier} |
-     {letter,other} |
-     {punctuation,connector} |
-     {punctuation,dash} |
-     {punctuation,open} |
-     {punctuation,close} |
-     {punctuation,initial} | % Punctuation, Initial quote (may behave like open or close depending on usage)
-     {punctuation,final} |   % Punctuation, Final quote (may behave like open or close depending on usage)
-     {punctuation,other} |
-     {symbol,math} |
-     {symbol,currency} |
-     {symbol,modifier} |
-     {symbol,other}.
-
--define(IS_CP(CP), is_integer(CP, 0, 16#10FFFF)).
--define(IS_ASCII(CP), is_integer(CP, 0, 127)).
--define(IS_LATIN1(CP), is_integer(CP, 0, 255)).
--define(IS_HANGUL(CP), is_integer(CP, 16#AC00, 16#D7A3)).
-
-
 """),
    ok.
-
-gen_static(Fd) ->
-    io:put_chars(Fd, """
--spec lookup(char()) ->
-     #{'canon':= [{byte(),char()}],
-       'ccc':= byte(),
-       'compat':= [] | {atom(),[{byte(),char()}]},
-       'category':= category()}.
-lookup(Codepoint) when ?IS_CP(Codepoint) ->
-    {CCC,Can,Comp,Cat} = unicode_table(Codepoint),
-    #{ccc=>CCC, canon=>Can, compat=>Comp, category=>category(Cat,Codepoint)}.
-
--spec category(char()) -> category().
-category(Codepoint) when ?IS_CP(Codepoint) ->
-    {_,_,_,Cat} = unicode_table(Codepoint),
-    category(Cat,Codepoint).
-
-
-"""),
-    io:put_chars(Fd, "-spec get_case(char()) -> #{'fold':=gc(), 'lower':=gc(), 'title':=gc(), 'upper':=gc()}.\n"),
-    io:put_chars(Fd, "get_case(Codepoint) when ?IS_CP(Codepoint) ->\n"
-                 "    case case_table(Codepoint) of\n"
-                 "        {U,L} -> #{upper=>U,lower=>L,title=>U,fold=>L};\n"
-                 "        {U,L,T,F} -> #{upper=>U,lower=>L,title=>T,fold=>F}\n"
-                 "    end.\n\n"),
-
-    io:put_chars(Fd, "spec_version() -> {17,0}.\n\n\n"),
-    io:put_chars(Fd, "class(Codepoint) when ?IS_CP(Codepoint) -> \n"
-                 "    {CCC,_,_,_} = unicode_table(Codepoint),\n    CCC.\n\n"),
-
-    io:put_chars(Fd, "-spec uppercase(unicode:chardata()) -> "
-                 "maybe_improper_list(gc(),unicode:chardata()).\n"),
-    io:put_chars(Fd, "uppercase(Str0) ->\n"),
-    io:put_chars(Fd, "    case cp(Str0) of\n"),
-    io:put_chars(Fd, "        [CP|Str] = Str1 ->\n"),
-    io:put_chars(Fd, "            case case_table(CP) of\n"),
-    io:put_chars(Fd, "                {Upper,_} -> [Upper|Str];\n"),
-    io:put_chars(Fd, "                {Upper,_,_,_} -> [Upper|Str]\n"),
-    io:put_chars(Fd, "            end;\n"),
-    io:put_chars(Fd, "        [] -> [];\n"),
-    io:put_chars(Fd, "        {error,Err} -> error({badarg, Err})\n"),
-    io:put_chars(Fd, "    end.\n\n"),
-    io:put_chars(Fd, "-spec lowercase(unicode:chardata()) -> "
-                 "maybe_improper_list(gc(),unicode:chardata()).\n"),
-    io:put_chars(Fd, "lowercase(Str0) ->\n"),
-    io:put_chars(Fd, "    case cp(Str0) of\n"),
-    io:put_chars(Fd, "        [CP|Str] = Str1 ->\n"),
-    io:put_chars(Fd, "            case case_table(CP) of\n"),
-    io:put_chars(Fd, "                {_,Lower} -> [Lower|Str];\n"),
-    io:put_chars(Fd, "                {_,Lower,_,_} -> [Lower|Str]\n"),
-    io:put_chars(Fd, "            end;\n"),
-    io:put_chars(Fd, "        [] -> [];\n"),
-    io:put_chars(Fd, "        {error,Err} -> error({badarg, Err})\n"),
-    io:put_chars(Fd, "    end.\n\n"),
-
-    io:put_chars(Fd, "-spec titlecase(unicode:chardata()) -> "
-                 "maybe_improper_list(gc(),unicode:chardata()).\n"),
-    io:put_chars(Fd, "titlecase(Str0) ->\n"),
-    io:put_chars(Fd, "    case cp(Str0) of\n"),
-    io:put_chars(Fd, "        [CP|Str] = Str1 ->\n"),
-    io:put_chars(Fd, "            case case_table(CP) of\n"),
-    io:put_chars(Fd, "                {_,_,Title,_} -> [Title|Str];\n"),
-    io:put_chars(Fd, "                {Upper,_} -> [Upper|Str]\n"),
-    io:put_chars(Fd, "            end;\n"),
-    io:put_chars(Fd, "        [] -> [];\n"),
-    io:put_chars(Fd, "        {error,Err} -> error({badarg, Err})\n"),
-    io:put_chars(Fd, "    end.\n\n"),
-
-    io:put_chars(Fd, "-spec casefold(unicode:chardata()) -> "
-                 "maybe_improper_list(gc(),unicode:chardata()).\n"),
-    io:put_chars(Fd, "casefold(Str0) ->\n"),
-    io:put_chars(Fd, "    case cp(Str0) of\n"),
-    io:put_chars(Fd, "        [CP|Str] = Str1 ->\n"),
-    io:put_chars(Fd, "            case case_table(CP) of\n"),
-    io:put_chars(Fd, "                {_,_,_,Fold} -> [Fold|Str];\n"),
-    io:put_chars(Fd, "                {_,Lower} -> [Lower|Str]\n"),
-    io:put_chars(Fd, "            end;\n"),
-    io:put_chars(Fd, "        [] -> [];\n"),
-    io:put_chars(Fd, "        {error,Err} -> error({badarg, Err})\n"),
-    io:put_chars(Fd, "    end.\n\n"),
-
-    io:put_chars(Fd, "%% Returns true if the character is considered wide in non east asian context.\n"),
-    io:put_chars(Fd, "-spec is_wide(gc()) -> boolean().\n"),
-    io:put_chars(Fd, "is_wide(C) when ?IS_ASCII(C) ->\n"),
-    io:put_chars(Fd, "    false;\n"),
-    io:put_chars(Fd, "is_wide(C) when ?IS_CP(C) ->\n"),
-    io:put_chars(Fd, "    is_wide_cp(C);\n"),
-    io:put_chars(Fd, "is_wide([_, 16#FE0E|Cs]) -> true; %% Presentation sequence\n"),
-    io:put_chars(Fd, "is_wide([_, 16#FE0F|Cs]) -> true; %% Presentation sequence\n"),
-    io:put_chars(Fd, "is_wide([C|Cs]) when ?IS_CP(C) ->\n"),
-    io:put_chars(Fd, "    is_wide_cp(C) orelse is_wide(Cs);\n"),
-    io:put_chars(Fd, "is_wide([]) ->\n    false.\n\n"),
-
-    io:put_chars(Fd, "category(lookup_category, Cp) ->\n"
-                 "    lookup_category(Cp);\n"
-                 "category(Def, _) -> Def.\n\n"),
-    ok.
-
-gen_norm(Fd) ->
-    io:put_chars(Fd,
-                 "-spec nfd(unicode:chardata()) -> maybe_improper_list(gc(),unicode:chardata()) | {error, unicode:chardata()}.\n"
-                 "nfd(Str0) ->\n"
-                 "    case gc(Str0) of\n"
-                 "        [GC|R] when ?IS_ASCII(GC) -> [GC|R];\n"
-                 "        [GC|Str] -> [decompose(GC)|Str];\n"
-                 "        [] -> [];\n"
-                 "        {error,_}=Error -> Error\n    end.\n\n"
-                ),
-
-    io:put_chars(Fd,
-                 "-spec nfkd(unicode:chardata()) -> maybe_improper_list(gc(),unicode:chardata()) | {error, unicode:chardata()}.\n"
-                 "nfkd(Str0) ->\n"
-                 "    case gc(Str0) of\n"
-                 "        [GC|R] when ?IS_ASCII(GC) -> [GC|R];\n"
-                 "        [GC|Str] -> [decompose_compat(GC)|Str];\n"
-                 "        [] -> [];\n"
-                 "        {error,_}=Error -> Error\n    end.\n\n"
-                ),
-
-    io:put_chars(Fd,
-                 "-spec nfc(unicode:chardata()) -> maybe_improper_list(gc(),unicode:chardata()) | {error, unicode:chardata()}.\n"
-                 "nfc(Str0) ->\n"
-                 "    case gc(Str0) of\n"
-                 "        [GC|R] when ?IS_LATIN1(GC) -> [GC|R];\n"
-                 "        [GC|Str] -> [compose(decompose(GC))|Str];\n"
-                 "        [] -> [];\n"
-                 "        {error,_}=Error -> Error\n    end.\n\n"
-                ),
-
-    io:put_chars(Fd,
-                 "-spec nfkc(unicode:chardata()) -> maybe_improper_list(gc(),unicode:chardata()) | {error, unicode:chardata()}.\n"
-                 "nfkc(Str0) ->\n"
-                 "    case gc(Str0) of\n"
-                 "        [GC|R] when ?IS_ASCII(GC) -> [GC|R];\n"
-                 "        [GC|Str] -> [compose_compat_0(decompose_compat(GC))|Str];\n"
-                 "        [] -> [];\n"
-                 "        {error,_}=Error -> Error\n    end.\n\n"
-                ),
-
-    io:put_chars(Fd,
-                 "decompose(CP) when is_integer(CP), not ?IS_HANGUL(CP) ->\n"
-                 "    case unicode_table(CP) of\n"
-                 "        {_,[],_,_} -> CP;\n"
-                 "        {_,CPs,_,_} -> canonical_order(CPs)\n"
-                 "    end;\n"
-                 "decompose(CP) ->\n"
-                 "   canonical_order(decompose_1(CP)).\n"
-                 "\n"
-                 "decompose_1(CP) when ?IS_HANGUL(CP) ->\n"
-                 "    Syll = CP-16#AC00,\n"
-                 "    T = 28,\n"
-                 "    N = 588,\n"
-                 "    Lead = 16#1100 + Syll div N,\n"
-                 "    Vowel = 16#1161 + (Syll rem N) div T,\n"
-                 "    case Syll rem T of\n"
-                 "        0 -> [{0,Lead},{0,Vowel}];\n"
-                 "        Trail -> [{0,Lead}, {0,Vowel}, {0,Trail+16#11A7}]\n"
-                 "    end;\n"
-                 "decompose_1(CP) when is_integer(CP) ->\n"
-                 "    case unicode_table(CP) of\n"
-                 "        {CCC, [],_,_} -> [{CCC,CP}];\n"
-                 "        {_,CPs,_,_} -> CPs\n"
-                 "    end;\n"
-                 "decompose_1([CP|CPs]) ->\n"
-                 "    decompose_1(CP) ++ decompose_1(CPs);\n"
-                 "decompose_1([]) -> [].\n"
-                 "\n"
-                 "canonical_order([{_,CP}]) -> CP;\n"
-                 "canonical_order(CPs) ->\n"
-                 "    canonical_order_1(CPs).\n"
-                 "\n"
-                 "canonical_order_1([{0,CP}|TaggedCPs]) ->\n"
-                 "    [CP|canonical_order_1(TaggedCPs)];\n"
-                 "canonical_order_1([_|_]=TaggedCPs) ->\n"
-                 "    canonical_order_2(TaggedCPs, []);\n"
-                 "canonical_order_1([]) -> [].\n"
-                 "\n"
-                 "canonical_order_2([{CCC,_}=First|Cont], Seq) when CCC > 0 ->\n"
-                 "    canonical_order_2(Cont, [First|Seq]);\n"
-                 "canonical_order_2(Cont, Seq) ->\n"
-                 "     [CP || {_, CP} <- lists:keysort(1,lists:reverse(Seq))] ++ canonical_order_1(Cont).\n\n"),
-
-    io:put_chars(Fd,
-                 "decompose_compat(CP) when is_integer(CP), not ?IS_HANGUL(CP) ->\n"
-                 "    case unicode_table(CP) of\n"
-                 "        {_, [], [], _} -> CP;\n"
-                 "        {_, _, {_,CPs}, _} -> canonical_order(CPs);\n"
-                 "        {_, CPs, _, _} -> canonical_order(CPs)\n"
-                 "    end;\n"
-                 "decompose_compat(CP) ->\n"
-                 "   canonical_order(decompose_compat_1(CP)).\n"
-                 "\n"
-                 "decompose_compat_1(CP) when ?IS_HANGUL(CP) ->\n"
-                 "    Syll = CP-16#AC00,\n"
-                 "    T = 28,\n"
-                 "    N = 588,\n"
-                 "    Lead = 16#1100 + Syll div N,\n"
-                 "    Vowel = 16#1161 + (Syll rem N) div T,\n"
-                 "    case Syll rem T of\n"
-                 "        0 -> [{0,Lead},{0,Vowel}];\n"
-                 "        Trail -> [{0,Lead}, {0,Vowel}, {0,Trail+16#11A7}]\n"
-                 "    end;\n"
-                 "decompose_compat_1(CP) when is_integer(CP) ->\n"
-                 "    case unicode_table(CP) of\n"
-                 "        {CCC, [], [], _} -> [{CCC,CP}];\n"
-                 "        {_, _, {_,CPs}, _} -> CPs;\n"
-                 "        {_, CPs, _, _} -> CPs\n"
-                 "    end;\n"
-                 "decompose_compat_1([CP|CPs]) ->\n"
-                 "    decompose_compat_1(CP) ++ decompose_compat_1(CPs);\n"
-                 "decompose_compat_1([]) -> [].\n\n"),
-
-
-    %% See: https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/#G49537
-
-    io:put_chars(Fd,
-                 """
-                 compose(CP) when is_integer(CP) -> CP;
-                 compose([Lead,Vowel|Trail]) %% Hangul
-                   when is_integer(Lead, 16#1100, 16#1112), is_integer(Vowel) ->
-                     if 16#1161 =< Vowel, Vowel =< 16#1175 ->
-                             CP = 16#AC00 + ((Lead - 16#1100) * 588) + ((Vowel - 16#1161) * 28),
-                             case Trail of
-                                 [T|Acc] when is_integer(T, 16#11A7, 16#11C2) ->
-                                      nolist(CP+T-16#11A7,Acc);
-                                 Acc -> nolist(CP,Acc)
-                             end;
-                        true ->
-                             case compose([Vowel|Trail]) of
-                                 [_|_] = CPs -> [Lead|CPs];
-                                 CP -> [Lead,CP]
-                             end
-                     end;
-                 compose([Base,Accent]=GC0) ->
-                     case compose_pair(Base,Accent) of
-                         false -> GC0;
-                         GC -> GC
-                     end;
-                 compose([CP|Many]) ->
-                     compose_many(Many, CP, [], class(CP)).
-
-                 compose_many([CP|Rest], Base, Accents, Prev) ->
-                     Class = class(CP),
-                     case (Prev =:= 0 orelse Prev < Class) andalso compose_pair(Base, CP) of
-                         false ->
-                             if Class =:= 0 ->
-                                   Begin = [Base|lists:reverse(Accents)],
-                                   case compose_many(Rest, CP, [], 0) of
-                                       [_|_] = GC -> Begin ++ GC;
-                                       Composed -> Begin ++ [Composed]
-                                   end;
-                                true ->
-                                   compose_many(Rest, Base, [CP|Accents], Class)
-                             end;
-                         Combined ->
-                             compose_many(Rest, Combined, Accents, Prev)
-                     end;
-                 compose_many([], Base, [], Prev) ->
-                     Base;
-                 compose_many([], Base, Accents, Prev) ->
-                     [Base|lists:reverse(Accents)].
-
-
-                 """
-                 ),
-    io:put_chars(Fd,
-                 """
-                 compose_compat_0(CP) when is_integer(CP) ->
-                     CP;
-                 compose_compat_0(L) ->
-                     case gc(L) of
-                         [First|Rest] ->
-                             case compose_compat(First) of
-                                 [_|_] = GC -> GC ++ compose_compat_0(Rest);
-                                 CP -> [CP|compose_compat_0(Rest)]
-                             end;
-                         [] -> []
-                     end.
-
-                 compose_compat(CP) when is_integer(CP) -> CP;
-                 compose_compat([Lead,Vowel|Trail]) %% Hangul
-                   when is_integer(Lead, 16#1100, 16#1112), is_integer(Vowel) ->
-                     if 16#1161 =< Vowel, Vowel =< 16#1175 ->
-                             CP = 16#AC00 + ((Lead - 16#1100) * 588) + ((Vowel - 16#1161) * 28),
-                             case Trail of
-                                 [T|Acc] when is_integer(T, 16#11A7, 16#11C2) ->
-                                     nolist(CP+T-16#11A7,Acc);
-                                 Acc -> nolist(CP,Acc)
-                             end;
-                        true ->
-                             case compose_compat([Vowel|Trail]) of
-                                 [_|_] = CPs -> [Lead|CPs];
-                                 CP -> [Lead,CP]
-                             end
-                     end;
-                 compose_compat([Base,Accent]=GC0) ->
-                     case compose_pair(Base,Accent) of
-                         false -> GC0;
-                         GC -> GC
-                     end;
-                 compose_compat([CP|Many]) ->
-                     compose_compat_many(Many, CP, [], class(CP)).
-
-                 compose_compat_many([CP|Rest], Base, Accents, Prev) ->
-                     Class = class(CP),
-                     case (Prev =:= 0 orelse Prev < Class) andalso compose_pair(Base, CP) of
-                         false ->
-                             if Class =:= 0 ->
-                                   Begin = [Base|lists:reverse(Accents)],
-                                   case compose_compat_many(Rest, CP, [], 0) of
-                                       [_|_] = GC -> Begin ++ GC;
-                                       Composed -> Begin ++ [Composed]
-                                   end;
-                                true ->
-                                   compose_compat_many(Rest, Base, [CP|Accents], Class)
-                             end;
-                         Combined ->
-                             compose_compat_many(Rest, Combined, Accents, Prev)
-                     end;
-                 compose_compat_many([], Base, [], Prev) ->
-                     Base;
-                 compose_compat_many([], Base, Accents, Prev) ->
-                     [Base|lists:reverse(Accents)].
-
-
-                 """),
-
-    ok.
 
 gen_props(Fd, Props, Data) ->
     PWS0 = maps:get(pattern_white_space, Props),
@@ -712,6 +328,7 @@ gen_props(Fd, Props, Data) ->
 
 gen_gc(Fd, GBP) ->
     %% see http://www.unicode.org/reports/tr29/#Grapheme_Cluster_Boundary_Rules
+
     io:put_chars(Fd,
                  """
 
@@ -724,6 +341,7 @@ gen_gc(Fd, GBP) ->
                  %% Handle control
 
                  """),
+    
     GenControl = fun(Range) -> io:format(Fd, "gc_1~s [CP|R0];\n", [gen_clause(Range)]) end,
     CRs0 = merge_ranges(maps:get(cr, GBP) ++ maps:get(lf, GBP) ++ maps:get(control, GBP), false),
     [R1,R2,R3|Crs] = CRs0,

@@ -104,7 +104,7 @@ whitespace(_Config) ->
     ok.
 
 cp(_) ->
-    Get = fun unicode_util:cp/1,
+    Get = fun string:cp/1,
     "hejsan" = fetch("hejsan", Get),
     "hejsan" = fetch(<<"hejsan">>, Get),
     "hejsan" = fetch(["hej",<<"san">>], Get),
@@ -124,7 +124,7 @@ cp(_) ->
 
 gc(Config) ->
     DataDir = proplists:get_value(data_dir, Config),
-    Get = fun unicode_util:gc/1,
+    Get = fun string:gc/1,
     "hejsan" = fetch("hejsan", Get),
     "hejsan" = fetch(<<"hejsan">>, Get),
     "hejsan" = fetch(["hej",<<"san">>], Get),
@@ -146,11 +146,11 @@ gc(Config) ->
 
 verify_gc(Line0, N, Acc) ->
     Line = unicode:characters_to_list(Line0),
-    Line = fetch(Line0,fun unicode_util:cp/1), %% Test cp
-    LineGC = fetch(Line0,fun unicode_util:gc/1), %% Test gc
-    LineGC = fetch(Line,fun unicode_util:gc/1), %% Test gc
-    LineGC = fetch(LineGC,fun unicode_util:gc/1), %% Test gc
-    LineGC = fetch(LineGC,fun unicode_util:cp/1), %% Test cp
+    Line = fetch(Line0,fun string:cp/1), %% Test cp
+    LineGC = fetch(Line0,fun string:gc/1), %% Test gc
+    LineGC = fetch(Line,fun string:gc/1), %% Test gc
+    LineGC = fetch(LineGC,fun string:gc/1), %% Test gc
+    LineGC = fetch(LineGC,fun string:cp/1), %% Test cp
 
     %io:format("Line: ~s~n",[Line]),
     [Data|_Comments] = string:tokens(Line, "#"),
@@ -170,7 +170,7 @@ verify_gc({error,_,[CP|_]}=Err, _Res, N, Line) ->
         io:format("~w: ~ts~n Error in unicode:characters_to_binary ~w~n", [N, Line, Err]),
     IsSurrogate;
 verify_gc(Str, Res, N, Line) ->
-    try fetch(Str, fun unicode_util:gc/1) of
+    try fetch(Str, fun string:gc/1) of
         Res -> true;
         Other ->
             io:format("Failed: ~p~nInput: ~ts~n\t=> ~w |~ts|~n",[N, Line, Str, Str]),
@@ -211,7 +211,7 @@ verify_nfd(Data0, LineNo, _Acc) ->
     Columns = string:tokens(Data2, ";"),
     [C1,C2,C3,C4,C5|_] = [[hex_to_int(CP) || CP <- string:tokens(C, " ")] ||
                              C <- Columns],
-    C3GC = fetch(C3, fun unicode_util:gc/1),
+    C3GC = fetch(C3, fun string:gc/1),
     try
         C3GC = fetch(C1, fun unicode_util:nfd/1),
         C3GC = fetch(C2, fun unicode_util:nfd/1),
@@ -226,7 +226,7 @@ verify_nfd(Data0, LineNo, _Acc) ->
             io:format("Expected: ~p~n", [C3]),
             erlang:raise(Cl,R,Stacktrace)
     end,
-    C5GC = fetch(C5, fun unicode_util:gc/1),
+    C5GC = fetch(C5, fun string:gc/1),
     try
         C5GC = fetch(C4, fun unicode_util:nfd/1),
         C5GC = fetch(C5, fun unicode_util:nfd/1)
@@ -254,7 +254,7 @@ verify_nfc(Data0, LineNo, _Acc) ->
     Columns = string:tokens(Data2, ";"),
     [C1,C2,C3,C4,C5|_] = [[hex_to_int(CP) || CP <- string:tokens(C, " ")] ||
                              C <- Columns],
-    C2GC = fetch(C2, fun unicode_util:gc/1),
+    C2GC = fetch(C2, fun string:gc/1),
     try
         C2GC = fetch(C1, fun unicode_util:nfc/1),
         C2GC = fetch(C2, fun unicode_util:nfc/1),
@@ -269,7 +269,7 @@ verify_nfc(Data0, LineNo, _Acc) ->
             io:format("Expected: ~p~n", [C3]),
             erlang:raise(Cl,R,Stacktrace)
     end,
-    C4GC = fetch(C4, fun unicode_util:gc/1),
+    C4GC = fetch(C4, fun string:gc/1),
     try
         C4GC = fetch(C4, fun unicode_util:nfc/1),
         C4GC = fetch(C5, fun unicode_util:nfc/1)
@@ -297,7 +297,7 @@ verify_nfkd(Data0, LineNo, _Acc) ->
     Columns = string:tokens(Data2, ";"),
     [C1,C2,C3,C4,C5|_] = [[hex_to_int(CP) || CP <- string:tokens(C, " ")] ||
                              C <- Columns],
-    C5GC = lists:flatten(fetch(C5, fun unicode_util:gc/1)),
+    C5GC = lists:flatten(fetch(C5, fun string:gc/1)),
     try
         C5GC = lists:flatten(fetch(C1, fun unicode_util:nfkd/1)),
         C5GC = lists:flatten(fetch(C2, fun unicode_util:nfkd/1)),
@@ -329,7 +329,7 @@ verify_nfkc(Data0, LineNo, _Acc) ->
     Columns = string:tokens(Data2, ";"),
     [C1,C2,C3,C4,C5|_] = [[hex_to_int(CP) || CP <- string:tokens(C, " ")] ||
                              C <- Columns],
-    C4GC = lists:flatten(fetch(C4, fun unicode_util:gc/1)),
+    C4GC = lists:flatten(fetch(C4, fun string:gc/1)),
     try
         C4GC = lists:flatten(fetch(C1, fun unicode_util:nfkc/1)),
         C4GC = lists:flatten(fetch(C2, fun unicode_util:nfkc/1)),
@@ -462,8 +462,13 @@ do_count(N,Sum,SumSq, _, _, Res, _) ->
     {N, Mean, Stdev, Res}.
 
 do_count(Fun, Str) ->
+    Mod = if
+            Fun =:= cp; Fun =:= gc ->
+                string;
+            true -> unicode_util
+        end,
     Count = fun Count(Str0, N) ->
-                    case unicode_util:Fun(Str0) of
+                    case Mod:Fun(Str0) of
                         [] -> N;
                         [_|Str1] -> Count(Str1,N+1)
                     end
