@@ -34,23 +34,13 @@
 %%%-----------------------------------------------------------------
 start(_, []) ->
     %% Setup the logger and configure the kernel logger environment
-    Tiny = case init:get_argument(mode) of
-               {ok, [["tiny"]|_]} -> true;
-               _ -> false
-           end,
     ok = logger:internal_init_logger(),
     ok = os:internal_init_cmd_shell(),
     case supervisor:start_link({local, kernel_sup}, kernel, []) of
 	{ok, Pid} ->
-            case Tiny of
-                true ->
-                    %% No erl_signal_server child, no logger_sup child.
-                    {ok, Pid, []};
-                false ->
-                    ok = erl_signal_handler:start(),
-                    ok = logger:add_handlers(kernel),
-                    {ok, Pid, []}
-            end;
+            ok = erl_signal_handler:start(),
+            ok = logger:add_handlers(kernel),
+            {ok, Pid, []};
 	Error -> Error
     end.
 
@@ -213,19 +203,6 @@ init([]) ->
     end,
 
     case init:get_argument(mode) of
-        {ok, [["tiny"]|_]} ->
-            %% Below "minimal": skip user_sup (no terminal / no shell;
-            %% callers must use standard_error for I/O), skip logger_sup
-            %% (boot-time errors go to stderr via standard_error), skip
-            %% erl_signal_server (no custom signal handlers, default
-            %% Ctrl-C behaviour). Targets escript / CLI scripts that
-            %% just want to read args, do work, and halt(0).
-            %% See IDEAS/07 #12.
-            {ok, {SupFlags,
-                  [Code, Preload, StdError | EarlyFile] ++
-                      [OnLoad | LateFile] ++
-                      Peer ++
-                      [Config, SafeSup]}};
         {ok, [["minimal"]|_]} ->
             {ok, {SupFlags,
                   [Code, Preload, StdError | EarlyFile] ++
