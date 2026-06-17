@@ -166,4 +166,13 @@ void cache_tool_shutdown(void);
 int  cache_tool_validate(const char *jc_path, const char *module_name,
                          int verbose);
 
+/* Cross-process determinism regression guard: invoke self twice on
+ * the same .beam, compare resulting .jc files byte-for-byte. Returns
+ * 0 on PASS (identical), non-zero on FAIL (with diagnostics on
+ * stderr). */
+int  cache_tool_validate_deterministic(const char *self_exe,
+                                       const char *arch,
+                                       const char *beam_path,
+                                       int verbose);
+
 #endif /* _CACHE_TOOL_H */

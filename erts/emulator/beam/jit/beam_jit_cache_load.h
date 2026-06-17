@@ -79,6 +79,13 @@ typedef struct {
 BeamJitCache *beam_jit_cache_open(const char *path);
 void          beam_jit_cache_close(BeamJitCache *c);
 
+/* Locate one module by name. Returns 0 on success; populates *out
+ * with pointers into the cache's mmap (valid for the cache's
+ * lifetime). Returns <0 on miss or corruption. */
+int beam_jit_cache_find_module(const BeamJitCache *c,
+                               const char *module_name,
+                               BeamJitCacheModule *out);
+
 /* Find one module by name, copy its code into a fresh buffer, and
  * walk the reloc list applying patches. Returns 0 on success and
  * populates *out_code / *out_size; caller frees *out_code. */

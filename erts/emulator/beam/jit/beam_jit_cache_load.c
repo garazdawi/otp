@@ -149,8 +149,8 @@ void beam_jit_cache_close(BeamJitCache *c) {
  * Module entries are laid out exactly as documented in cache_writer.c.
  *
  * Returns 0 + populates `out` on hit, <0 on miss / corruption. */
-static int find_module(const BeamJitCache *c, const char *name,
-                       BeamJitCacheModule *out) {
+int beam_jit_cache_find_module(const BeamJitCache *c, const char *name,
+                               BeamJitCacheModule *out) {
     /* Module entries start right after the 80-byte header. */
     const uint8_t *p = c->data + CACHE_HDR_SIZE;
     const uint8_t *end = c->data + c->strtab_off;
@@ -223,7 +223,7 @@ int beam_jit_cache_load_module(BeamJitCache *c,
                                void **out_code,
                                size_t *out_size) {
     BeamJitCacheModule m;
-    int rc = find_module(c, module_name, &m);
+    int rc = beam_jit_cache_find_module(c, module_name, &m);
     if (rc != 0) return rc;
 
     /* Allocate the loaded-code region close enough to the live global

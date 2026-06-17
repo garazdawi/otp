@@ -61,6 +61,11 @@ static void usage(const char *prog, int rc) {
             "  --jit-vsn <hash>  JIT emitter git hash (cache key)\n"
             "  --cflags-hash <h> hash of relevant +J* flags (cache key)\n"
             "  --verbose         print per-module timings and stats\n"
+            "  --validate <mod> <jc>           round-trip validate one\n"
+            "                                  module from a .jc file\n"
+            "  --validate-deterministic <beam> compile twice in two\n"
+            "                                  processes; PASS iff .jc\n"
+            "                                  byte-identical\n"
             "  --help            this message\n",
             prog);
     exit(rc);
@@ -86,6 +91,7 @@ int main(int argc, char **argv) {
     };
 
     int validate_mode = 0;
+    int validate_det_mode = 0;
     const char *validate_module = NULL;
     static struct option longopts[] = {
         {"arch",        required_argument, 0, 'a'},
@@ -96,12 +102,14 @@ int main(int argc, char **argv) {
         {"cflags-hash", required_argument, 0, 'f'},
         {"verbose",     no_argument,       0, 'v'},
         {"validate",    required_argument, 0, 'V'},
+        {"validate-deterministic", no_argument, 0, 'D'},
         {"help",        no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     int c;
-    while ((c = getopt_long(argc, argv, "a:o:be:j:f:vV:h", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "a:o:be:j:f:vV:Dh",
+                            longopts, NULL)) != -1) {
         switch (c) {
         case 'a': opts.arch = optarg; break;
         case 'o': opts.out = optarg; break;
@@ -111,6 +119,7 @@ int main(int argc, char **argv) {
         case 'f': opts.cflags_hash = optarg; break;
         case 'v': opts.verbose = 1; break;
         case 'V': validate_mode = 1; validate_module = optarg; break;
+        case 'D': validate_det_mode = 1; break;
         case 'h': usage(argv[0], 0);
         default:  usage(argv[0], 1);
         }
@@ -123,6 +132,24 @@ int main(int argc, char **argv) {
         }
         return cache_tool_validate(argv[optind], validate_module,
                                    opts.verbose);
+    }
+
+    if (validate_det_mode) {
+        if (optind >= argc) {
+            fprintf(stderr,
+                    "--validate-deterministic requires a .beam path\n");
+            return 1;
+        }
+        int rc = 0, pass = 0, total = 0;
+        for (int i = optind; i < argc; i++) {
+            total++;
+            int r = cache_tool_validate_deterministic(
+                argv[0], opts.arch, argv[i], opts.verbose);
+            if (r == 0) pass++;
+            else rc = r;
+        }
+        fprintf(stderr, "validate-det: %d/%d byte-identical\n", pass, total);
+        return rc;
     }
 
     if (!opts.out || optind >= argc) usage(argv[0], 1);
