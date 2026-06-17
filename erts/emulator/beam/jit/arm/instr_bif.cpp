@@ -600,24 +600,24 @@ void BeamModuleAssembler::emit_call_light_bif(const ArgWord &Bif,
     a.bind(entry);
 
 #ifdef CACHE_TOOL_BUILD
-    uint32_t exp_start = (uint32_t)a.offset();
-#endif
+    /* Skip mov_arg's register caching and emit a direct LDR-from-pool
+     * for both arguments. Going through embed_constant_with_reloc
+     * means the reloc points at the 8-byte pool slot (where the actual
+     * pointer is encoded) instead of the 4-byte LDR (whose offset
+     * encodes a PC-relative jump that's correct as-is). The cache
+     * loader then patches the pool slot with the live VM's address.
+     * Cost is a possible extra load if the same Exp/Bif was already
+     * register-cached — measured separately, the asm-cache-hit
+     * benefit isn't worth the broken portability. */
+    a.ldr(ARG4, embed_constant_with_reloc(Exp, disp32K,
+                                          BEAM_JIT_RELOC_EXPORT,
+                                          (uint32_t)Exp.get()));
+    a.ldr(ARG8, embed_constant_with_reloc(Bif, disp32K,
+                                          BEAM_JIT_RELOC_BIF,
+                                          (uint32_t)Exp.get()));
+#else
     mov_arg(ARG4, Exp);
-#ifdef CACHE_TOOL_BUILD
-    /* ARG4 holds a pointer to the Export entry for this BIF; the
-     * symbolic_ref is the import-table index, which the cache
-     * extractor translates to an "M:F/A" string before writing. */
-    record_mov_imm_reloc(exp_start, BEAM_JIT_RELOC_EXPORT,
-                         (uint32_t)Exp.get());
-    uint32_t bif_start = (uint32_t)a.offset();
-#endif
     mov_arg(ARG8, Bif);
-#ifdef CACHE_TOOL_BUILD
-    /* ARG8 holds the BIF C function pointer. Same import index
-     * uniquely identifies which BIF — the loader can derive the
-     * function pointer from the runtime's bif_table. */
-    record_mov_imm_reloc(bif_start, BEAM_JIT_RELOC_BIF,
-                         (uint32_t)Exp.get());
 #endif
     a.adr(ARG3, entry);
 

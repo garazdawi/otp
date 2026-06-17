@@ -560,13 +560,16 @@ protected:
             /* Updates the local copy of the active code index, retaining
              * save_calls if active. */
 #ifdef CACHE_TOOL_BUILD
+            /* Force the full MOVZ+MOVK*3 form so the cache loader has
+             * a 16-byte slot to patch with the live address regardless
+             * of its bit width. */
             uint32_t reloc_start = (uint32_t)a.offset();
-#endif
-            mov_imm(SUPER_TMP, &the_active_code_index);
-#ifdef CACHE_TOOL_BUILD
+            mov_imm_full(SUPER_TMP, &the_active_code_index);
             record_mov_imm_reloc(reloc_start,
                                  BEAM_JIT_RELOC_VM_STATIC,
                                  BEAM_JIT_VM_STATIC_ACTIVE_CODE_INDEX);
+#else
+            mov_imm(SUPER_TMP, &the_active_code_index);
 #endif
             a.ldr(SUPER_TMP.w(), a64::Mem(SUPER_TMP));
             a.cmp(active_code_ix, imm(ERTS_SAVE_CALLS_CODE_IX));
@@ -745,6 +748,31 @@ protected:
         cache_tool_mov_imm_count++;
 #endif
     }
+
+#ifdef CACHE_TOOL_BUILD
+    /* Force-emit MOVZ + MOVK × 3 (16 bytes), unconditionally.
+     *
+     * Use at any site whose 64-bit immediate will be recorded as a
+     * relocation: the cache loader patches by overwriting the same
+     * imm16 fields and re-encoding, so we MUST reserve all 4
+     * instructions up-front. If asmjit's mov_imm picks a shorter
+     * form (because the value happens to fit), the patch slot is
+     * too small to hold any other 64-bit replacement value.
+     *
+     * Cost: at most 12 extra bytes per recorded site, on hot paths
+     * that aren't repeated per-allocation. The cache_tool's whole
+     * point is to trade emit-time efficiency for cross-process
+     * portability of the resulting code. */
+    template<typename T>
+    void mov_imm_full(a64::Gp to, T value) {
+        static_assert(std::is_integral<T>::value || std::is_pointer<T>::value);
+        uint64_t v = (uint64_t)(uintptr_t)value;
+        a.movz(to, imm((uint16_t)(v >>  0)),  0);
+        a.movk(to, imm((uint16_t)(v >> 16)), 16);
+        a.movk(to, imm((uint16_t)(v >> 32)), 32);
+        a.movk(to, imm((uint16_t)(v >> 48)), 48);
+    }
+#endif
 
     void mov_imm(a64::Gp to, std::nullptr_t value) {
         (void)value;
