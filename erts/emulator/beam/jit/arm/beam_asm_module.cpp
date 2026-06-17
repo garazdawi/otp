@@ -453,17 +453,16 @@ void beam_jit_i_emit_nyi(const char *msg) {
 void BeamModuleAssembler::emit_nyi(const char *msg) {
     emit_enter_runtime(0);
 
-#ifdef CACHE_TOOL_BUILD
     /* msg is a static C string in the host binary — its address is
      * process-specific and we have no cache reloc kind for static
-     * strings. Since emit_nyi is "should never run" trap code, the
-     * message content doesn't need to survive caching. Pass NULL —
-     * deterministic, and i_emit_nyi handles it as "NYI: (null)". */
+     * strings. emit_nyi is "should never run" trap code so dropping
+     * the message is fine. Pass NULL — deterministic, and
+     * beam_jit_i_emit_nyi handles it as "NYI: (null)". Doing this
+     * unconditionally keeps the runtime's asmjit output byte-for-byte
+     * compatible with cached code so the cache loader's overlay
+     * works. */
     (void)msg;
     a.mov(ARG1, ZERO);
-#else
-    a.mov(ARG1, imm(msg));
-#endif
     runtime_call<void (*)(const char *), beam_jit_i_emit_nyi>();
 
     /* Never returns */
@@ -636,17 +635,16 @@ void BeamModuleAssembler::emit_int_code_end() {
     for (auto pair : _dispatchTable) {
         bind_veneer_target(pair.second);
 
-#ifdef CACHE_TOOL_BUILD
-        /* The dispatch table bakes a live fptr into a mov-imm sequence.
-         * Force the full 16-byte MOVZ+MOVK*3 form so size is constant,
-         * then record either a FRAGMENT_BRANCH reloc (if the fptr is
-         * one of BGA's named fragments) or a RUNTIME_FN reloc (if it's
-         * a regular C function reachable via dladdr — happens because
-         * the secondary runtime_call/fragment_call helpers stuff non-
-         * BGA function pointers into _dispatchTable too). */
-        const char *frag_name = ga->name_for_fragment_addr((void *)pair.first);
+        /* Always force the 16-byte mov_imm_full form so the cache
+         * loader can patch with any 64-bit replacement (asmjit's
+         * variable encoding would size the slot to this-process's
+         * fptr, breaking the load). The reloc recording stays gated
+         * on CACHE_TOOL_BUILD since only the cache_tool writes .jc. */
         uint32_t reloc_start = (uint32_t)a.offset();
+        (void)reloc_start;
         mov_imm_full(SUPER_TMP, pair.first);
+#ifdef CACHE_TOOL_BUILD
+        const char *frag_name = ga->name_for_fragment_addr((void *)pair.first);
         if (frag_name) {
             uint32_t idx = (uint32_t)fragment_names.size();
             fragment_names.push_back(frag_name);
@@ -665,8 +663,6 @@ void BeamModuleAssembler::emit_int_code_end() {
                                      idx);
             }
         }
-#else
-        a.mov(SUPER_TMP, imm(pair.first));
 #endif
         a.br(SUPER_TMP);
     }

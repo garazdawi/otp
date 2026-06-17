@@ -383,15 +383,18 @@ protected:
 
     template<typename T, T Func>
     void runtime_call() {
-#ifdef CACHE_TOOL_BUILD
-        /* Force the full 16-byte MOVZ+MOVK*3 form so the loader can
-         * patch any 64-bit replacement, then record the call target's
-         * symbol name (via dladdr) so the loader can dlsym it in the
-         * loading process. Without recording, the live function ptr
-         * would be baked into cached code and the load-time process
-         * would jump to a stale address. */
+        /* Force the full 16-byte MOVZ+MOVK*3 form so the cache loader
+         * can patch the slot with any 64-bit replacement. Both
+         * cache_tool and runtime emit this form so the cache's
+         * recorded code matches what the runtime asmjit produces
+         * byte-for-byte (except at reloc-covered sites that get
+         * patched at load). asmjit's plain a.mov(reg, imm) picks the
+         * shortest encoding for the source process's value, which
+         * makes the slot too small to hold any other 64-bit address. */
         uint32_t reloc_start = (uint32_t)a.offset();
+        (void)reloc_start;
         mov_imm_full(TMP1, Func);
+#ifdef CACHE_TOOL_BUILD
         ::Dl_info info;
         if (::dladdr((void *)Func, &info) && info.dli_sname) {
             uint32_t idx = (uint32_t)runtime_fns.size();
@@ -401,8 +404,6 @@ protected:
                                  BEAM_JIT_RELOC_RUNTIME_FN,
                                  idx);
         }
-#else
-        a.mov(TMP1, Func);
 #endif
         a.blr(TMP1);
     }
@@ -792,29 +793,24 @@ protected:
             a.mov(to, follow_size(ZERO, to));
         }
 #ifdef CACHE_TOOL_BUILD
-        /* Sanity counter: every mov_imm call goes through here. Tells
-         * us whether the per-module emit even reaches mov_imm — if it
-         * does, every untagged immediate is a candidate for symbolic
-         * recording. */
         extern unsigned long cache_tool_mov_imm_count;
         cache_tool_mov_imm_count++;
 #endif
     }
 
-#ifdef CACHE_TOOL_BUILD
     /* Force-emit MOVZ + MOVK × 3 (16 bytes), unconditionally.
      *
-     * Use at any site whose 64-bit immediate will be recorded as a
-     * relocation: the cache loader patches by overwriting the same
-     * imm16 fields and re-encoding, so we MUST reserve all 4
+     * Use at any site whose 64-bit immediate will be a cache reloc
+     * patch slot: the cache loader rewrites the same imm16 fields
+     * with the live process's value, so we MUST reserve all 4
      * instructions up-front. If asmjit's mov_imm picks a shorter
-     * form (because the value happens to fit), the patch slot is
-     * too small to hold any other 64-bit replacement value.
+     * form (because the value happens to fit), the slot is too
+     * small to hold any other 64-bit replacement value.
      *
-     * Cost: at most 12 extra bytes per recorded site, on hot paths
-     * that aren't repeated per-allocation. The cache_tool's whole
-     * point is to trade emit-time efficiency for cross-process
-     * portability of the resulting code. */
+     * Both the runtime and cache_tool emit this 16-byte form at
+     * recorded sites — guarantees byte-for-byte size matching so
+     * the cache loader's overlay scheme works. Cost is at most 12
+     * extra bytes per recorded site on cold paths. */
     template<typename T>
     void mov_imm_full(a64::Gp to, T value) {
         static_assert(std::is_integral<T>::value || std::is_pointer<T>::value);
@@ -824,7 +820,6 @@ protected:
         a.movk(to, imm((uint16_t)(v >> 32)), 32);
         a.movk(to, imm((uint16_t)(v >> 48)), 48);
     }
-#endif
 
     void mov_imm(a64::Gp to, std::nullptr_t value) {
         (void)value;
@@ -1584,8 +1579,8 @@ protected:
 #endif
         a.bl(resolve_fragment(reinterpret_cast<void (*)()>(target), disp128MB));
 #ifdef CACHE_TOOL_BUILD
-        const char *name = ga->name_for_fragment(
-            reinterpret_cast<void (*)()>(target));
+        const char *name = ga->name_for_fragment_addr(
+            (void *)reinterpret_cast<void (*)()>(target));
         if (name) record_fragment_branch(bl_off, name);
 #endif
     }

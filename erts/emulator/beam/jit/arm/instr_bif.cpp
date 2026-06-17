@@ -599,26 +599,12 @@ void BeamModuleAssembler::emit_call_light_bif(const ArgWord &Bif,
 
     a.bind(entry);
 
-#ifdef CACHE_TOOL_BUILD
-    /* Skip mov_arg's register caching and emit a direct LDR-from-pool
-     * for both arguments. Going through embed_constant_with_reloc
-     * means the reloc points at the 8-byte pool slot (where the actual
-     * pointer is encoded) instead of the 4-byte LDR (whose offset
-     * encodes a PC-relative jump that's correct as-is). The cache
-     * loader then patches the pool slot with the live VM's address.
-     * Cost is a possible extra load if the same Exp/Bif was already
-     * register-cached — measured separately, the asm-cache-hit
-     * benefit isn't worth the broken portability. */
-    a.ldr(ARG4, embed_constant_with_reloc(Exp, disp32K,
-                                          BEAM_JIT_RELOC_EXPORT,
-                                          (uint32_t)Exp.get()));
-    a.ldr(ARG8, embed_constant_with_reloc(Bif, disp32K,
-                                          BEAM_JIT_RELOC_BIF,
-                                          (uint32_t)Exp.get()));
-#else
+    /* Both runtime and cache_tool use the standard mov_arg path so
+     * the emit bytes (and register-cache decisions) match exactly.
+     * The cache_tool extractor records the resulting pool-slot relocs
+     * via emit_constant's per-ArgVal-type dispatch. */
     mov_arg(ARG4, Exp);
     mov_arg(ARG8, Bif);
-#endif
     a.adr(ARG3, entry);
 
     if (logger.file()) {
@@ -635,21 +621,11 @@ void BeamModuleAssembler::emit_send() {
      * do it in the loader. */
     a.bind(entry);
 
-#ifdef CACHE_TOOL_BUILD
-    /* Defer the reloc until the literal pool flush — the recorded
-     * offset will point at the embedded constant's bytes (where the
-     * loader needs to patch), not at the LDR instruction. */
-    a.ldr(ARG4, embed_constant_with_reloc(BIF_TRAP_EXPORT(BIF_send_2),
-                                          disp32K,
-                                          BEAM_JIT_RELOC_EXPORT,
-                                          0xffff0000u | BIF_send_2));
-    a.ldr(ARG8, embed_constant_with_reloc(send_2, disp32K,
-                                          BEAM_JIT_RELOC_BIF,
-                                          0xffff0000u | BIF_send_2));
-#else
+    /* Same here — uniform embed_constant emit for runtime and
+     * cache_tool. The reloc dispatch in emit_constant records the
+     * RUNTIME_FN entry for send_2 (via dladdr) at pool-flush time. */
     a.ldr(ARG4, embed_constant(BIF_TRAP_EXPORT(BIF_send_2), disp32K));
     a.ldr(ARG8, embed_constant(send_2, disp32K));
-#endif
     a.adr(ARG3, entry);
 
     fragment_call(ga->get_call_light_bif_shared());
@@ -864,19 +840,18 @@ void BeamModuleAssembler::emit_call_bif_mfa(const ArgAtom &M,
             e->info.mfa.module,
             e->info.mfa.function,
             A.get());
-#ifdef CACHE_TOOL_BUILD
-    /* func is bif_table[i].f — process-specific. Force the 16-byte
-     * MOVZ+MOVK*3 form and record a BIF reloc with the BIF table
-     * index so the loader patches with the live entry. */
+    /* func is bif_table[i].f — process-specific. Always force the
+     * 16-byte MOVZ+MOVK*3 form so the cache loader can patch the
+     * slot. Recording is cache_tool-only. */
     {
         uint32_t reloc_start = (uint32_t)a.offset();
+        (void)reloc_start;
         mov_imm_full(ARG4, func);
+#ifdef CACHE_TOOL_BUILD
         record_mov_imm_reloc(reloc_start, BEAM_JIT_RELOC_BIF,
                              0xffff0000u | (uint32_t)e->bif_number);
-    }
-#else
-    a.mov(ARG4, imm(func));
 #endif
+    }
 
     a.b(resolve_fragment(ga->get_call_bif_shared(), disp128MB));
 }
