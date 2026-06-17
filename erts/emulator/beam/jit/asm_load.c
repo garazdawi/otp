@@ -81,6 +81,12 @@ size_t cache_tool_atom_name_bytes(uint32_t atom_eterm_low32,
     return atom->len;
 }
 
+/* Specific-op name lookup for tracing. */
+const char *cache_tool_specific_op_name(int specific_op) {
+    if (specific_op < 0 || specific_op >= num_instructions) return "<invalid>";
+    return opc[specific_op].name;
+}
+
 /* Look up the i'th fragment-name string the assembler recorded
  * alongside its FRAGMENT_BRANCH relocs. Pointers are static-lifetime
  * (BeamGlobalAssembler::labelNames). Returns NULL on out-of-range. */
@@ -840,9 +846,28 @@ int beam_load_emit_op(LoaderState *stp, BeamOp *tmp_op) {
     }
 
     /* Generate assembly code for the specific instruction. */
+#ifdef CACHE_TOOL_BUILD
+    extern size_t beamasm_get_offset(void *instance);
+    extern const char *cache_tool_specific_op_name(int);
+    size_t pre_off = beamasm_get_offset(stp->ba);
+#endif
     if (beamasm_emit(stp->ba, stp->specific_op, tmp_op) == 0) {
         BeamLoadError1(stp, "failed to emit asm for %d", stp->specific_op);
     }
+#ifdef CACHE_TOOL_BUILD
+    {
+        size_t post_off = beamasm_get_offset(stp->ba);
+        const char *want = getenv("CACHE_TOOL_TRACE_OFFSET");
+        if (want) {
+            size_t target = (size_t)atol(want);
+            if (pre_off <= target && target < post_off) {
+                fprintf(stderr, "OP@%zu..%zu: specific_op=%d (%s)\n",
+                        pre_off, post_off, stp->specific_op,
+                        cache_tool_specific_op_name(stp->specific_op));
+            }
+        }
+    }
+#endif
 
     switch (stp->specific_op) {
     case op_func_line_I:

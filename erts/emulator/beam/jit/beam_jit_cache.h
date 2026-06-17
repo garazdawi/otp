@@ -116,6 +116,13 @@ typedef enum {
      * loader writes (loaded_code_base + offset) to the 8-byte slot. */
     BEAM_JIT_RELOC_INTRA_LABEL,
 
+    /* Absolute 8-byte slot holding the address of a byte within the
+     * module's string table (BEAM file's StrT chunk). symbolic_ref is
+     * the byte offset within that table. The loader allocates a fresh
+     * string buffer, copies the table content, patches the slot to
+     * (string_table_base + offset). */
+    BEAM_JIT_RELOC_BYTE_PTR,
+
     BEAM_JIT_RELOC_KIND_COUNT
 } BeamJitRelocKind;
 
@@ -148,6 +155,7 @@ typedef enum {
     BEAM_JIT_VM_STATIC_ACTIVE_CODE_INDEX = 1,
     BEAM_JIT_VM_STATIC_BIF_MFA           = 2,
     BEAM_JIT_VM_STATIC_DBG_FLAGS         = 3,
+    BEAM_JIT_VM_STATIC_ERTS_THIS_NODE    = 4,
     /* … */
 } BeamJitVmStatic;
 

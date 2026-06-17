@@ -699,7 +699,13 @@ void BeamModuleAssembler::emit_swap4(const ArgRegister &R1,
 }
 
 void BeamModuleAssembler::emit_node(const ArgRegister &Dst) {
+#ifdef CACHE_TOOL_BUILD
+    a.ldr(TMP1, embed_constant_with_reloc(&erts_this_node, disp32K,
+                                          BEAM_JIT_RELOC_VM_STATIC,
+                                          BEAM_JIT_VM_STATIC_ERTS_THIS_NODE));
+#else
     a.ldr(TMP1, embed_constant(&erts_this_node, disp32K));
+#endif
     a.ldr(TMP1, a64::Mem(TMP1));
     mov_arg(Dst, a64::Mem(TMP1, offsetof(ErlNode, sysname)));
 }

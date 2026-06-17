@@ -1157,7 +1157,13 @@ void BeamModuleAssembler::emit_bif_node(const ArgLabel &Fail,
     }
 
     a.bind(internal);
+#ifdef CACHE_TOOL_BUILD
+    a.ldr(TMP1, embed_constant_with_reloc(&erts_this_node, disp32K,
+                                          BEAM_JIT_RELOC_VM_STATIC,
+                                          BEAM_JIT_VM_STATIC_ERTS_THIS_NODE));
+#else
     a.ldr(TMP1, embed_constant(&erts_this_node, disp32K));
+#endif
     a.ldr(TMP1, a64::Mem(TMP1));
 
     a.bind(next);

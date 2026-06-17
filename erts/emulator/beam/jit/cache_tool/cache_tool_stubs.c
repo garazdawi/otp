@@ -209,7 +209,9 @@ CacheArch arch_from_string(const char *s) {
 extern void init_atom_table(void);
 extern void beamasm_init(void);
 
+extern int erts_jit_asm_dump;
 int cache_tool_init(const char *target_arch) {
+    if (getenv("CACHE_TOOL_ASM_DUMP")) erts_jit_asm_dump = 1;
     /* Initialise asmjit's CodeHolder template for the target arch.
      * Initialise the loader's static state (atom 0 reserved, etc.).
      * Build the BeamGlobalAssembler fragments for this arch so
@@ -699,7 +701,9 @@ ABORT_STUB(erts_seal_module)
 ABORT_STUB(erts_unseal_module)
 ABORT_STUB(erts_set_fun_code)
 ABORT_STUB(erts_update_ranges)
-ABORT_STUB(erts_jit_asm_dump)
+/* erts_jit_asm_dump: flag controlling asmjit's text dumping. Default
+ * off; the cache_tool exposes it via CACHE_TOOL_ASM_DUMP env var. */
+int erts_jit_asm_dump = 0;
 ABORT_STUB(erts_clear_all_export_break)
 ABORT_STUB(erts_release_code_mod_permission)
 ABORT_STUB(erts_try_seize_code_mod_permission)

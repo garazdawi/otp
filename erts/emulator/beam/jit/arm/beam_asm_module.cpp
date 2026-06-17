@@ -1016,12 +1016,31 @@ void BeamModuleAssembler::emit_constant(const Constant &constant) {
         switch (value.getType()) {
         case ArgVal::Type::BytePtr:
             strings.push_back({anchor, 0, value.as<ArgBytePtr>().get()});
+#ifdef CACHE_TOOL_BUILD
+            /* The 8-byte slot gets patched at codegen with the address
+             * of a byte in the module's StrT chunk (string table). The
+             * cache loader allocates a fresh string table and patches
+             * accordingly. symbolic_ref is the byte offset within the
+             * string table. */
+            record_fixed_reloc((uint32_t)a.offset(),
+                               BEAM_JIT_RELOC_BYTE_PTR, 8,
+                               (uint32_t)value.as<ArgBytePtr>().get());
+#endif
             a.embed_uint64(LLONG_MAX);
             break;
         case ArgVal::Type::Catch: {
             auto handler = rawLabels[value.as<ArgCatch>().get()];
             catches.push_back({{anchor, 0, 0}, handler});
 
+#ifdef CACHE_TOOL_BUILD
+            /* The catch table entry is patched at codegen with an
+             * intra-module handler address truncated to 32 bits. The
+             * BeamLabel number is value.as<ArgCatch>().get(); look it
+             * up via beamasm_label_offset at extract time. */
+            record_fixed_reloc((uint32_t)a.offset(),
+                               BEAM_JIT_RELOC_INTRA_LABEL, 8,
+                               (uint32_t)value.as<ArgCatch>().get());
+#endif
             /* Catches are limited to 32 bits, but since we don't want to load
              * 32-bit argument values due to displacement limits, we'll store
              * this as a 64-bit value with the upper bits cleared. */
@@ -1031,12 +1050,31 @@ void BeamModuleAssembler::emit_constant(const Constant &constant) {
         case ArgVal::Type::Export: {
             auto index = value.as<ArgExport>().get();
             imports[index].patches.push_back({anchor, 0, 0});
+#ifdef CACHE_TOOL_BUILD
+            /* The 8-byte slot gets patched at codegen time with the
+             * live Export* pointer. For the cache, the loader
+             * resolves the import-table index → live Export. */
+            record_fixed_reloc((uint32_t)a.offset(),
+                               BEAM_JIT_RELOC_EXPORT, 8,
+                               (uint32_t)index);
+#endif
             a.embed_uint64(LLONG_MAX);
             break;
         }
         case ArgVal::Type::FunEntry: {
             auto index = value.as<ArgLambda>().get();
             lambdas[index].patches.push_back({anchor, 0, 0});
+#ifdef CACHE_TOOL_BUILD
+            /* Lambda entries are intra-module (the function's
+             * trampoline label address). Resolve to a byte offset via
+             * the trampoline Label stored in lambdas[index].trampoline.
+             * The asmjit label id is what we stash; the extractor's
+             * INTRA_LABEL path will translate via beamasm_label_
+             * offset_by_asmjit_id. */
+            record_fixed_reloc((uint32_t)a.offset(),
+                               BEAM_JIT_RELOC_INTRA_LABEL, 8,
+                               0x80000000u | lambdas[index].trampoline.id());
+#endif
             a.embed_uint64(LLONG_MAX);
             break;
         }
