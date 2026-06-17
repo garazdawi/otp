@@ -110,6 +110,12 @@ typedef enum {
      * (loaded_code_base + code_offset), re-emits the instruction. */
     BEAM_JIT_RELOC_FRAGMENT_BRANCH,
 
+    /* Absolute 8-byte slot holding the address of an intra-module
+     * label (embed_label of a code-internal target). The symbolic_ref
+     * is the label's byte offset within the module's code blob; the
+     * loader writes (loaded_code_base + offset) to the 8-byte slot. */
+    BEAM_JIT_RELOC_INTRA_LABEL,
+
     BEAM_JIT_RELOC_KIND_COUNT
 } BeamJitRelocKind;
 

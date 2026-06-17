@@ -389,6 +389,27 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
                  * serialises the literal blob separately; the loader
                  * uses the index to look up the live Eterm. */
                 continue;
+            case BEAM_JIT_RELOC_INTRA_LABEL: {
+                /* Translate to byte offset within code. The high bit
+                 * tags the encoding:
+                 *   0xxx...: BeamLabel number (loader-assigned)
+                 *   1xxx...: asmjit Label id (used for embed_label
+                 *            sites without a BeamLabel handle). */
+                extern unsigned beamasm_label_offset(void *instance,
+                                                    unsigned label);
+                extern unsigned beamasm_label_offset_by_asmjit_id(
+                    void *instance, unsigned id);
+                extern void *beamasm_get_assembler(void *magic);
+                void *ba = beamasm_get_assembler(magic);
+                if (r->symbolic_ref & 0x80000000u) {
+                    r->symbolic_ref = beamasm_label_offset_by_asmjit_id(
+                        ba, r->symbolic_ref & 0x7fffffffu);
+                } else {
+                    r->symbolic_ref = beamasm_label_offset(ba,
+                        r->symbolic_ref);
+                }
+                continue;
+            }
             default:
                 continue;
             }

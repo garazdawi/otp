@@ -90,11 +90,29 @@ const char *cache_tool_fragment_name_at(Binary *magic, uint32_t idx) {
     return stp->ba ? beamasm_get_fragment_name(stp->ba, idx) : NULL;
 }
 
-/* Look up a literal's live Eterm by its per-module index. Used by the
- * validator's host hook to patch RELOC_LITERAL entries. */
-uintptr_t cache_tool_literal_eterm_at(Binary *magic, uint32_t idx) {
+/* Expose the BeamAssembler for label-offset lookups. */
+void *beamasm_get_assembler(Binary *magic) {
     LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
-    if (idx >= (uint32_t)stp->beam.static_literals.count) return 0;
+    return stp->ba;
+}
+
+/* Look up a literal's live Eterm by its per-module index. Used by the
+ * validator's host hook to patch RELOC_LITERAL entries.
+ *
+ * The runtime uses two encodings:
+ *   - idx >= 0: static literal, indexed into beam.static_literals
+ *   - idx <  0: dynamic literal, real index is ~idx into
+ *               beam.dynamic_literals (matches beamfile_get_literal
+ *               semantics in beam_load.c). */
+uintptr_t cache_tool_literal_eterm_at(Binary *magic, uint32_t idx_u) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    Sint32 idx = (Sint32)idx_u;
+    if (idx < 0) {
+        Sint32 di = ~idx;
+        if (di < 0 || di >= stp->beam.dynamic_literals.count) return 0;
+        return (uintptr_t)stp->beam.dynamic_literals.entries[di].value;
+    }
+    if (idx >= stp->beam.static_literals.count) return 0;
     return (uintptr_t)stp->beam.static_literals.entries[idx].value;
 }
 

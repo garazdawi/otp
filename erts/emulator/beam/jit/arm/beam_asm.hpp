@@ -1030,7 +1030,12 @@ class BeamModuleAssembler : public BeamAssembler,
 
     /* Maps code pointers to thunks that jump to them, letting us treat global
      * fragments as if they were local. */
-    std::unordered_map<void (*)(), Label> _dispatchTable;
+    /* Ordered (std::map) so the iteration in emit_int_code_end emits
+     * dispatch-table entries in a deterministic sequence. With an
+     * unordered_map, bucket-order iteration depends on rehash-time
+     * insertion choices, producing slightly different code bytes
+     * between same-input compiles. */
+    std::map<void (*)(), Label> _dispatchTable;
 
     RegisterCache<16, a64::Mem, a64::Gp> reg_cache =
             RegisterCache<16, a64::Mem, a64::Gp>(scheduler_registers, E, {});

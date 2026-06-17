@@ -301,6 +301,12 @@ int beam_jit_cache_load_module(BeamJitCache *c,
             resolved = (value != 0);
             break;
         }
+        case BEAM_JIT_RELOC_INTRA_LABEL:
+            /* symbolic_ref holds the byte offset within the code blob.
+             * Patch the 8-byte slot with the absolute loaded address. */
+            value = (uintptr_t)code + r->symbolic_ref;
+            resolved = 1;
+            break;
         case BEAM_JIT_RELOC_FRAGMENT_BRANCH: {
             if (r->symbolic_ref >= m.mfa_count) {
                 fprintf(stderr, "  FRAG: symref %u >= mfa_count %zu\n",

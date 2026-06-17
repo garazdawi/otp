@@ -507,6 +507,11 @@ void BeamModuleAssembler::emit_i_jump_on_val(const ArgSource &Src,
     if (embedInText) {
         for (const ArgVal &arg : args) {
             ASSERT(arg.getType() == ArgVal::Type::Label);
+#ifdef CACHE_TOOL_BUILD
+            record_fixed_reloc((uint32_t)a.offset(),
+                               BEAM_JIT_RELOC_INTRA_LABEL, 8,
+                               (uint32_t)arg.as<ArgLabel>().get());
+#endif
             a.embed_label(rawLabels[arg.as<ArgLabel>().get()]);
         }
     }

@@ -687,10 +687,18 @@ extern "C"
         return bga->addr_for_fragment_name(name);
     }
 
-    /* Per-module label offset within the assembled code blob. */
+    /* Per-module label offset within the assembled code blob, looked
+     * up via the BeamLabel number. */
     unsigned beamasm_label_offset(void *instance, unsigned label) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
         return (unsigned)ba->labelOffset(ba->rawLabels.at(label));
+    }
+
+    /* Same, but looked up by asmjit Label id (used for embed_label sites
+     * that don't have a BeamLabel number on hand). */
+    unsigned beamasm_label_offset_by_asmjit_id(void *instance, unsigned id) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return (unsigned)ba->labelOffset(Label(id));
     }
 
     /* Per-module function label by index — returns the label number

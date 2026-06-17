@@ -129,6 +129,14 @@ void BeamModuleAssembler::embed_vararg_rodata(const Span<const ArgVal> &args,
             Label patch = a.new_label();
 
             a.bind(patch);
+#ifdef CACHE_TOOL_BUILD
+            /* Inline rodata also bakes literal pointers. Record so
+             * the loader rewrites them at cache-load time. Negative
+             * indices are dynamic literals (~i encoding). */
+            record_fixed_reloc((uint32_t)a.offset(),
+                               BEAM_JIT_RELOC_LITERAL, 8,
+                               (uint32_t)arg.as<ArgLiteral>().get());
+#endif
             a.embed_uint64(LLONG_MAX);
             patches.push_back({patch, 0});
             break;
@@ -140,6 +148,11 @@ void BeamModuleAssembler::embed_vararg_rodata(const Span<const ArgVal> &args,
             a.embed_uint64(make_loader_y_reg(arg.as<ArgYRegister>().get()));
             break;
         case ArgVal::Type::Label:
+#ifdef CACHE_TOOL_BUILD
+            record_fixed_reloc((uint32_t)a.offset(),
+                               BEAM_JIT_RELOC_INTRA_LABEL, 8,
+                               (uint32_t)arg.as<ArgLabel>().get());
+#endif
             a.embed_label(rawLabels[arg.as<ArgLabel>().get()]);
             break;
         case ArgVal::Type::Immediate:
@@ -905,6 +918,14 @@ void BeamModuleAssembler::flush_pending_labels() {
         const EmbeddedLabel &embedded_label = _pending_labels.top();
 
         a.bind(embedded_label.anchor);
+#ifdef CACHE_TOOL_BUILD
+        /* The 8-byte slot will hold an absolute intra-module address
+         * once codegen patches the embed_label. Stash the asmjit Label
+         * id; the extractor resolves it to a byte offset post-emit. */
+        record_fixed_reloc((uint32_t)a.offset(),
+                           BEAM_JIT_RELOC_INTRA_LABEL, 8,
+                           0x80000000u | embedded_label.label.id());
+#endif
         a.embed_label(embedded_label.label, 8);
 
         _pending_labels.pop();
@@ -941,6 +962,11 @@ void BeamModuleAssembler::emit_veneer(const Veneer &veneer) {
 
         a.align(AlignMode::kCode, 8);
         a.bind(pointer);
+#ifdef CACHE_TOOL_BUILD
+        record_fixed_reloc((uint32_t)a.offset(),
+                           BEAM_JIT_RELOC_INTRA_LABEL, 8,
+                           0x80000000u | veneer.target.id());
+#endif
         a.embed_label(veneer.target);
     }
 }
@@ -974,6 +1000,17 @@ void BeamModuleAssembler::emit_constant(const Constant &constant) {
     } else if (value.isWord()) {
         a.embed_uint64(value.as<ArgWord>().get());
     } else if (value.isLabel()) {
+#ifdef CACHE_TOOL_BUILD
+        /* The 8-byte slot holds an absolute intra-module address,
+         * resolved at code-bind time. The cache loader writes
+         * (loaded_code_base + sym_ref) where sym_ref is the
+         * target label's byte offset within the code blob, looked
+         * up at extract time. We stash the BeamLabel number for
+         * now; the extractor translates it. */
+        record_fixed_reloc((uint32_t)a.offset(),
+                           BEAM_JIT_RELOC_INTRA_LABEL, 8,
+                           (uint32_t)value.as<ArgLabel>().get());
+#endif
         a.embed_label(rawLabels.at(value.as<ArgLabel>().get()));
     } else {
         switch (value.getType()) {
@@ -1009,14 +1046,12 @@ void BeamModuleAssembler::emit_constant(const Constant &constant) {
 #ifdef CACHE_TOOL_BUILD
             /* Record where the literal pointer lands so the cache
              * loader can rewrite it to the live VM's literal Eterm.
-             * Some ArgLiterals carry sentinel negative indices for
-             * special "kinds" — exclude those, the loader's literal
-             * table has nothing to look up. */
-            if (index >= 0 && index < (Sint)literals.size()) {
-                record_fixed_reloc((uint32_t)a.offset(),
-                                   BEAM_JIT_RELOC_LITERAL, 8,
-                                   (uint32_t)index);
-            }
+             * The index can be negative — that's the ~i encoding the
+             * loader uses for dynamic literals. cache_tool_literal_
+             * eterm_at handles both encodings. */
+            record_fixed_reloc((uint32_t)a.offset(),
+                               BEAM_JIT_RELOC_LITERAL, 8,
+                               (uint32_t)index);
 #endif
             a.embed_uint64(LLONG_MAX);
             break;

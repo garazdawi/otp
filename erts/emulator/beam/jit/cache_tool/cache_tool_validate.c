@@ -290,6 +290,62 @@ int cache_tool_validate(const char *jc_path, const char *module_name,
         }
     }
 
+    /* Determinism test: re-compile a second time in the same process,
+     * then categorise the diffing bytes. Anything outside the header
+     * + reloc-covered ranges is unrecorded non-determinism. */
+    BeamInput in2;
+    if (cache_tool_read_beam(beam_path, &in2) == 0) {
+        CompiledModule cm2 = {0};
+        if (cache_tool_compile_module(&in2, &cm2) == 0) {
+            size_t det_diff = 0, in_header = 0, in_reloc = 0, unexplained = 0;
+            size_t cmp2 = cm.code_size < cm2.code_size
+                          ? cm.code_size : cm2.code_size;
+            for (size_t i = 0; i < cmp2; i++) {
+                if (cm.code[i] == cm2.code[i]) continue;
+                det_diff++;
+                if (i < header_size) { in_header++; continue; }
+                /* Is this byte covered by any reloc? */
+                int covered = 0;
+                for (size_t r = 0; r < cm.reloc_count; r++) {
+                    if (i >= cm.relocs[r].code_offset
+                        && i < cm.relocs[r].code_offset
+                                + cm.relocs[r].imm_width) {
+                        covered = 1;
+                        break;
+                    }
+                }
+                if (covered) {
+                    in_reloc++;
+                } else {
+                    if (unexplained < 3) {
+                        /* Show 16-byte context aligned to instruction
+                         * boundary, in cm and cm2. */
+                        size_t blk = i & ~(size_t)15;
+                        fprintf(stderr, "  unexpl@%zu blk@%zu\n", i, blk);
+                        fprintf(stderr, "    cm :");
+                        for (int k = 0; k < 16 && blk + k < cmp2; k++) {
+                            fprintf(stderr, " %02x", cm.code[blk + k]);
+                            if (k % 4 == 3) fprintf(stderr, " |");
+                        }
+                        fprintf(stderr, "\n    cm2:");
+                        for (int k = 0; k < 16 && blk + k < cmp2; k++) {
+                            fprintf(stderr, " %02x", cm2.code[blk + k]);
+                            if (k % 4 == 3) fprintf(stderr, " |");
+                        }
+                        fprintf(stderr, "\n");
+                    }
+                    unexplained++;
+                }
+            }
+            fprintf(stderr,
+                    "determinism: same-process re-compile diffs — total=%zu "
+                    "(header=%zu, reloc-covered=%zu, unexplained=%zu)\n",
+                    det_diff, in_header, in_reloc, unexplained);
+            cache_tool_free_compiled(&cm2);
+        }
+        cache_tool_free_input(&in2);
+    }
+
     cache_tool_free_compiled(&cm);
     cache_tool_free_input(&in);
     free(code);
