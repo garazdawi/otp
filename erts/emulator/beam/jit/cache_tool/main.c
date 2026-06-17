@@ -181,8 +181,14 @@ int main(int argc, char **argv) {
 
         if (opts.verbose) {
             fprintf(stderr,
-                    "  %-40s %6zu bytes code, %4zu relocs, %4zu atoms\n",
-                    beam_path, cm.code_size, cm.reloc_count, cm.atom_count);
+                    "  %-40s %6zu bytes code, %4zu relocs, %4zu atoms, "
+                    "%3zu funcs\n",
+                    beam_path, cm.code_size, cm.reloc_count, cm.atom_count,
+                    cm.func_count);
+            for (size_t fi = 0; fi < cm.func_count && fi < 16; fi++) {
+                fprintf(stderr, "    func[%zu] off=%u arity=%u\n",
+                        fi, cm.funcs[fi].code_offset, cm.funcs[fi].arity);
+            }
         }
 
         /* Serialise: code blob + reloc lists + literal pool +

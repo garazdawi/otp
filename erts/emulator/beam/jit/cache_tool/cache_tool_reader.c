@@ -267,6 +267,29 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
     memcpy(out->code, code_blob, code_blob_size);
     out->code_size = code_blob_size;
 
+    /* Populate the per-function table. */
+    extern unsigned cache_tool_function_count(void *magic);
+    extern int cache_tool_function_at(void *magic, unsigned i,
+                                      unsigned *code_offset,
+                                      unsigned *arity,
+                                      char *name_buf, size_t buf_sz);
+    unsigned fc = cache_tool_function_count(magic);
+    if (fc > 0) {
+        out->func_count = fc;
+        out->funcs = calloc(fc, sizeof(*out->funcs));
+        char nbuf[256];
+        for (unsigned i = 0; i < fc; i++) {
+            unsigned off = 0, ar = 0;
+            cache_tool_function_at(magic, i, &off, &ar, nbuf, sizeof(nbuf));
+            out->funcs[i].code_offset = off;
+            out->funcs[i].arity = ar;
+            /* name_str_idx 0 — the writer interns each function name
+             * separately and would assign the real index. For our
+             * round-trip we don't read these back yet. */
+            out->funcs[i].name_str_idx = 0;
+        }
+    }
+
     /* Copy the reloc list into out->relocs and translate each entry's
      * symbolic_ref from a (BIF-table-local) value to an index in a
      * per-module string table.

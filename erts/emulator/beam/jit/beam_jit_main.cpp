@@ -686,6 +686,20 @@ extern "C"
         if (!bga) return nullptr;
         return bga->addr_for_fragment_name(name);
     }
+
+    /* Per-module label offset within the assembled code blob. */
+    unsigned beamasm_label_offset(void *instance, unsigned label) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return (unsigned)ba->labelOffset(ba->rawLabels.at(label));
+    }
+
+    /* Per-module function label by index — returns the label number
+     * assigned to function i's ErtsCodeInfo (set in emit_i_func_info). */
+    unsigned beamasm_function_label(void *instance, unsigned i) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        if (i >= ba->functions.size()) return 0;
+        return ba->functions[i];
+    }
 #endif
 
     void beamasm_patch_import(void *instance,

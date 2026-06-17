@@ -398,6 +398,14 @@ int beam_jit_cache_load_module(BeamJitCache *c,
                     "%zu unresolved, %zu width-deferred\n",
             module_name, m.reloc_count, patched,
             skipped_unresolved, skipped_width);
+    /* For debugging: dump first 30 reloc records sorted by offset. */
+    if (1) {
+        for (size_t ii = 0; ii < m.reloc_count && ii < 30; ii++) {
+            fprintf(stderr, "    reloc[%zu] off=%u kind=%u w=%u ref=%u\n",
+                    ii, m.relocs[ii].code_offset, m.relocs[ii].kind,
+                    m.relocs[ii].imm_width, m.relocs[ii].symbolic_ref);
+        }
+    }
 
     *out_code = code;
     *out_size = m.code_size;

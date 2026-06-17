@@ -182,8 +182,13 @@ public:
     const std::vector<const char *> &getFragmentNames() const {
         return fragment_names;
     }
+    /* Read-only label → byte-offset lookup, for cache_tool extraction. */
+    size_t labelOffset(const Label &lbl) const {
+        return code.label_offset_from_base(lbl);
+    }
 #endif
 };
+
 
 struct BeamModuleAssemblerCommon {
     typedef unsigned BeamLabel;

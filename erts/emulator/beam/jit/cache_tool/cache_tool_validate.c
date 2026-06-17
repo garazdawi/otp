@@ -214,10 +214,20 @@ int cache_tool_validate(const char *jc_path, const char *module_name,
         return 4;
     }
 
+    /* Skip the BeamCodeHeader region — its contents (literal_area,
+     * line_table, functions[], on_load, md5_ptr, are_nifs, coverage)
+     * are process-specific pointers reconstructed by the loader,
+     * not relocations on the asmjit-emitted code. */
+    extern unsigned cache_tool_code_header_size(void *magic);
+    size_t header_size = cache_tool_code_header_size(cm.loader_magic);
+    /* Round up to 8-byte alignment to match the kCode/kData boundary
+     * that follows the embed_zeros. */
+    header_size = (header_size + 7) & ~(size_t)7;
+
     size_t cmp_size = code_size < cm.code_size ? code_size : cm.code_size;
     size_t diff_bytes = 0;
     size_t first_diff = (size_t)-1;
-    for (size_t i = 0; i < cmp_size; i++) {
+    for (size_t i = header_size; i < cmp_size; i++) {
         if (((uint8_t *)code)[i] != cm.code[i]) {
             if (first_diff == (size_t)-1) first_diff = i;
             diff_bytes++;
@@ -225,29 +235,58 @@ int cache_tool_validate(const char *jc_path, const char *module_name,
     }
 
     fprintf(stderr,
-            "validate: %s — %zu byte cache code, %zu byte fresh code, "
-            "%zu mismatched bytes",
-            module_name, code_size, cm.code_size, diff_bytes);
+            "validate: %s — %zu byte cache code, %zu byte fresh code "
+            "(skipped %zu-byte header), %zu mismatched bytes",
+            module_name, code_size, cm.code_size, header_size, diff_bytes);
     if (first_diff != (size_t)-1) {
         fprintf(stderr, " (first diff at offset %zu)", first_diff);
     }
     fprintf(stderr, "\n");
 
     if (verbose) {
-        if (first_diff != (size_t)-1) {
-            fprintf(stderr, "  cache@%zu: ", first_diff);
-            for (size_t i = first_diff;
-                 i < first_diff + 16 && i < cmp_size; i++) {
-                fprintf(stderr, "%02x ", ((uint8_t *)code)[i]);
-            }
-            fprintf(stderr, "\n  fresh@%zu: ", first_diff);
-            for (size_t i = first_diff;
-                 i < first_diff + 16 && i < cmp_size; i++) {
-                fprintf(stderr, "%02x ", cm.code[i]);
-            }
+        /* Hex-dump first 96 bytes side-by-side to spot constant-pool entries */
+        fprintf(stderr, "  --- first 96 bytes ---\n");
+        for (size_t k = 0; k < 96 && k < cmp_size; k += 16) {
+            fprintf(stderr, "  off=%-4zu cache:", k);
+            for (size_t j = 0; j < 16 && k + j < cmp_size; j++)
+                fprintf(stderr, " %02x", ((uint8_t *)code)[k + j]);
+            fprintf(stderr, "\n           fresh:");
+            for (size_t j = 0; j < 16 && k + j < cmp_size; j++)
+                fprintf(stderr, " %02x", cm.code[k + j]);
             fprintf(stderr, "\n");
-        } else {
+        }
+        if (first_diff == (size_t)-1) {
             fprintf(stderr, "  byte-identical.\n");
+        } else {
+            /* Walk every diff region, snapping each to 4-byte instruction
+             * boundaries so aarch64 BL/MOVZ instructions show as full
+             * 32-bit words. Skip the BeamCodeHeader area. */
+            size_t i = header_size;
+            int region = 0;
+            while (i < cmp_size) {
+                while (i < cmp_size
+                       && ((uint8_t *)code)[i] == cm.code[i]) i++;
+                if (i >= cmp_size) break;
+                /* Snap start back to instruction boundary. */
+                size_t start = i & ~(size_t)3;
+                /* Extend end past the last differing byte, rounded up. */
+                size_t end = i;
+                while (end < cmp_size
+                       && ((uint8_t *)code)[end] != cm.code[end]) end++;
+                end = (end + 3) & ~(size_t)3;
+                if (end > cmp_size) end = cmp_size;
+                fprintf(stderr, "  diff#%-2d off=%-5zu len=%-3zu  cache:",
+                        region++, start, end - start);
+                for (size_t k = start; k < end && k - start < 32; k++) {
+                    fprintf(stderr, " %02x", ((uint8_t *)code)[k]);
+                }
+                fprintf(stderr, "  fresh:");
+                for (size_t k = start; k < end && k - start < 32; k++) {
+                    fprintf(stderr, " %02x", cm.code[k]);
+                }
+                fprintf(stderr, "\n");
+                i = end;
+            }
         }
     }
 

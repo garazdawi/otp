@@ -103,6 +103,77 @@ int cache_tool_literal_count(Binary *magic) {
     return stp->beam.static_literals.count;
 }
 
+/* Compute the byte size of the BeamCodeHeader region at the start
+ * of the executable code blob. This region is filled in by codegen
+ * (memcpy from LoaderState + functions[] pointers + on_load); it
+ * does NOT come out of asmjit's emit, so the cache loader will
+ * reconstruct it fresh rather than carrying its process-specific
+ * pointers through. */
+unsigned cache_tool_code_header_size(Binary *magic) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    return (unsigned)(sizeof(BeamCodeHeader)
+                      + sizeof(ErtsCodeInfo *)
+                      * stp->beam.code.function_count);
+}
+
+/* Per-function metadata: offset within the code blob, MFA, on_load
+ * flag. The runtime loader uses these to populate the reconstructed
+ * BeamCodeHeader's functions[] array. */
+unsigned cache_tool_function_count(Binary *magic) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    return (unsigned)stp->beam.code.function_count;
+}
+
+int cache_tool_function_at(Binary *magic, unsigned i,
+                           unsigned *code_offset, unsigned *arity,
+                           char *name_buf, size_t buf_sz) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    if (i >= (unsigned)stp->beam.code.function_count) return -1;
+
+    /* The runtime loader, in BeamModuleAssembler::codegen, walks
+     *   for each i: ci = getCode(functions[i]); functions[i] = ci;
+     * The `functions[i]` array on the assembler is populated in
+     * BeamModuleAssembler::emit_i_func_info via
+     *   functions.push_back(Label.get());
+     * — i.e. the *label numbers* for each function's start. The
+     * label's offset is the function's offset within the code blob. */
+    extern unsigned beamasm_label_offset(void *instance, unsigned label);
+    extern unsigned beamasm_function_label(void *instance, unsigned i);
+    unsigned func_label = beamasm_function_label(stp->ba, i);
+    *code_offset = beamasm_label_offset(stp->ba, func_label);
+
+    /* MFA: scan exports + locals for a label match. */
+    *arity = 0;
+    if (name_buf && buf_sz > 0) name_buf[0] = 0;
+    for (Sint32 e = 0; e < stp->beam.exports.count; e++) {
+        if (stp->beam.exports.entries[e].label == (Sint32)func_label) {
+            *arity = stp->beam.exports.entries[e].arity;
+            if (name_buf && buf_sz > 0) {
+                Atom *a = atom_tab(atom_val(
+                    stp->beam.exports.entries[e].function));
+                size_t n = a->len < buf_sz - 1 ? a->len : buf_sz - 1;
+                memcpy(name_buf, erts_atom_get_name(a), n);
+                name_buf[n] = 0;
+            }
+            return 0;
+        }
+    }
+    for (Sint32 e = 0; e < stp->beam.locals.count; e++) {
+        if (stp->beam.locals.entries[e].label == (Sint32)func_label) {
+            *arity = stp->beam.locals.entries[e].arity;
+            if (name_buf && buf_sz > 0) {
+                Atom *a = atom_tab(atom_val(
+                    stp->beam.locals.entries[e].function));
+                size_t n = a->len < buf_sz - 1 ? a->len : buf_sz - 1;
+                memcpy(name_buf, erts_atom_get_name(a), n);
+                name_buf[n] = 0;
+            }
+            return 0;
+        }
+    }
+    return 0;
+}
+
 /* Look up the {module, function, arity} of an import-table entry by
  * its index in the BeamFile parsed during load. The MFA atoms are
  * resolved to strings via atom_tab; arity is a small unsigned int.
