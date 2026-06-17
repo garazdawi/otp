@@ -1118,6 +1118,8 @@ JIT_OBJS = \
     $(OBJDIR)/beam_asm_global.o \
     $(OBJDIR)/beam_asm_module.o \
     $(OBJDIR)/beam_jit_bs.o \
+    $(OBJDIR)/beam_jit_cache.o \
+    $(OBJDIR)/beam_jit_cache_load.o \
     $(OBJDIR)/beam_jit_common.o \
     $(OBJDIR)/beam_jit_main.o \
     $(OBJDIR)/beam_jit_metadata.o \

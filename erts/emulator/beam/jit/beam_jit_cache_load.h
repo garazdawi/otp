@@ -77,6 +77,10 @@ typedef struct {
 } BeamJitCacheHostHooks;
 
 BeamJitCache *beam_jit_cache_open(const char *path);
+/* Open a cache that's already in memory (e.g. from a preloaded
+ * static array). The caller's bytes must outlive the BeamJitCache.
+ * No mmap / no unmap on close. */
+BeamJitCache *beam_jit_cache_open_mem(const uint8_t *data, size_t size);
 void          beam_jit_cache_close(BeamJitCache *c);
 
 /* Locate one module by name. Returns 0 on success; populates *out

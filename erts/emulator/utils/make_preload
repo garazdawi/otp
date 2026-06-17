@@ -43,6 +43,7 @@ my $gen_rc = 0;
 my $gen_old = 0;
 my $windres = 0;
 my $file;
+my $jc_dir = '';   # if set, look for sidecar <jc_dir>/<module>.jc per input
 
 my $progname = basename($0);
 
@@ -54,6 +55,8 @@ while (@ARGV && $ARGV[0] =~ /^-(\w+)/) {
 	$windres = 1;
     } elsif ($opt eq '-old') {
 	$gen_old = 1;
+    } elsif ($opt eq '-jc-dir') {
+	$jc_dir = shift;
     } else {
 	usage("bad option: $opt");
     }
@@ -87,13 +90,37 @@ foreach $file (@ARGV) {
 	$_ = beam_strip($_, $file);
 	close(FILE);
 	
-	# IDEAS/07 #1 — extend each entry with a JIT cache slot.
-	# Today these are NULL/0; populated by a future build-time
-	# step that runs the JIT on each preloaded module and serialises
-	# the result (code blob + reloc list) into preloaded_jc_<mod>.
+	# Look for a sidecar JIT cache file: <jc_dir>/<module>.jc.
+	# If present, embed its bytes as `preloaded_jc_<module>[]`
+	# and reference it from the pre_loaded[] entry. The cache is
+	# produced by the build-time `beam_jit_compile` tool.
+	my $jc_size = 0;
+	my $jc_ref  = '0';
+	if ($jc_dir ne '') {
+	    my $jc_path = "$jc_dir/$module.jc";
+	    if (-f $jc_path) {
+		open(JC, $jc_path) or error("failed to read $jc_path: $!");
+		binmode(JC);
+		my $jc_bytes = <JC>;
+		close(JC);
+		$jc_size = length($jc_bytes);
+		$jc_ref  = "preloaded_jc_$module";
+		print "const unsigned preloaded_jc_size_$module = ",
+		      $jc_size, ";\n";
+		print "const unsigned char preloaded_jc_$module", "[] = {\n";
+		for (my $j = 0; $j < $jc_size; $j++) {
+		    if ($j % 16 == 0 && $j > 0) { print "\n  "; }
+		    elsif ($j == 0) { print "  "; }
+		    printf("0x%02x,", ord(substr($jc_bytes, $j, 1)));
+		}
+		print "\n};\n";
+	    }
+	}
+
 	push(@modules, "  {\"$module\", " . length($_)
 	                . ", preloaded_$module"
-	                . ", 0, 0 /* jit_cache_size, jit_cache */"
+	                . ", $jc_size, $jc_ref"
+	                . " /* jit_cache_size, jit_cache */"
 	                . "},\n");
 	print "const unsigned preloaded_size_$module = ", length($_), ";\n";
 	print "const unsigned char preloaded_$module", "[] = {\n";

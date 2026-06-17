@@ -81,6 +81,9 @@ static uint32_t read_u32(const uint8_t *p) {
 struct BeamJitCache_ {
     const uint8_t *data;
     size_t         size;
+    int            owns_data;   /* 1 if data was mmap'd here, 0 if borrowed
+                                 * (caller owns the bytes — used for the
+                                 * preloaded-from-memory open). */
 
     uint32_t       module_count;
     uint32_t       strtab_off;
@@ -117,9 +120,30 @@ BeamJitCache *beam_jit_cache_open(const char *path) {
     BeamJitCache *c = calloc(1, sizeof(*c));
     if (!c) return NULL;
     if (file_mmap(path, &c->data, &c->size) != 0) { free(c); return NULL; }
+    c->owns_data = 1;
     if (c->size < CACHE_HDR_SIZE
         || memcmp(c->data, CACHE_MAGIC, 4) != 0) {
         file_unmap(c->data, c->size); free(c);
+        return NULL;
+    }
+    c->module_count = read_u32(c->data + CACHE_MODCOUNT_OFF);
+    c->strtab_off   = read_u32(c->data + CACHE_STRTAB_OFF_OFF);
+    if (parse_strtab(c) != 0) {
+        beam_jit_cache_close(c);
+        return NULL;
+    }
+    return c;
+}
+
+BeamJitCache *beam_jit_cache_open_mem(const uint8_t *data, size_t size) {
+    BeamJitCache *c = calloc(1, sizeof(*c));
+    if (!c) return NULL;
+    c->data = data;
+    c->size = size;
+    c->owns_data = 0;
+    if (c->size < CACHE_HDR_SIZE
+        || memcmp(c->data, CACHE_MAGIC, 4) != 0) {
+        free(c);
         return NULL;
     }
     c->module_count = read_u32(c->data + CACHE_MODCOUNT_OFF);
@@ -139,7 +163,7 @@ void beam_jit_cache_close(BeamJitCache *c) {
         }
         free(c->strtab);
     }
-    file_unmap(c->data, c->size);
+    if (c->owns_data) file_unmap(c->data, c->size);
     free(c);
 }
 

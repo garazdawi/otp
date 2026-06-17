@@ -555,10 +555,19 @@ load_preloaded(void)
          * regular loader. When the build-time step is implemented,
          * this hook is where the cached-load path plugs in. */
         if (preload_p[i].jit_cache != NULL) {
-            /* TODO: erts_preload_module_from_cache(...) */
-            /* falls through to regular loader for now */
+            res = erts_preload_module_from_cache(NULL, 0, NIL, &module_name,
+                                                 code, length,
+                                                 preload_p[i].jit_cache,
+                                                 preload_p[i].jit_cache_size);
+            if (res == NIL) {
+                /* Cache load succeeded — module is fully installed. */
+                goto loaded;
+            }
+            /* Non-NIL means: cache rejected or not yet implemented.
+             * Fall through to the regular loader. */
         }
 	res = erts_preload_module(NULL, 0, NIL, &module_name, code, length);
+    loaded:;
 	sys_preload_end(&preload_p[i]);
 	if (res != NIL)
 	    erts_exit(ERTS_ERROR_EXIT,"Failed loading preloaded module %s (%T)\n",

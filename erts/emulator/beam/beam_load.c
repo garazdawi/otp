@@ -44,6 +44,7 @@
 #include "erl_process_dict.h"
 #include "erl_unicode.h"
 #include "beam_file.h"
+#include "jit/beam_jit_cache_load.h"
 
 Uint erts_total_code_size;
 
@@ -93,6 +94,58 @@ Binary *erts_alloc_loader_state(void) {
     beamopallocator_init(&stp->op_allocator);
 
     return magic;
+}
+
+/* Cache-load entry point. Stage 1 (this commit) just confirms the
+ * dispatch wiring: open the cache, find the module, log success,
+ * then return a non-NIL atom so the caller falls through to the
+ * regular erts_preload_module path. Stage 2 will allocate JIT
+ * memory, copy the code blob, run the reloc patcher against live
+ * VM tables, and reconstruct the BeamCodeHeader. */
+Eterm
+erts_preload_module_from_cache(Process *c_p,
+                               ErtsProcLocks c_p_locks,
+                               Eterm group_leader,
+                               Eterm *modp,
+                               const byte *code,
+                               Uint code_size,
+                               const byte *jit_cache,
+                               Uint jit_cache_size)
+{
+    (void)c_p; (void)c_p_locks; (void)group_leader; (void)code;
+    (void)code_size;
+
+    BeamJitCache *c = beam_jit_cache_open_mem((const uint8_t *)jit_cache,
+                                              (size_t)jit_cache_size);
+    if (!c) return am_badfile;
+
+    /* Build a NUL-terminated copy of the module's atom name. */
+    Atom *a = atom_tab(atom_val(*modp));
+    int alen = a->len;
+    char mod_name[256];
+    if (alen >= (int)sizeof(mod_name)) {
+        beam_jit_cache_close(c);
+        return am_badfile;
+    }
+    sys_memcpy(mod_name, erts_atom_get_name(a), alen);
+    mod_name[alen] = 0;
+
+    BeamJitCacheModule m;
+    if (beam_jit_cache_find_module(c, mod_name, &m) != 0) {
+        beam_jit_cache_close(c);
+        return am_badfile;
+    }
+
+    if (getenv("ERL_CACHE_TRACE")) {
+        fprintf(stderr,
+                "preload-cache: hit %s (%zu code bytes, %zu relocs)\n",
+                mod_name, (size_t)m.code_size, (size_t)m.reloc_count);
+    }
+
+    beam_jit_cache_close(c);
+    /* Stage 1: signal "not yet wired" so the caller falls back to
+     * the regular loader. Stage 2 will return NIL on full success. */
+    return am_badfile;
 }
 
 Eterm

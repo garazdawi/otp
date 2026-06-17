@@ -216,6 +216,35 @@ public:
 
     enum erts_is_line_breakpoint is_line_breakpoint_trampoline(ErtsCodePtr);
 
+#ifdef CACHE_TOOL_BUILD
+    /* Forward lookup: labelName string → live fragment fptr. Used by
+     * the cache_tool's load-side host hook to resolve FRAGMENT_BRANCH
+     * relocs. */
+    void *addr_for_fragment_name(const char *name) const {
+        for (const auto &kv : labelNames) {
+            if (kv.second == name) {
+                auto pit = ptrs.find(kv.first);
+                if (pit != ptrs.end()) return (void *)pit->second;
+            }
+        }
+        return nullptr;
+    }
+
+    /* Reverse lookup: live fragment fptr → labelName.c_str().
+     * Used by the cache_tool's writer when an instruction (e.g. the
+     * dispatch table entry) bakes a fragment address that needs to
+     * be recorded for the loader to patch. */
+    const char *name_for_fragment_addr(void *addr) const {
+        for (const auto &kv : ptrs) {
+            if ((void *)kv.second == addr) {
+                auto nit = labelNames.find(kv.first);
+                if (nit != labelNames.end()) return nit->second.c_str();
+            }
+        }
+        return nullptr;
+    }
+#endif
+
 $decl_get_funcs
 };
 

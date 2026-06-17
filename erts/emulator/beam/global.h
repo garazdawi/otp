@@ -990,6 +990,16 @@ Eterm erts_finish_loading(Binary *loader_state, Process *c_p,
 Eterm erts_preload_module(Process *c_p, ErtsProcLocks c_p_locks,
                           Eterm group_leader, Eterm *mod,
                           const byte *code, Uint size);
+/* Try to load a preloaded module from a JIT cache blob attached to
+ * the preload entry. Returns NIL on success and the module is fully
+ * installed. Returns a non-NIL error atom (e.g. am_badfile,
+ * am_not_implemented) on failure; the caller should fall through to
+ * the regular erts_preload_module path. */
+Eterm erts_preload_module_from_cache(Process *c_p, ErtsProcLocks c_p_locks,
+                                     Eterm group_leader, Eterm *mod,
+                                     const byte *code, Uint code_size,
+                                     const byte *jit_cache,
+                                     Uint jit_cache_size);
 void init_load(void);
 const ErtsCodeMFA* erts_find_function_from_pc(ErtsCodePtr pc);
 ErtsCodePtr erts_find_next_code_for_line(const BeamCodeHeader* code_hdr,
