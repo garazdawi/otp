@@ -680,6 +680,13 @@ extern "C"
         return v[idx];
     }
 
+    const char *beamasm_get_runtime_fn_name(void *instance, uint32_t idx) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        const auto &v = ba->getRuntimeFns();
+        if (idx >= v.size()) return nullptr;
+        return v[idx];
+    }
+
     /* Look up a global fragment's live address by its labelName, for
      * the cache_tool's validate path. */
     void *cache_tool_fragment_addr(const char *name) {

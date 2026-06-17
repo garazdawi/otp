@@ -443,15 +443,28 @@ enum erts_is_line_breakpoint BeamGlobalAssembler::is_line_breakpoint_trampoline(
     return (instr == expected_br_instr) ? line_bp_type : IS_NOT_LINE_BP;
 }
 
-static void i_emit_nyi(const char *msg) {
+/* Note: intentionally non-static so the cache_tool's writer can
+ * dladdr() this symbol and record the runtime_call reloc. With static
+ * linkage the symbol isn't exported and the load-time dlsym fails. */
+void beam_jit_i_emit_nyi(const char *msg) {
     erts_exit(ERTS_ERROR_EXIT, "NYI: %s\n", msg);
 }
 
 void BeamModuleAssembler::emit_nyi(const char *msg) {
     emit_enter_runtime(0);
 
+#ifdef CACHE_TOOL_BUILD
+    /* msg is a static C string in the host binary — its address is
+     * process-specific and we have no cache reloc kind for static
+     * strings. Since emit_nyi is "should never run" trap code, the
+     * message content doesn't need to survive caching. Pass NULL —
+     * deterministic, and i_emit_nyi handles it as "NYI: (null)". */
+    (void)msg;
+    a.mov(ARG1, ZERO);
+#else
     a.mov(ARG1, imm(msg));
-    runtime_call<void (*)(const char *), i_emit_nyi>();
+#endif
+    runtime_call<void (*)(const char *), beam_jit_i_emit_nyi>();
 
     /* Never returns */
 }
@@ -623,7 +636,27 @@ void BeamModuleAssembler::emit_int_code_end() {
     for (auto pair : _dispatchTable) {
         bind_veneer_target(pair.second);
 
+#ifdef CACHE_TOOL_BUILD
+        /* The dispatch table bakes a live fragment fptr into a mov-imm
+         * sequence. asmjit would pick the shortest encoding (which
+         * varies per process — making both the code size and bytes
+         * non-deterministic), and nothing would record the address for
+         * the loader to patch. Force the full 16-byte MOVZ+MOVK*3 form
+         * and record a FRAGMENT_BRANCH-kind reloc with imm_width=16 so
+         * the loader's generic MOVZ+MOVK*N patcher rewrites the slot. */
+        const char *frag_name = ga->name_for_fragment_addr((void *)pair.first);
+        uint32_t reloc_start = (uint32_t)a.offset();
+        mov_imm_full(SUPER_TMP, pair.first);
+        if (frag_name) {
+            uint32_t idx = (uint32_t)fragment_names.size();
+            fragment_names.push_back(frag_name);
+            record_mov_imm_reloc(reloc_start,
+                                 BEAM_JIT_RELOC_FRAGMENT_BRANCH,
+                                 0xfffe0000u | idx);
+        }
+#else
         a.mov(SUPER_TMP, imm(pair.first));
+#endif
         a.br(SUPER_TMP);
     }
 

@@ -95,6 +95,12 @@ protected:
      * map — they outlive the assembler. */
     std::vector<const char *> fragment_names;
 
+    /* Side table for RUNTIME_FN relocs: a C symbol name per recorded
+     * runtime_call site. Names are strdup'd (dladdr returns dli_sname
+     * pointing into the dyld string table; we copy to keep the lifetime
+     * tied to the assembler). Freed in record_runtime_fn's reverse. */
+    std::vector<char *> runtime_fns;
+
     /* Record a relocation covering the immediate just emitted. Call
      * AFTER the mov_imm sequence: start_offset is captured before, and
      * the size is computed from the current assembler offset. */
@@ -181,6 +187,9 @@ public:
     const BeamJitRelocList *getRelocs() const { return &relocs; }
     const std::vector<const char *> &getFragmentNames() const {
         return fragment_names;
+    }
+    const std::vector<char *> &getRuntimeFns() const {
+        return runtime_fns;
     }
     /* Read-only label → byte-offset lookup, for cache_tool extraction. */
     size_t labelOffset(const Label &lbl) const {

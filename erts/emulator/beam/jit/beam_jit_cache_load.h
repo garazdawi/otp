@@ -70,6 +70,10 @@ typedef struct {
      * and returns base+offset; validator reads the offset back into
      * the re-loaded BeamFile->strings.data. */
     const void *(*byte_ptr_addr)(void *ctx, uint32_t offset);
+    /* For RELOC_RUNTIME_FN: C symbol name (e.g. "erts_factory_check") →
+     * live function pointer. Runtime resolves via dlsym(RTLD_DEFAULT,
+     * name); validator via the cache_tool's linked process image. */
+    void *(*runtime_fn_for_symbol)(void *ctx, const char *symbol);
 } BeamJitCacheHostHooks;
 
 BeamJitCache *beam_jit_cache_open(const char *path);

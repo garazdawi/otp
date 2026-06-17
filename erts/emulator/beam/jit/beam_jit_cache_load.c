@@ -307,6 +307,25 @@ int beam_jit_cache_load_module(BeamJitCache *c,
             value = (uintptr_t)code + r->symbolic_ref;
             resolved = 1;
             break;
+        case BEAM_JIT_RELOC_RUNTIME_FN: {
+            /* The reader encoded the C symbol name into the per-module
+             * mfa_strings table with prefix "<rfn:". Strip and resolve
+             * via the runtime_fn host hook. */
+            if (r->symbolic_ref >= m.mfa_count) break;
+            uint32_t str_idx = read_u32(m.mfa_indices + r->symbolic_ref * 4);
+            if (str_idx >= c->strtab_count) break;
+            const char *s = c->strtab[str_idx];
+            if (strncmp(s, "<rfn:", 5) != 0) break;
+            char name[256];
+            size_t nl = strlen(s);
+            if (nl < 6 || nl - 5 >= sizeof(name)) break;
+            memcpy(name, s + 5, nl - 6);
+            name[nl - 6] = 0;
+            if (!hooks->runtime_fn_for_symbol) break;
+            value = (uintptr_t)hooks->runtime_fn_for_symbol(hooks->ctx, name);
+            resolved = (value != 0);
+            break;
+        }
         case BEAM_JIT_RELOC_BYTE_PTR: {
             /* symbolic_ref is the offset into the BEAM file's StrT
              * chunk. The host hook returns the live address of that

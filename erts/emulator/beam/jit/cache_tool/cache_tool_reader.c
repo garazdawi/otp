@@ -383,6 +383,25 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
                 cap = &mfa_cap;
                 break;
             }
+            case BEAM_JIT_RELOC_RUNTIME_FN: {
+                /* symbolic_ref is an index into the per-module
+                 * runtime_fns side table. Look up the C symbol name
+                 * and encode it into mfa_strings as "<rfn:NAME>" so
+                 * the loader dispatches via dlsym. */
+                extern const char *cache_tool_runtime_fn_name_at(
+                    void *magic, uint32_t idx);
+                const char *rname = cache_tool_runtime_fn_name_at(
+                    magic, r->symbolic_ref);
+                if (rname) {
+                    snprintf(buf, sizeof(buf), "<rfn:%s>", rname);
+                    src = buf;
+                    src_len = strlen(buf);
+                }
+                tbl = &out->mfa_strings;
+                count = &out->mfa_count;
+                cap = &mfa_cap;
+                break;
+            }
             case BEAM_JIT_RELOC_LITERAL:
                 /* Pass through: symbolic_ref already carries the
                  * literal's per-module index. The cache writer

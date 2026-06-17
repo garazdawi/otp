@@ -29,6 +29,10 @@
 #include <algorithm>
 #include <cmath>
 
+#ifdef CACHE_TOOL_BUILD
+#  include <dlfcn.h>
+#endif
+
 #include <asmjit/a64.h>
 
 extern "C"
@@ -351,7 +355,26 @@ protected:
 
     template<typename T, T Func>
     void runtime_call() {
+#ifdef CACHE_TOOL_BUILD
+        /* Force the full 16-byte MOVZ+MOVK*3 form so the loader can
+         * patch any 64-bit replacement, then record the call target's
+         * symbol name (via dladdr) so the loader can dlsym it in the
+         * loading process. Without recording, the live function ptr
+         * would be baked into cached code and the load-time process
+         * would jump to a stale address. */
+        uint32_t reloc_start = (uint32_t)a.offset();
+        mov_imm_full(TMP1, Func);
+        ::Dl_info info;
+        if (::dladdr((void *)Func, &info) && info.dli_sname) {
+            uint32_t idx = (uint32_t)runtime_fns.size();
+            runtime_fns.push_back(strdup(info.dli_sname));
+            record_mov_imm_reloc(reloc_start,
+                                 BEAM_JIT_RELOC_RUNTIME_FN,
+                                 idx);
+        }
+#else
         a.mov(TMP1, Func);
+#endif
         a.blr(TMP1);
     }
 

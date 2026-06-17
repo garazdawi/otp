@@ -123,6 +123,13 @@ typedef enum {
      * (string_table_base + offset). */
     BEAM_JIT_RELOC_BYTE_PTR,
 
+    /* RUNTIME_FN: symbolic_ref indexes into the per-module runtime_fns
+     * side table; the entry is a C symbol name (e.g. "erts_factory_check").
+     * Resolved at load time via dlsym(RTLD_DEFAULT, name) — works as
+     * long as the writer and the loading process share the same set
+     * of exported symbols (i.e. linked against the same runtime). */
+    BEAM_JIT_RELOC_RUNTIME_FN = 10,
+
     BEAM_JIT_RELOC_KIND_COUNT
 } BeamJitRelocKind;
 

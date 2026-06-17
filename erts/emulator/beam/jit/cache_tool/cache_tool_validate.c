@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dlfcn.h>
 
 #include "cache_tool.h"
 #include "../beam_jit_cache_load.h"
@@ -142,6 +143,11 @@ static const void *hk_byte_ptr_addr(void *ctx, uint32_t offset) {
     return cache_tool_byte_ptr_at(v->magic, offset);
 }
 
+static void *hk_runtime_fn_for_symbol(void *ctx, const char *symbol) {
+    (void)ctx;
+    return dlsym(RTLD_DEFAULT, symbol);
+}
+
 static void *hk_vm_static_for_id(void *ctx, uint32_t which) {
     (void)ctx;
     /* For the cache_tool's process, the well-known runtime statics
@@ -206,6 +212,7 @@ int cache_tool_validate(const char *jc_path, const char *module_name,
         .fragment_addr_for_name  = hk_fragment_addr_for_name,
         .literal_eterm_for_index = hk_literal_eterm_for_index,
         .byte_ptr_addr           = hk_byte_ptr_addr,
+        .runtime_fn_for_symbol   = hk_runtime_fn_for_symbol,
     };
 
     void *code = NULL;

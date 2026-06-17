@@ -90,6 +90,12 @@ const char *cache_tool_specific_op_name(int specific_op) {
 /* Look up the i'th fragment-name string the assembler recorded
  * alongside its FRAGMENT_BRANCH relocs. Pointers are static-lifetime
  * (BeamGlobalAssembler::labelNames). Returns NULL on out-of-range. */
+extern const char *beamasm_get_runtime_fn_name(void *instance, uint32_t idx);
+const char *cache_tool_runtime_fn_name_at(Binary *magic, uint32_t idx) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    return stp->ba ? beamasm_get_runtime_fn_name(stp->ba, idx) : NULL;
+}
+
 extern const char *beamasm_get_fragment_name(void *instance, uint32_t idx);
 const char *cache_tool_fragment_name_at(Binary *magic, uint32_t idx) {
     LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
