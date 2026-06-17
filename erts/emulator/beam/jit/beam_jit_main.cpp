@@ -633,6 +633,27 @@ extern "C"
                     out_rw_hdr);
     }
 
+    /* Low-level cache-install: allocate a JIT region the size of the
+     * cached code blob, copy the bytes in, leave the region in RW
+     * mode so the caller can apply relocs. Returns 0 on success. */
+    int beamasm_install_cache_code(const unsigned char *code, size_t code_size,
+                                   const void **executable_region,
+                                   void **writable_region) {
+        if (!jit_allocator) return -1;
+
+        JitAllocator::Span span;
+        Out<JitAllocator::Span> out(span);
+        Error err = jit_allocator->alloc(out, code_size + 16);
+        if (err != Error::kOk) return -2;
+
+        *executable_region = span.rx();
+        *writable_region = span.rw();
+
+        VirtMem::protect_jit_memory(VirtMem::ProtectJitAccess::kReadWrite);
+        sys_memcpy(span.rw(), code, code_size);
+        return 0;
+    }
+
     void *beamasm_register_metadata(void *instance,
                                     const BeamCodeHeader *header) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
@@ -665,6 +686,16 @@ extern "C"
     unsigned int beamasm_patch_catches(void *instance, char *rw_base) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
         return ba->patchCatches(rw_base);
+    }
+
+    /* Look up a global fragment's live address by its labelName. Used
+     * by the runtime cache loader's FRAGMENT_BRANCH reloc resolver to
+     * locate the BGA fragment in this process. Available in both
+     * cache_tool and runtime builds; only the validator needs the
+     * cache_tool_* alias above (which dlsym keys off). */
+    void *beamasm_fragment_addr_for_name(const char *name) {
+        if (!bga) return nullptr;
+        return bga->addr_for_fragment_name(name);
     }
 
 #ifdef CACHE_TOOL_BUILD

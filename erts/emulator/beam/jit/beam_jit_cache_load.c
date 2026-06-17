@@ -155,6 +155,15 @@ BeamJitCache *beam_jit_cache_open_mem(const uint8_t *data, size_t size) {
     return c;
 }
 
+uint32_t beam_jit_cache_strtab_count(const BeamJitCache *c) {
+    return c ? c->strtab_count : 0;
+}
+
+const char *beam_jit_cache_strtab_at(const BeamJitCache *c, uint32_t i) {
+    if (!c || i >= c->strtab_count) return NULL;
+    return c->strtab[i];
+}
+
 void beam_jit_cache_close(BeamJitCache *c) {
     if (!c) return;
     if (c->strtab) {
@@ -207,9 +216,11 @@ int beam_jit_cache_find_module(const BeamJitCache *c, const char *name,
         if (p + 4 > end) return -6;
         uint32_t lrc = read_u32(p); p += 4 + lrc * (uint32_t)sizeof(BeamJitReloc);
 
-        /* Func table — skip past as well; we read code only here. */
+        /* Func table — capture pointer + count. */
         if (p + 4 > end) return -7;
-        uint32_t fc = read_u32(p); p += 4 + fc * 12;
+        uint32_t fc = read_u32(p); p += 4;
+        const uint8_t *funcs_p = p;
+        p += fc * 12;
 
         /* has_on_load + 3-byte pad */
         if (p + 4 > end) return -8;
@@ -228,6 +239,8 @@ int beam_jit_cache_find_module(const BeamJitCache *c, const char *name,
         out->atom_count   = atom_count;
         out->mfa_indices  = mfas_p;
         out->mfa_count    = mfa_count;
+        out->funcs        = funcs_p;
+        out->func_count   = fc;
         out->has_on_load  = has_on_load;
         return 0;
     }

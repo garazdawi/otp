@@ -96,12 +96,15 @@ Binary *erts_alloc_loader_state(void) {
     return magic;
 }
 
-/* Cache-load entry point. Stage 1 (this commit) just confirms the
- * dispatch wiring: open the cache, find the module, log success,
- * then return a non-NIL atom so the caller falls through to the
- * regular erts_preload_module path. Stage 2 will allocate JIT
- * memory, copy the code blob, run the reloc patcher against live
- * VM tables, and reconstruct the BeamCodeHeader. */
+/* Cache-load entry point. Opens the embedded .jc bytes, finds the
+ * module, parses the BEAM file's metadata via the standard loader,
+ * then installs the cached JIT code directly (no per-op asmjit
+ * emit). Returns NIL on success; any non-NIL error causes the
+ * caller to fall back to the regular erts_preload_module path. */
+extern int erts_load_cache_module(LoaderState *stp,
+                                  BeamJitCache *cache,
+                                  BeamJitCacheModule *m);
+
 Eterm
 erts_preload_module_from_cache(Process *c_p,
                                ErtsProcLocks c_p_locks,
@@ -112,40 +115,69 @@ erts_preload_module_from_cache(Process *c_p,
                                const byte *jit_cache,
                                Uint jit_cache_size)
 {
-    (void)c_p; (void)c_p_locks; (void)group_leader; (void)code;
-    (void)code_size;
-
-    BeamJitCache *c = beam_jit_cache_open_mem((const uint8_t *)jit_cache,
-                                              (size_t)jit_cache_size);
-    if (!c) return am_badfile;
+    BeamJitCache *cache = beam_jit_cache_open_mem(
+        (const uint8_t *)jit_cache, (size_t)jit_cache_size);
+    if (!cache) return am_badfile;
 
     /* Build a NUL-terminated copy of the module's atom name. */
     Atom *a = atom_tab(atom_val(*modp));
     int alen = a->len;
     char mod_name[256];
     if (alen >= (int)sizeof(mod_name)) {
-        beam_jit_cache_close(c);
+        beam_jit_cache_close(cache);
         return am_badfile;
     }
     sys_memcpy(mod_name, erts_atom_get_name(a), alen);
     mod_name[alen] = 0;
 
     BeamJitCacheModule m;
-    if (beam_jit_cache_find_module(c, mod_name, &m) != 0) {
-        beam_jit_cache_close(c);
+    if (beam_jit_cache_find_module(cache, mod_name, &m) != 0) {
+        beam_jit_cache_close(cache);
         return am_badfile;
     }
 
     if (getenv("ERL_CACHE_TRACE")) {
         fprintf(stderr,
-                "preload-cache: hit %s (%zu code bytes, %zu relocs)\n",
+                "preload-cache: try %s (%zu code bytes, %zu relocs)\n",
                 mod_name, (size_t)m.code_size, (size_t)m.reloc_count);
     }
 
-    beam_jit_cache_close(c);
-    /* Stage 1: signal "not yet wired" so the caller falls back to
-     * the regular loader. Stage 2 will return NIL on full success. */
-    return am_badfile;
+    /* Parse the BEAM file and run the standard prepare phase. We
+     * need stp->beam (for atoms / exports / imports / literals) and
+     * stp->load_hdr (the prepared BeamCodeHeader template). The
+     * prepare phase ALSO runs the per-op transform + asmjit emit
+     * loop, which is wasted work for the cache path -- a future
+     * change will split prepare_emit so we can skip the per-op
+     * loop. For now, accept the duplicate work. */
+    Binary *magic = erts_alloc_loader_state();
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    stp->module = *modp;
+    stp->group_leader = group_leader;
+    Eterm retval = erts_prepare_loading(magic, c_p, group_leader,
+                                        modp, code, code_size);
+    if (retval != NIL) {
+        beam_jit_cache_close(cache);
+        return retval;
+    }
+
+    /* Install the cached code, overriding what asmjit produced.
+     * Stage 1: only supports modules with no literals, no string
+     * table, no on_load. */
+    if (erts_load_cache_module(stp, cache, &m) != 0) {
+        if (getenv("ERL_CACHE_TRACE")) {
+            fprintf(stderr,
+                    "preload-cache: %s install failed; falling back\n",
+                    mod_name);
+        }
+        beam_load_prepared_free(magic);
+        beam_jit_cache_close(cache);
+        return am_badfile;
+    }
+
+    /* Finish loading via the standard path. */
+    retval = erts_finish_loading(magic, c_p, c_p_locks, modp);
+    beam_jit_cache_close(cache);
+    return retval;
 }
 
 Eterm

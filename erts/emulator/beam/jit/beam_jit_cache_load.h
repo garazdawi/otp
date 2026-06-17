@@ -38,6 +38,11 @@ typedef struct {
     size_t              atom_count;
     const uint8_t      *mfa_indices;
     size_t              mfa_count;
+    /* Func table: func_count entries of {name_str_idx (4), arity (4),
+     * code_offset (4)} = 12 bytes each. funcs points at the start of
+     * the entries, NOT a count prefix. */
+    const uint8_t      *funcs;
+    size_t              func_count;
     int                 has_on_load;
 } BeamJitCacheModule;
 

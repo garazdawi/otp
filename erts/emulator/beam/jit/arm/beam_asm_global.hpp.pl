@@ -216,10 +216,9 @@ public:
 
     enum erts_is_line_breakpoint is_line_breakpoint_trampoline(ErtsCodePtr);
 
-#ifdef CACHE_TOOL_BUILD
-    /* Forward lookup: labelName string → live fragment fptr. Used by
-     * the cache_tool's load-side host hook to resolve FRAGMENT_BRANCH
-     * relocs. */
+    /* Forward lookup: labelName string → live fragment fptr. Used
+     * by both the runtime cache loader and the cache_tool's
+     * validator to resolve FRAGMENT_BRANCH relocs. */
     void *addr_for_fragment_name(const char *name) const {
         for (const auto &kv : labelNames) {
             if (kv.second == name) {
@@ -230,10 +229,11 @@ public:
         return nullptr;
     }
 
-    /* Reverse lookup: live fragment fptr → labelName.c_str().
-     * Used by the cache_tool's writer when an instruction (e.g. the
+#ifdef CACHE_TOOL_BUILD
+    /* Reverse lookup: live fragment fptr → labelName.c_str(). Used
+     * by the cache_tool's writer when an instruction (e.g. the
      * dispatch table entry) bakes a fragment address that needs to
-     * be recorded for the loader to patch. */
+     * be recorded for the loader to patch. Runtime doesn't need it. */
     const char *name_for_fragment_addr(void *addr) const {
         for (const auto &kv : ptrs) {
             if ((void *)kv.second == addr) {
