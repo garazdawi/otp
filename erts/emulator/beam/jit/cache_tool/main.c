@@ -46,6 +46,7 @@
 #include <getopt.h>
 
 #include "cache_tool.h"
+#include "../beam_jit_cache_load.h"
 
 static void usage(const char *prog, int rc) {
     fprintf(stderr,
@@ -84,6 +85,8 @@ int main(int argc, char **argv) {
         .verbose = 0,
     };
 
+    int validate_mode = 0;
+    const char *validate_module = NULL;
     static struct option longopts[] = {
         {"arch",        required_argument, 0, 'a'},
         {"out",         required_argument, 0, 'o'},
@@ -92,12 +95,13 @@ int main(int argc, char **argv) {
         {"jit-vsn",     required_argument, 0, 'j'},
         {"cflags-hash", required_argument, 0, 'f'},
         {"verbose",     no_argument,       0, 'v'},
+        {"validate",    required_argument, 0, 'V'},
         {"help",        no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     int c;
-    while ((c = getopt_long(argc, argv, "a:o:be:j:f:vh", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "a:o:be:j:f:vV:h", longopts, NULL)) != -1) {
         switch (c) {
         case 'a': opts.arch = optarg; break;
         case 'o': opts.out = optarg; break;
@@ -106,9 +110,19 @@ int main(int argc, char **argv) {
         case 'j': opts.jit_vsn = optarg; break;
         case 'f': opts.cflags_hash = optarg; break;
         case 'v': opts.verbose = 1; break;
+        case 'V': validate_mode = 1; validate_module = optarg; break;
         case 'h': usage(argv[0], 0);
         default:  usage(argv[0], 1);
         }
+    }
+
+    if (validate_mode) {
+        if (optind >= argc) {
+            fprintf(stderr, "--validate requires a .jc file argument\n");
+            return 1;
+        }
+        return cache_tool_validate(argv[optind], validate_module,
+                                   opts.verbose);
     }
 
     if (!opts.out || optind >= argc) usage(argv[0], 1);

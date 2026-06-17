@@ -72,6 +72,8 @@ C_SRCS=(
     "cache_tool_stubs.c"
     "cache_tool_bif_stubs.c"
     "cache_tool_reader.c"
+    "cache_tool_validate.c"
+    "$ROOT/erts/emulator/beam/jit/beam_jit_cache_load.c"
     "$ROOT/erts/emulator/beam/beam_load.c"
     "$ROOT/erts/emulator/beam/beam_file.c"
     "$ROOT/erts/emulator/beam/beam_transform_helpers.c"

@@ -153,4 +153,11 @@ void         cache_writer_close(CacheWriter *w);
 int  cache_tool_init(const char *target_arch);
 void cache_tool_shutdown(void);
 
+/* Round-trip validator: load a .jc file written by an earlier run,
+ * walk the reloc list applying patches, report counts.  Used to
+ * verify the writer / loader pair without the runtime emulator in
+ * the loop. */
+int  cache_tool_validate(const char *jc_path, const char *module_name,
+                         int verbose);
+
 #endif /* _CACHE_TOOL_H */
