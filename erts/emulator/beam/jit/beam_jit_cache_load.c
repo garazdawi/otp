@@ -307,6 +307,16 @@ int beam_jit_cache_load_module(BeamJitCache *c,
             value = (uintptr_t)code + r->symbolic_ref;
             resolved = 1;
             break;
+        case BEAM_JIT_RELOC_BYTE_PTR: {
+            /* symbolic_ref is the offset into the BEAM file's StrT
+             * chunk. The host hook returns the live address of that
+             * byte (i.e. string_table_base + offset). */
+            if (!hooks->byte_ptr_addr) break;
+            value = (uintptr_t)hooks->byte_ptr_addr(hooks->ctx,
+                                                   r->symbolic_ref);
+            resolved = (value != 0);
+            break;
+        }
         case BEAM_JIT_RELOC_FRAGMENT_BRANCH: {
             if (r->symbolic_ref >= m.mfa_count) {
                 fprintf(stderr, "  FRAG: symref %u >= mfa_count %zu\n",

@@ -65,6 +65,11 @@ typedef struct {
      * validator, by re-reading the BEAM file and looking up index
      * in beam->static_literals. */
     uintptr_t (*literal_eterm_for_index)(void *ctx, uint32_t index);
+    /* For RELOC_BYTE_PTR: offset into the module's StrT chunk → live
+     * pointer to that byte. Runtime allocates a buffer for the StrT
+     * and returns base+offset; validator reads the offset back into
+     * the re-loaded BeamFile->strings.data. */
+    const void *(*byte_ptr_addr)(void *ctx, uint32_t offset);
 } BeamJitCacheHostHooks;
 
 BeamJitCache *beam_jit_cache_open(const char *path);

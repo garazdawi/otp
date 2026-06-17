@@ -127,6 +127,16 @@ int cache_tool_literal_count(Binary *magic) {
     return stp->beam.static_literals.count;
 }
 
+/* Live address of byte `offset` inside the loaded BEAM's StrT chunk.
+ * Used by the validator's RELOC_BYTE_PTR host hook. Returns NULL if
+ * the module has no string table or the offset is out of range. */
+const void *cache_tool_byte_ptr_at(Binary *magic, uint32_t offset) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    if (!stp->beam.strings.data) return NULL;
+    if (offset >= (uint32_t)stp->beam.strings.size) return NULL;
+    return stp->beam.strings.data + offset;
+}
+
 /* Compute the byte size of the BeamCodeHeader region at the start
  * of the executable code blob. This region is filled in by codegen
  * (memcpy from LoaderState + functions[] pointers + on_load); it

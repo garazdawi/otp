@@ -130,10 +130,16 @@ struct ValidateCtx {
 };
 
 extern uintptr_t cache_tool_literal_eterm_at(void *magic, uint32_t idx);
+extern const void *cache_tool_byte_ptr_at(void *magic, uint32_t offset);
 
 static uintptr_t hk_literal_eterm_for_index(void *ctx, uint32_t idx) {
     struct ValidateCtx *v = (struct ValidateCtx *)ctx;
     return cache_tool_literal_eterm_at(v->magic, idx);
+}
+
+static const void *hk_byte_ptr_addr(void *ctx, uint32_t offset) {
+    struct ValidateCtx *v = (struct ValidateCtx *)ctx;
+    return cache_tool_byte_ptr_at(v->magic, offset);
 }
 
 static void *hk_vm_static_for_id(void *ctx, uint32_t which) {
@@ -199,6 +205,7 @@ int cache_tool_validate(const char *jc_path, const char *module_name,
         .vm_static_for_id        = hk_vm_static_for_id,
         .fragment_addr_for_name  = hk_fragment_addr_for_name,
         .literal_eterm_for_index = hk_literal_eterm_for_index,
+        .byte_ptr_addr           = hk_byte_ptr_addr,
     };
 
     void *code = NULL;
