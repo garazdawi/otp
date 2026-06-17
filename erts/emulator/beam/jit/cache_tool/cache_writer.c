@@ -147,10 +147,30 @@ int cache_writer_emit_module(CacheWriter *w, const CompiledModule *cm) {
     fwrite(&name_idx,   4, 1, w->fp);
     fwrite(cm->beam_sha256, 32, 1, w->fp);
 
-    /* Code */
+    /* Code. Canonicalise before write so the .jc is byte-reproducible:
+     *   - zero the BeamCodeHeader region (loader rebuilds it),
+     *   - zero every slot a reloc will overwrite (loader patches it).
+     * After this, any leftover difference between two .jc's compiled
+     * from the same .beam is a real non-determinism bug — and a stale
+     * byte that wasn't overwritten at load time will crash hard
+     * instead of executing on someone else's old pointer. */
+    extern unsigned cache_tool_code_header_size(void *magic);
     uint32_t code_size = (uint32_t)cm->code_size;
     fwrite(&code_size,  4, 1, w->fp);
-    fwrite(cm->code,    cm->code_size, 1, w->fp);
+    uint8_t *canon = malloc(cm->code_size);
+    if (!canon) return -1;
+    memcpy(canon, cm->code, cm->code_size);
+    size_t hdr = cache_tool_code_header_size(cm->loader_magic);
+    hdr = (hdr + 7) & ~(size_t)7;
+    if (hdr > cm->code_size) hdr = cm->code_size;
+    memset(canon, 0, hdr);
+    for (size_t i = 0; i < cm->reloc_count; i++) {
+        const BeamJitReloc *r = &cm->relocs[i];
+        if ((size_t)r->code_offset + r->imm_width > cm->code_size) continue;
+        memset(canon + r->code_offset, 0, r->imm_width);
+    }
+    fwrite(canon, cm->code_size, 1, w->fp);
+    free(canon);
 
     /* Relocs */
     uint32_t rc = (uint32_t)cm->reloc_count;
