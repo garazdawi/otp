@@ -226,11 +226,31 @@ int beam_jit_cache_load_module(BeamJitCache *c,
     int rc = find_module(c, module_name, &m);
     if (rc != 0) return rc;
 
-    /* Copy the code into a mutable buffer so we can patch it. The
-     * runtime would mmap PROT_WRITE then mprotect to RX after; for
-     * the round-trip-test path malloc suffices. */
-    uint8_t *code = malloc(m.code_size);
-    if (!code) return -10;
+    /* Allocate the loaded-code region close enough to the live global
+     * fragments that an aarch64 BL can reach. We mmap with the address
+     * of a known global fragment as a placement hint — the OS will pick
+     * a nearby slot. malloc would put us in the heap, which on macOS is
+     * gigabytes away from JIT-allocator regions and outside BL's
+     * ±128 MB reach. The runtime emulator's real loader uses the JIT
+     * allocator directly, which never has this problem. */
+    void *fragment_hint = hooks->fragment_addr_for_name
+        ? hooks->fragment_addr_for_name(hooks->ctx,
+                                        "i_func_info_shared") : NULL;
+    size_t page = 4096;
+    size_t alloc_size = (m.code_size + page - 1) & ~(page - 1);
+    uint8_t *code = NULL;
+    if (fragment_hint) {
+        /* Try just past the fragment region (within 8 MB) so we're
+         * comfortably inside BL reach in either direction. */
+        void *hint = (uint8_t *)fragment_hint + (8 << 20);
+        code = mmap(hint, alloc_size, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (code == MAP_FAILED) code = NULL;
+    }
+    if (!code) {
+        code = malloc(m.code_size);
+        if (!code) return -10;
+    }
     memcpy(code, m.code, m.code_size);
 
     size_t patched = 0, skipped_unresolved = 0, skipped_width = 0;
@@ -275,11 +295,62 @@ int beam_jit_cache_load_module(BeamJitCache *c,
             resolved = 1;
             break;
         }
+        case BEAM_JIT_RELOC_FRAGMENT_BRANCH: {
+            if (r->symbolic_ref >= m.mfa_count) {
+                fprintf(stderr, "  FRAG: symref %u >= mfa_count %zu\n",
+                        r->symbolic_ref, m.mfa_count);
+                break;
+            }
+            uint32_t str_idx = read_u32(m.mfa_indices + r->symbolic_ref * 4);
+            if (str_idx >= c->strtab_count) break;
+            const char *s = c->strtab[str_idx];
+            if (strncmp(s, "<frag:", 6) != 0) {
+                fprintf(stderr, "  FRAG: not a frag string '%s'\n", s);
+                break;
+            }
+            char name[256];
+            size_t nl = strlen(s);
+            if (nl < 7 || nl - 6 >= sizeof(name)) break;
+            memcpy(name, s + 6, nl - 7);
+            name[nl - 7] = 0;
+            value = (uintptr_t)hooks->fragment_addr_for_name(
+                hooks->ctx, name);
+            if (!value) {
+                fprintf(stderr, "  FRAG: unresolved '%s'\n", name);
+            }
+            resolved = (value != 0);
+            break;
+        }
         default:
             break;
         }
 
         if (!resolved) { skipped_unresolved++; continue; }
+
+        if (r->kind == BEAM_JIT_RELOC_FRAGMENT_BRANCH
+            && r->imm_width == 4
+            && r->code_offset + 4 <= m.code_size) {
+            /* Rewrite the aarch64 BL instruction at code_offset to
+             * target the live fragment address. Encoding:
+             *   BL imm26 = 0x94000000 | (imm26 & 0x03ffffff)
+             * imm26 is signed offset / 4 from this instruction's PC. */
+            uintptr_t pc = (uintptr_t)(code + r->code_offset);
+            intptr_t delta = (intptr_t)(value - pc);
+            /* Sanity: BL's range is ±128 MB. If we can't reach, leave
+             * the existing instruction in place; the loader would need
+             * a veneer slot, which the cache writer hasn't reserved. */
+            if (delta >= -(intptr_t)(1 << 27) && delta < (intptr_t)(1 << 27)
+                && (delta & 3) == 0) {
+                int32_t imm26 = (int32_t)(delta / 4);
+                uint32_t insn = 0x94000000u
+                    | ((uint32_t)imm26 & 0x03ffffffu);
+                memcpy(code + r->code_offset, &insn, 4);
+                patched++;
+            } else {
+                skipped_width++;
+            }
+            continue;
+        }
 
         if (r->imm_width == 8 && r->code_offset + 8 <= m.code_size) {
             memcpy(code + r->code_offset, &value, 8);

@@ -338,6 +338,26 @@ int cache_tool_compile_module(const BeamInput *in, CompiledModule *out) {
                 count = &out->mfa_count;
                 cap = &mfa_cap;
                 break;
+            case BEAM_JIT_RELOC_FRAGMENT_BRANCH: {
+                /* symbolic_ref carries 0xfffe0000 | side_table_idx.
+                 * The side table holds static labelName strings from
+                 * BeamGlobalAssembler. Encode as "<frag:NAME>" in the
+                 * mfa_strings table so the loader recognises the
+                 * pattern and dispatches to fragment_addr_for_name. */
+                extern const char *cache_tool_fragment_name_at(
+                    void *magic, uint32_t idx);
+                uint32_t idx = r->symbolic_ref & 0xffff;
+                const char *fname = cache_tool_fragment_name_at(magic, idx);
+                if (fname) {
+                    snprintf(buf, sizeof(buf), "<frag:%s>", fname);
+                    src = buf;
+                    src_len = strlen(buf);
+                }
+                tbl = &out->mfa_strings;
+                count = &out->mfa_count;
+                cap = &mfa_cap;
+                break;
+            }
             default:
                 continue;
             }

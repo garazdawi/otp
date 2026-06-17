@@ -1494,7 +1494,15 @@ protected:
         a.bind(next);
 #endif
 
+#ifdef CACHE_TOOL_BUILD
+        uint32_t bl_off = (uint32_t)a.offset();
+#endif
         a.bl(resolve_fragment(reinterpret_cast<void (*)()>(target), disp128MB));
+#ifdef CACHE_TOOL_BUILD
+        const char *name = ga->name_for_fragment(
+            reinterpret_cast<void (*)()>(target));
+        if (name) record_fragment_branch(bl_off, name);
+#endif
     }
 
     template<typename T, T Func>

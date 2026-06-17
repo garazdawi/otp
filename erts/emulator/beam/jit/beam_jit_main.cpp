@@ -672,6 +672,20 @@ extern "C"
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
         return ba->getRelocs();
     }
+
+    const char *beamasm_get_fragment_name(void *instance, uint32_t idx) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        const auto &v = ba->getFragmentNames();
+        if (idx >= v.size()) return nullptr;
+        return v[idx];
+    }
+
+    /* Look up a global fragment's live address by its labelName, for
+     * the cache_tool's validate path. */
+    void *cache_tool_fragment_addr(const char *name) {
+        if (!bga) return nullptr;
+        return bga->addr_for_fragment_name(name);
+    }
 #endif
 
     void beamasm_patch_import(void *instance,

@@ -102,6 +102,14 @@ typedef enum {
      * symbolic_ref is an MFA string-table index. */
     BEAM_JIT_RELOC_BIF_MFA,
 
+    /* PC-relative BL/B instruction targeting a global BeamGlobalAssembler
+     * fragment (e.g. "i_func_info_shared", "call_light_bif_shared").
+     * The symbolic_ref is an index into the per-module mfa_strings
+     * table holding the fragment's labelName. The loader decodes the
+     * existing BL/B, computes the new offset = live_fragment_addr -
+     * (loaded_code_base + code_offset), re-emits the instruction. */
+    BEAM_JIT_RELOC_FRAGMENT_BRANCH,
+
     BEAM_JIT_RELOC_KIND_COUNT
 } BeamJitRelocKind;
 

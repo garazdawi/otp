@@ -109,6 +109,17 @@ static void *hk_bif_fn_for_index(void *ctx, uint32_t bif_index) {
     return bif_table[bif_index].f;
 }
 
+/* For the cache_tool host, the BeamGlobalAssembler lives at a known
+ * address inside the same process — the one initialised by
+ * beamasm_init() during cache_tool_init. Walk its labelNames map for
+ * the requested name and return the live fragment fptr. */
+extern void *cache_tool_fragment_addr(const char *name);
+
+static void *hk_fragment_addr_for_name(void *ctx, const char *name) {
+    (void)ctx;
+    return cache_tool_fragment_addr(name);
+}
+
 static void *hk_vm_static_for_id(void *ctx, uint32_t which) {
     (void)ctx;
     /* For the cache_tool's process, the well-known runtime statics
@@ -142,12 +153,13 @@ int cache_tool_validate(const char *jc_path, const char *module_name,
     }
 
     BeamJitCacheHostHooks hooks = {
-        .ctx                  = NULL,
-        .atom_eterm_for_name  = hk_atom_eterm_for_name,
-        .export_ptr_for_mfa   = hk_export_ptr_for_mfa,
-        .bif_fn_for_mfa       = hk_bif_fn_for_mfa,
-        .bif_fn_for_index     = hk_bif_fn_for_index,
-        .vm_static_for_id     = hk_vm_static_for_id,
+        .ctx                    = NULL,
+        .atom_eterm_for_name    = hk_atom_eterm_for_name,
+        .export_ptr_for_mfa     = hk_export_ptr_for_mfa,
+        .bif_fn_for_mfa         = hk_bif_fn_for_mfa,
+        .bif_fn_for_index       = hk_bif_fn_for_index,
+        .vm_static_for_id       = hk_vm_static_for_id,
+        .fragment_addr_for_name = hk_fragment_addr_for_name,
     };
 
     void *code = NULL;

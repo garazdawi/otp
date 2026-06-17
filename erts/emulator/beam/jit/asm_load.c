@@ -81,6 +81,15 @@ size_t cache_tool_atom_name_bytes(uint32_t atom_eterm_low32,
     return atom->len;
 }
 
+/* Look up the i'th fragment-name string the assembler recorded
+ * alongside its FRAGMENT_BRANCH relocs. Pointers are static-lifetime
+ * (BeamGlobalAssembler::labelNames). Returns NULL on out-of-range. */
+extern const char *beamasm_get_fragment_name(void *instance, uint32_t idx);
+const char *cache_tool_fragment_name_at(Binary *magic, uint32_t idx) {
+    LoaderState *stp = (LoaderState *)ERTS_MAGIC_BIN_DATA(magic);
+    return stp->ba ? beamasm_get_fragment_name(stp->ba, idx) : NULL;
+}
+
 /* Look up the {module, function, arity} of an import-table entry by
  * its index in the BeamFile parsed during load. The MFA atoms are
  * resolved to strings via atom_tab; arity is a small unsigned int.

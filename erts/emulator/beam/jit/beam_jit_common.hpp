@@ -88,6 +88,13 @@ protected:
      * loader patches each entry to the live address at load time. */
     BeamJitRelocList relocs;
 
+    /* Side table for FRAGMENT_BRANCH relocs: their symbolic_ref is set
+     * to (0xfffe0000 | index_into_this), and the extractor copies the
+     * string into the module's mfa_strings table. Pointers held here
+     * are static `const char *` from BeamGlobalAssembler's labelNames
+     * map — they outlive the assembler. */
+    std::vector<const char *> fragment_names;
+
     /* Record a relocation covering the immediate just emitted. Call
      * AFTER the mov_imm sequence: start_offset is captured before, and
      * the size is computed from the current assembler offset. */
@@ -108,6 +115,19 @@ protected:
                             uint16_t width,
                             uint32_t symbolic_ref) {
         beam_jit_reloc_append(&relocs, offset, kind, width, symbolic_ref);
+    }
+
+    /* Record a PC-relative BL/B to a global BeamGlobalAssembler
+     * fragment. `name` must be static-lifetime (typically from
+     * BeamGlobalAssembler::labelNames). The extractor walks the
+     * fragment_names side-table to populate mfa_strings. */
+    void record_fragment_branch(uint32_t offset, const char *name) {
+        uint32_t idx = (uint32_t)fragment_names.size();
+        fragment_names.push_back(name);
+        beam_jit_reloc_append(&relocs, offset,
+                              BEAM_JIT_RELOC_FRAGMENT_BRANCH,
+                              4 /* one 4-byte aarch64 BL */,
+                              0xfffe0000u | idx);
     }
 #endif
 
@@ -159,6 +179,9 @@ public:
 
 #ifdef CACHE_TOOL_BUILD
     const BeamJitRelocList *getRelocs() const { return &relocs; }
+    const std::vector<const char *> &getFragmentNames() const {
+        return fragment_names;
+    }
 #endif
 };
 

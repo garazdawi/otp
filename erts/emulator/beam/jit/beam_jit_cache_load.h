@@ -56,6 +56,9 @@ typedef struct {
     void *(*bif_fn_for_index)(void *ctx, uint32_t bif_index);
     /* For RELOC_VM_STATIC: stable enum id → live runtime symbol addr. */
     void *(*vm_static_for_id)(void *ctx, uint32_t which);
+    /* For RELOC_FRAGMENT_BRANCH "<frag:NAME>": live address of that
+     * BeamGlobalAssembler fragment in the current process. */
+    void *(*fragment_addr_for_name)(void *ctx, const char *name);
 } BeamJitCacheHostHooks;
 
 BeamJitCache *beam_jit_cache_open(const char *path);
