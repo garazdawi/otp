@@ -31,6 +31,7 @@
 
 #ifdef CACHE_TOOL_BUILD
 #  include <dlfcn.h>
+#  include <cstring>
 #endif
 
 #include <asmjit/a64.h>
@@ -51,6 +52,14 @@ extern "C"
 }
 
 #include "beam_jit_common.hpp"
+
+#ifdef CACHE_TOOL_BUILD
+/* Forward-decl: implemented in cache_tool_static_table.c. Stores
+ * (name → addr) pairs the loader's runtime_fn_for_symbol consults
+ * after dlsym fails (for file-local and function-local statics
+ * where dlsym can't see the symbol). */
+extern "C" void cache_tool_register_static(const char *name, void *addr);
+#endif
 
 /* Is it safe to STP or LDP `Struct->Field1` and `Struct->Field2`? */
 #define ERTS_CT_ASSERT_FIELD_PAIR(Struct, Field1, Field2)                      \
@@ -353,6 +362,25 @@ protected:
         static constexpr size_t Arity = sizeof...(Domain);
     };
 
+#ifdef CACHE_TOOL_BUILD
+    /* Record a recorded symbol's live address into the loader's
+     * fallback table, keyed by the mangled name dladdr returned.
+     *
+     * The mangled name is what we serialise into the cache file; at
+     * load time the loader tries dlsym(mangled_name) first (works
+     * for external-linkage C++ symbols) and falls back to the table
+     * for local-linkage statics (`_ZL...`) and function-local
+     * statics (`_ZZN...`) that dlsym can't see.
+     *
+     * Caller owns the returned strdup'd name. */
+    static char *cache_tool_record_symbol(const char *mangled, void *addr) {
+        if (!mangled) return nullptr;
+        char *key = strdup(mangled);
+        cache_tool_register_static(key, addr);
+        return key;
+    }
+#endif
+
     template<typename T, T Func>
     void runtime_call() {
 #ifdef CACHE_TOOL_BUILD
@@ -367,7 +395,8 @@ protected:
         ::Dl_info info;
         if (::dladdr((void *)Func, &info) && info.dli_sname) {
             uint32_t idx = (uint32_t)runtime_fns.size();
-            runtime_fns.push_back(strdup(info.dli_sname));
+            runtime_fns.push_back(
+                cache_tool_record_symbol(info.dli_sname, (void *)Func));
             record_mov_imm_reloc(reloc_start,
                                  BEAM_JIT_RELOC_RUNTIME_FN,
                                  idx);

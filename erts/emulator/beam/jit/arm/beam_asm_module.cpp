@@ -657,13 +657,12 @@ void BeamModuleAssembler::emit_int_code_end() {
             ::Dl_info info;
             if (::dladdr((void *)pair.first, &info) && info.dli_sname) {
                 uint32_t idx = (uint32_t)runtime_fns.size();
-                runtime_fns.push_back(strdup(info.dli_sname));
+                runtime_fns.push_back(
+                    cache_tool_record_symbol(info.dli_sname,
+                                             (void *)pair.first));
                 record_mov_imm_reloc(reloc_start,
                                      BEAM_JIT_RELOC_RUNTIME_FN,
                                      idx);
-            } else if (getenv("CACHE_TOOL_TRACE_DT")) {
-                fprintf(stderr, "  dispatch table: no name + no dladdr "
-                                "for fptr %p\n", (void *)pair.first);
             }
         }
 #else
@@ -1055,7 +1054,8 @@ void BeamModuleAssembler::emit_constant(const Constant &constant) {
             && (uintptr_t)info.dli_saddr == w) {
             uint32_t off = (uint32_t)a.offset();
             uint32_t idx = (uint32_t)runtime_fns.size();
-            runtime_fns.push_back(strdup(info.dli_sname));
+            runtime_fns.push_back(
+                cache_tool_record_symbol(info.dli_sname, (void *)w));
             record_fixed_reloc(off, BEAM_JIT_RELOC_RUNTIME_FN, 8, idx);
         }
 #endif

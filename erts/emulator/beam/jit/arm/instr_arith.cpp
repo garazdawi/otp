@@ -1035,7 +1035,9 @@ void BeamModuleAssembler::emit_div_rem(const ArgLabel &Fail,
                     && info.dli_sname
                     && (uintptr_t)info.dli_saddr == (uintptr_t)error_mfa) {
                     uint32_t idx = (uint32_t)runtime_fns.size();
-                    runtime_fns.push_back(strdup(info.dli_sname));
+                    runtime_fns.push_back(
+                        cache_tool_record_symbol(info.dli_sname,
+                                                 (void *)error_mfa));
                     record_mov_imm_reloc(reloc_start,
                                          BEAM_JIT_RELOC_RUNTIME_FN, idx);
                 }

@@ -143,9 +143,17 @@ static const void *hk_byte_ptr_addr(void *ctx, uint32_t offset) {
     return cache_tool_byte_ptr_at(v->magic, offset);
 }
 
+/* Local-linkage symbols dlsym can't see — file-scope and function-
+ * local statics whose addresses end up baked in via runtime_call /
+ * embed_constant. Defined in cache_tool_static_table.c, which lives
+ * in the same TU as enough of the affected files to see them. */
+extern void *cache_tool_static_symbol_addr(const char *name);
+
 static void *hk_runtime_fn_for_symbol(void *ctx, const char *symbol) {
     (void)ctx;
-    return dlsym(RTLD_DEFAULT, symbol);
+    void *p = dlsym(RTLD_DEFAULT, symbol);
+    if (p) return p;
+    return cache_tool_static_symbol_addr(symbol);
 }
 
 static void *hk_vm_static_for_id(void *ctx, uint32_t which) {
