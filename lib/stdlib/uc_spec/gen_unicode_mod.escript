@@ -262,7 +262,6 @@ gen_file(Fd, Data, ExclData, Props, WideCs, UpdateTests) ->
     gen_static(Fd),
     gen_norm(Fd),
     gen_props(Fd, Props, Data),
-    gen_cp(Fd),
     gen_gc(Fd, Props),
     gen_compose_pairs(Fd, ExclData, Data),
     gen_case_table(Fd, Data),
@@ -278,7 +277,7 @@ gen_header(Fd) ->
 
 -module(unicode_util).
 -moduledoc false.
--export([cp/1, gc/1]).
+-export([gc_1/2]).
 -export([nfd/1, nfc/1, nfkd/1, nfkc/1]).
 -export([pattern_whitespace/0, is_whitespace/1]).
 -export([uppercase/1, lowercase/1, titlecase/1, casefold/1]).
@@ -288,7 +287,8 @@ gen_header(Fd) ->
 -export([is_other_id_start/1, is_other_id_continue/1, is_letter_not_pattern_syntax/1]).
 -compile({inline, [class/1]}).
 -compile(nowarn_unused_vars).
--dialyzer({no_improper_lists, [cp/1, gc/1, gc_prepend/2]}).
+-dialyzer({no_improper_lists, [gc_prepend/2]}).
+-import(string, [cp/1, gc/1]).
 -type gc() :: char()|[char()].
 -type category() ::
      {letter,uppercase} |
@@ -708,123 +708,10 @@ gen_props(Fd, Props, Data) ->
 
     ok.
 
-gen_cp(Fd) ->
-    io:put_chars(Fd, "-spec cp(String::unicode:chardata()) ->"
-                 " maybe_improper_list() | {error, unicode:chardata()}.\n"),
-    io:put_chars(Fd, "cp([C|_]=L) when ?IS_CP(C) -> L;\n"),
-    io:put_chars(Fd, "cp([List]) -> cp(List);\n"),
-    io:put_chars(Fd, "cp([List|R]) -> cpl(List, R);\n"),
-    io:put_chars(Fd, "cp([]) -> [];\n"),
-    io:put_chars(Fd, "cp(<<C/utf8, R/binary>>) -> [C|R];\n"),
-    io:put_chars(Fd, "cp(<<>>) -> [];\n"),
-    io:put_chars(Fd, "cp(<<R/binary>>) -> {error,R}.\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "cpl([C], R) when ?IS_CP(C) -> [C|cpl_1_cont(R)];\n"),
-    io:put_chars(Fd, "cpl([C|T], R) when ?IS_CP(C) -> [C|cpl_cont(T, R)];\n"),
-    io:put_chars(Fd, "cpl([List], R) -> cpl(List, R);\n"),
-    io:put_chars(Fd, "cpl([List|T], R) -> cpl(List, [T|R]);\n"),
-    io:put_chars(Fd, "cpl([], R) -> cp(R);\n"),
-    io:put_chars(Fd, "cpl(<<C/utf8, T/binary>>, R) -> [C,T|R];\n"),
-    io:put_chars(Fd, "cpl(<<>>, R) -> cp(R);\n"),
-    io:put_chars(Fd, "cpl(<<B/binary>>, R) -> {error,[B|R]}.\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "%%%\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "cpl_cont([C|T], R) when is_integer(C) -> [C|cpl_cont2(T, R)];\n"),
-    io:put_chars(Fd, "cpl_cont([L], R) -> cpl_cont(L, R);\n"),
-    io:put_chars(Fd, "cpl_cont([L|T], R) -> cpl_cont(L, [T|R]);\n"),
-    io:put_chars(Fd, "cpl_cont([], R) -> cpl_1_cont(R);\n"),
-    io:put_chars(Fd, "cpl_cont(T, R) -> [T|R].\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "cpl_cont2([C|T], R) when is_integer(C) -> [C|cpl_cont3(T, R)];\n"),
-    io:put_chars(Fd, "cpl_cont2([L], R) -> cpl_cont2(L, R);\n"),
-    io:put_chars(Fd, "cpl_cont2([L|T], R) -> cpl_cont2(L, [T|R]);\n"),
-    io:put_chars(Fd, "cpl_cont2([], R) -> cpl_1_cont2(R);\n"),
-    io:put_chars(Fd, "cpl_cont2(T, R) -> [T|R].\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "cpl_cont3([C], R) when is_integer(C) -> [C|R];\n"),
-    io:put_chars(Fd, "cpl_cont3([C|T], R) when is_integer(C) -> [C,T|R];\n"),
-    io:put_chars(Fd, "cpl_cont3([L], R) -> cpl_cont3(L, R);\n"),
-    io:put_chars(Fd, "cpl_cont3([L|T], R) -> cpl_cont3(L, [T|R]);\n"),
-    io:put_chars(Fd, "cpl_cont3([], R) -> cpl_1_cont3(R);\n"),
-    io:put_chars(Fd, "cpl_cont3(T, R) -> [T|R].\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "%%%\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "cpl_1_cont([C|T]) when is_integer(C) -> [C|cpl_1_cont2(T)];\n"),
-    io:put_chars(Fd, "cpl_1_cont([L]) -> cpl_1_cont(L);\n"),
-    io:put_chars(Fd, "cpl_1_cont([L|T]) -> cpl_cont(L, T);\n"),
-    io:put_chars(Fd, "cpl_1_cont(T) -> T.\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "cpl_1_cont2([C|T]) when is_integer(C) -> [C|cpl_1_cont3(T)];\n"),
-    io:put_chars(Fd, "cpl_1_cont2([L]) -> cpl_1_cont2(L);\n"),
-    io:put_chars(Fd, "cpl_1_cont2([L|T]) -> cpl_cont2(L, T);\n"),
-    io:put_chars(Fd, "cpl_1_cont2(T) -> T.\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "cpl_1_cont3([C|_]=T) when is_integer(C) -> T;\n"),
-    io:put_chars(Fd, "cpl_1_cont3([L]) -> cpl_1_cont3(L);\n"),
-    io:put_chars(Fd, "cpl_1_cont3([L|T]) -> cpl_cont3(L, T);\n"),
-    io:put_chars(Fd, "cpl_1_cont3(T) -> T.\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "%%%\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "cp_no_bin([C|_]=L) when is_integer(C) -> L;\n"),
-    io:put_chars(Fd, "cp_no_bin([List]) -> cp_no_bin(List);\n"),
-    io:put_chars(Fd, "cp_no_bin([List|R]) -> cp_no_binl(List, R);\n"),
-    io:put_chars(Fd, "cp_no_bin([]) -> [];\n"),
-    io:put_chars(Fd, "cp_no_bin(_) -> binary_found.\n"),
-    io:put_chars(Fd, "\n"),
-    io:put_chars(Fd, "cp_no_binl([C], R) when is_integer(C) -> [C|cpl_1_cont(R)];\n"),
-    io:put_chars(Fd, "cp_no_binl([C|T], R) when is_integer(C) -> [C|cpl_cont(T, R)];\n"),
-    io:put_chars(Fd, "cp_no_binl([List], R) -> cp_no_binl(List, R);\n"),
-    io:put_chars(Fd, "cp_no_binl([List|T], R) -> cp_no_binl(List, [T|R]);\n"),
-    io:put_chars(Fd, "cp_no_binl([], R) -> cp_no_bin(R);\n"),
-    io:put_chars(Fd, "cp_no_binl(_, _) -> binary_found.\n\n"),
-    ok.
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 gen_gc(Fd, GBP) ->
     %% see http://www.unicode.org/reports/tr29/#Grapheme_Cluster_Boundary_Rules
-    io:put_chars(Fd,
-                 "-spec gc(String::unicode:chardata()) ->"
-                 " maybe_improper_list() | {error, unicode:chardata()}.\n"),
-    io:put_chars(Fd,
-                 "gc([]=R) -> R;\n"
-                 "gc([CP]=R) when ?IS_CP(CP) -> R;\n"
-                 "gc([$\\r=CP|R0]) ->\n"
-                 "    case cp(R0) of % Don't break CRLF\n"
-                 "        [$\\n|R1] -> [[$\\r,$\\n]|R1];\n"
-                 "        T -> [CP|T]\n"
-                 "    end;\n"
-                 "gc([CP1|T1]=T) when ?IS_LATIN1(CP1) ->\n"
-                 "    case T1 of\n"
-                 "        [CP2|_] when ?IS_LATIN1(CP2) -> T; %% Ascii Fast path\n"
-                 "        _ -> %% Keep the tail binary.\n"
-                 "            case cp_no_bin(T1) of\n"
-                 "                [CP2|_]=T3 when ?IS_LATIN1(CP2) -> [CP1|T3]; %% Asciii Fast path\n"
-                 "                binary_found -> gc_1(T1, CP1);\n"
-                 "                T4 -> gc_1(T4, CP1)\n"
-                 "            end\n"
-                 "    end;\n"
-                 "gc(<<>>) -> [];\n"
-                 "gc(<<CP1/utf8, Rest/binary>>) ->\n"
-                 "    if CP1 < 256, CP1 =/= $\\r ->\n"
-                 "           case Rest of\n"
-                 "               <<CP2/utf8, _/binary>> when CP2 < 256 -> %% Ascii Fast path\n"
-                 "                   [CP1|Rest];\n"
-                 "               _ -> gc_1(Rest, CP1)\n"
-                 "           end;\n"
-                 "      true -> gc_1(Rest, CP1)\n"
-                 "    end;\n"
-                 "gc([CP|T]) when ?IS_CP(CP) -> gc_1(T,CP);\n"
-                 "gc(Str) ->\n"
-                 "    case cp(Str) of\n"
-                 "        {error,_}=Error -> Error;\n"
-                 "        CPs -> gc(CPs)\n"
-                 "    end.\n"
-                ),
-
     io:put_chars(Fd,
                  """
 
