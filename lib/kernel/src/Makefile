@@ -59,6 +59,7 @@ MODULES = \
 	application_master \
 	application_starter \
 	auth \
+	auto_hibernate \
 	code \
 	code_server \
 	data_publisher \
