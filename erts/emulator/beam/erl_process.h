@@ -1089,6 +1089,14 @@ struct process {
 
     Eterm* abandoned_heap;
 
+    /* When F_COMPRESSED is set the process is hibernated and its heap block
+     * has been zlib-compressed and freed (see erts_compress_hibernated() in
+     * erl_gc.c). The heap geometry fields (heap/hend/htop/stop/high_water/
+     * heap_sz) are left pointing at the freed block; they are only used to
+     * recompute the relocation delta when the heap is decompressed again on
+     * the next schedule-in. */
+    struct erts_hibernate_image *hib_image;
+
     Uint heap_sz;               /* Size of heap in words */
     Uint min_heap_size;         /* Minimum size of heap (in words). */
     Uint min_vheap_size;        /* Minimum size of virtual heap (in words). */
@@ -1654,6 +1662,7 @@ extern int erts_system_profile_ts_type;
 #define F_DBG_FORCED_TRAP    (1 << 24) /* DEBUG: Last BIF call was a forced trap */
 #define F_DIRTY_CHECK_CLA    (1 << 25) /* Check if copy literal area GC scheduled */
 #define F_ASYNC_DIST         (1 << 26) /* Truly asynchronous distribution */
+#define F_COMPRESSED         (1 << 27) /* Hibernated heap is compressed (see erl_gc.c) */
 
 /* Signal queue flags */
 #define FS_OFF_HEAP_MSGQ       (1 << 0) /* Off heap msg queue */

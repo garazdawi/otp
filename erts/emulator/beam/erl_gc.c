@@ -44,6 +44,8 @@
 #include "erl_proc_sig_queue.h"
 #include "beam_common.h"
 #include "beam_bp.h"
+#include "erl_zlib.h"
+#include "erl_process_dict.h"
 
 #define ERTS_INACT_WR_PB_LEAVE_MUCH_LIMIT 1
 #define ERTS_INACT_WR_PB_LEAVE_MUCH_PERCENTAGE 20
@@ -1130,6 +1132,208 @@ erts_garbage_collect_hibernate(Process* p)
 {
     int reds = garbage_collect_hibernate(p, 1);
     BUMP_REDS(p, reds);
+}
+
+/*
+ * Compressed hibernation (idea #1, step 3)
+ * ----------------------------------------
+ *
+ * A hibernated process (see garbage_collect_hibernate() above) keeps all of
+ * its live data in a single, minimally sized heap block that also holds the
+ * stack. erts_compress_hibernated() zlib-compresses that block and frees it,
+ * keeping only the compressed image plus a self-contained copy of the process
+ * dictionary. erts_decompress_hibernated() reverses this before the process is
+ * allowed to execute again (called from the scheduler at schedule-in).
+ *
+ * Term sharing within the heap is preserved for free, since we compress the
+ * raw heap bytes (we do not re-encode the terms). The compressed image is
+ * position dependent, so on decompression the block is relocated and all term
+ * pointers are adjusted with the same machinery the copying collector uses
+ * (offset_heap()/offset_rootset()).
+ *
+ * While compressed, the geometry fields of the process (heap/hend/htop/stop/
+ * high_water and heap_sz) are deliberately left pointing at the now-freed
+ * block. They are never dereferenced in that state -- a compressed process is
+ * never scheduled to run code or garbage collected before it is decompressed
+ * -- and are only used to recompute the relocation delta on decompression.
+ *
+ * The off-heap list is intentionally NOT cleaned up when the block is freed:
+ * the ProcBin / reference-counted binary headers live inside the compressed
+ * copy and are restored on decompression, so their reference counts must be
+ * kept intact across the compressed interval.
+ */
+struct erts_hibernate_image {
+    byte *cdata;            /* zlib-compressed heap block */
+    Uint csize;             /* number of compressed bytes */
+    Uint orig_bytes;        /* uncompressed heap block size in bytes */
+    ErlHeapFragment *dict;  /* self-contained copy of the process dictionary */
+    Eterm dict_term;        /* [{Key,Value},...] root term inside 'dict' */
+};
+
+void
+erts_compress_hibernated(Process *p)
+{
+    struct erts_hibernate_image *image;
+    Eterm *heap = p->heap;
+    Uint src_bytes = p->heap_sz * sizeof(Eterm);
+    uLongf bound, clen;
+    byte *cbuf;
+    ErlHeapFragment *dictfrag;
+    Eterm dict_term;
+    int res;
+
+    ASSERT(p->flags & F_HIBERNATED);
+    ASSERT(p->old_heap == NULL && p->mbuf == NULL && p->abandoned_heap == NULL);
+
+    if (p->flags & F_COMPRESSED)
+        return; /* already compressed */
+    if (p->flags & (F_DISABLE_GC|F_DELAY_GC))
+        return;
+
+    /* Copy the dictionary into a self-contained heap fragment so that
+     * process_info(Pid, dictionary) can be answered without decompressing
+     * the heap (see erts_compressed_dictionary_copy()). */
+    dictfrag = erts_dictionary_to_heap_frag(p->dictionary, &dict_term);
+
+    /* Compress the whole heap block (live heap + small reserve + stack). */
+    bound = src_bytes + (src_bytes / 8) + 256;
+    cbuf = (byte *) erts_alloc(ERTS_ALC_T_HEAP, bound);
+    clen = bound;
+    res = erl_zlib_compress2(cbuf, &clen, (Bytef *) heap, (uLong) src_bytes,
+                             Z_BEST_SPEED);
+    if (res != Z_OK) {
+        /* Leave the process hibernated but uncompressed. */
+        erts_free(ERTS_ALC_T_HEAP, cbuf);
+        if (dictfrag)
+            free_message_buffer(dictfrag);
+        return;
+    }
+
+    /* Shrink the compression buffer to its actual size. */
+    cbuf = (byte *) erts_realloc(ERTS_ALC_T_HEAP, cbuf, (Uint) clen);
+
+    image = (struct erts_hibernate_image *)
+        erts_alloc(ERTS_ALC_T_HEAP, sizeof(struct erts_hibernate_image));
+    image->cdata = cbuf;
+    image->csize = (Uint) clen;
+    image->orig_bytes = src_bytes;
+    image->dict = dictfrag;
+    image->dict_term = dict_term;
+
+    /* Free the heap block (without cleaning up the off-heap list, see above). */
+    ERTS_HEAP_FREE(ERTS_ALC_T_HEAP, heap, src_bytes);
+
+    p->hib_image = image;
+    p->flags |= F_COMPRESSED;
+}
+
+void
+erts_decompress_hibernated(Process *p)
+{
+    struct erts_hibernate_image *image = p->hib_image;
+    Eterm *oldheap = p->heap;
+    Uint heap_bytes;
+    Eterm *newheap;
+    uLongf destlen;
+    Sint delta;
+    const char *area;
+    Uint area_sz;
+    int res;
+
+    ASSERT(p->flags & F_COMPRESSED);
+    ASSERT(image != NULL);
+
+    heap_bytes = image->orig_bytes;
+    newheap = (Eterm *) ERTS_HEAP_ALLOC(ERTS_ALC_T_HEAP, heap_bytes);
+    destlen = heap_bytes;
+    res = erl_zlib_uncompress((Bytef *) newheap, &destlen,
+                              image->cdata, (uLong) image->csize);
+    ASSERT(res == Z_OK && destlen == heap_bytes);
+    (void) res;
+    (void) destlen;
+
+    /* Relocate the block: move geometry pointers, then adjust every term
+     * pointer (in the heap, on the stack, in the dictionary, off-heap list,
+     * etc.) that points into the old (freed) block. */
+    delta = newheap - oldheap;
+    area = (const char *) oldheap;
+    area_sz = heap_bytes;
+
+    p->heap = newheap;
+    p->htop += delta;
+    p->hend += delta;
+    p->stop += delta;
+    p->high_water += delta;
+
+    offset_heap(newheap, (Uint) (p->htop - newheap), delta, area, area_sz);
+    offset_rootset(p, delta, area, area_sz, delta, area, area_sz,
+                   p->arg_reg, p->arity);
+    if (erts_frame_layout == ERTS_FRAME_LAYOUT_FP_RA)
+        FRAME_POINTER(p) += delta;
+
+    erts_free(ERTS_ALC_T_HEAP, image->cdata);
+    if (image->dict)
+        free_message_buffer(image->dict);
+    erts_free(ERTS_ALC_T_HEAP, image);
+    p->hib_image = NULL;
+    p->flags &= ~F_COMPRESSED;
+
+#ifdef CHECK_FOR_HOLES
+    p->last_htop = p->htop;
+    p->last_mbuf = NULL;
+#endif
+#ifdef DEBUG
+    p->last_old_htop = NULL;
+#endif
+    ErtsGcQuickSanityCheck(p);
+}
+
+/*
+ * Copy the dictionary of a compressed-hibernated process into 'hfact' without
+ * decompressing the heap. Returns THE_NON_VALUE if the process is not
+ * compressed (caller should fall back to the normal path), NIL if it has no
+ * dictionary, or the [{Key,Value},...] list otherwise. Must be called with
+ * the main lock of 'p' held.
+ */
+Eterm
+erts_compressed_dictionary_copy(Process *p, ErtsHeapFactory *hfact,
+                                Uint reserve_size)
+{
+    struct erts_hibernate_image *image;
+    Eterm src, *hp;
+    Uint sz;
+
+    if (!(p->flags & F_COMPRESSED))
+        return THE_NON_VALUE;
+
+    image = p->hib_image;
+    if (image == NULL || image->dict == NULL)
+        return NIL;
+
+    src = image->dict_term;
+    sz = size_object(src);
+    hp = erts_produce_heap(hfact, sz, reserve_size);
+    return copy_struct(src, sz, &hp, hfact->off_heap);
+}
+
+/*
+ * Actual heap-related memory footprint of a compressed-hibernated process
+ * (compressed image + dictionary copy + bookkeeping), in bytes. Returns 0 if
+ * the process is not compressed.
+ */
+Uint
+erts_compressed_process_heap_size(Process *p)
+{
+    struct erts_hibernate_image *image = p->hib_image;
+    Uint sz;
+
+    if (!(p->flags & F_COMPRESSED) || image == NULL)
+        return 0;
+
+    sz = sizeof(struct erts_hibernate_image) + image->csize;
+    if (image->dict)
+        sz += sizeof(ErlHeapFragment) + image->dict->alloc_size * sizeof(Eterm);
+    return sz;
 }
 
 int

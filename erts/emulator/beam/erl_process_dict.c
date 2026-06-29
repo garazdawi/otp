@@ -308,6 +308,66 @@ Eterm erts_dictionary_copy(ErtsHeapFactory *hfact, ProcDict *pd, Uint reserve_si
     return res;
 }
 
+/*
+ * Word size of the process dictionary when copied into a [{Key,Value},...]
+ * list (matches what erts_dictionary_copy() produces).
+ */
+static Uint
+dictionary_copy_size(ProcDict *pd)
+{
+    unsigned int i, num = HASH_RANGE(pd);
+    Uint sz = 0;
+
+    for (i = 0; i < num; ++i) {
+	Eterm tmp = ARRAY_GET(pd, i);
+	if (is_boxed(tmp)) {
+	    ASSERT(is_tuple(tmp));
+	    sz += size_object(tmp) + 2;
+	}
+	else if (is_list(tmp)) {
+	    while (tmp != NIL) {
+		sz += size_object(TCAR(tmp)) + 2;
+		tmp = TCDR(tmp);
+	    }
+	}
+    }
+    return sz;
+}
+
+/*
+ * Copy the process dictionary into a freshly allocated, self-contained heap
+ * fragment. Used by compressed hibernation (erl_gc.c) so that
+ * process_info(Pid, dictionary) can be served without decompressing the
+ * process heap. Returns the fragment (or NULL for an empty dictionary) and
+ * stores the resulting [{Key,Value},...] term in *result.
+ */
+ErlHeapFragment *
+erts_dictionary_to_heap_frag(ProcDict *pd, Eterm *result)
+{
+    ErlHeapFragment *frag;
+    ErtsHeapFactory factory;
+    Uint sz;
+
+    if (pd == NULL || pd->numElements == 0) {
+	*result = NIL;
+	return NULL;
+    }
+
+    PD_CHECK(pd);
+    sz = dictionary_copy_size(pd);
+    if (sz == 0) {
+	*result = NIL;
+	return NULL;
+    }
+
+    frag = new_message_buffer(sz);
+    erts_factory_heap_frag_init(&factory, frag);
+    *result = erts_dictionary_copy(&factory, pd, 0);
+    erts_factory_close(&factory);
+
+    return frag;
+}
+
 
 /*
 ** BIF interface

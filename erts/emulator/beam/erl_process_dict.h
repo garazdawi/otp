@@ -45,6 +45,7 @@ void erts_dictionary_dump(fmtfn_t to, void *to_arg, ProcDict *pd);
 void erts_deep_dictionary_dump(fmtfn_t to, void *to_arg,
 			       ProcDict* pd, void (*cb)(fmtfn_t, void *, Eterm obj));
 Eterm erts_dictionary_copy(ErtsHeapFactory *hfact, ProcDict *pd, Uint reserve_size);
+struct erl_heap_fragment *erts_dictionary_to_heap_frag(ProcDict *pd, Eterm *result);
 
 Eterm erts_pd_hash_get(struct process *p, Eterm id);
 

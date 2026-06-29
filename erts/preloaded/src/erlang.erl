@@ -453,7 +453,8 @@ A list of binaries. This datatype is useful to use together with
 -export([get_module_info/1, group_leader/0]).
 -export([group_leader/2]).
 -export([halt/0, halt/1, halt/2,
-	 has_prepared_code_on_load/1, hibernate/0, hibernate/3]).
+	 has_prepared_code_on_load/1, hibernate/0, hibernate/1, hibernate/2,
+	 hibernate/3]).
 -export([insert_element/3]).
 -export([integer_to_binary/1, integer_to_list/1]).
 -export([iolist_size/1, iolist_to_binary/1, iolist_to_iovec/1]).
@@ -3562,6 +3563,70 @@ processes), are to use `proc_lib:hibernate/3` instead, to ensure that the
 exception handler continues to work when the process wakes up.
 """.
 -doc #{ category => processes }.
+%% hibernate/1
+-doc(#{ equiv => hibernate(Pid, []) }).
+-doc(#{ since => ~"OTP 28.0" }).
+-spec hibernate(Pid) -> Result when
+      Pid :: pid(),
+      Result :: boolean().
+hibernate(Pid) when erlang:is_pid(Pid) ->
+    erlang:hibernate(Pid, []).
+
+%% hibernate/2
+-doc """
+Hibernates another process `Pid`, garbage collecting and shrinking its heap to
+the minimal size needed to hold its live data, at the next safe point.
+
+This is the inter-process counterpart of `erlang:hibernate/3`: it does not
+discard the call stack or continuation of `Pid`, it only reclaims the unused
+heap memory of an idle process without requiring its cooperation.
+
+If `OptionList` contains the `compressed` option, the heap is additionally
+stored in a compressed form, freeing even more memory at the cost of a slightly
+longer wake-up time when the process is next scheduled (idea #1, step 3). A
+compressed process is transparently decompressed before it executes again; its
+process dictionary remains readable via `process_info(Pid, dictionary)` without
+forcing a decompression.
+
+Returns `true` if the process was hibernated, and `false` if it could not be
+(for example because it no longer exists or has garbage collection disabled).
+""".
+-doc(#{ since => ~"OTP 28.0" }).
+-spec hibernate(Pid, OptionList) -> Result when
+      Pid :: pid(),
+      OptionList :: [Option],
+      Option :: compressed,
+      Result :: boolean().
+hibernate(Pid, OptionList) when erlang:is_pid(Pid), erlang:is_list(OptionList) ->
+    Compress = hibernate_opts(OptionList, false),
+    case Pid =:= erlang:self() of
+        true ->
+            %% Self-hibernation only shrinks; compressing a running heap is
+            %% not meaningful.
+            ReqId = erlang:make_ref(),
+            erts_internal:request_system_task(
+                Pid, inherit, {hibernate, ReqId, false}),
+            receive
+                {hibernate, ReqId, Result} -> Result
+            end;
+        false ->
+            ReqId = erlang:make_ref(),
+            erts_internal:request_system_task(
+                Pid, inherit, {hibernate, ReqId, Compress}),
+            receive
+                {hibernate, ReqId, Result} -> Result
+            end
+    end;
+hibernate(Pid, OptionList) ->
+    badarg_with_info([Pid, OptionList]).
+
+hibernate_opts([compressed | T], _Compress) ->
+    hibernate_opts(T, true);
+hibernate_opts([], Compress) ->
+    Compress;
+hibernate_opts(_, _Compress) ->
+    erlang:error(badarg).
+
 -spec hibernate(Module, Function, Args) -> no_return() when
       Module :: module(),
       Function :: atom(),
