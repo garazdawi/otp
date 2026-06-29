@@ -1378,7 +1378,14 @@ process_info_bif(Process *c_p, Eterm pid, Eterm opt, int always_wrap, int pi2)
         locks |= ERTS_PROC_LOCK_MAIN;
     }
     else {
-        if (flags & ERTS_PI_FLAG_FORCE_SIG_SEND)
+        /* A sole process dictionary request against a compressed-hibernated
+         * process (idea #1, step 3) is served directly from the compressed
+         * image while holding the main lock, so the target is neither woken
+         * up nor decompressed. Every other forced-signal request takes the
+         * normal signalling path. */
+        int dict_only = (len == 1 && item_ix[0] == ERTS_PI_IX_DICTIONARY);
+
+        if ((flags & ERTS_PI_FLAG_FORCE_SIG_SEND) && !dict_only)
             goto send_signal;
         state = ERTS_PSFLG_RUNNING; /* fail state... */
         rp = erts_try_lock_sig_free_proc(pid, locks, &state);
@@ -1393,6 +1400,15 @@ process_info_bif(Process *c_p, Eterm pid, Eterm opt, int always_wrap, int pi2)
                 erts_proc_unlock(rp, locks);
             locks = 0;
             /* wait for it to terminate properly... */
+            goto send_signal;
+        }
+        if ((flags & ERTS_PI_FLAG_FORCE_SIG_SEND)
+            && !(rp->flags & F_COMPRESSED)) {
+            /* dict_only request but the target is not compressed: use the
+             * normal forced-signal path. */
+            if (locks)
+                erts_proc_unlock(rp, locks);
+            locks = 0;
             goto send_signal;
         }
         if (flags & ERTS_PI_FLAG_NEED_MSGQ) {
@@ -1961,7 +1977,15 @@ process_info_aux(Process *c_p,
     }
 
     case ERTS_PI_IX_DICTIONARY:
-	if (!rp->dictionary || (ERTS_IS_PROC_SENSITIVE(rp))) {
+	if (ERTS_IS_PROC_SENSITIVE(rp)) {
+	    res = NIL;
+	} else if (rp->flags & F_COMPRESSED) {
+            /* Read the dictionary from the compressed-hibernation image
+             * without decompressing the heap (idea #1, step 3). */
+	    res = erts_compressed_dictionary_copy(rp, hfact, reserve_size);
+	    if (is_non_value(res))
+		res = NIL;
+	} else if (!rp->dictionary) {
 	    res = NIL;
 	} else {
             Uint num = rp->dictionary->numElements;
