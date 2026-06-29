@@ -1339,7 +1339,16 @@ eval_script([{primLoad,Mods}|T], #es{init=Init,prim_load=PrimLoad,debug=Deb}=Es)
   when is_list(Mods) ->
     case PrimLoad of
 	true ->
-	    debug(Deb, {primLoad,Mods}, fun() -> load_modules(Mods, Init) end);
+            LoadedFun = fun(Loaded) ->
+                                Init ! {self(), loaded, Loaded}
+                        end,
+            OnLoadFun = fun(Mod) ->
+                                ?ON_LOAD_HANDLER ! {loaded, Mod}
+                        end,
+            debug(Deb, {primLoad,Mods},
+                  fun() ->
+                          erl_prim_loader:load_modules(Mods, LoadedFun, OnLoadFun)
+                  end);
 	false ->
 	    %% Do not load now, code_server does that dynamically!
 	    ok
@@ -1356,63 +1365,6 @@ eval_script([], #es{}) ->
     ok;
 eval_script(What, #es{}) ->
     exit({'unexpected command in bootfile',What}).
-
-load_modules(Mods0, Init) ->
-    Mods = [M || M <- Mods0, not erlang:module_loaded(M)],
-    F = prepare_loading_fun(),
-    case has_small_memory() of
-        true ->
-            %% Load one module at the time to reduce the peak memory
-            %% usage.
-            _ = [do_load_modules([M], F, Init) || M <- Mods],
-            ok;
-        false ->
-            %% Load the modules in parallel.
-            do_load_modules(Mods, F, Init)
-    end.
-
-do_load_modules(Mods, F, Init) ->
-    case erl_prim_loader:get_modules(Mods, F) of
-	{ok,{Prep0,[]}} ->
-	    Prep = [Code || {_,{prepared,Code,_}} <- Prep0],
-	    ok = erlang:finish_loading(Prep),
-	    Loaded = [{Mod,Full} || {Mod,{_,_,Full}} <- Prep0],
-	    Init ! {self(),loaded,Loaded},
-	    Beams = [{M,Beam,Full} || {M,{on_load,Beam,Full}} <- Prep0],
-	    load_rest(Beams, Init);
-	{ok,{_,[_|_]=Errors}} ->
-	    Ms = [M || {M,_} <- Errors],
-	    exit({load_failed,Ms})
-    end.
-
-load_rest([{Mod,Beam,Full}|T], Init) ->
-    do_load_module(Mod, Beam),
-    Init ! {self(),loaded,[{Mod,Full}]},
-    load_rest(T, Init);
-load_rest([], _) ->
-    ok.
-
-prepare_loading_fun() ->
-    fun(Mod, FullName, Beam) ->
-	    case erlang:prepare_loading(Mod, Beam) of
-		{error,_}=Error ->
-		    Error;
-		Prepared ->
-		    case erlang:has_prepared_code_on_load(Prepared) of
-			true ->
-			    {ok,{on_load,Beam,FullName}};
-			false ->
-			    {ok,{prepared,Prepared,FullName}}
-		    end
-	    end
-    end.
-
-has_small_memory() ->
-    %% Heuristic for small memory. If true, we'll try to preserve
-    %% memory by not loading code in parallel.
-    (erlang:system_info(wordsize) =:= 4 andalso
-     erlang:system_info(schedulers_online) =:= 1) orelse
-        erlang:system_info(debug_compiled).
 
 make_path(Pa, Pz, Path, Vars) ->
     append([Pa,append([fix_path(Path,Vars),Pz])]).

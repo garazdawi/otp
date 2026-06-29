@@ -95,8 +95,14 @@ The `erl_prim_loader` module interprets the following command-line flags:
 %% Used by test suites
 -export([purge_archive_cache/0, get_modules/3]).
 
+%% Used by code server
+-export([get_modules/2]).
+
 %% Used by init and the code server
--export([get_modules/2, is_basename/1]).
+-export([is_basename/1]).
+
+%% Used by init and kernel
+-export([load_modules/1, load_modules/3]).
 
 -include_lib("kernel/include/file.hrl").
 
@@ -399,6 +405,71 @@ get_modules(Modules, Fun) ->
 
 get_modules(Modules, Fun, Path) ->
     request({get_modules,{Modules,Fun,Path}}).
+
+-doc false.
+-spec load_modules([module()]) -> ok | no_return().
+load_modules(Mods) ->
+    load_modules(Mods, fun(_Loaded) -> ok end, fun(_Mod) -> ok end).
+
+-doc false.
+-spec load_modules([module()], fun(([{module(), any()}]) -> any()), fun((atom()) -> any())) -> ok | no_return().
+load_modules(Mods, InitFun, OnloadFun) ->
+    UnloadedMods = [M || M <- Mods, not erlang:module_loaded(M)],
+    F = prepare_loading_fun(),
+    case has_small_memory() of
+        true ->
+            %% Load one module at the time to reduce the peak memory
+            %% usage.
+            _ = [do_load_modules([M], F, InitFun, OnloadFun) || M <- UnloadedMods],
+            ok;
+        false ->
+            %% Load the modules in parallel.
+            do_load_modules(UnloadedMods, F, InitFun, OnloadFun)
+    end.
+
+do_load_modules(Mods, F, InitFun, OnloadFun) ->
+    case get_modules(Mods, F) of
+        {ok,{Prep0,[]}} ->
+            Prep = [Code || {_,{prepared,Code,_}} <- Prep0],
+            ok = erlang:finish_loading(Prep),
+            Loaded = [{Mod,Full} || {Mod,{_,_,Full}} <- Prep0],
+            InitFun(Loaded),
+            Beams = [{M,Beam,Full} || {M,{on_load,Beam,Full}} <- Prep0],
+            load_on_load_modules(Beams, InitFun, OnloadFun);
+        {ok,{_,[_|_]=Errors}} ->
+            Ms = [M || {M,_} <- Errors],
+            exit({load_failed,Ms})
+    end.
+
+load_on_load_modules([{Mod,Beam,Full}|T], InitFun, OnloadFun) ->
+    {error, on_load} = erlang:load_module(Mod, Beam),
+    OnloadFun(Mod),
+    InitFun([{Mod,Full}]),
+    load_on_load_modules(T, InitFun, OnloadFun);
+load_on_load_modules([], _, _) ->
+    ok.
+
+has_small_memory() ->
+    %% Heuristic for small memory. If true, we'll try to preserve
+    %% memory by not loading code in parallel.
+    (erlang:system_info(wordsize) =:= 4 andalso
+     erlang:system_info(schedulers_online) =:= 1) orelse
+        erlang:system_info(debug_compiled).
+
+prepare_loading_fun() ->
+    fun(Mod, FullName, Beam) ->
+            case erlang:prepare_loading(Mod, Beam) of
+                {error,_}=Error ->
+                    Error;
+                Prepared ->
+                    case erlang:has_prepared_code_on_load(Prepared) of
+                        true ->
+                            {ok,{on_load,Beam,FullName}};
+                        false ->
+                            {ok,{prepared,Prepared,FullName}}
+                    end
+            end
+    end.
 
 request(Req) ->
     Loader = whereis(erl_prim_loader),
