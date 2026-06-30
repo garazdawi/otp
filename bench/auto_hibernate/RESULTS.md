@@ -36,21 +36,38 @@ the memory that compression actually frees for reuse inside the VM).
 
 ## Results — process memory
 
+Compression uses the `enc_term` encoding (`erts_encode_ext_ets`, the same
+compact format ETS uses for `compressed` tables):
+
 | Idle processes | baseline | after `hibernate` (shrink) | after `compressed` |
 |---:|---:|---:|---:|
-| ~120 (bare node) | 25.3 MB | 25.3 MB (−0.2 %) | 25.7 MB (−1.5 %) |
-| 5 120 | 128.7 MB | 107.9 MB (−16.1 %) | **44.5 MB (−65.4 %)** |
-| 20 120 | 437.5 MB | 352.6 MB (−19.4 %) | **102.5 MB (−76.6 %)** |
+| ~120 (bare node) | 25.3 MB | 25.3 MB (−0.1 %) | 25.6 MB (−1.3 %) |
+| 5 120 | 128.7 MB | 107.9 MB (−16.2 %) | **51.8 MB (−59.8 %)** |
+| 20 120 | 437.4 MB | 352.6 MB (−19.4 %) | **131.6 MB (−69.9 %)** |
 
 * On a **bare idle node** there are only ~120 processes with already-tiny
   heaps. Shrinking is roughly neutral (most system processes already hibernate
-  themselves), and compressing such tiny heaps costs slightly more (zlib output
-  + per-process bookkeeping) than it saves. **Compression is not worthwhile for
-  a handful of small processes.**
+  themselves), and compressing such tiny heaps costs slightly more (encoded
+  image + per-process bookkeeping) than it saves. **Compression is not
+  worthwhile for a handful of small processes.**
 * On a **realistic long-running system** (thousands of idle processes holding
-  real state), compression reclaims **65–77 % of the process heap memory** —
-  e.g. **335 MB freed** with 20 000 idle workers. Plain shrinking alone
+  real state), compression reclaims **60–70 % of the process heap memory** —
+  e.g. **306 MB freed** with 20 000 idle workers. Plain shrinking alone
   reclaims ~16–19 %; the rest comes from compression.
+
+### `enc_term` vs the earlier zlib prototype
+
+The first prototype zlib-compressed the raw heap block; it reclaimed 65–77 % on
+this *synthetic* benchmark — a little more than `enc_term` (60–70 %) — because
+the workers hold `lists:seq(1,1000)` and runs of sequential integers are an
+ideal case for zlib's entropy coder, whereas `enc_term` spends ~1.5 bytes per
+small integer plus per-process bookkeeping. On **real application data** the
+ranking reverses: `enc_term` measured **37 % of heap** on real RabbitMQ process
+states vs the raw-heap zlib's ~46–54 %, because real idle heaps are dominated by
+atoms (encoded as 2–3 byte table indices) and refc binaries (kept as
+references, never inlined) rather than long integer runs. `enc_term` is also
+position independent (no pointer relocation on wake) and cheaper on CPU, which
+is why it is the chosen mechanism.
 
 ## Results — ETS
 
@@ -79,9 +96,12 @@ lives in (uncompressed) tables.
 * The ETS figure is a *potential* saving measured via compressed clones; there
   is no in-place table-compression conversion in this branch (idea #1 is about
   processes — ETS already supports `compressed` at creation time).
-* Compression uses `zlib` at `Z_BEST_SPEED`. Term sharing inside a heap is
-  preserved (raw heap bytes are compressed, not re-encoded). The process
-  dictionary is kept in a separately-decompressable form so
+* Compression re-encodes the live data with `enc_term` (`erts_encode_ext_ets`).
+  Refc binaries and magic refs are kept as references (never inlined), atoms
+  become table indices, and decoding needs no pointer relocation. Term sharing
+  is **not** preserved (a shared subterm is expanded on decode); the worst case
+  for that — large shared binaries — is avoided since binaries are kept as
+  references. The process dictionary is kept in a separately-decodable form so
   `process_info(Pid, dictionary)` works without waking/decompressing the
   process.
 
