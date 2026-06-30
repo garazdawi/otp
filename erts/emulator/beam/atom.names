@@ -364,6 +364,7 @@ atom heap_type
 atom heart_port
 atom heir
 atom hibernate
+atom hibernated
 atom hidden
 atom hide
 atom high

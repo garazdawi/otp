@@ -8496,7 +8496,7 @@ process_flag(_Flag, _Value) ->
       {registered_name, [] | (Atom :: atom())} |
       {sequential_trace_token, [] | (SequentialTraceToken :: term())} |
       {stack_size, Size :: non_neg_integer()} |
-      {status, Status :: exiting | garbage_collecting | waiting | running | runnable | suspended} |
+      {status, Status :: exiting | garbage_collecting | waiting | running | runnable | suspended | hibernated} |
       {suspending,
        SuspendeeList :: [{Suspendee :: pid(),
                           ActiveSuspendCount :: non_neg_integer(),
@@ -8707,6 +8707,8 @@ Valid `InfoTuple`s with corresponding `Item`s:
   - `runnable` (ready to run, but another process is running)
   - `suspended` (suspended on a "busy" port or by the BIF
     `erlang:suspend_process/1,2`)
+  - `hibernated` (waiting for a message while hibernated, see
+    `hibernate/1` and `hibernate/3`)
 
 - **`{suspending, SuspendeeList}`** - `SuspendeeList` is a list of
   `{Suspendee, ActiveSuspendCount, OutstandingSuspendCount}` tuples. `Suspendee`

@@ -1700,6 +1700,15 @@ process_info_aux(Process *c_p,
                 }
             }
         }
+        /*
+         * A hibernated process (idea #1) is reported as 'hibernated' rather
+         * than 'waiting' so that its hibernation (and, with the compressed
+         * option, that its heap is compressed) is visible without having to
+         * wake it. F_HIBERNATED is read without the main lock here; a stale
+         * value is harmless for a status hint and 'status' is signal-free.
+         */
+        if (res == am_waiting && (rp->flags & F_HIBERNATED))
+            res = am_hibernated;
 	break;
     }
 
