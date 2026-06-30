@@ -1089,12 +1089,11 @@ struct process {
 
     Eterm* abandoned_heap;
 
-    /* When F_COMPRESSED is set the process is hibernated and its heap block
-     * has been zlib-compressed and freed (see erts_compress_hibernated() in
-     * erl_gc.c). The heap geometry fields (heap/hend/htop/stop/high_water/
-     * heap_sz) are left pointing at the freed block; they are only used to
-     * recompute the relocation delta when the heap is decompressed again on
-     * the next schedule-in. */
+    /* When F_COMPRESSED is set the process is hibernated and its live data has
+     * been encoded into the compact ETS-compressed external term format and
+     * the heap block freed (see erts_compress_hibernated() in erl_gc.c). The
+     * heap geometry fields are left stale while compressed and are not used;
+     * the live data is decoded onto a fresh heap on the next schedule-in. */
     struct erts_hibernate_image *hib_image;
 
     Uint heap_sz;               /* Size of heap in words */
