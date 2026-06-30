@@ -1711,7 +1711,7 @@ hibernate_wake_up(N, MaxHeapSz, Child) ->
                            process_info(Child, current_function)
                end),
     {message_queue_len,0} = process_info(Child, message_queue_len),
-    {status,waiting} = process_info(Child, status),
+    {status,hibernated} = process_info(Child, status),
     {heap_size,After} = process_info(Child, heap_size),
     true = After =< MaxHeapSz,
     Child ! {whats_up,self()},

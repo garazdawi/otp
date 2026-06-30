@@ -3530,47 +3530,17 @@ hibernate() ->
     %% remote call of ourselves into a special instruction.
     erlang:hibernate().
 
-%% hibernate/3
--doc """
-Puts the calling process into a wait state where its memory allocation has been
-reduced as much as possible. This is useful if the process does not expect to
-receive any messages soon.
-
-The process is awakened when a message is sent to it, and control resumes in
-`Module:Function` with the arguments specified by `Args` with the call stack
-emptied, meaning that the process terminates when that function returns. Thus
-`erlang:hibernate/3` never returns to its caller. The resume function
-`Module:Function/Arity` must be exported (`Arity` =:=
-[`length(Args)`](`length/1`)).
-
-If the process has any message in its message queue, the process is awakened
-immediately in the same way as described earlier.
-
-In more technical terms, `erlang:hibernate/3` discards the call stack for the
-process, and then garbage collects the process. After this, all live data is in
-one continuous heap. The heap is then shrunken to the exact same size as the
-live data that it holds (even if that size is less than the minimum heap size
-for the process).
-
-If the size of the live data in the process is less than the minimum heap size,
-the first garbage collection occurring after the process is awakened ensures
-that the heap size is changed to a size not smaller than the minimum heap size.
-
-Notice that emptying the call stack means that any surrounding `catch` is
-removed and must be re-inserted after hibernation. One effect of this is that
-processes started using `proc_lib` (also indirectly, such as `gen_server`
-processes), are to use `proc_lib:hibernate/3` instead, to ensure that the
-exception handler continues to work when the process wakes up.
-""".
--doc #{ category => processes }.
 %% hibernate/1
+-doc #{ category => processes }.
 -doc(#{ equiv => hibernate(Pid, []) }).
 -doc(#{ since => ~"OTP 28.0" }).
 -spec hibernate(Pid) -> Result when
       Pid :: pid(),
       Result :: boolean().
 hibernate(Pid) when erlang:is_pid(Pid) ->
-    erlang:hibernate(Pid, []).
+    erlang:hibernate(Pid, []);
+hibernate(Pid) ->
+    badarg_with_info([Pid]).
 
 %% hibernate/2
 -doc """
@@ -3616,6 +3586,39 @@ hibernate_opts([], Compress) ->
 hibernate_opts(_, _Compress) ->
     erlang:error(badarg).
 
+%% hibernate/3
+-doc """
+Puts the calling process into a wait state where its memory allocation has been
+reduced as much as possible. This is useful if the process does not expect to
+receive any messages soon.
+
+The process is awakened when a message is sent to it, and control resumes in
+`Module:Function` with the arguments specified by `Args` with the call stack
+emptied, meaning that the process terminates when that function returns. Thus
+`erlang:hibernate/3` never returns to its caller. The resume function
+`Module:Function/Arity` must be exported (`Arity` =:=
+[`length(Args)`](`length/1`)).
+
+If the process has any message in its message queue, the process is awakened
+immediately in the same way as described earlier.
+
+In more technical terms, `erlang:hibernate/3` discards the call stack for the
+process, and then garbage collects the process. After this, all live data is in
+one continuous heap. The heap is then shrunken to the exact same size as the
+live data that it holds (even if that size is less than the minimum heap size
+for the process).
+
+If the size of the live data in the process is less than the minimum heap size,
+the first garbage collection occurring after the process is awakened ensures
+that the heap size is changed to a size not smaller than the minimum heap size.
+
+Notice that emptying the call stack means that any surrounding `catch` is
+removed and must be re-inserted after hibernation. One effect of this is that
+processes started using `proc_lib` (also indirectly, such as `gen_server`
+processes), are to use `proc_lib:hibernate/3` instead, to ensure that the
+exception handler continues to work when the process wakes up.
+""".
+-doc #{ category => processes }.
 -spec hibernate(Module, Function, Args) -> no_return() when
       Module :: module(),
       Function :: atom(),

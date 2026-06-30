@@ -1828,6 +1828,7 @@ doctests(_Config) ->
                              {halt, 1},
                              {halt, 2},
                              {hibernate, 0},
+                             {hibernate, 2},
                              {hibernate, 3},
                              {is_alive, 0},
                              {is_record, 2},
