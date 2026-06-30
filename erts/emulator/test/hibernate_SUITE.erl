@@ -27,7 +27,9 @@
 -export([all/0, suite/0,
 	 basic/1,dynamic_call/1,min_heap_size/1,bad_args/1,
 	 messages_in_queue/1,undefined_mfa/1,no_heap/1,
-         wake_up_and_bif_trap/1,in_place/1,stuck_dirty_hibernate/1]).
+         wake_up_and_bif_trap/1,in_place/1,stuck_dirty_hibernate/1,
+         pid_compressed/1,compressed_dictionary/1,compressed_messages/1,
+         compressed_writable_binary/1]).
 
 %% Used by test cases.
 -export([basic_hibernator/1,dynamic_call_hibernator/2,messages_in_queue_restart/2,
@@ -37,10 +39,11 @@ suite() ->
     [{ct_hooks,[ts_install_cth]},
      {timetrap, {minutes, 3}}].
 
-all() -> 
+all() ->
     [basic, dynamic_call, min_heap_size, bad_args, messages_in_queue,
      undefined_mfa, no_heap, wake_up_and_bif_trap, in_place,
-     stuck_dirty_hibernate].
+     stuck_dirty_hibernate, pid_compressed, compressed_dictionary,
+     compressed_messages, compressed_writable_binary].
 
 %%%
 %%% Testing the basic functionality of erlang:hibernate/3.
@@ -535,3 +538,122 @@ wait_until(Fun) ->
 	true -> ok;
 	_ -> receive after 10 -> wait_until(Fun) end
     end.
+
+%%%
+%%% erlang:hibernate/1,2 -- hibernate (and optionally compress) ANOTHER process
+%%% (idea #1). Compressed hibernation re-encodes the live data and frees the
+%%% heap, decoding it back on the next schedule-in; it must round-trip every
+%%% kind of live data and survive being inspected.
+%%%
+
+%% Compress a population of idle processes holding mixed state, verify the state
+%% survives waking, and that a compressed process reports status 'hibernated'.
+pid_compressed(Config) when is_list(Config) ->
+    Self = self(),
+    Pids = [spawn_link(fun() ->
+                               %% list + integer + ref + a (writable) binary
+                               S = {lists:seq(1, V), V, make_ref(), <<V:64>>},
+                               Self ! {ready, self()},
+                               compressed_sum_loop(S)
+                       end) || V <- lists:seq(1, 200)],
+    _ = [receive {ready, _} -> ok end || _ <- Pids],
+    _ = [begin
+             true = erlang:hibernate(P, [compressed]),
+             {status, hibernated} = process_info(P, status)
+         end || P <- Pids],
+    Expect = lists:sort([lists:sum(lists:seq(1, V)) || V <- lists:seq(1, 200)]),
+    _ = [P ! {sum, self()} || P <- Pids],
+    Sums = [receive {sum, X} -> X end || _ <- Pids],
+    Expect = lists:sort(Sums),
+    _ = [begin unlink(P), exit(P, kill) end || P <- Pids],
+    ok.
+
+compressed_sum_loop(S) ->
+    receive
+        {sum, From} -> From ! {sum, lists:sum(element(1, S))}, compressed_sum_loop(S);
+        _ -> compressed_sum_loop(S)
+    end.
+
+%% process_info(Pid, dictionary) must return the right data WITHOUT decompressing
+%% the target (checked via global process memory staying low).
+compressed_dictionary(Config) when is_list(Config) ->
+    Self = self(),
+    Pairs = [{spawn_link(fun() ->
+                                 put(k, lists:seq(1, V)),
+                                 Self ! {ready, self()},
+                                 compressed_hold_loop({lists:seq(1, 1000 + V), make_ref()})
+                         end), V} || V <- lists:seq(1, 200)],
+    _ = [receive {ready, _} -> ok end || _ <- Pairs],
+    _ = [true = erlang:hibernate(P, [compressed]) || {P, _} <- Pairs],
+    Before = erlang:memory(processes),
+    _ = [begin
+             {dictionary, [{k, Seq}]} = process_info(P, dictionary),
+             Seq = lists:seq(1, V)
+         end || {P, V} <- Pairs],
+    erlang:garbage_collect(),
+    After = erlang:memory(processes),
+    true = (After - Before) < 2000000,    %% reading did not decompress anything
+    _ = [begin unlink(P), exit(P, kill) end || {P, _} <- Pairs],
+    ok.
+
+compressed_hold_loop(State) ->
+    receive _ -> compressed_hold_loop(State) end.
+
+%% A process hibernated while it still has unmatched messages sitting in its
+%% on-heap message queue (a selective receive that did not match) must not lose
+%% them: the message-queue roots are part of the GC rootset and must be encoded.
+compressed_messages(Config) when is_list(Config) ->
+    Self = self(),
+    P = spawn_link(fun() ->
+                           receive
+                               {wanted, From} -> From ! {drained, drain_other([])}
+                           end
+                   end),
+    %% Messages that will NOT match the selective receive, each carrying heap
+    %% content (a list) that must survive compression.
+    _ = [P ! {other, N, lists:seq(1, N)} || N <- lists:seq(1, 30)],
+    wait_until(fun() ->
+                       process_info(P, message_queue_len) =:= {message_queue_len, 30}
+               end),
+    {status, waiting} = process_info(P, status),
+    true = erlang:hibernate(P, [compressed]),
+    {status, hibernated} = process_info(P, status),
+    P ! {wanted, Self},
+    receive
+        {drained, Drained} ->
+            Expect = [{N, lists:seq(1, N)} || N <- lists:seq(1, 30)],
+            Expect = Drained
+    after 5000 -> ct:fail(msgq_wake_timeout)
+    end,
+    unlink(P), exit(P, kill),
+    ok.
+
+drain_other(Acc) ->
+    receive
+        {other, N, Seq} -> drain_other([{N, Seq} | Acc])
+    after 0 -> lists:reverse(Acc)
+    end.
+
+%% A process holding a writable binary (bit-syntax append buffer) must survive
+%% compressed hibernation: the writable-binaries list (p->wrt_bins) holds BinRefs
+%% inside the freed heap block and must be released. After waking, appending to
+%% the binary must still produce the correct result.
+compressed_writable_binary(Config) when is_list(Config) ->
+    Self = self(),
+    P = spawn_link(fun() ->
+                           B = <<1:64>>,
+                           Self ! {ready, self()},
+                           receive
+                               {append, From} -> From ! {appended, <<B/binary, 2:64>>}
+                           end
+                   end),
+    receive {ready, _} -> ok end,
+    true = erlang:hibernate(P, [compressed]),
+    {status, hibernated} = process_info(P, status),
+    P ! {append, Self},
+    receive
+        {appended, R} -> R = <<1:64, 2:64>>
+    after 5000 -> ct:fail(append_timeout)
+    end,
+    unlink(P), exit(P, kill),
+    ok.
