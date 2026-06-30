@@ -466,6 +466,7 @@ BIF_RETTYPE db_set_trace_control_word_1(BIF_ALIST_1);
 void db_initialize_util(void);
 Eterm db_getkey(int keypos, Eterm obj);
 void db_cleanup_offheap_comp(DbTerm* p);
+void erts_cleanup_compressed_offheap_list(struct erl_off_heap_header *first);
 void db_free_term(DbTable *tb, void* basep, Uint offset);
 void db_free_term_no_tab(bool compress, void* basep, Uint offset);
 Uint db_term_size(DbTable *tb, void* basep, Uint offset);

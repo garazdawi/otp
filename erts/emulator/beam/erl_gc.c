@@ -44,8 +44,10 @@
 #include "erl_proc_sig_queue.h"
 #include "beam_common.h"
 #include "beam_bp.h"
-#include "erl_zlib.h"
 #include "erl_process_dict.h"
+#include "erl_db_util.h"
+#define ERTS_WANT_EXTERNAL_TAGS
+#include "external.h"
 
 #define ERTS_INACT_WR_PB_LEAVE_MUCH_LIMIT 1
 #define ERTS_INACT_WR_PB_LEAVE_MUCH_PERCENTAGE 20
@@ -1140,47 +1142,115 @@ erts_garbage_collect_hibernate(Process* p)
  *
  * A hibernated process (see garbage_collect_hibernate() above) keeps all of
  * its live data in a single, minimally sized heap block that also holds the
- * stack. erts_compress_hibernated() zlib-compresses that block and frees it,
- * keeping only the compressed image plus a self-contained copy of the process
- * dictionary. erts_decompress_hibernated() reverses this before the process is
- * allowed to execute again (called from the scheduler at schedule-in).
+ * stack. erts_compress_hibernated() re-encodes that live data into the compact
+ * ETS-compressed external term format (erts_encode_ext_ets) and frees the heap
+ * block, keeping only the encoded image. erts_decompress_hibernated() decodes
+ * it back onto a fresh heap before the process is allowed to execute again
+ * (called from the scheduler at schedule-in).
  *
- * Term sharing within the heap is preserved for free, since we compress the
- * raw heap bytes (we do not re-encode the terms). The compressed image is
- * position dependent, so on decompression the block is relocated and all term
- * pointers are adjusted with the same machinery the copying collector uses
- * (offset_heap()/offset_rootset()).
+ * Why erts_encode_ext_ets rather than zlib of the raw heap:
+ *   - it is binary safe: refc binaries and magic refs are kept as internal
+ *     references (BINARY_INTERNAL_REF / MAGIC_REF_INTERNAL_REF), never inlined;
+ *   - atoms encode as 2-3 byte table indices, ideal for atom-dense idle heaps;
+ *   - it is compact (~1/3 of the heap on real data) and cheaper than zlib;
+ *   - it is position independent w.r.t. the heap (no heap pointers in the
+ *     encoding), so decoding needs no pointer relocation.
  *
- * While compressed, the geometry fields of the process (heap/hend/htop/stop/
- * high_water and heap_sz) are deliberately left pointing at the now-freed
- * block. They are never dereferenced in that state -- a compressed process is
- * never scheduled to run code or garbage collected before it is decompressed
- * -- and are only used to recompute the relocation delta on decompression.
+ * The whole root set is encoded as a single flat tuple of all boxed/list root
+ * slots, in a fixed order: the stack's term slots first, then the persisting
+ * regions (arg_reg, dictionary array, recv markers, nfunc rootset and the
+ * scalar process roots; see hib_root_regions()). Immediate slots are not
+ * encoded -- they are restored directly from the (persisting) region arrays,
+ * or, for the stack, from a saved raw skeleton. The stack is the only root
+ * region that lives inside the freed heap block, so it is copied out verbatim;
+ * its CP / frame-pointer words are kept as-is (frame pointers relocated on
+ * wake) and its term slots refilled from the decoded tuple.
  *
- * The off-heap list is intentionally NOT cleaned up when the block is freed:
- * the ProcBin / reference-counted binary headers live inside the compressed
- * copy and are restored on decompression, so their reference counts must be
- * kept intact across the compressed interval.
+ * erts_encode_ext_ets does NOT preserve term sharing -- a shared subterm is
+ * expanded on decode -- which makes decode sizing exact: the decoded heap size
+ * is simply size_object() (the flat size) of each root, summed at encode time.
+ *
+ * Off-heap (refc binary / magic / external) references that the encoder keeps
+ * are threaded (unaligned) into image->off_heap with their refcounts bumped;
+ * the heap block's own off-heap list is then cleaned up before the block is
+ * freed, and image->off_heap is released on decode (after the decoder has
+ * taken its own references) -- net refcount neutral, mirroring ETS.
+ *
+ * While compressed, the geometry fields of the process are not used; the only
+ * pointers kept from the old block are the saved stack range, used to relocate
+ * frame pointers on wake.
  */
+
+/* A contiguous array of root Eterms that survives the heap being freed. */
+#define ERTS_HIB_MAX_REGIONS 12
+struct hib_region { Eterm *v; Uint sz; };
+
+/*
+ * The persisting root regions, in a FIXED order shared by encode and decode.
+ * The stack is handled separately (it lives in the freed heap block). All of
+ * these arrays are outside the heap block, so at decode time the immediate vs
+ * boxed classification of each slot is unchanged and can be re-derived.
+ */
+static int
+hib_root_regions(Process *p, struct hib_region *r)
+{
+    int n = 0;
+    Eterm *v;
+    Uint sz;
+
+    if (p->arity > 0) {
+        r[n].v = p->arg_reg; r[n].sz = p->arity; n++;
+    }
+    if (p->dictionary != NULL) {
+        r[n].v = ERTS_PD_START(p->dictionary);
+        r[n].sz = ERTS_PD_SIZE(p->dictionary);
+        n++;
+    }
+    if (p->sig_qs.recv_mrk_blk != NULL) {
+        r[n].v = &p->sig_qs.recv_mrk_blk->ref[0];
+        r[n].sz = ERTS_RECV_MARKER_BLOCK_SIZE;
+        n++;
+    }
+    if (erts_setup_nfunc_rootset(p, &v, &sz)) {
+        r[n].v = v; r[n].sz = sz; n++;
+    }
+    r[n].v = &p->fvalue;          r[n].sz = 1; n++;
+    r[n].v = &p->ftrace;          r[n].sz = 1; n++;
+    r[n].v = &p->seq_trace_token; r[n].sz = 1; n++;
+    r[n].v = &p->group_leader;    r[n].sz = 1; n++;
+    r[n].v = &p->parent;          r[n].sz = 1; n++;
+    ASSERT(n <= ERTS_HIB_MAX_REGIONS);
+    return n;
+}
+
 struct erts_hibernate_image {
-    byte *cdata;            /* zlib-compressed heap block */
-    Uint csize;             /* number of compressed bytes */
-    Uint orig_bytes;        /* uncompressed heap block size in bytes */
-    ErlHeapFragment *dict;  /* self-contained copy of the process dictionary */
-    Eterm dict_term;        /* [{Key,Value},...] root term inside 'dict' */
+    byte  *ext;                          /* ETS-encoded flat tuple of all roots */
+    Uint   ext_size;                     /* size of 'ext' in bytes */
+    Uint   nslots;                       /* tuple arity == number of boxed roots */
+    Uint   decode_words;                 /* heap words needed to decode 'ext' */
+    struct erl_off_heap_header *off_heap; /* kept refs (unaligned, embedded in ext) */
+    Eterm *stack;                        /* raw copy of the old stack [stop, hend) */
+    Uint   stack_words;
+    Eterm *orig_stack_lo;                /* old p->stop (frame-pointer relocation) */
+    Eterm *orig_stack_hi;                /* old STACK_START(p) */
+    ErlHeapFragment *dict;               /* dictionary copy for process_info */
+    Eterm  dict_term;                    /* [{Key,Value},...] root term in 'dict' */
 };
 
 void
 erts_compress_hibernated(Process *p)
 {
     struct erts_hibernate_image *image;
-    Eterm *heap = p->heap;
-    Uint src_bytes = p->heap_sz * sizeof(Eterm);
-    uLongf bound, clen;
-    byte *cbuf;
+    Eterm *stop = STACK_TOP(p);
+    Eterm *send = STACK_START(p);
+    Uint stack_words = send - stop;
+    struct hib_region regs[ERTS_HIB_MAX_REGIONS];
+    int nregs, ri;
+    Uint i;
+    Uint nslots = 0, ext_bytes = 0, decode_words = 0;
+    byte *ep;
     ErlHeapFragment *dictfrag;
     Eterm dict_term;
-    int res;
 
     ASSERT(p->flags & F_HIBERNATED);
     ASSERT(p->old_heap == NULL && p->mbuf == NULL && p->abandoned_heap == NULL);
@@ -1190,38 +1260,85 @@ erts_compress_hibernated(Process *p)
     if (p->flags & (F_DISABLE_GC|F_DELAY_GC))
         return;
 
-    /* Copy the dictionary into a self-contained heap fragment so that
-     * process_info(Pid, dictionary) can be answered without decompressing
-     * the heap (see erts_compressed_dictionary_copy()). */
+    nregs = hib_root_regions(p, regs);
+
+    /* Pass 1: count boxed root slots and the encoded / decoded sizes. */
+    for (i = 0; i < stack_words; i++) {
+        Eterm w = stop[i];
+        if (is_not_immed(w) && !is_CP(w)) {
+            nslots++;
+            ext_bytes += erts_encode_ext_size_ets(w);
+            decode_words += size_object(w);
+        }
+    }
+    for (ri = 0; ri < nregs; ri++) {
+        for (i = 0; i < regs[ri].sz; i++) {
+            Eterm w = regs[ri].v[i];
+            if (is_not_immed(w)) {
+                nslots++;
+                ext_bytes += erts_encode_ext_size_ets(w);
+                decode_words += size_object(w);
+            }
+        }
+    }
+    /* Framing: one flat tuple of nslots elements (no version byte in the ETS
+     * format), plus the tuple's own decoded footprint. */
+    ext_bytes += (nslots < 256) ? 2 : 5;
+    decode_words += 1 + nslots;
+
+    /* Dictionary copy for process_info(Pid, dictionary) without decompressing. */
     dictfrag = erts_dictionary_to_heap_frag(p->dictionary, &dict_term);
 
-    /* Compress the whole heap block (live heap + small reserve + stack). */
-    bound = src_bytes + (src_bytes / 8) + 256;
-    cbuf = (byte *) erts_alloc(ERTS_ALC_T_HEAP, bound);
-    clen = bound;
-    res = erl_zlib_compress2(cbuf, &clen, (Bytef *) heap, (uLong) src_bytes,
-                             Z_BEST_SPEED);
-    if (res != Z_OK) {
-        /* Leave the process hibernated but uncompressed. */
-        erts_free(ERTS_ALC_T_HEAP, cbuf);
-        if (dictfrag)
-            free_message_buffer(dictfrag);
-        return;
-    }
-
-    /* Shrink the compression buffer to its actual size. */
-    cbuf = (byte *) erts_realloc(ERTS_ALC_T_HEAP, cbuf, (Uint) clen);
-
     image = (struct erts_hibernate_image *)
-        erts_alloc(ERTS_ALC_T_HEAP, sizeof(struct erts_hibernate_image));
-    image->cdata = cbuf;
-    image->csize = (Uint) clen;
-    image->orig_bytes = src_bytes;
+        erts_alloc(ERTS_ALC_T_HEAP, sizeof(*image));
+    image->ext = (byte *) erts_alloc(ERTS_ALC_T_HEAP, ext_bytes);
+    image->ext_size = ext_bytes;
+    image->nslots = nslots;
+    image->decode_words = decode_words;
+    image->off_heap = NULL;
     image->dict = dictfrag;
     image->dict_term = dict_term;
 
-    /* Free the heap block (without cleaning up the off-heap list, see above). */
-    ERTS_HEAP_FREE(ERTS_ALC_T_HEAP, heap, src_bytes);
+    /* Pass 2: write the tuple framing, then encode each boxed root in order. */
+    ep = image->ext;
+    if (nslots < 256) {
+        *ep++ = SMALL_TUPLE_EXT;
+        *ep++ = (byte) nslots;
+    } else {
+        *ep++ = LARGE_TUPLE_EXT;
+        put_int32(nslots, ep);
+        ep += 4;
+    }
+    for (i = 0; i < stack_words; i++) {
+        Eterm w = stop[i];
+        if (is_not_immed(w) && !is_CP(w))
+            ep = erts_encode_ext_ets(w, ep, &image->off_heap);
+    }
+    for (ri = 0; ri < nregs; ri++) {
+        for (i = 0; i < regs[ri].sz; i++) {
+            Eterm w = regs[ri].v[i];
+            if (is_not_immed(w))
+                ep = erts_encode_ext_ets(w, ep, &image->off_heap);
+        }
+    }
+    ASSERT(ep == image->ext + ext_bytes);
+
+    /* Save the stack skeleton (it lives inside the heap block we are freeing). */
+    image->stack_words = stack_words;
+    image->orig_stack_lo = stop;
+    image->orig_stack_hi = send;
+    image->stack = (Eterm *) erts_alloc(ERTS_ALC_T_HEAP,
+                                        (stack_words ? stack_words : 1)
+                                        * sizeof(Eterm));
+    sys_memcpy(image->stack, stop, stack_words * sizeof(Eterm));
+
+    /* The encoder took its own references to the off-heap things, so release
+     * the heap block's references before freeing it. */
+    erts_cleanup_offheap(&p->off_heap);
+    p->off_heap.first = NULL;
+    p->off_heap.overhead = 0;
+
+    ERTS_HEAP_FREE(ERTS_ALC_T_HEAP, p->heap, p->heap_sz * sizeof(Eterm));
 
     p->hib_image = image;
     p->flags |= F_COMPRESSED;
@@ -1231,52 +1348,88 @@ void
 erts_decompress_hibernated(Process *p)
 {
     struct erts_hibernate_image *image = p->hib_image;
-    Eterm *oldheap = p->heap;
-    Uint heap_bytes;
+    Uint heap_words = image->decode_words + S_RESERVED + image->stack_words;
     Eterm *newheap;
-    uLongf destlen;
-    Sint delta;
-    const char *area;
-    Uint area_sz;
-    int res;
+    ErtsHeapFactory factory;
+    Eterm root, *tpl;
+    Uint eix;
+    Eterm *new_stop;
+    Sint stack_offset;
+    struct hib_region regs[ERTS_HIB_MAX_REGIONS];
+    int nregs, ri;
+    Uint i;
 
     ASSERT(p->flags & F_COMPRESSED);
     ASSERT(image != NULL);
 
-    heap_bytes = image->orig_bytes;
-    newheap = (Eterm *) ERTS_HEAP_ALLOC(ERTS_ALC_T_HEAP, heap_bytes);
-    destlen = heap_bytes;
-    res = erl_zlib_uncompress((Bytef *) newheap, &destlen,
-                              image->cdata, (uLong) image->csize);
-    ASSERT(res == Z_OK && destlen == heap_bytes);
-    (void) res;
-    (void) destlen;
+    newheap = (Eterm *) ERTS_HEAP_ALLOC(ERTS_ALC_T_HEAP,
+                                        heap_words * sizeof(Eterm));
 
-    /* Relocate the block: move geometry pointers, then adjust every term
-     * pointer (in the heap, on the stack, in the dictionary, off-heap list,
-     * etc.) that points into the old (freed) block. */
-    delta = newheap - oldheap;
-    area = (const char *) oldheap;
-    area_sz = heap_bytes;
+    /* Decode the flat tuple of roots onto the new heap. The decoder takes its
+     * own references to any off-heap things. */
+    erts_factory_static_init(&factory, newheap, image->decode_words,
+                             &p->off_heap);
+    root = erts_decode_ext_ets(&factory, image->ext);
+    erts_factory_close(&factory);
+    ASSERT(is_tuple(root));
+    tpl = tuple_val(root);
+    ASSERT(arityval(tpl[0]) == image->nslots);
 
+    /* Set up the new heap geometry: decoded data low, stack high. */
     p->heap = newheap;
-    p->htop += delta;
-    p->hend += delta;
-    p->stop += delta;
-    p->high_water += delta;
+    p->heap_sz = heap_words;
+    p->htop = newheap + image->decode_words;
+    p->hend = newheap + heap_words;
+    new_stop = p->hend - image->stack_words;
+    p->stop = new_stop;
+    p->high_water = p->htop;
 
-    offset_heap(newheap, (Uint) (p->htop - newheap), delta, area, area_sz);
-    offset_rootset(p, delta, area, area_sz, delta, area, area_sz,
-                   p->arg_reg, p->arity);
-    if (erts_frame_layout == ERTS_FRAME_LAYOUT_FP_RA)
-        FRAME_POINTER(p) += delta;
+    eix = 1; /* next tuple element to consume (1-based) */
 
-    erts_free(ERTS_ALC_T_HEAP, image->cdata);
+    /* Rebuild the stack from the saved skeleton. */
+    stack_offset = new_stop - image->orig_stack_lo;
+    for (i = 0; i < image->stack_words; i++) {
+        Eterm w = image->stack[i];
+        if (is_CP(w)) {
+            if (erts_frame_layout == ERTS_FRAME_LAYOUT_FP_RA) {
+                Eterm *fp = (Eterm *) cp_val(w);
+                if ((image->orig_stack_lo + i) < fp && fp < image->orig_stack_hi)
+                    w = offset_ptr(w, stack_offset);
+            }
+            new_stop[i] = w;
+        } else if (is_immed(w)) {
+            new_stop[i] = w;
+        } else {
+            new_stop[i] = tpl[eix++];
+        }
+    }
+    if (erts_frame_layout == ERTS_FRAME_LAYOUT_FP_RA) {
+        Eterm *ofp = FRAME_POINTER(p);
+        if (image->orig_stack_lo <= ofp && ofp < image->orig_stack_hi)
+            FRAME_POINTER(p) = new_stop + (ofp - image->orig_stack_lo);
+    }
+
+    /* Restore the persisting regions (same order as encode). Immediate slots
+     * already hold the right value; boxed slots get the next decoded root. */
+    nregs = hib_root_regions(p, regs);
+    for (ri = 0; ri < nregs; ri++) {
+        for (i = 0; i < regs[ri].sz; i++) {
+            if (is_not_immed(regs[ri].v[i]))
+                regs[ri].v[i] = tpl[eix++];
+        }
+    }
+    ASSERT(eix == image->nslots + 1);
+
+    /* Release the encoder's off-heap references (the decoder took its own). */
+    erts_cleanup_compressed_offheap_list(image->off_heap);
     if (image->dict)
         free_message_buffer(image->dict);
+    erts_free(ERTS_ALC_T_HEAP, image->ext);
+    erts_free(ERTS_ALC_T_HEAP, image->stack);
     erts_free(ERTS_ALC_T_HEAP, image);
     p->hib_image = NULL;
     p->flags &= ~F_COMPRESSED;
+    p->live_hf_end = ERTS_INVALID_HFRAG_PTR;
 
 #ifdef CHECK_FOR_HOLES
     p->last_htop = p->htop;
@@ -1318,8 +1471,8 @@ erts_compressed_dictionary_copy(Process *p, ErtsHeapFactory *hfact,
 
 /*
  * Actual heap-related memory footprint of a compressed-hibernated process
- * (compressed image + dictionary copy + bookkeeping), in bytes. Returns 0 if
- * the process is not compressed.
+ * (encoded image + stack skeleton + dictionary copy + bookkeeping), in bytes.
+ * Returns 0 if the process is not compressed.
  */
 Uint
 erts_compressed_process_heap_size(Process *p)
@@ -1330,7 +1483,9 @@ erts_compressed_process_heap_size(Process *p)
     if (!(p->flags & F_COMPRESSED) || image == NULL)
         return 0;
 
-    sz = sizeof(struct erts_hibernate_image) + image->csize;
+    sz = sizeof(struct erts_hibernate_image)
+        + image->ext_size
+        + image->stack_words * sizeof(Eterm);
     if (image->dict)
         sz += sizeof(ErlHeapFragment) + image->dict->alloc_size * sizeof(Eterm);
     return sz;
