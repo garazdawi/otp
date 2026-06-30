@@ -62,11 +62,10 @@ The service is not started automatically; start it with `start_link/0,1`.
                 reds_tolerance :: non_neg_integer(),
                 compressed   :: boolean(),
                 exclude      :: fun((pid()) -> boolean()),
-                %% pid => last observed reduction count
-                reds = #{}   :: #{pid() => non_neg_integer()},
-                %% pid => number of consecutive idle rounds, or the atom
-                %% 'hibernated' once the process has been hibernated
-                idle = #{}   :: #{pid() => non_neg_integer() | hibernated},
+                %% pid => {last observed reduction count,
+                %%         consecutive idle rounds | 'hibernated' once hibernated}
+                tracked = #{} :: #{pid() => {non_neg_integer(),
+                                             non_neg_integer() | hibernated}},
                 hibernated_total = 0 :: non_neg_integer(),
                 timer :: reference() | undefined}).
 
@@ -143,9 +142,11 @@ handle_call(info, _From, State) ->
               idle_rounds => State#state.idle_rounds,
               reds_tolerance => State#state.reds_tolerance,
               compressed => State#state.compressed,
-              tracked => map_size(State#state.reds),
+              tracked => map_size(State#state.tracked),
               currently_hibernated =>
-                  length([P || {P, hibernated} <- maps:to_list(State#state.idle)]),
+                  maps:fold(fun(_, {_, hibernated}, A) -> A + 1;
+                               (_, _, A) -> A
+                            end, 0, State#state.tracked),
               hibernated_total => State#state.hibernated_total},
     {reply, Reply, State};
 handle_call(_Req, _From, State) ->
@@ -181,76 +182,71 @@ arm_timer(State = #state{interval = Interval}) ->
 
 %% One scan round: update the idle bookkeeping and hibernate processes that
 %% have been idle long enough.
-scan(State = #state{reds = PrevReds, idle = PrevIdle,
-                    idle_rounds = Threshold, reds_tolerance = Tol,
-                    exclude = Exclude, compressed = Compressed}) ->
+scan(State = #state{tracked = Prev, idle_rounds = Threshold,
+                    reds_tolerance = Tol, exclude = Exclude,
+                    compressed = Compressed}) ->
     Self = self(),
     HibOpts = case Compressed of
                   true -> [compressed];
                   false -> []
               end,
-    {Reds, Idle, ToHib} =
+    %% A fresh map is built each scan so dead pids are pruned automatically.
+    {Tracked, ToHib} =
         lists:foldl(
           fun(P, Acc) when P =:= Self ->
                   %% Never hibernate the scanner itself.
                   Acc;
-             (P, {RAcc, IAcc, HAcc}) ->
+             (P, {TAcc, HAcc}) ->
                   %% Only signal-free process_info items are used, so a scan
                   %% never sends a signal to the inspected process and thus
                   %% never perturbs its reduction count (nor wakes/decompresses
                   %% an already hibernated process).
                   case erlang:process_info(P, [status, reductions]) of
                       undefined ->
-                          {RAcc, IAcc, HAcc};   %% died between processes/1 and now
+                          {TAcc, HAcc};   %% died between processes/1 and now
                       [{status, hibernated}, {reductions, R}] ->
                           %% The VM reports it as hibernated (by us or by other
                           %% means, e.g. proc_lib:hibernate). Leave it be.
-                          {RAcc#{P => R}, IAcc#{P => hibernated}, HAcc};
+                          {TAcc#{P => {R, hibernated}}, HAcc};
                       [{status, Status}, {reductions, R}] ->
-                          RAcc1 = RAcc#{P => R},
-                          PrevR = maps:get(P, PrevReds, undefined),
+                          {PrevR, PrevIdle} =
+                              case maps:get(P, Prev, undefined) of
+                                  {PR, PI} -> {PR, PI};
+                                  undefined -> {undefined, 0}
+                              end,
                           IsIdle = Status =:= waiting
                               andalso is_integer(PrevR)
                               andalso R - PrevR =< Tol,
-                          case IsIdle of
-                              false ->
-                                  %% Active (did work, not waiting, or first
-                                  %% time seen) -> reset.
-                                  {RAcc1, IAcc#{P => 0}, HAcc};
-                              true ->
-                                  case maps:get(P, PrevIdle, 0) of
-                                      hibernated ->
-                                          %% Was hibernated but is no longer;
-                                          %% it woke -> reset.
-                                          {RAcc1, IAcc#{P => 0}, HAcc};
-                                      N when N + 1 >= Threshold ->
-                                          case Exclude(P) of
-                                              true ->
-                                                  {RAcc1, IAcc#{P => N + 1}, HAcc};
-                                              false ->
-                                                  {RAcc1, IAcc#{P => hibernated},
-                                                   [P | HAcc]}
-                                          end;
-                                      N ->
-                                          {RAcc1, IAcc#{P => N + 1}, HAcc}
-                                  end
-                          end
+                          {IdleState, Hib} =
+                              decide(IsIdle, PrevIdle, Threshold, Exclude, P),
+                          {TAcc#{P => {R, IdleState}},
+                           case Hib of true -> [P | HAcc]; false -> HAcc end}
                   end
           end,
-          {#{}, #{}, []},
+          {#{}, []},
           erlang:processes()),
-    N = hibernate_all(ToHib, HibOpts, 0),
-    {N, State#state{reds = Reds, idle = Idle,
+    N = lists:foldl(
+          fun(P, Acc) ->
+                  try erlang:hibernate(P, HibOpts) of
+                      true -> Acc + 1;
+                      _ -> Acc
+                  catch
+                      _:_ -> Acc
+                  end
+          end, 0, ToHib),
+    {N, State#state{tracked = Tracked,
                     hibernated_total = State#state.hibernated_total + N}}.
 
-hibernate_all([P | Ps], HibOpts, N) ->
-    Hibernated =
-        try erlang:hibernate(P, HibOpts) of
-            true -> 1;
-            _ -> 0
-        catch
-            _:_ -> 0
-        end,
-    hibernate_all(Ps, HibOpts, N + Hibernated);
-hibernate_all([], _HibOpts, N) ->
-    N.
+%% Given whether a process was idle this round and its previous idle state,
+%% return its new idle state and whether to hibernate it now.
+decide(false, _PrevIdle, _Threshold, _Exclude, _P) ->
+    {0, false};                                   %% active -> reset
+decide(true, hibernated, _Threshold, _Exclude, _P) ->
+    {0, false};                                   %% woke since last scan -> reset
+decide(true, N, Threshold, Exclude, P) when N + 1 >= Threshold ->
+    case Exclude(P) of
+        true -> {N + 1, false};
+        false -> {hibernated, true}
+    end;
+decide(true, N, _Threshold, _Exclude, _P) ->
+    {N + 1, false}.

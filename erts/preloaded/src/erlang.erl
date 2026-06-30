@@ -3598,24 +3598,13 @@ Returns `true` if the process was hibernated, and `false` if it could not be
       Option :: compressed,
       Result :: boolean().
 hibernate(Pid, OptionList) when erlang:is_pid(Pid), erlang:is_list(OptionList) ->
-    Compress = hibernate_opts(OptionList, false),
-    case Pid =:= erlang:self() of
-        true ->
-            %% Self-hibernation only shrinks; compressing a running heap is
-            %% not meaningful.
-            ReqId = erlang:make_ref(),
-            erts_internal:request_system_task(
-                Pid, inherit, {hibernate, ReqId, false}),
-            receive
-                {hibernate, ReqId, Result} -> Result
-            end;
-        false ->
-            ReqId = erlang:make_ref(),
-            erts_internal:request_system_task(
-                Pid, inherit, {hibernate, ReqId, Compress}),
-            receive
-                {hibernate, ReqId, Result} -> Result
-            end
+    %% Self-hibernation only shrinks; compressing a running heap is not
+    %% meaningful. hibernate_opts/2 still validates the options either way.
+    Compress = hibernate_opts(OptionList, false) andalso Pid =/= erlang:self(),
+    ReqId = erlang:make_ref(),
+    erts_internal:request_system_task(Pid, inherit, {hibernate, ReqId, Compress}),
+    receive
+        {hibernate, ReqId, Result} -> Result
     end;
 hibernate(Pid, OptionList) ->
     badarg_with_info([Pid, OptionList]).
