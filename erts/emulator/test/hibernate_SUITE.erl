@@ -78,7 +78,7 @@ hibernate_wake_up(N, MaxHeapSz, Child) ->
 				 process_info(Child, current_function)
 		     end),
     {message_queue_len,0} = process_info(Child, message_queue_len),
-    {status,waiting} = process_info(Child, status),
+    {status,hibernated} = process_info(Child, status),
     {heap_size,After} = process_info(Child, heap_size),
     io:format("Before hibernation: ~p  After hibernation: ~p\n",
 	      [Before,After]),
@@ -480,7 +480,7 @@ in_place_helper(Description, Fun, Limit) ->
     receive {'DOWN', RefMon, _, _, _} -> ok end,
 
     receive {ready, Token} -> ok end,
-    [{status, waiting}, {_, HiberSize}] =
+    [{status, hibernated}, {_, HiberSize}] =
         process_info(Hibernator, [status, total_heap_size]),
 
     %% Sleep a while, we have a small race between the ready message and
@@ -516,7 +516,7 @@ in_place_helper(Description, Fun, Limit) ->
 is_hibernated(P) ->
     case process_info(P, [current_function, status]) of
 	[{current_function, {erlang, hibernate, _}},
-	 {status, waiting}] ->
+	 {status, hibernated}] ->
 	    true;
 	_ ->
 	    false
