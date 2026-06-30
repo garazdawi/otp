@@ -12,10 +12,11 @@ the feature VM. Instead, for each app I:
    major GC of every process (`garbage_collect(P, [{type,major}])`, a proxy for
    what hibernate-shrink reclaims), and the **real ETS compression saving** by
    cloning every readable table with the `compressed` option,
-3. for RabbitMQ, also captured every process' real live data (gen_server state
-   + dictionary + messages) and **replayed it on the feature VM**, running the
-   actual `erlang:hibernate(Pid, [compressed])` to measure raw-heap compression
-   on real data (and to confirm the feature is correct on real states).
+3. for RabbitMQ and EMQX, also captured every process' real live data
+   (gen_server state + dictionary + messages) and **replayed it on the feature
+   VM**, running the actual `erlang:hibernate(Pid, [compressed])` to measure
+   `enc_term` compression on real data (and to confirm the feature is correct
+   on real states).
 
 Tooling: `capture.erl`, `probe_inline.erl`, `prober.escript`, `app_replay.erl`.
 
@@ -34,21 +35,26 @@ heaps + stacks + queues. ² `erlang:memory(processes)` — allocator carrier siz
 `Elixir.Livebook.EPMD`) and rejects external connections, so it cannot be
 probed this way (a finding in itself).
 
-### RabbitMQ — feature actually run on real captured states (feature VM)
+### Feature run on real captured states (feature VM, `enc_term`)
 
-The 328 real process states replayed and compressed correctly. On the real
-*live* process data (no artificial slack):
+The captured process states from RabbitMQ and EMQX were replayed on the feature
+VM and compressed with the shipped `enc_term` mechanism. On the real *live*
+process data (no artificial slack):
 
-```
-live process data : 1.07 MB
-after hibernate    : 0.72 MB  (shrink: -32%)
-after compress     : 0.57 MB  (compress: -46.5%)
-```
+| app | live process data | after `hibernate` (shrink) | after `compressed` |
+|---|---:|---:|---:|
+| RabbitMQ (328 procs) | 1.07 MB | 0.72 MB (−32 %) | **0.58 MB (−45 %)** |
+| EMQX (944 procs) | 4.43 MB | 2.78 MB (−37 %) | **1.11 MB (−75 %)** |
 
-Raw-heap compression of real BEAM process heaps is ~**46%** here — lower than
-ETS's 79% because raw heaps carry pointers/headers/stack that compress less
-than ETS's external-term encoding, and small heaps have fixed per-process
-bookkeeping.
+`enc_term` compression of real idle process data lands at **~45 %** (RabbitMQ)
+to **~75 %** (EMQX). EMQX compresses better — its MQTT session/topic state is
+atom- and structure-heavy (atoms become 2–3 byte table indices), while
+RabbitMQ's smaller states have more fixed per-process bookkeeping relative to
+their size. When the real heap *slack* is reproduced (idle processes carry
+allocated heap well above live data), shrink+compress reclaims **88 %**
+(RabbitMQ, 4.83→0.59 MB) to **97 %** (EMQX, 34.4→1.10 MB) of the allocated
+process memory. All roundtrips verified correct (data intact, refc binaries
+kept as references, no leaks) on the debug emulator.
 
 ## Findings
 
@@ -81,13 +87,16 @@ bookkeeping.
 
 ## Rough "reclaimable on an idle node" per app
 
-Process compression at the measured ~46 % of live heap + the real ETS saving:
+Process compression at the measured `enc_term` ratio on each app's live process
+data + the real ETS saving:
 
 | App | process compress | ETS compress | combined |
 |---|---:|---:|---:|
-| RabbitMQ 4 | ~0.8 MB | 2.08 MB | **~2.9 MB** |
-| MongooseIM 6.2 | ~3.1 MB | 2.76 MB | **~5.9 MB** |
-| EMQX 6.2 | ~1.5 MB | 8.45 MB | **~9.9 MB** |
+| RabbitMQ 4 | ~0.5 MB (45 % of 1.07 MB) | 2.08 MB | **~2.6 MB** |
+| MongooseIM 6.2 | ~3 MB (≈45 % of 6.66 MB)¹ | 2.76 MB | **~5.8 MB** |
+| EMQX 6.2 | ~3.3 MB (75 % of 4.43 MB) | 8.45 MB | **~11.8 MB** |
+
+¹ MongooseIM not re-measured with `enc_term`; estimated at the RabbitMQ-like ratio.
 
 ## Bottom line
 

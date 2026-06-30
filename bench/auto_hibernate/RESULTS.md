@@ -42,8 +42,8 @@ compact format ETS uses for `compressed` tables):
 | Idle processes | baseline | after `hibernate` (shrink) | after `compressed` |
 |---:|---:|---:|---:|
 | ~120 (bare node) | 25.3 MB | 25.3 MB (−0.1 %) | 25.6 MB (−1.3 %) |
-| 5 120 | 128.7 MB | 107.9 MB (−16.2 %) | **51.8 MB (−59.8 %)** |
-| 20 120 | 437.4 MB | 352.6 MB (−19.4 %) | **131.6 MB (−69.9 %)** |
+| 5 120 | 129.0 MB | 107.9 MB (−16 %) | **51.1 MB (−60.4 %)** |
+| 20 120 | 437.5 MB | 352.6 MB (−19.4 %) | **129.2 MB (−70.5 %)** |
 
 * On a **bare idle node** there are only ~120 processes with already-tiny
   heaps. Shrinking is roughly neutral (most system processes already hibernate
