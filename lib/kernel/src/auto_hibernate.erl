@@ -48,15 +48,18 @@ The service is not started automatically; start it with `start_link/0,1`.
 -type option() ::
         {interval, pos_integer()}        %% milliseconds between scans
       | {idle_rounds, pos_integer()}     %% idle scans before hibernating
+      | {reds_tolerance, non_neg_integer()} %% reductions still counted as idle
       | {compressed, boolean()}          %% also compress the heap
       | {exclude, [pid()] | fun((pid()) -> boolean())}.
 -export_type([option/0]).
 
 -define(DEFAULT_INTERVAL, 5000).
 -define(DEFAULT_IDLE_ROUNDS, 2).
+-define(DEFAULT_REDS_TOLERANCE, 0).
 
 -record(state, {interval     :: pos_integer(),
                 idle_rounds  :: pos_integer(),
+                reds_tolerance :: non_neg_integer(),
                 compressed   :: boolean(),
                 exclude      :: fun((pid()) -> boolean()),
                 %% pid => last observed reduction count
@@ -84,6 +87,11 @@ Options:
 - `{interval, Milliseconds}` - time between scans (default 5000).
 - `{idle_rounds, N}` - number of consecutive idle scans before a process is
   hibernated (default 2).
+- `{reds_tolerance, N}` - a process is still considered idle if its reduction
+  count grew by at most `N` between two scans (default 0). Detection uses only
+  signal-free `process_info` items (`status`, `reductions`), so scanning never
+  perturbs the inspected processes; the default of 0 (exact equality) is
+  therefore safe.
 - `{compressed, Boolean}` - if `true`, also compress the heap of hibernated
   processes (default `false`).
 - `{exclude, PidsOrPred}` - processes to never hibernate, either a list of pids
@@ -116,10 +124,12 @@ info() ->
 init(Options) ->
     Interval = proplists:get_value(interval, Options, ?DEFAULT_INTERVAL),
     IdleRounds = proplists:get_value(idle_rounds, Options, ?DEFAULT_IDLE_ROUNDS),
+    Tol = proplists:get_value(reds_tolerance, Options, ?DEFAULT_REDS_TOLERANCE),
     Compressed = proplists:get_value(compressed, Options, false),
     Exclude = make_exclude(proplists:get_value(exclude, Options, [])),
     State = #state{interval = Interval,
                    idle_rounds = IdleRounds,
+                   reds_tolerance = Tol,
                    compressed = Compressed,
                    exclude = Exclude},
     {ok, arm_timer(State)}.
@@ -131,6 +141,7 @@ handle_call(scan_now, _From, State0) ->
 handle_call(info, _From, State) ->
     Reply = #{interval => State#state.interval,
               idle_rounds => State#state.idle_rounds,
+              reds_tolerance => State#state.reds_tolerance,
               compressed => State#state.compressed,
               tracked => map_size(State#state.reds),
               currently_hibernated =>
@@ -171,8 +182,8 @@ arm_timer(State = #state{interval = Interval}) ->
 %% One scan round: update the idle bookkeeping and hibernate processes that
 %% have been idle long enough.
 scan(State = #state{reds = PrevReds, idle = PrevIdle,
-                    idle_rounds = Threshold, exclude = Exclude,
-                    compressed = Compressed}) ->
+                    idle_rounds = Threshold, reds_tolerance = Tol,
+                    exclude = Exclude, compressed = Compressed}) ->
     Self = self(),
     HibOpts = case Compressed of
                   true -> [compressed];
@@ -180,22 +191,38 @@ scan(State = #state{reds = PrevReds, idle = PrevIdle,
               end,
     {Reds, Idle, ToHib} =
         lists:foldl(
-          fun(P, {RAcc, IAcc, HAcc}) when P =:= Self ->
+          fun(P, Acc) when P =:= Self ->
                   %% Never hibernate the scanner itself.
-                  {RAcc, IAcc, HAcc};
+                  Acc;
              (P, {RAcc, IAcc, HAcc}) ->
-                  case erlang:process_info(P, reductions) of
+                  %% Only signal-free process_info items are used, so a scan
+                  %% never sends a signal to the inspected process and thus
+                  %% never perturbs its reduction count (nor wakes/decompresses
+                  %% an already hibernated process).
+                  case erlang:process_info(P, [status, reductions]) of
                       undefined ->
                           {RAcc, IAcc, HAcc};   %% died between processes/1 and now
-                      {reductions, R} ->
+                      [{status, hibernated}, {reductions, R}] ->
+                          %% The VM reports it as hibernated (by us or by other
+                          %% means, e.g. proc_lib:hibernate). Leave it be.
+                          {RAcc#{P => R}, IAcc#{P => hibernated}, HAcc};
+                      [{status, Status}, {reductions, R}] ->
                           RAcc1 = RAcc#{P => R},
-                          Prev = maps:get(P, PrevReds, undefined),
-                          case Prev =:= R of
+                          PrevR = maps:get(P, PrevReds, undefined),
+                          IsIdle = Status =:= waiting
+                              andalso is_integer(PrevR)
+                              andalso R - PrevR =< Tol,
+                          case IsIdle of
+                              false ->
+                                  %% Active (did work, not waiting, or first
+                                  %% time seen) -> reset.
+                                  {RAcc1, IAcc#{P => 0}, HAcc};
                               true ->
-                                  %% No work since last scan -> idle this round.
                                   case maps:get(P, PrevIdle, 0) of
                                       hibernated ->
-                                          {RAcc1, IAcc#{P => hibernated}, HAcc};
+                                          %% Was hibernated but is no longer;
+                                          %% it woke -> reset.
+                                          {RAcc1, IAcc#{P => 0}, HAcc};
                                       N when N + 1 >= Threshold ->
                                           case Exclude(P) of
                                               true ->
@@ -206,10 +233,7 @@ scan(State = #state{reds = PrevReds, idle = PrevIdle,
                                           end;
                                       N ->
                                           {RAcc1, IAcc#{P => N + 1}, HAcc}
-                                  end;
-                              false ->
-                                  %% Did work (or first time seen) -> active.
-                                  {RAcc1, IAcc#{P => 0}, HAcc}
+                                  end
                           end
                   end
           end,
