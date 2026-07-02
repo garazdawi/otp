@@ -260,7 +260,7 @@ send_stdin(Term, Chars) ->
     send_stdin(Term, iolist_to_binary(unicode:characters_to_binary(Chars))).
 
 check_location(Term, Where) ->
-    check_location(Term, Where, 5).
+    check_location(Term, Where, 50).
 check_location(Term, Where, Attempt) when is_tuple(Where) ->
     check_location(Term, [Where], Attempt);
 check_location(#tmux{ orig_location = {OrigRow, OrigCol} = Orig } = Term,
