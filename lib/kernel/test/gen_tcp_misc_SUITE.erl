@@ -7125,6 +7125,7 @@ setup_active_timeout_sink(Config, RNode, Addr, Timeout, AutoClose) ->
 		   {packet,             0},
 		   {nodelay,            true},
 		   {keepalive,          true},
+                   {sndbuf,             16 * 1024},
 		   {send_timeout,       Timeout},
 		   {send_timeout_close, AutoClose}],
     {ok, L} = ?LISTEN(Config, 0, ListenOpts),
@@ -7145,7 +7146,9 @@ setup_active_timeout_sink(Config, RNode, Addr, Timeout, AutoClose) ->
 	     end,
     {ok, C} = Remote(fun() ->
 			     ?CONNECT(Config, Addr, Port, [{ip,     Addr},
-			                                   {active, false}])
+			                                   {active, false},
+			                                   {recbuf, BufSz div 2},
+			                                   {sndbuf, BufSz div 2}])
 		     end),
     {ok, A} = gen_tcp:accept(L),
     gen_tcp:send(A, "Hello"),
