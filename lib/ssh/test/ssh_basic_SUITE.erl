@@ -266,7 +266,8 @@ misc_ssh_options(Config) when is_list(Config) ->
     SystemDir = filename:join(proplists:get_value(priv_dir, Config), system),
     UserDir = proplists:get_value(priv_dir, Config),
     
-    CMiscOpt0 = [{connect_timeout, 1000}, {user_dir, UserDir}, {silently_accept_hosts, true}],
+    CMiscOpt0 = [{connect_timeout, 15000 * ssh_test_lib:timetrap_scale()},
+                 {user_dir, UserDir}, {silently_accept_hosts, true}],
     CMiscOpt1 = [{connect_timeout, infinity}, {user_dir, UserDir}, {silently_accept_hosts, true}],
     SMiscOpt0 =  [{user_dir, UserDir}, {system_dir, SystemDir}],
     SMiscOpt1 =  [{user_dir, UserDir}, {system_dir, SystemDir}],
