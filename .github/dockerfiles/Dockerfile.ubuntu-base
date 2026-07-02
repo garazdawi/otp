@@ -108,8 +108,8 @@ RUN apt-get install -y linux-tools-$(uname -r) || true
 
 ## We use tmux to test terminals
 RUN apt-get install -y libevent-dev libutf8proc-dev && \
-    cd /tmp && wget https://github.com/tmux/tmux/releases/download/3.3a/tmux-3.3a.tar.gz && \
-    tar xvzf tmux-3.3a.tar.gz && cd tmux-3.3a && \
+    cd /tmp && wget https://github.com/tmux/tmux/releases/download/3.7b/tmux-3.7b.tar.gz && \
+    tar xvzf tmux-3.7b.tar.gz && cd tmux-3.7b && \
     ./configure --enable-static --enable-utf8proc && \
     make && make install
 
