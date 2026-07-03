@@ -1,0 +1,153 @@
+## %CopyrightBegin%
+##
+## SPDX-License-Identifier: Apache-2.0
+##
+## Copyright Ericsson AB 2026. All Rights Reserved.
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+##
+## %CopyrightEnd%
+
+##
+## Soak test for known-flaky test cases.
+##
+## Runs a hand-picked set of previously-flaky test cases many times in a row
+## (ct_run -repeat N) so that timing/scheduling races have a real chance to
+## resurface. A green run means every one of the N iterations passed.
+##
+## This is a verification aid, NOT part of the normal CI gate: it only runs
+## when triggered manually (workflow_dispatch) or when explicitly pushed to
+## the test-stability branch. It reuses the same build path as the normal
+## test job (reusable-setup -> reusable-pack -> build-base-image), so the
+## cases run in exactly the environment they flaked in.
+##
+
+name: Test stability (soak)
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: 'How many times to repeat each test case'
+        required: true
+        default: '25'
+        type: string
+  push:
+    branches:
+      - lukas/gh/test-stability
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    uses: ./.github/workflows/reusable-setup.yaml
+
+  pack:
+    name: Build Erlang/OTP (64-bit)
+    needs: setup
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/reusable-pack.yaml
+    with:
+      base_branch:          ${{ needs.setup.outputs.base_branch }}
+      full_build_and_check: ${{ needs.setup.outputs.full_build_and_check }}
+      bypass_erlang_repo:   true
+
+  soak:
+    name: "Soak ${{ matrix.id }}"
+    needs:
+      - setup
+      - pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions:  write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: send_timeout_active
+            app: kernel
+            args: "-suite gen_tcp_misc_SUITE -group inet_backend_default -case send_timeout_active"
+          - id: differing_cookies
+            app: kernel
+            args: "-suite erl_distribution_SUITE -group differing_cookies -case differing_cookies"
+          - id: shell_combining_unicode
+            app: kernel
+            args: "-suite interactive_shell_SUITE -group tty -case shell_combining_unicode"
+          - id: dirty_signal_handling
+            app: emulator
+            args: "-suite signal_SUITE -case dirty_signal_handling"
+          - id: misc_ssh_options
+            app: ssh
+            args: "-suite ssh_basic_SUITE -group p_basic -case misc_ssh_options"
+    env:
+      BASE_BRANCH: ${{ needs.setup.outputs.base_branch }}
+      ITERATIONS:  ${{ github.event.inputs.iterations || '25' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-base-image
+        with:
+          BASE_BRANCH: ${{ env.BASE_BRANCH }}
+      - name: Soak test case
+        env:
+          MATRIX_APP:  ${{ matrix.app }}
+          MATRIX_ID:   ${{ matrix.id }}
+          MATRIX_ARGS: ${{ matrix.args }}
+        run: |
+          set -x
+          mkdir "$PWD/make_test_dir"
+          APP="${MATRIX_APP}"
+          ## Same DIR mapping as the normal test job (reusable-test.yaml)
+          case "${APP}" in
+            emulator) DIR=erts/emulator ;;
+            epmd)     DIR=erts/epmd ;;
+            *)        DIR=lib/${APP} ;;
+          esac
+          ## ct_run args: select the single case and repeat it ITERATIONS times.
+          CT_ARGS="${MATRIX_ARGS} -repeat ${ITERATIONS}"
+          ## Remove systemd-coredump (see reusable-test.yaml)
+          sudo apt remove systemd-coredump || true
+          sudo service apport stop || true
+          sudo sysctl -w dev.tty.legacy_tiocsti=1
+          sudo bash -c "echo 'core.%p' > /proc/sys/kernel/core_pattern"
+          docker run --ulimit core=-1 --ulimit nofile=5000:5000 --pids-limit 1024 \
+            -e CTRUN_TIMEOUT=90 -e SPEC_POSTFIX=gh \
+            -e TEST_NEEDS_RELEASE=true -e "RELEASE_ROOT=/buildroot/otp/Erlang ∅⊤℞" \
+            -e ARGS="${CT_ARGS}" \
+            -e EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"/buildroot/otp/$DIR/make_test_dir/${MATRIX_ID}_junit.xml\"}]" \
+            -v "$PWD/make_test_dir:/buildroot/otp/$DIR/make_test_dir" \
+            -v "$PWD/scripts:/buildroot/otp/scripts" \
+            otp "./otp_build download_gdb_tools && make emulator && make && make ${APP}_test"
+      - name: Cleanup tests
+        if: ${{ !cancelled() }}
+        env:
+          MATRIX_ID: ${{ matrix.id }}
+        run: |
+          rm -rf make_test_dir/otp || true
+          sudo bash -c "chown -R $(whoami) make_test_dir && chmod -R +r make_test_dir"
+          tar czf "${MATRIX_ID}_soak_results.tar.gz" make_test_dir
+      - name: Upload test results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        if: ${{ !cancelled() }}
+        with:
+          name: ${{ matrix.id }}_soak_results
+          path: ${{ matrix.id }}_soak_results.tar.gz
