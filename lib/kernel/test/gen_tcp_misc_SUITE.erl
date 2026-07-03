@@ -7119,13 +7119,14 @@ oki({ok, V}) -> V;
 oki(E)       -> E.
 
 setup_active_timeout_sink(Config, RNode, Addr, Timeout, AutoClose) ->
+    BufSz = 16 * 1024,
     ListenOpts =  [binary,
                    {ifaddr,             Addr},
 		   {active,             false},
 		   {packet,             0},
 		   {nodelay,            true},
 		   {keepalive,          true},
-                   {sndbuf,             16 * 1024},
+                   {sndbuf,             BufSz},
 		   {send_timeout,       Timeout},
 		   {send_timeout_close, AutoClose}],
     {ok, L} = ?LISTEN(Config, 0, ListenOpts),
