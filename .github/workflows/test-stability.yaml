@@ -88,9 +88,14 @@ jobs:
           - id: differing_cookies
             app: kernel
             args: "-suite erl_distribution_SUITE -group differing_cookies -case differing_cookies"
+          # Run the whole tty group (not just -case shell_combining_unicode):
+          # the failure is contention-induced by the [parallel] tty_tests group
+          # (~20 concurrent tmux shells), so the case must be soaked alongside
+          # its parallel siblings, not in isolation, to reproduce it.
           - id: shell_combining_unicode
             app: kernel
-            args: "-suite interactive_shell_SUITE -group tty -case shell_combining_unicode"
+            args: "-suite interactive_shell_SUITE -group tty"
+            repeat: '15'
           - id: dirty_signal_handling
             app: emulator
             args: "-suite signal_SUITE -case dirty_signal_handling"
@@ -109,9 +114,10 @@ jobs:
           BASE_BRANCH: ${{ env.BASE_BRANCH }}
       - name: Soak test case
         env:
-          MATRIX_APP:  ${{ matrix.app }}
-          MATRIX_ID:   ${{ matrix.id }}
-          MATRIX_ARGS: ${{ matrix.args }}
+          MATRIX_APP:    ${{ matrix.app }}
+          MATRIX_ID:     ${{ matrix.id }}
+          MATRIX_ARGS:   ${{ matrix.args }}
+          MATRIX_REPEAT: ${{ matrix.repeat }}
         run: |
           set -x
           mkdir "$PWD/make_test_dir"
@@ -122,8 +128,9 @@ jobs:
             epmd)     DIR=erts/epmd ;;
             *)        DIR=lib/${APP} ;;
           esac
-          ## ct_run args: select the single case and repeat it ITERATIONS times.
-          CT_ARGS="${MATRIX_ARGS} -repeat ${ITERATIONS}"
+          ## ct_run args: repeat the selection. Entries may override the global
+          ## ITERATIONS with a per-entry matrix.repeat (heavier entries use less).
+          CT_ARGS="${MATRIX_ARGS} -repeat ${MATRIX_REPEAT:-${ITERATIONS}}"
           ## Remove systemd-coredump (see reusable-test.yaml)
           sudo apt remove systemd-coredump || true
           sudo service apport stop || true
