@@ -107,7 +107,8 @@ RUN apt-get update && apt-get install -y \
 RUN apt-get install -y linux-tools-$(uname -r) || true
 
 ## We use tmux to test terminals
-RUN apt-get install -y libevent-dev libutf8proc-dev && \
+## (bison provides yacc, which tmux 3.7's ./configure requires)
+RUN apt-get install -y libevent-dev libutf8proc-dev bison && \
     cd /tmp && wget https://github.com/tmux/tmux/releases/download/3.7b/tmux-3.7b.tar.gz && \
     tar xvzf tmux-3.7b.tar.gz && cd tmux-3.7b && \
     ./configure --enable-static --enable-utf8proc && \
