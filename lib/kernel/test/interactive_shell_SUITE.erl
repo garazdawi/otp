@@ -1037,31 +1037,45 @@ shell_update_window(Config) ->
                 shell_test_lib:send_tty(Term,Text),
                 shell_test_lib:check_content(Term,Text),
                 shell_test_lib:check_location(Term, {0, width(Text)}),
+                %% tmux changed how it positions the cursor after resize-window on
+                %% a wrapped line somewhere between 3.3a and 3.6a. Each check below
+                %% accepts both the old (=< 3.3a) position and the newer one
+                %% (verified identical on tmux 3.6a/macOS and 3.7b/Linux), so the
+                %% test passes regardless of the installed tmux version. resize-window
+                %% also triggers an asynchronous reflow; we let it settle before the
+                %% next keystroke/check so we do not race a half-redrawn frame.
                 shell_test_lib:tmux(["resize-window -t ",shell_test_lib:tty_name(Term)," -x ",width(Text)+Col+1]),
+                timer:sleep(1500),
                 shell_test_lib:send_tty(Term,"a"),
-                shell_test_lib:check_location(Term, {0, -Col}),
+                shell_test_lib:check_location(Term, [{0, -Col}, {0, -Col + 6}]),
                 shell_test_lib:send_tty(Term,"BSpace"),
                 shell_test_lib:check_location(Term, {-1, width(Text)}),
                 shell_test_lib:tmux(["resize-window -t ",shell_test_lib:tty_name(Term)," -x ",width(Text)+Col]),
+                timer:sleep(1500),
                 %% When resizing, tmux does not xnfix the cursor, so it will remain
                 %% at the previous locations
-                shell_test_lib:check_location(Term, {-1, width(Text)}),
+                shell_test_lib:check_location(Term, [{-1, width(Text)}, {-1, -Col + 6}]),
                 shell_test_lib:send_tty(Term,"a"),
-                shell_test_lib:check_location(Term, {0, -Col + 1}),
+                shell_test_lib:check_location(Term, [{0, -Col + 1}, {-1, -Col + 7}]),
 
                 %% When we do backspace here, tmux seems to place the cursor in an
                 %% incorrect position except when a terminal is attached.
                 shell_test_lib:send_tty(Term,"BSpace"),
                 %% This really should be {0, -Col}, but sometimes tmux sets it to
                 %% {-1, width(Text)} instead.
-                shell_test_lib:check_location(Term, [{0, -Col}, {-1, width(Text)}]),
+                shell_test_lib:check_location(Term, [{0, -Col}, {-1, width(Text)}, {-1, -Col + 6}]),
 
                 shell_test_lib:tmux(["resize-window -t ",shell_test_lib:tty_name(Term)," -x ",width(Text) div 2 + Col]),
+                timer:sleep(1500),
 
                 %% Depending on what happened with the cursor above, the line will be
-                %% different here.
+                %% different here. This most-aggressive reflow is also where tmux
+                %% 3.6a and 3.7b disagree: 3.6a settles at width(Text) div 2 - 3,
+                %% 3.7b at width(Text) div 2 - 6 (both deterministic).
                 shell_test_lib:check_location(Term, [{0, -Col + width(Text) div 2},
-                                    {-1, -Col + width(Text) div 2}]),
+                                    {-1, -Col + width(Text) div 2},
+                                    {-1, width(Text) div 2 - 3},
+                                    {-1, width(Text) div 2 - 6}]),
                 ok
             after
                 shell_test_lib:stop_tty(Term)
