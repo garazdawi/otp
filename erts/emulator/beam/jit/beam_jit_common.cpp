@@ -1084,6 +1084,9 @@ Sint32 beam_jit_remove_message(Process *c_p,
 
     ERTS_CHK_MBUF_SZ(c_p);
 
+    /* T2FULL M0.R: receive instance terminates here with a match. */
+    erts_recv_stats_match(c_p);
+
     if (active_code_ix == ERTS_SAVE_CALLS_CODE_IX) {
         save_calls(c_p, &exp_receive);
     }
@@ -1190,6 +1193,9 @@ void beam_jit_take_receive_lock(Process *c_p) {
 }
 
 void beam_jit_wait_locked(Process *c_p, ErtsCodePtr cp) {
+    /* T2FULL M0.R: the process is suspending on an empty/exhausted queue
+     * in the current receive instance (a scheduler round-trip). */
+    c_p->recv_waited = 1;
     c_p->arity = 0;
     if (!ERTS_PTMR_IS_TIMED_OUT(c_p)) {
         erts_atomic32_read_band_relb(&c_p->state, ~ERTS_PSFLG_ACTIVE);
@@ -1240,6 +1246,8 @@ enum beam_jit_tmo_ret beam_jit_wait_timeout(Process *c_p,
 }
 
 void beam_jit_timeout(Process *c_p) {
+    /* T2FULL M0.R: receive instance terminates here via its after-clause. */
+    erts_recv_stats_abandon(c_p);
     if (ERTS_IS_P_TRACED_FL(c_p, F_TRACE_RECEIVE)) {
         trace_receive(c_p, am_clock_service, am_timeout);
     }

@@ -126,6 +126,16 @@ void erts_galloc_reset(void);
 Eterm erts_galloc_sites_term(Process *p);
 void erts_galloc_set_all(int on);   /* global all-processes switch */
 extern int erts_galloc_default_active;
+
+/* Receive-path statistics (T2FULL M0.R). Always-on, per-scheduler
+ * counters that classify every receive instance as it terminates.
+ * erts_recv_stats_match/abandon are called from the receive terminals
+ * (beam_jit_remove_message / beam_jit_timeout); reset/term are the
+ * readout hooks (erts_debug:{get,set}_internal_state(recv_stats,...)). */
+void erts_recv_stats_match(Process *c_p);
+void erts_recv_stats_abandon(Process *c_p);
+void erts_recv_stats_reset(void);
+Eterm erts_recv_stats_term(Process *p);
 #define ERTS_SCHED_THREAD_MIN_STACK_SIZE 20	/* Kilo words */
 #define ERTS_SCHED_THREAD_MAX_STACK_SIZE 8192	/* Kilo words */
 
@@ -1109,6 +1119,14 @@ struct process {
      * JIT emit time, then by galloc_active per process at runtime). */
     Uint galloc_active;         /* per-process on/off (0 = no recording) */
     Uint galloc_words;          /* accumulated heap words allocated */
+
+    /* Receive-path statistics (T2FULL M0.R): per-instance scratch state.
+     * recv_scanned = messages advanced past (loop_rec_end) since this
+     * receive instance began; recv_waited = set once the process has
+     * suspended on an empty/exhausted queue in this instance. Both are
+     * consumed and cleared at the receive terminal. */
+    Uint recv_scanned;
+    Uint recv_waited;
 
     ErtsCodePtr i;              /* Program counter. */
     Sint catches;               /* Number of catches on stack */

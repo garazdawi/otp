@@ -2386,6 +2386,9 @@ erts_msgq_set_save_next(Process *c_p)
     ErtsMessage *sigp = (*c_p->sig_qs.save)->next;
     ErtsMessage **sigpp = &(*c_p->sig_qs.save)->next;
     ASSERT(!(c_p->sig_qs.flags & FS_HANDLING_SIGS));
+    /* T2FULL M0.R: one message just failed to match and we advance past
+     * it -- record it as scanned in the current receive instance. */
+    c_p->recv_scanned++;
     ERTS_HDBG_CHECK_SIGNAL_PRIV_QUEUE(c_p, 0);
     if (sigp && ERTS_SIG_IS_RECV_MARKER(sigp))
         sigpp = erts_msgq_pass_recv_markers(c_p, sigpp);

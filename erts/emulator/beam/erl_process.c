@@ -309,6 +309,155 @@ erts_galloc_sites_term(Process *p)
         free(snap);
     return res;
 }
+
+/*
+ * Receive-path statistics (T2FULL M0.R — measurement for the "receive
+ * in the IR" open question). One *receive instance* is one execution of
+ * a receive statement by a process, from the first message-queue
+ * inspection until it either matches+removes a message or gives up via
+ * an after-clause. Each instance terminates in exactly one of
+ * beam_jit_remove_message (match) or beam_jit_timeout (abandon), and is
+ * classified there from two pieces of per-process scratch state:
+ *
+ *   recv_waited  - set by beam_jit_wait_locked, i.e. the process actually
+ *                  suspended on an empty/exhausted queue during this
+ *                  instance (a scheduler round-trip). Reduction-preemption
+ *                  yields do NOT set it (they don't go through the wait
+ *                  instruction), so they are counted as hits.
+ *   recv_scanned - number of non-matching messages advanced past
+ *                  (loop_rec_end / erts_msgq_set_save_next) this instance.
+ *
+ * Buckets:
+ *   hit_first      matched, never waited, scan depth 1 (matched the very
+ *                  first message inspected -> recv_scanned == 0)
+ *   hit_scan_2_4   matched, never waited, scan depth 2..4
+ *   hit_scan_5p    matched, never waited, scan depth >= 5
+ *   wait_match     matched after >= 1 suspend on empty/exhausted queue
+ *   timeout_imm    after-clause fired without ever waiting (e.g. `after 0`)
+ *   timeout_waited after-clause fired after having waited (`after N` elapsed)
+ *   msgs_scanned   total non-matching messages advanced past, all instances
+ *
+ * Counters are per-scheduler and cache-line-padded, incremented with plain
+ * non-atomic adds into the running normal scheduler's own slot (no
+ * contention). Always on; the only per-message cost is the recv_scanned++
+ * add on the loop_rec_end path.
+ */
+typedef struct {
+    Uint64 hit_first;
+    Uint64 hit_scan_2_4;
+    Uint64 hit_scan_5p;
+    Uint64 wait_match;
+    Uint64 timeout_imm;
+    Uint64 timeout_waited;
+    Uint64 msgs_scanned;
+} ErtsRecvStatsCnt;
+
+typedef union {
+    ErtsRecvStatsCnt c;
+    char align[ERTS_ALC_CACHE_LINE_ALIGN_SIZE(sizeof(ErtsRecvStatsCnt))];
+} ErtsAlignedRecvStats;
+
+static ErtsAlignedRecvStats
+    erts_recv_stats[ERTS_MAX_NO_OF_SCHEDULERS + 1]
+    erts_align_attribute(ERTS_CACHE_LINE_SIZE);
+
+static ERTS_INLINE ErtsRecvStatsCnt *
+erts_recv_stats_slot(void)
+{
+    ErtsSchedulerData *esdp = erts_get_scheduler_data();
+    Uint no = (esdp && esdp->type == ERTS_SCHED_NORMAL) ? esdp->no : 0;
+    if (no > ERTS_MAX_NO_OF_SCHEDULERS)
+        no = 0;
+    return &erts_recv_stats[no].c;
+}
+
+void
+erts_recv_stats_match(Process *c_p)
+{
+    ErtsRecvStatsCnt *s = erts_recv_stats_slot();
+    Uint scanned = c_p->recv_scanned;
+    s->msgs_scanned += scanned;
+    if (c_p->recv_waited)
+        s->wait_match++;
+    else if (scanned == 0)
+        s->hit_first++;      /* scan depth 1: matched the first message */
+    else if (scanned < 4)
+        s->hit_scan_2_4++;   /* scan depth 2..4 */
+    else
+        s->hit_scan_5p++;    /* scan depth >= 5 */
+    c_p->recv_scanned = 0;
+    c_p->recv_waited = 0;
+}
+
+void
+erts_recv_stats_abandon(Process *c_p)
+{
+    ErtsRecvStatsCnt *s = erts_recv_stats_slot();
+    s->msgs_scanned += c_p->recv_scanned;
+    if (c_p->recv_waited)
+        s->timeout_waited++;
+    else
+        s->timeout_imm++;
+    c_p->recv_scanned = 0;
+    c_p->recv_waited = 0;
+}
+
+void
+erts_recv_stats_reset(void)
+{
+    sys_memzero((void *) erts_recv_stats, sizeof(erts_recv_stats));
+}
+
+Eterm
+erts_recv_stats_term(Process *p)
+{
+    ErtsRecvStatsCnt tot;
+    struct { const char *name; Uint64 val; } kv[7];
+    int i, n;
+    Uint sz;
+    Eterm *hp, res;
+
+    sys_memzero((void *) &tot, sizeof(tot));
+    for (i = 0; i <= ERTS_MAX_NO_OF_SCHEDULERS; i++) {
+        ErtsRecvStatsCnt *s = &erts_recv_stats[i].c;
+        tot.hit_first      += s->hit_first;
+        tot.hit_scan_2_4   += s->hit_scan_2_4;
+        tot.hit_scan_5p    += s->hit_scan_5p;
+        tot.wait_match     += s->wait_match;
+        tot.timeout_imm    += s->timeout_imm;
+        tot.timeout_waited += s->timeout_waited;
+        tot.msgs_scanned   += s->msgs_scanned;
+    }
+
+    n = 0;
+    kv[n].name = "hit_first";      kv[n++].val = tot.hit_first;
+    kv[n].name = "hit_scan_2_4";   kv[n++].val = tot.hit_scan_2_4;
+    kv[n].name = "hit_scan_5p";    kv[n++].val = tot.hit_scan_5p;
+    kv[n].name = "wait_match";     kv[n++].val = tot.wait_match;
+    kv[n].name = "timeout_imm";    kv[n++].val = tot.timeout_imm;
+    kv[n].name = "timeout_waited"; kv[n++].val = tot.timeout_waited;
+    kv[n].name = "msgs_scanned";   kv[n++].val = tot.msgs_scanned;
+
+    sz = 0;
+    for (i = 0; i < n; i++) {
+        sz += 2 /* cons */ + 3 /* {atom,int} */;
+        (void) erts_bld_uint(NULL, &sz, (Uint) kv[i].val);
+    }
+    hp = HAlloc(p, sz);
+    res = NIL;
+    for (i = n - 1; i >= 0; i--) {
+        Eterm v = erts_bld_uint(&hp, NULL, (Uint) kv[i].val);
+        Eterm k = erts_atom_put((byte *) kv[i].name,
+                                sys_strlen(kv[i].name),
+                                ERTS_ATOM_ENC_LATIN1, 1);
+        Eterm pair = TUPLE2(hp, k, v);
+        hp += 3;
+        res = CONS(hp, pair, res);
+        hp += 2;
+    }
+    return res;
+}
+
 #ifdef ERTS_ENABLE_LOCK_CHECK
 ErtsLcPSDLocks erts_psd_required_locks[ERTS_PSD_SIZE];
 #endif
@@ -12764,6 +12913,8 @@ erl_create_process(Process* parent, /* Parent of process (default group leader).
     p->heap_sz = sz;
     p->galloc_active = erts_galloc_default_active;
     p->galloc_words = 0;
+    p->recv_scanned = 0;
+    p->recv_waited = 0;
     p->abandoned_heap = NULL;
     p->live_hf_end = ERTS_INVALID_HFRAG_PTR;
     p->catches = 0;

@@ -4288,6 +4288,12 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	    /* Per-function allocation attribution: [{{M,F,A}, Words}]. */
 	    BIF_RET(erts_galloc_sites_term(BIF_P));
 	}
+	else if (ERTS_IS_ATOM_STR("recv_stats", BIF_ARG_1)) {
+	    /* Receive-path classification counters (T2FULL M0.R):
+	     * [{hit_first,_},{hit_scan_2_4,_},{hit_scan_5p,_},{wait_match,_},
+	     *  {timeout_imm,_},{timeout_waited,_},{msgs_scanned,_}]. */
+	    BIF_RET(erts_recv_stats_term(BIF_P));
+	}
 	else if (ERTS_IS_ATOM_STR("reds_left", BIF_ARG_1)) {
 	    /* Used by (emulator) */
 	    BIF_RET(make_small((Uint) ERTS_BIF_REDS_LEFT(BIF_P)));
@@ -5013,6 +5019,12 @@ BIF_RETTYPE erts_debug_set_internal_state_2(BIF_ALIST_2)
 	if (ERTS_IS_ATOM_STR("alloc_profile_sites", BIF_ARG_1)) {
 	    /* Reset the global per-function site counters. */
 	    erts_galloc_reset();
+	    BIF_RET(am_true);
+	}
+
+	if (ERTS_IS_ATOM_STR("recv_stats", BIF_ARG_1)) {
+	    /* Reset the receive-path classification counters (T2FULL M0.R). */
+	    erts_recv_stats_reset();
 	    BIF_RET(am_true);
 	}
 
