@@ -1,0 +1,16 @@
+FROM erlang:29
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get install -y -qq curl unzip git linux-perf >/dev/null
+RUN mkdir -p /opt/elixir && cd /opt && \
+    curl -sL https://github.com/elixir-lang/elixir/releases/download/v1.19.0/elixir-otp-28.zip -o e.zip && \
+    unzip -q e.zip -d /opt/elixir && rm e.zip
+ENV PATH=/opt/elixir/bin:$PATH
+ENV ELIXIR_ERL_OPTIONS="+fnu"
+RUN elixir --version
+RUN mix local.hex --force >/dev/null && mix local.rebar --force >/dev/null
+WORKDIR /app
+RUN mix new bench --sup >/dev/null
+RUN printf 'defmodule Bench.MixProject do\n  use Mix.Project\n  def project, do: [app: :bench, version: "0.1.0", elixir: "~> 1.19", deps: deps()]\n  def application, do: [extra_applications: [:logger]]\n  defp deps, do: [\n    {:phoenix, "~> 1.7"},\n    {:phoenix_html, "~> 4.1"},\n    {:phoenix_live_view, "~> 1.0"},\n    {:ecto_sql, "~> 3.11"},\n    {:postgrex, ">= 0.0.0"},\n    {:jason, "~> 1.4"},\n    {:plug_cowboy, "~> 2.6"},\n    {:gettext, "~> 0.24"},\n    {:absinthe, "~> 1.7"}\n  ]\nend\n' > mix.exs
+RUN mix deps.get 2>&1 | tail -5
+RUN mix deps.compile 2>&1 | tail -3
+RUN echo "DEP MODULES:" && find _build -name '*.beam' | wc -l

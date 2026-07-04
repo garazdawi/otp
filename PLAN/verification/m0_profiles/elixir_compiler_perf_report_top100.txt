@@ -1,0 +1,110 @@
+=== Elixir 1.19.0 (compiled with Erlang/OTP 28) ; OTP 29 ===
+BEAM=96
+=== compile rc=0 wall=8s maps=2 ===
+@@@DSO@@@
+    62.85%  beam.smp  
+    23.75%  [JIT] tid 96  
+     7.92%  [kernel.kallsyms]  
+     3.47%  libc.so.6  
+     1.64%  libz.so.1.3.1  
+     0.31%  [vdso]  
+     0.05%  libcrypto.so.3     
+     0.02%  libstdc++.so.6.0.33
+@@@SAMPLES@@@
+# Samples: 8K of event 'cpu-clock'
+@@@SYMBOLS@@@
+     8.98%  beam.smp  [.] eq  -  -  
+     5.95%  beam.smp  [.] do_minor  -  -  
+     5.19%  beam.smp  [.] erts_cmp_compound  -  -  
+     4.96%  beam.smp  [.] sweep_new_heap  -  -  
+     4.72%  beam.smp  [.] erts_ptab_processes_next  -  -  
+     4.16%  [JIT] tid 96  [.] $global::i_get_map_element_shared  -  -  
+     3.82%  beam.smp  [.] erts_maps_put  -  -  
+     3.27%  beam.smp  [.] any_heap_refs  -  -  
+     1.84%  beam.smp  [.] erts_hashmap_insert_up  -  -  
+     1.79%  beam.smp  [.] full_sweep_heaps.isra.0  -  -  
+     1.71%  beam.smp  [.] get_map_element  -  -  
+     1.40%  [kernel.kallsyms]    [k] el0_svc  -  -  
+     1.11%  beam.smp  [.] make_internal_hash  -  -  
+     0.82%  beam.smp  [.] erts_schedule  -  -  
+     0.82%  beam.smp  [.] scheduler_wait  -  -  
+     0.81%  beam.smp  [.] __aarch64_cas4_acq  -  -  
+     0.81%  beam.smp  [.] erts_hashmap_get  -  -  
+     0.76%  [kernel.kallsyms]    [k] __schedule  -  -  
+     0.75%  libc.so.6  [.] __sched_yield  -  -  
+     0.73%  beam.smp  [.] erts_hashmap_insert_down  -  -  
+     0.68%  beam.smp  [.] hxnodecmp  -  -  
+     0.62%  beam.smp  [.] export_start_staging  -  -  
+     0.59%  libc.so.6  [.] pthread_mutex_trylock  -  -  
+     0.58%  beam.smp  [.] copy_struct_x  -  -  
+     0.51%  [kernel.kallsyms]    [k] __wake_up_sync_key  -  -  
+     0.51%  [kernel.kallsyms]    [k] arch_local_irq_enable  -  -  
+     0.50%  [JIT] tid 96  [.] $beam_ssa:successors/1  -  -  
+     0.49%  beam.smp  [.] lists_reverse_2  -  -  
+     0.46%  beam.smp  [.] erts_qsort_helper  -  -  
+     0.44%  beam.smp  [.] erts_internal_map_next_3  -  -  
+     0.41%  [kernel.kallsyms]    [k] try_to_wake_up  -  -  
+     0.41%  beam.smp  [.] erts_qsort_partion_array_ycf_gen_yielding.isra.0  -  -  
+     0.39%  beam.smp  [.] maps_merge_2  -  -  
+     0.35%  [kernel.kallsyms]    [k] el0_da  -  -  
+     0.35%  beam.smp  [.] erts_maps_take  -  -  
+     0.35%  beam.smp  [.] erts_qsort_swap  -  -  
+     0.34%  [JIT] tid 96  [.] $global::call_light_bif_shared  -  -  
+     0.34%  beam.smp  [.] erts_maps_update  -  -  
+     0.34%  beam.smp  [.] hashmap_merge  -  -  
+     0.33%  beam.smp  [.] hashmap_from_unsorted_array.constprop.0  -  -  
+     0.32%  [JIT] tid 96  [.] $beam_ssa:rpo_1/4  -  -  
+     0.32%  [JIT] tid 96  [.] $global::arith_compare_shared  -  -  
+     0.30%  [kernel.kallsyms]    [k] invoke_syscall  -  -  
+     0.30%  [kernel.kallsyms]    [k] schedule  -  -  
+     0.30%  [vdso]  [.] 0x0000000000000508  -  -  
+     0.29%  beam.smp  [.] copy_shallow_x  -  -  
+     0.29%  beam.smp  [.] size_object_x  -  -  
+     0.27%  beam.smp  [.] flatmap_from_validated_list  -  -  
+     0.26%  [JIT] tid 96  [.] $global::i_get_map_element_hash_shared  -  -  
+     0.26%  beam.smp  [.] ebif_plusplus_2  -  -  
+     0.26%  beam.smp  [.] hash_part  -  -  
+     0.25%  [kernel.kallsyms]    [k] find_inode  -  -  
+     0.25%  beam.smp  [.] __aarch64_cas4_relax  -  -  
+     0.25%  beam.smp  [.] erts_hashmap_insert  -  -  
+     0.23%  [JIT] tid 96  [.] $beam_ssa:used_args/1  -  -  
+     0.23%  [JIT] tid 96  [.] $global::update_map_single_assoc_shared  -  -  
+     0.23%  beam.smp  [.] rbt_insert  -  -  
+     0.23%  libz.so.1.3.1  [.] 0x0000000000003b74  -  -  
+     0.22%  [JIT] tid 96  [.] $cerl:type/1  -  -  
+     0.22%  [JIT] tid 96  [.] $sets:is_element/2  -  -  
+     0.22%  [kernel.kallsyms]    [k] get_random_u16  -  -  
+     0.22%  beam.smp  [.] erts_fun_start_staging  -  -  
+     0.22%  beam.smp  [.] rbt_delete  -  -  
+     0.21%  beam.smp  [.] hash_get  -  -  
+     0.19%  [JIT] tid 96  [.] $ordsets:union/2  -  -  
+     0.18%  [JIT] tid 96  [.] $global::i_length_body_shared  -  -  
+     0.18%  beam.smp  [.] hashmap_from_chunked_array_ycf_gen_yielding.isra.0  -  -  
+     0.18%  libc.so.6  [.] 0x00000000000a31dc  -  -  
+     0.17%  [JIT] tid 96  [.] $beam_ssa:used_instr/1  -  -  
+     0.17%  [JIT] tid 96  [.] $lists:reverse/1  -  -  
+     0.17%  beam.smp  [.] aoff_get_free_block  -  -  
+     0.17%  beam.smp  [.] erts_qsort_helper_ycf_gen_yielding.isra.0  -  -  
+     0.17%  beam.smp  [.] maps_from_list_1_helper_ycf_gen_yielding  -  -  
+     0.17%  libc.so.6  [.] 0x00000000000a3110  -  -  
+     0.16%  [JIT] tid 96  [.] $lists:foldl_1/3  -  -  
+     0.15%  [JIT] tid 96  [.] $eval_bits:'-eval_field/5-lc$^0/1-1-'/1  -  -  
+     0.15%  beam.smp  [.] encode_size_struct_int  -  -  
+     0.15%  beam.smp  [.] offset_heap  -  -  
+     0.14%  [JIT] tid 96  [.] $beam_types:join/2  -  -  
+     0.14%  [JIT] tid 96  [.] $beam_types:verified_normal_type/1  -  -  
+     0.14%  [JIT] tid 96  [.] $cerl_trees:next_free/2  -  -  
+     0.14%  beam.smp  [.] erts_trapping_length_1  -  -  
+     0.14%  beam.smp  [.] lists_member_2  -  -  
+     0.14%  beam.smp  [.] maps_keys_1_helper_ycf_gen_yielding  -  -  
+     0.14%  beam.smp  [.] mbc_free  -  -  
+     0.14%  libc.so.6  [.] 0x000000000008ef6c  -  -  
+     0.13%  [JIT] tid 96  [.] $beam_types:get_singleton_value/1  -  -  
+     0.13%  [JIT] tid 96  [.] $lists:usort/1  -  -  
+     0.13%  [kernel.kallsyms]    [k] handle_mm_fault  -  -  
+     0.13%  beam.smp  [.] enc_term_int  -  -  
+     0.13%  beam.smp  [.] erts_map_hash  -  -  
+     0.13%  beam.smp  [.] erts_maps_get  -  -  
+     0.13%  libz.so.1.3.1  [.] 0x0000000000005418  -  -  
+     0.11%  [JIT] tid 96  [.] $beam_ssa:fix_phis/2  -  -  
+     0.11%  [JIT] tid 96  [.] $beam_ssa:used/1  -  -  

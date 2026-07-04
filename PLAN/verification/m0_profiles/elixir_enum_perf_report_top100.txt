@@ -1,0 +1,76 @@
+=== iters=1503 ; # Samples: 8K of event 'cpu-clock' ===
+@@@DSO@@@
+    62.77%  beam.smp  
+    18.28%  [JIT] tid 9  
+     9.51%  [kernel.kallsyms]
+     8.55%  libc.so.6  
+     0.89%  [vdso]  
+@@@FAMILY@@@
+JIT bucket=18.3
+  JIT runtime glue  4.18%
+  Stream.*  0.51%
+  user anon funs  1.06%
+  other-JIT  1.60%
+  Scorable protocol (user)  1.87%
+  Enum.*  3.85%
+  Protocol.* (dispatch)  2.13%
+  Map/Keyword  0.10%
+  Enumerable protocol  0.31%
+  lists:* (erl)  2.66%
+beam.smp C bucket=62.7
+  other-C  53.94%
+  call/dispatch (C)  1.70%
+  map ops (C)  1.34%
+  GC  5.74%
+@@@TOPJIT@@@
+2.05% $'Elixir.Enum':'-map/2-lists^map/1-1-'/2
+2.01% $global::call_light_bif_shared
+1.37% $'Elixir.Enum':filter_list/2
+0.98% $global::i_get_map_element_shared
+0.78% $'Elixir.Protocol':ensure_prefix/1
+0.57% $'Elixir.Scorable':impl_for/1
+0.55% $'Elixir.Scorable.Item':score/1
+0.55% $global::i_get_map_element_hash_shared
+0.54% $Elixir.Protocol::codeFooter
+0.53% $erlang:atom_to_binary/1
+0.50% $global::bs_get_tail_shared
+0.48% $'Elixir.Protocol':remove_prefix/1
+0.41% $lists:split_1/5
+0.40% $lists:rmerge3_1/6
+0.36% $'Elixir.Scorable':score/1
+0.35% $lists:merge3_2/6
+0.34% $'Elixir.Enum':'-group_by/3-fun-0-'/4
+0.33% $'Elixir.Protocol':'__concat__'/2
+0.33% $'Elixir.Scorable':'impl_for!'/1
+0.32% $code:ensure_loaded/1
+0.32% $lists:rmerge3_2/6
+0.29% $'Elixir.Runner':'-work/1-fun-5-'/2
+0.27% $'Elixir.Stream':'-filter/2-fun-0-'/4
+0.25% $'Elixir.Code':ensure_compiled/2
+0.24% $'Elixir.Stream':'-map/2-fun-0-'/4
+0.23% $'Elixir.Enumerable.List':reduce/3
+0.23% $'Elixir.Runner':'-work/1-fun-9-'/1
+0.20% $lists:merge3_1/6
+0.15% $lists:merge2_1/4
+0.14% $'Elixir.Runner':'-work/1-fun-10-'/1
+@@@TOPBEAM@@@
+4.36% atom_hash
+4.27% erts_alcu_free_thr_pref
+3.44% mbc_free
+3.38% do_minor
+2.75% __aarch64_ldset4_rel
+2.10% __aarch64_ldadd8_acq
+2.08% aoff_unlink_free_block
+1.96% rbt_delete
+1.91% hash_get
+1.89% sweep_new_heap
+1.86% scheduler_wait
+1.77% rbt_insert
+1.70% dealloc_block.part.0
+1.62% erts_build_sub_bitstring
+1.48% binary_to_atom_2
+1.47% erts_bs_append_checked
+1.46% atom_to_binary_2
+1.34% erts_maps_update
+1.21% erts_alcu_check_delayed_dealloc
+1.05% __aarch64_ldset4_relax

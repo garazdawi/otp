@@ -18,11 +18,11 @@ corpus infrastructure.
 |---|---|---|---|
 | M0.1 | **Elimination-rich boundary pool**: cycle share of hot cross-module/fun call sites where caller facts would eliminate callee work (guard subsumption, constant args — literal funs above all, construct/deconstruct pairs) | cycle profiles (perf `+JPperf`) joined with a static eliminability classifier over the hot functions' BEAM code | P3 go/scope |
 | M0.2 | **Sinkable-allocation pool**: fraction of allocation volume from T2-eligible hot code that dies young and region-locally | idea-#50 term-lifetime instrumentation (otp-ideas repo; shadow-array design) on the app corpus | P5 go/scope |
-| M0.3 | Elixir `Enum`/protocol wrapper dynamic weight | cycle profile of an Elixir corpus (Elixir compiler, Phoenix app, Broadway pipeline) | P3 scoring table |
+| M0.3 | Elixir `Enum`/protocol wrapper dynamic weight — **DONE** ([`../verification/M0_PROFILES.md`](../verification/M0_PROFILES.md)): ≈0 % on the Elixir-compiler leg; ~8.7 % even on a pure-pipeline workload, whose real cost is **allocator churn ~15 % + GC ~6 % from per-stage intermediate lists**. Consequence: keep Enum low-weighted in the P3 scoring table; its value routes through pillar 3 — Enum inlining is the *enabler for sinking the intermediate lists*, further coupling P3→P5. Running-app (Phoenix/Broadway) profile still owed under M0.6. | cycle profile (perf-in-colima) | P3 scoring table |
 | M0.4 | Float-heavy loop share | corpus census + cycle profiles | P5 float-unboxing scope |
-| M0.5 | Graviton re-run of the experiment kit | existing kit | validity of Apple-Silicon nulls/wins on server ARM |
-| M0.6 | Corpus extension: MongooseIM under Amoc, an Ecto-heavy service, Elixir compiler, plus the existing suite | [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §6 | all gates |
-| M0.7 | Dialyzer/compiler perf DSO split (JIT vs C share of the 75.8 % emulator time) | Linux perf leg | compute-class targets |
+| M0.5 | Graviton re-run of the experiment kit | existing kit — **needs server-ARM hardware; batched as a user ask** | validity of Apple-Silicon nulls/wins on server ARM |
+| M0.6 | Corpus extension: MongooseIM under Amoc, an Ecto-heavy service, a running Phoenix/Broadway app, plus the existing suite | [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §6 | all gates |
+| M0.7 | Dialyzer/compiler perf DSO split — **DONE** ([`../verification/M0_PROFILES.md`](../verification/M0_PROFILES.md)): dialyzer [JIT] = **34 %** of on-CPU (≈49 % of non-GC emulator; GC ≈ 18 % of the C bucket), Elixir compiler = **23.8 %**; compute-application addressable band is **24–34 %**, confirming the 5–15 % honest target with 20 % as the all-pillars stretch. `erl_types` family alone is ≥13–17 % of dialyzer CPU — the G3-2 subject; elimination-rich inlining (M0.1) is what must move it. | Linux perf leg (per-pid `-p`, not `-a` — idle mis-attribution) | compute-class targets |
 
 **Gate G-M0** (scope, not kill): sum the measured pools against the
 per-class targets of [`00_goal_and_thesis.md`](00_goal_and_thesis.md)

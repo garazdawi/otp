@@ -1,0 +1,110 @@
+=== OTP 29 ; apps: erts kernel stdlib compiler crypto syntax_tools runtime_tools tools ssl public_key asn1 inets mnesia xmerl eldap ftp tftp sasl os_mon ===
+BEAM pid=270 (attach t=0s)
+=== dialyzer rc=2  build wall=27s ===
+  yecc:yecc_ret/0 (c.erl:1435:57)
+ done in 0m27.00s
+done (warnings were emitted)
+@@@DSO@@@
+    53.11%  beam.smp  
+    33.59%  [JIT] tid 270    
+     9.86%  [kernel.kallsyms]
+     2.64%  libc.so.6  
+     0.52%  libz.so.1.3.1    
+     0.28%  [vdso]  
+@@@SYMBOLS_DSO@@@
+     6.88%  beam.smp  [.] sweep_new_heap  -  -  
+     6.82%  beam.smp  [.] do_minor  -  -  
+     6.77%  beam.smp  [.] eq  -  -  
+     4.18%  [kernel.kallsyms]  [k] __pi_clear_page  -  -  
+     3.93%  beam.smp  [.] full_sweep_heaps.isra.0  -  -  
+     2.96%  beam.smp  [.] erts_cmp_compound  -  -  
+     2.90%  [JIT] tid 270  [.] $global::i_get_map_element_shared  -  -  
+     2.74%  beam.smp  [.] copy_shallow_x  -  -  
+     2.49%  beam.smp  [.] db_get_element_hash  -  -  
+     2.44%  [JIT] tid 270  [.] $erl_types:is_limited/2  -  -  
+     2.36%  beam.smp  [.] dec_term  -  -  
+     1.75%  [JIT] tid 270  [.] $erl_types:t_inf_aux/2  -  -  
+     1.32%  beam.smp  [.] erts_maps_put  -  -  
+     1.26%  [JIT] tid 270  [.] $erl_types:oc_mark/3  -  -  
+     1.21%  beam.smp  [.] decoded_size  -  -  
+     1.10%  beam.smp  [.] make_internal_hash  -  -  
+     0.95%  [JIT] tid 270  [.] $erl_types:are_all_limited/2  -  -  
+     0.90%  [kernel.kallsyms]  [k] el0_da  -  -  
+     0.87%  [JIT] tid 270  [.] $erl_types:t_has_var/1  -  -  
+     0.81%  [JIT] tid 270  [.] $global::call_light_bif_shared  -  -  
+     0.76%  [JIT] tid 270  [.] $cerl:type/1  -  -  
+     0.67%  beam.smp  [.] erts_schedule  -  -  
+     0.66%  beam.smp  [.] lists_reverse_2  -  -  
+     0.61%  beam.smp  [.] __aarch64_cas4_acq  -  -  
+     0.55%  beam.smp  [.] erts_hashmap_insert_up  -  -  
+     0.54%  [JIT] tid 270  [.] $erl_types:t_sup_aux/2  -  -  
+     0.47%  beam.smp  [.] ebif_plusplus_2  -  -  
+     0.46%  [kernel.kallsyms]  [k] el0_svc  -  -  
+     0.44%  [JIT] tid 270  [.] $erl_types:'-oc_mark/3-lc$^5/1-5-'/3  -  -  
+     0.42%  [JIT] tid 270  [.] $erl_types:t_has_var_list/1  -  -  
+     0.42%  beam.smp  [.] erts_hashmap_get  -  -  
+     0.41%  beam.smp  [.] db_get_hash  -  -  
+     0.41%  [JIT] tid 270  [.] $dialyzer_codeserver:compress_file_anno/2  -  -  
+     0.38%  [JIT] tid 270  [.] $erl_types:'-oc_mark/3-lc$^1/1-1-'/3  -  -  
+     0.38%  beam.smp  [.] size_object_x  -  -  
+     0.37%  beam.smp  [.] copy_struct_x  -  -  
+     0.36%  beam.smp  [.] erts_qsort_partion_array_ycf_gen_yielding.isra.0  -  -  
+     0.35%  beam.smp  [.] shutdown@plt  -  -  
+     0.34%  [JIT] tid 270  [.] $global::arith_compare_shared  -  -  
+     0.33%  libc.so.6  [.] 0x00000000000a31dc  -  -  
+     0.33%  libc.so.6  [.] pthread_mutex_trylock  -  -  
+     0.32%  beam.smp  [.] erts_trapping_length_1  -  -  
+     0.30%  libc.so.6  [.] 0x00000000000a31c0  -  -  
+     0.30%  beam.smp  [.] rbt_insert  -  -  
+     0.28%  [JIT] tid 270  [.] $dialyzer_typesig:v2_solve_conj/12  -  -  
+     0.28%  beam.smp  [.] enc_term_int  -  -  
+     0.28%  [JIT] tid 270  [.] $cerl_trees:fold_1/3  -  -  
+     0.27%  [kernel.kallsyms]  [k] __mod_node_page_state  -  -  
+     0.27%  [kernel.kallsyms]  [k] percpu_ref_put_many.constprop.0  -  -  
+     0.26%  [JIT] tid 270  [.] $dialyzer_typesig:'-calculate_masks/3-lc$^0/1-0-'/3  -  -  
+     0.25%  [JIT] tid 270  [.] $dialyzer_typesig:refine_bindings/3  -  -  
+     0.25%  [JIT] tid 270  [.] $erl_types::codeFooter  -  -  
+     0.25%  [vdso]  [.] 0x0000000000000508  -  -  
+     0.25%  beam.smp  [.] encode_size_struct_int  -  -  
+     0.25%  beam.smp  [.] erts_maps_get  -  -  
+     0.24%  beam.smp  [.] grow  -  -  
+     0.24%  [JIT] tid 270  [.] $erl_types:t_unify_table_only/3  -  -  
+     0.24%  [JIT] tid 270  [.] $ordsets:union/2  -  -  
+     0.23%  beam.smp  [.] hxnodecmp  -  -  
+     0.23%  [JIT] tid 270  [.] $global::i_length_body_shared  -  -  
+     0.23%  beam.smp  [.] scheduler_wait  -  -  
+     0.22%  [JIT] tid 270  [.] $lists:umerge3_1/7  -  -  
+     0.22%  [kernel.kallsyms]  [k] handle_mm_fault  -  -  
+     0.22%  beam.smp  [.] erts_hashmap_insert_down  -  -  
+     0.21%  [JIT] tid 270  [.] $erl_types:t_collect_var_names/2  -  -  
+     0.21%  beam.smp  [.] erts_qsort_swap  -  -  
+     0.21%  beam.smp  [.] ethr_rwmutex_runlock  -  -  
+     0.21%  [JIT] tid 270  [.] $erl_types:structural/2  -  -  
+     0.21%  [kernel.kallsyms]  [k] try_charge_memcg  -  -  
+     0.21%  libc.so.6  [.] __sched_yield  -  -  
+     0.21%  [JIT] tid 270  [.] $erl_types:inf_union_collect/4  -  -  
+     0.21%  [JIT] tid 270  [.] $erl_types:t_limit_k/2  -  -  
+     0.21%  [JIT] tid 270  [.] $global::bif_is_eq_exact_shared  -  -  
+     0.21%  beam.smp  [.] erts_internal_map_next_3  -  -  
+     0.21%  beam.smp  [.] handle_error  -  -  
+     0.21%  beam.smp  [.] mbc_free  -  -  
+     0.20%  [JIT] tid 270  [.] $lists:umergel/3  -  -  
+     0.20%  [kernel.kallsyms]  [k] __schedule  -  -  
+     0.19%  [JIT] tid 270  [.] $erl_types:t_subst_aux/2  -  -  
+     0.19%  [JIT] tid 270  [.] $lists:umerge2_2/4  -  -  
+     0.18%  libc.so.6  [.] 0x00000000000a31f0  -  -  
+     0.18%  [JIT] tid 270  [.] $cerl_trees:get_label/1  -  -  
+     0.18%  [JIT] tid 270  [.] $erl_types:any_any/1  -  -  
+     0.18%  [kernel.kallsyms]  [k] folio_batch_move_lru  -  -  
+     0.18%  [JIT] tid 270  [.] $dict:find_val/2  -  -  
+     0.18%  beam.smp  [.] erts_maps_take  -  -  
+     0.17%  [JIT] tid 270  [.] $erl_types:inf_union/5  -  -  
+     0.16%  [JIT] tid 270  [.] $dialyzer_dataflow:enter_type/3  -  -  
+     0.16%  [JIT] tid 270  [.] $lists:umerge3_2/7  -  -  
+     0.16%  beam.smp  [.] db_copy_element_from_ets  -  -  
+     0.16%  [JIT] tid 270  [.] $dialyzer_typesig:lookup_type/2  -  -  
+     0.16%  [JIT] tid 270  [.] $erl_types:any_none_or_unit/1  -  -  
+     0.16%  [JIT] tid 270  [.] $erl_types:t_inf_lists_strict/3  -  -  
+     0.16%  [JIT] tid 270  [.] $lists:umerge2_1/5  -  -  
+     0.16%  [JIT] tid 270  [.] $ordsets:add_element/2  -  -  
+     0.16%  [kernel.kallsyms]  [k] release_pages  -  -  

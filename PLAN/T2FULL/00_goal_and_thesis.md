@@ -35,7 +35,7 @@ them:
 | class | exemplar | JIT-addressable share of cycles | 1.20× end-to-end requires |
 |---|---|---|---|
 | **compute kernels** | stdlib `json`, base64, parsers, dataflow inner loops | 60–90 % | ~1.3–1.5× on Erlang code — **reachable** (fusion alone measured 5.6× on scans) |
-| **compute applications** | dialyzer, compiler, Elixir compiler | 75.8 % emulator share, of which plausibly ~40–55 % is JIT code (rest is C BIFs + GC) | ~1.6–2.0× on all Erlang code — **stretch**; requires all three pillars compounding *and* high eligibility |
+| **compute applications** | dialyzer, compiler, Elixir compiler | **24–34 % measured** (M0.7: dialyzer [JIT] = 34 % of on-CPU, ≈49 % of non-GC emulator time; Elixir compiler 23.8 % — [`../verification/M0_PROFILES.md`](../verification/M0_PROFILES.md)) | ~2.0× on all JIT code at ~100 % eligibility — **stretch confirmed**; 5–15 % is what 34 % addressable supports |
 | **serialization-heavy service** | Bandit/Phoenix JSON API | 20.7 % ([JIT] perf share) + 12.3 % GC | ~5.1× on all JIT code alone — **not reachable by execution speed alone**; reachable only in combination with the GC pool (§3.3) |
 | **messaging/broker** | RabbitMQ at 489 k msg/s | 12.2 % ([JIT]) + 9.5 % GC | infinite speedup on JIT code caps at 1.14× — **not reachable by a JIT** |
 
