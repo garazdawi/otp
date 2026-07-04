@@ -49,6 +49,13 @@ implementation status in [`../mvp/STATUS.md`](../mvp/STATUS.md).
 
 ## Status
 
+> **Superseded (July 2026)**: [`../T2FULL/`](../T2FULL/README.md)
+> is now the authoritative plan. It absorbs the loop tier of
+> [`08_v1_loop_tier.md`](08_v1_loop_tier.md) as its first shippable
+> milestone and reinstates — evidence-gated — the general-inlining
+> and classic-optimization phases 08 shelved. The files here remain
+> the detailed mechanism specs T2FULL cites.
+
 **The MVP is complete and passed** (1.97× min / 1.85× median vs T1,
 within 2 % of the instruction-count ceiling — see
 [`../mvp/OUTCOME.md`](../mvp/OUTCOME.md)).
