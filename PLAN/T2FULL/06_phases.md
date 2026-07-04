@@ -161,11 +161,22 @@ not after P7.
 
 ## Open questions
 
-1. **Receive loops**: `receive` stays AOT-owned (App C resolution);
-   functions whose hot loop encloses a receive compile the
-   non-receive windows only — is that enough for gen_server-shaped
-   servers, or does the message-wait boundary need first-class IR?
-   Decide with M0.6 profiles.
+1. **Receive loops — RESOLVED (M0.R, 2026-07-04,
+   [`../verification/RECV_RESULTS.md`](../verification/RECV_RESULTS.md))**:
+   `receive` stays a region-terminator; no first-class receive IR.
+   Measured with exact receive-instance classification counters
+   (per-scheduler, terminal-based): the message-already-queued "hit"
+   rate is **anti-correlated with JIT-addressability** — 99 %+ on
+   the messaging class the tier already concedes (ring/flood),
+   structurally capped at 50 % for gen_server call/reply (the
+   client's reply-receive is a synchronous round-trip), and receive
+   density is negligible on the compute class (dialyzer: 124 k
+   instances in 7 s, 18.7 % hit). The one workload with both high
+   hit rate (89.9 %) and real scan depth (Bandit: 5.3 % of
+   instances scan ~15 deep) sizes to sub-1 % of a core. Hedge
+   recorded: a narrow `loop_rec`-scan-ownership optimization for
+   Bandit-shaped selective receives (pillar-1 shape, not receive
+   IR), gated on an M0.6 cycle profile.
 2. **PIC width**: guarded dispatch beyond 2 targets rarely pays
    (HotSpot bimorphic precedent) — confirm on the Elixir protocol
    corpus before building wider.
