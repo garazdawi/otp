@@ -1,0 +1,167 @@
+
+========================================================
+ M0.1 ELIMINABILITY — results
+========================================================
+
+### DIALYZER LEG (cycle-weighted; weights from PROFILE_RESULTS.md)
+
+  Family A: is_limited+are_all_limited+t_has_var* (12% busy)
+    total sites=38  resolvable=38  opaque=0  (resolution 100.0%)
+    -- as % of resolvable sites --
+      guard-subsumable     7.9%   (3 sites, 3 subsumed tests)
+      constant-args LIB    5.3%   (2 sites; any literal, upper bound)
+      constant-args EFF    2.6%   (1 sites; literal folds a callee branch)
+      literal-FUN          5.3%   (2 sites; collapses call_fun)
+      construct/deconstr   0.0%   (0 sites)
+      loop-unlock         81.6%   (31 sites)
+    ------------------------------------------
+      PRECISE-elim         7.9%   (guard|litfun|cdcon; high-confidence floor)
+      CORE-eliminable     10.5%   (guard|constEFF|litfun|cdcon; Pillar-2 pool)
+      ANY-eliminable      89.5%   (core|loop-unlock)
+      none (G3-2 shape)   10.5%
+    dominant Pillar-2 category: 'guard-subsumable'  (loop-unlock reported separately)
+    -- REMOTE (cross-module) sites only: 2 of 38 resolvable --
+       r-guard=100.0% r-constEFF=0.0% r-litfun=100.0% r-cdcon=0.0% r-loop=0.0%
+       r-PRECISE=100.0%  r-CORE=100.0%  r-ANY=100.0%  r-none=0.0%
+
+  Family B: oc_mark + its comprehensions      ( 9% busy)
+    total sites=34  resolvable=34  opaque=0  (resolution 100.0%)
+    -- as % of resolvable sites --
+      guard-subsumable     0.0%   (0 sites, 0 subsumed tests)
+      constant-args LIB    2.9%   (1 sites; any literal, upper bound)
+      constant-args EFF    2.9%   (1 sites; literal folds a callee branch)
+      literal-FUN          0.0%   (0 sites; collapses call_fun)
+      construct/deconstr   0.0%   (0 sites)
+      loop-unlock         20.6%   (7 sites)
+    ------------------------------------------
+      PRECISE-elim         0.0%   (guard|litfun|cdcon; high-confidence floor)
+      CORE-eliminable      2.9%   (guard|constEFF|litfun|cdcon; Pillar-2 pool)
+      ANY-eliminable      20.6%   (core|loop-unlock)
+      none (G3-2 shape)   79.4%
+    dominant Pillar-2 category: 'constant-args(eff)'  (loop-unlock reported separately)
+    -- REMOTE (cross-module) sites only: 0 of 34 resolvable --
+       r-guard=0.0% r-constEFF=0.0% r-litfun=0.0% r-cdcon=0.0% r-loop=0.0%
+       r-PRECISE=0.0%  r-CORE=0.0%  r-ANY=0.0%  r-none=0.0%
+  >> cycle-weighted over the 21% named hot core:
+     Pillar-2 core-eliminable sites = 7.3% ; incl. loop-unlock = 60.0%
+
+  erl_types WHOLE MODULE (structural proxy, NOT cycle-weighted)
+    total sites=1702  resolvable=1691  opaque=11  (resolution 99.4%)
+    -- as % of resolvable sites --
+      guard-subsumable     7.5%   (126 sites, 172 subsumed tests)
+      constant-args LIB   13.6%   (230 sites; any literal, upper bound)
+      constant-args EFF    3.1%   (53 sites; literal folds a callee branch)
+      literal-FUN          5.4%   (91 sites; collapses call_fun)
+      construct/deconstr   0.4%   (6 sites)
+      loop-unlock         24.7%   (417 sites)
+    ------------------------------------------
+      PRECISE-elim        11.3%   (guard|litfun|cdcon; high-confidence floor)
+      CORE-eliminable     13.0%   (guard|constEFF|litfun|cdcon; Pillar-2 pool)
+      ANY-eliminable      33.5%   (core|loop-unlock)
+      none (G3-2 shape)   66.5%
+    dominant Pillar-2 category: 'guard-subsumable'  (loop-unlock reported separately)
+    -- REMOTE (cross-module) sites only: 203 of 1691 resolvable --
+       r-guard=16.3% r-constEFF=2.5% r-litfun=11.3% r-cdcon=0.5% r-loop=1.0%
+       r-PRECISE=16.3%  r-CORE=16.3%  r-ANY=17.2%  r-none=82.8%
+
+  erl_types comprehension helpers (structural)
+    total sites=203  resolvable=198  opaque=5  (resolution 97.5%)
+    -- as % of resolvable sites --
+      guard-subsumable     1.0%   (2 sites, 2 subsumed tests)
+      constant-args LIB    2.5%   (5 sites; any literal, upper bound)
+      constant-args EFF    0.0%   (0 sites; literal folds a callee branch)
+      literal-FUN          0.0%   (0 sites; collapses call_fun)
+      construct/deconstr   0.0%   (0 sites)
+      loop-unlock         40.4%   (80 sites)
+    ------------------------------------------
+      PRECISE-elim         1.0%   (guard|litfun|cdcon; high-confidence floor)
+      CORE-eliminable      1.0%   (guard|constEFF|litfun|cdcon; Pillar-2 pool)
+      ANY-eliminable      41.4%   (core|loop-unlock)
+      none (G3-2 shape)   58.6%
+    dominant Pillar-2 category: 'guard-subsumable'  (loop-unlock reported separately)
+    -- REMOTE (cross-module) sites only: 8 of 198 resolvable --
+       r-guard=25.0% r-constEFF=0.0% r-litfun=0.0% r-cdcon=0.0% r-loop=0.0%
+       r-PRECISE=25.0%  r-CORE=25.0%  r-ANY=25.0%  r-none=75.0%
+
+  dialyzer app whole (all dialyzer/src modules; <=2.5%/fn TAIL, structural)
+    total sites=11244  resolvable=10826  opaque=418  (resolution 96.3%)
+    -- as % of resolvable sites --
+      guard-subsumable     7.0%   (755 sites, 914 subsumed tests)
+      constant-args LIB   16.6%   (1798 sites; any literal, upper bound)
+      constant-args EFF    3.6%   (394 sites; literal folds a callee branch)
+      literal-FUN          4.1%   (447 sites; collapses call_fun)
+      construct/deconstr   0.6%   (69 sites)
+      loop-unlock         12.0%   (1301 sites)
+    ------------------------------------------
+      PRECISE-elim         9.7%   (guard|litfun|cdcon; high-confidence floor)
+      CORE-eliminable     10.5%   (guard|constEFF|litfun|cdcon; Pillar-2 pool)
+      ANY-eliminable      21.1%   (core|loop-unlock)
+      none (G3-2 shape)   78.9%
+    dominant Pillar-2 category: 'guard-subsumable'  (loop-unlock reported separately)
+    -- REMOTE (cross-module) sites only: 5142 of 10826 resolvable --
+       r-guard=9.1% r-constEFF=4.6% r-litfun=3.5% r-cdcon=0.2% r-loop=0.7%
+       r-PRECISE=9.5%  r-CORE=9.8%  r-ANY=10.4%  r-none=89.6%
+
+### STDLIB JSON LEG (json.erl, uniform)
+
+  json.erl whole module
+    total sites=306  resolvable=261  opaque=45  (resolution 85.3%)
+    -- as % of resolvable sites --
+      guard-subsumable     6.1%   (16 sites, 16 subsumed tests)
+      constant-args LIB   37.2%   (97 sites; any literal, upper bound)
+      constant-args EFF    0.4%   (1 sites; literal folds a callee branch)
+      literal-FUN          3.1%   (8 sites; collapses call_fun)
+      construct/deconstr   0.0%   (0 sites)
+      loop-unlock         21.1%   (55 sites)
+    ------------------------------------------
+      PRECISE-elim         6.5%   (guard|litfun|cdcon; high-confidence floor)
+      CORE-eliminable      6.5%   (guard|constEFF|litfun|cdcon; Pillar-2 pool)
+      ANY-eliminable      27.6%   (core|loop-unlock)
+      none (G3-2 shape)   72.4%
+    dominant Pillar-2 category: 'guard-subsumable'  (loop-unlock reported separately)
+    -- REMOTE (cross-module) sites only: 47 of 261 resolvable --
+       r-guard=14.9% r-constEFF=2.1% r-litfun=10.6% r-cdcon=0.0% r-loop=0.0%
+       r-PRECISE=17.0%  r-CORE=17.0%  r-ANY=17.0%  r-none=83.0%
+  >> per-function-equal weighting (alt): core-elim=7.5% elim=25.0%
+
+### UNWEIGHTED CENSUS (structural shape)
+
+  stdlib/src (all modules)
+    total sites=32517  resolvable=31739  opaque=778  (resolution 97.6%)
+    -- as % of resolvable sites --
+      guard-subsumable     6.9%   (2185 sites, 2402 subsumed tests)
+      constant-args LIB   28.5%   (9044 sites; any literal, upper bound)
+      constant-args EFF    3.4%   (1073 sites; literal folds a callee branch)
+      literal-FUN          2.5%   (804 sites; collapses call_fun)
+      construct/deconstr   1.0%   (331 sites)
+      loop-unlock         16.0%   (5073 sites)
+    ------------------------------------------
+      PRECISE-elim         8.2%   (guard|litfun|cdcon; high-confidence floor)
+      CORE-eliminable     10.1%   (guard|constEFF|litfun|cdcon; Pillar-2 pool)
+      ANY-eliminable      24.0%   (core|loop-unlock)
+      none (G3-2 shape)   76.0%
+    dominant Pillar-2 category: 'guard-subsumable'  (loop-unlock reported separately)
+    -- REMOTE (cross-module) sites only: 9163 of 31739 resolvable --
+       r-guard=12.2% r-constEFF=3.7% r-litfun=5.5% r-cdcon=0.6% r-loop=1.5%
+       r-PRECISE=12.7%  r-CORE=13.4%  r-ANY=14.8%  r-none=85.2%
+
+  kernel/src (all modules)
+    total sites=15898  resolvable=15529  opaque=369  (resolution 97.7%)
+    -- as % of resolvable sites --
+      guard-subsumable     8.7%   (1353 sites, 1523 subsumed tests)
+      constant-args LIB   31.9%   (4955 sites; any literal, upper bound)
+      constant-args EFF    5.8%   (894 sites; literal folds a callee branch)
+      literal-FUN          1.9%   (292 sites; collapses call_fun)
+      construct/deconstr   0.6%   (99 sites)
+      loop-unlock         11.2%   (1745 sites)
+    ------------------------------------------
+      PRECISE-elim         9.3%   (guard|litfun|cdcon; high-confidence floor)
+      CORE-eliminable     11.8%   (guard|constEFF|litfun|cdcon; Pillar-2 pool)
+      ANY-eliminable      21.3%   (core|loop-unlock)
+      none (G3-2 shape)   78.7%
+    dominant Pillar-2 category: 'guard-subsumable'  (loop-unlock reported separately)
+    -- REMOTE (cross-module) sites only: 6909 of 15529 resolvable --
+       r-guard=12.2% r-constEFF=6.7% r-litfun=3.4% r-cdcon=0.4% r-loop=1.4%
+       r-PRECISE=12.4%  r-CORE=13.9%  r-ANY=14.7%  r-none=85.3%
+
+(fields are % of RESOLVABLE sites unless noted; opaque shown separately)
