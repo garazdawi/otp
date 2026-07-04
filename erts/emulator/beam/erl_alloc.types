@@ -146,6 +146,7 @@ type	DIST_TABLE	STANDARD	SYSTEM		dist_tab
 type	NODE_TABLE	STANDARD	SYSTEM		node_tab
 type	ATOM_TABLE	LONG_LIVED	ATOM		atom_tab
 type	MODULE_TABLE	LONG_LIVED	CODE		module_tab
+type	T2_CODE		LONG_LIVED	CODE		t2_code
 type	TAINT		LONG_LIVED	CODE		taint_list
 type	MODULE_REFS	STANDARD	CODE		module_refs
 type	NC_TMP		TEMPORARY	SYSTEM		nc_tmp

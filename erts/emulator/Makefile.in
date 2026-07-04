@@ -459,6 +459,7 @@ CREATE_DIRS += $(OBJDIR) \
         $(ZSTD_OBJDIR)
 
 ifeq ($(FLAVOR),jit)
+CREATE_DIRS+=$(OBJDIR)/t2
 CREATE_DIRS+=$(OBJDIR)/asmjit/ \
 	$(OBJDIR)/asmjit/core \
 	$(OBJDIR)/asmjit/support \
@@ -855,7 +856,7 @@ COMMON_INCLUDES += -I../include -I../include/$(TARGET)
 COMMON_INCLUDES += -I../include/internal -I../include/internal/$(TARGET)
 
 ifeq ($(FLAVOR),jit)
-COMMON_INCLUDES += -Ibeam/jit -Ibeam/jit/$(JIT_ARCH)
+COMMON_INCLUDES += -Ibeam/jit -Ibeam/jit/$(JIT_ARCH) -Ibeam/jit/t2
 endif
 
 INCLUDES  =  -I$(TTF_DIR) $(COMMON_INCLUDES)
@@ -1125,6 +1126,11 @@ JIT_OBJS += \
 	$(OBJDIR)/instr_trace.o
 endif
 
+# Tier-2 (T2-Full) mid-end. Architecture-independent; the arch-specific
+# emitter hooks live in the per-arch files above. See PLAN/T2FULL/.
+JIT_OBJS += \
+	$(OBJDIR)/t2/t2_hir.o
+
 JIT_OBJS += $(ASMJIT_OBJS)
 
 EMU_OBJS = \
@@ -1390,7 +1396,7 @@ BEAM_SRC=$(wildcard beam/*.c)
 ifeq ($(FLAVOR),emu)
 BEAM_SRC+=$(wildcard beam/emu/*.c)
 else
-BEAM_CPP_SRC=$(wildcard beam/*.cpp) $(wildcard beam/jit/*.cpp) $(wildcard beam/jit/$(JIT_ARCH)/*.cpp)
+BEAM_CPP_SRC=$(wildcard beam/*.cpp) $(wildcard beam/jit/*.cpp) $(wildcard beam/jit/t2/*.cpp) $(wildcard beam/jit/$(JIT_ARCH)/*.cpp)
 endif
 DRV_COMMON_SRC=$(wildcard drivers/common/*.c)
 DRV_OSTYPE_SRC=$(wildcard drivers/$(ERLANG_OSTYPE)/*.c)
