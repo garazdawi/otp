@@ -159,6 +159,24 @@ Eterm erts_t2_debug_install(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_jettison(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_installed(Process *p, Eterm mod, Eterm func, Eterm arity);
 
+/* t2_compile.cpp: the +JT2enable synchronous compile-at-load driver
+ * (map §5). Called from beam_load_finalize_code right after the pctab
+ * is built, while the loader still holds the module unsealed and load
+ * permission (which includes code modification permission). Builds,
+ * lowers, emits and installs every eligible function of the module;
+ * any per-function failure degrades that function to T1. No-op unless
+ * erts_jit_t2_force. */
+struct ErtsT2RetainedCode;
+void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
+                            const void *code_hdr,
+                            struct erl_module_instance *mi);
+
+/* Cumulative driver statistics, for erts_debug:get_internal_state(
+ * t2_stats):
+ * {Modules, FunctionsBuilt, Installed, IselUnsupported, EmitFailed,
+ *  InstallRejected, BuildFailed, CompileMicros} */
+Eterm erts_t2_debug_stats(Process *p);
+
 /* beam_jit_main.cpp: C bridge over the global JitAllocator. */
 int beamasm_t2_jit_alloc(void **rx, void **rw, size_t size);
 void beamasm_t2_jit_release(void *rx);

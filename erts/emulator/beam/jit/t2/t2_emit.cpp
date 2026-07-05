@@ -48,6 +48,7 @@ extern "C"
 
 #include "t2_retain.h"
 #include "t2_pctab.h"
+#include "t2_install.h"
 }
 
 #include "t2_lir.hpp"
@@ -834,7 +835,8 @@ namespace erts_t2 {
 
     const void *t2_emit_blob(const T2LirFunction &fn,
                              std::string *err,
-                             std::string *disasm) {
+                             std::string *disasm,
+                             T2EmitResult *out) {
         BeamGlobalAssembler *ga = erts_t2_global_assembler();
         if (ga == nullptr || erts_t2_jit_allocator() == nullptr) {
             if (err) {
@@ -871,6 +873,11 @@ namespace erts_t2 {
         }
         if (entry == nullptr && err && err->empty()) {
             *err = "codegen produced no entry";
+        }
+        if (entry != nullptr && out != nullptr) {
+            out->entry = entry;
+            out->base = ma.blob_base;
+            out->size = ma.blob_size;
         }
         return entry;
     }
@@ -1011,6 +1018,7 @@ extern "C" Eterm erts_t2_debug_exec(Process *p,
     /* Build HIR -> isel -> verify -> emit, all while the module decode
      * (and any literals the HIR references) is still alive. */
     const void *blob = NULL;
+    T2EmitResult blob_span;
     std::string build_err;
     std::string pipe_err;
 
@@ -1027,7 +1035,7 @@ extern "C" Eterm erts_t2_debug_exec(Process *p,
                 if (!t2_regalloc(lir, &pipe_err)) {
                     return;
                 }
-                blob = t2_emit_blob(lir, &pipe_err, nullptr);
+                blob = t2_emit_blob(lir, &pipe_err, nullptr, &blob_span);
             },
             &build_err);
 
@@ -1098,6 +1106,16 @@ extern "C" Eterm erts_t2_debug_exec(Process *p,
     for (Uint i = 0; i < nsave; i++) {
         xreg[i] = saved[i];
     }
+
+    /* The throwaway blob is dead; release its span once every scheduler
+     * has passed a code barrier. (A raising input skips this like it
+     * skips the restore above -- the P1 install wave's tombstone-free
+     * covers the paths that matter; the raise path of this pre-install
+     * debug harness keeps its historical one-blob leak.) */
+    erts_t2_free_spans_after_barrier((void *)blob_span.base,
+                                     blob_span.size,
+                                     NULL,
+                                     0);
 
     return result;
 }

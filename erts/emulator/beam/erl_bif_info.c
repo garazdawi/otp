@@ -69,6 +69,7 @@ Eterm erts_t2_debug_pc_table(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_install(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_jettison(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_installed(Process *p, Eterm mod, Eterm func, Eterm arity);
+Eterm erts_t2_debug_stats(Process *p);
 Eterm erts_t2_debug_exec(Process *p, Eterm mod, Eterm func, Eterm arity,
                          Eterm args);
 #endif
@@ -4309,6 +4310,16 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	else if (ERTS_IS_ATOM_STR("reds_left", BIF_ARG_1)) {
 	    /* Used by (emulator) */
 	    BIF_RET(make_small((Uint) ERTS_BIF_REDS_LEFT(BIF_P)));
+	}
+	else if (ERTS_IS_ATOM_STR("t2_stats", BIF_ARG_1)) {
+	    /* T2-Full P1 +JT2enable driver statistics:
+	       {Modules, FunctionsBuilt, Installed, IselUnsupported,
+	        EmitFailed, InstallRejected, BuildFailed, CompileMicros} */
+#ifdef BEAMASM
+	    BIF_RET(erts_t2_debug_stats(BIF_P));
+#else
+	    BIF_RET(am_undefined);
+#endif
 	}
 	else if (ERTS_IS_ATOM_STR("node_and_dist_references", BIF_ARG_1)) {
 	    /* Used by node_container_SUITE (emulator) */

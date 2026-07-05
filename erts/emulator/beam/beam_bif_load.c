@@ -45,6 +45,7 @@
 
 #include "jit/beam_asm.h"
 #include "jit/t2/t2_retain.h"
+#include "jit/t2/t2_install.h"
 
 #if defined(BEAMASM) && defined(ADDRESS_SANITIZER)
 #  include <sanitizer/lsan_interface.h>
@@ -2229,6 +2230,16 @@ BIF_RETTYPE erts_internal_purge_module_2(BIF_ALIST_2)
                                               modp->old.code_length);
 #   endif
                 beamasm_unregister_metadata(modp->old.metadata);
+
+                /* T2-Full: jettison any installed tier-2 blobs. The
+                 * prologue is not reverted -- the T1 code it lives in
+                 * is freed right below, under purge's own guarantee
+                 * that nothing references or executes the old code
+                 * anymore; the blob spans are still released behind a
+                 * code barrier (thread-progress two-phase free, like
+                 * the purger itself). */
+                erts_t2_jettison_instance(&modp->old, 0);
+
                 beamasm_purge_module(modp->old.executable_region,
                                      modp->old.writable_region,
                                      modp->old.code_length);

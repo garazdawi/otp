@@ -33,6 +33,7 @@
 #include "erl_alloc.h"
 #include "beam_file.h"
 #include "module.h"
+#include "beam_asm.h" /* erts_jit_t2_force */
 
 #include "t2_retain.h"
 #include "t2_pctab.h"
@@ -41,6 +42,12 @@ static erts_atomic_t t2_retained_bytes;
 
 int erts_t2_enabled(void) {
     static int enabled = -1;
+
+    /* +JT2enable implies retention (PLAN/T2FULL/08 §5); the flag is
+     * parsed before any module loads, so reading it here is stable. */
+    if (erts_jit_t2_force) {
+        return 1;
+    }
 
     if (enabled < 0) {
         const char *env = getenv("T2_RETAIN");

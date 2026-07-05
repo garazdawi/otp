@@ -52,6 +52,11 @@ extern char etrs_jit_perf_directory[MAXPATHLEN];
 #    endif
 extern int erts_jit_single_map;
 
+/* +JT2enable: compile every tier-2-eligible function synchronously at
+ * module load and install it over the T1 prologue (T2-Full P1,
+ * PLAN/T2FULL/08 §5). Implies tier-2 code retention. */
+extern int erts_jit_t2_force;
+
 void beamasm_init(void);
 void *beamasm_new_assembler(Eterm mod,
                             int num_labels,

@@ -1753,6 +1753,51 @@ namespace erts_t2 {
         return status;
     }
 
+    bool t2_build_each(const ErtsT2RetainedCode *ret,
+                       const std::function<void(const T2Function &)> &emit,
+                       int *failures,
+                       std::string *err) {
+        ModuleDecode md;
+        std::string local_err;
+        int failed = 0;
+
+        if (!decode_module(ret, md, &local_err)) {
+            if (err != nullptr) {
+                *err = "decode: " + local_err;
+            }
+            md.cleanup();
+            return false;
+        }
+
+        for (size_t i = 0; i < md.functions.size(); i++) {
+            const FunctionCode &fc = md.functions[i];
+
+            if (i >= (size_t)ret->function_count ||
+                !(ret->eligible_bitmap[i / 32] & (((Uint32)1) << (i % 32)))) {
+                continue;
+            }
+
+            FunctionBuilder builder(md, fc, (uint32_t)i);
+            std::unique_ptr<T2Function> fn = builder.build(&local_err);
+
+            if (fn == nullptr || !t2_validate(*fn, &local_err)) {
+                /* Degrade to T1 for this function; never abort the
+                 * load (map §5). */
+                failed++;
+                continue;
+            }
+
+            emit(*fn);
+        }
+
+        if (failures != nullptr) {
+            *failures = failed;
+        }
+
+        md.cleanup();
+        return true;
+    }
+
 } /* namespace erts_t2 */
 
 /* ------------------------------------------------------------------ *

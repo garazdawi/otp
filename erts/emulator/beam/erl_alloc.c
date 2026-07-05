@@ -68,6 +68,10 @@
 #ifdef BEAMASM
 /* jit/t2/t2_retain.h; bare prototype to avoid the beam_file.h chain. */
 extern UWord erts_t2_retained_sz(void);
+/* jit/t2/t2_ranges.h + t2_install.h: blob range array + installed
+ * tier-2 blob/bridge code bytes. */
+extern UWord erts_t2_blobs_sz(void);
+extern UWord erts_t2_installed_sz(void);
 #endif
 
 #define ERTS_ALC_DEFAULT_MAX_THR_PREF ERTS_MAX_NO_OF_SCHEDULERS
@@ -2509,6 +2513,8 @@ erts_memory(fmtfn_t *print_to_p, void *print_to_arg, void *proc, Eterm earg)
 	size.code += erts_total_code_size;
 #ifdef BEAMASM
 	size.code += erts_t2_retained_sz();
+	size.code += erts_t2_blobs_sz();
+	size.code += erts_t2_installed_sz();
 #endif
     }
 
@@ -2667,9 +2673,12 @@ erts_allocated_areas(fmtfn_t *print_to_p, void *print_to_arg, void *proc)
     values[i].name = "loaded_code";
     values[i].ui[0] = erts_total_code_size;
 #ifdef BEAMASM
-    /* T2-Full: retained tier-2 tables (jit/t2/t2_retain.c). This is the
-     * value erlang:memory(code) aggregates via allocated_areas. */
+    /* T2-Full: retained tier-2 tables (jit/t2/t2_retain.c), the blob
+     * range array and installed tier-2 code. This is the value
+     * erlang:memory(code) aggregates via allocated_areas. */
     values[i].ui[0] += erts_t2_retained_sz();
+    values[i].ui[0] += erts_t2_blobs_sz();
+    values[i].ui[0] += erts_t2_installed_sz();
 #endif
     i++;
 

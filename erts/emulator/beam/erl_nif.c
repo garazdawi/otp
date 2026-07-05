@@ -68,6 +68,9 @@
 #define HAVE_USE_DTRACE 1
 #endif
 #include "jit/beam_asm.h"
+#ifdef BEAMASM
+#    include "jit/t2/t2_install.h"
+#endif
 #include "erl_global_literals.h"
 #include "erl_iolist.h"
 
@@ -5076,6 +5079,14 @@ static void patch_call_nif_early(ErlNifEntry* entry,
             code_ptr[0] = BeamSetCodeAddr(code_ptr[0], call_nif_early);
         }
 #else
+        /* T2-Full: a tier-2 blob owns the same prologue word the
+         * call_nif_early flag rewrites; strict mutual exclusion
+         * (PLAN/T2/06 §2.4) means the blob is jettisoned before the
+         * flag claims the prologue. */
+        if (this_mi->t2_installs != NULL) {
+            erts_t2_jettison_function(this_mi, ci_exec);
+        }
+
         /* See beam_asm.h for details on how the nif load trampoline works */
         erts_asm_bp_set_flag(ci_rw, ci_exec, ERTS_ASM_BP_FLAG_CALL_NIF_EARLY);
 #endif

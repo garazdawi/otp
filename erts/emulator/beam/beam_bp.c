@@ -38,6 +38,9 @@
 
 #include "beam_common.h"
 #include "jit/beam_asm.h"
+#ifdef BEAMASM
+#    include "jit/t2/t2_install.h"
+#endif
 
 
 /* *************************************************************************
@@ -626,6 +629,15 @@ erts_install_breakpoints(BpFunctions* f)
 	    ASSERT(g->data[erts_active_bp_ix()].flags == 0);
 	    ASSERT(g->data[erts_staging_bp_ix()].flags != 0);
             ASSERT(g->to_insert == NULL);
+
+            /* T2-Full: trace always wins (PLAN/T2/06 §1.1, §2.4). A
+             * tier-2 blob owns the same prologue word the breakpoint
+             * flag rewrites, so jettison it before the flag commits;
+             * erts_asm_bp_enable then finds the pristine `b next` its
+             * assertion demands. */
+            if (mi->t2_installs != NULL) {
+                erts_t2_jettison_function(mi, ci_exec);
+            }
 
             erts_asm_bp_set_flag(ci_rw, ci_exec, ERTS_ASM_BP_FLAG_BP);
             mi->num_breakpoints++;
@@ -1756,6 +1768,16 @@ void erts_free_timem_info(void)
 
 void erts_install_line_breakpoint(struct erl_module_instance *mi, ErtsCodePtr cp_exec) {
     ErtsCodePtr cp_rw;
+
+#ifdef BEAMASM
+    /* T2-Full: a tier-2-installed function never executes its T1 body,
+     * so a line breakpoint inside it would silently never fire. Trace
+     * always wins (PLAN/T2/06 §1.1): jettison the instance's blobs
+     * before enabling the trampoline. */
+    if (mi->t2_installs != NULL) {
+        erts_t2_jettison_instance(mi, 1);
+    }
+#endif
 
     erts_unseal_module(mi);
     cp_rw = erts_writable_code_ptr(mi, cp_exec);

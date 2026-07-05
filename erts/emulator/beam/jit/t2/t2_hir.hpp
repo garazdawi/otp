@@ -617,6 +617,19 @@ namespace erts_t2 {
             const std::function<void(const T2Function &)> &emit,
             std::string *err);
 
+    /* Decode the retained module once and build + validate every
+     * eligible function, invoking `emit` for each success while the
+     * module decode is alive (same contract as t2_build_for_debug).
+     * Build/validate failures skip the function (it stays on T1).
+     * Returns false with *err set only when the module decode itself
+     * fails. `failures`, when non-null, receives the number of
+     * functions that failed to build/validate. Drives the +JT2enable
+     * compile-at-load path (t2_compile.cpp). */
+    bool t2_build_each(const ErtsT2RetainedCode *ret,
+                       const std::function<void(const T2Function &)> &emit,
+                       int *failures,
+                       std::string *err);
+
 } /* namespace erts_t2 */
 
 /* ------------------------------------------------------------------ *

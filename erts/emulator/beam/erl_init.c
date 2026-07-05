@@ -602,6 +602,7 @@ __decl_noreturn void __noreturn  erts_usage(void)
     erts_fprintf(stderr, "-JPperf true|false|dump|map|fp|no_fp   enable or disable support for perf on Linux\n");
     erts_fprintf(stderr, "-JPperfdirectory <directory>    set the directory perf files are stored. Default: /tmp\n");
     erts_fprintf(stderr, "-JMsingle bool enable the use of single-mapped RWX memory for JIT:ed code\n");
+    erts_fprintf(stderr, "-JT2enable bool compile and install tier-2 code for every eligible function at module load\n");
     erts_fprintf(stderr, "\n");
 #endif
 
@@ -1790,6 +1791,27 @@ erl_start(int argc, char **argv)
                     }
                 } else {
                     erts_fprintf(stderr, "bad +JM sub-option %s\n", arg);
+                    erts_usage();
+                }
+                break;
+            case 'T':
+                /* T2-Full P1 (PLAN/T2FULL/08 §5): +JT2enable compiles
+                 * every tier-2-eligible function synchronously at module
+                 * load and installs it over the T1 prologue. Implies
+                 * tier-2 code retention. */
+                sub_param++;
+                if (has_prefix("2enable", sub_param)) {
+                    arg = get_arg(sub_param+7, argv[i + 1], &i);
+                    if (sys_strcmp(arg, "true") == 0) {
+                        erts_jit_t2_force = 1;
+                    } else if (sys_strcmp(arg, "false") == 0) {
+                        erts_jit_t2_force = 0;
+                    } else {
+                        erts_fprintf(stderr, "bad +JT2enable flag %s\n", arg);
+                        erts_usage();
+                    }
+                } else {
+                    erts_fprintf(stderr, "bad +JT sub-option %s\n", sub_param);
                     erts_usage();
                 }
                 break;

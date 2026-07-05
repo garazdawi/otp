@@ -37,6 +37,7 @@
 #include "beam_asm.h"
 #include "t2_retain.h"
 #include "t2_pctab.h"
+#include "t2_install.h"
 
 #ifdef ADDRESS_SANITIZER
 #    include <sanitizer/lsan_interface.h>
@@ -1302,6 +1303,16 @@ void beam_load_finalize_code(LoaderState *stp,
         /* P1 commit-3 structural selftest (T2_EMIT_SELFTEST; no-op for
          * modules other than t2_mvp). Needs the pctab, hence here. */
         erts_t2_emit_selftest_module(committed, stp->code_hdr);
+
+        /* +JT2enable (map §5): compile + install every eligible
+         * function, synchronously, while we hold load permission (which
+         * includes code modification permission) and the module is
+         * still unsealed. on_load instances are skipped in P1: their
+         * lifecycle (abort/replace) is not tied into jettison yet, and
+         * they simply stay on T1. */
+        if (stp->on_load == NULL) {
+            erts_t2_compile_module(committed, stp->code_hdr, inst_p);
+        }
 
         stp->t2_retained = NULL;
     }

@@ -57,9 +57,12 @@ namespace erts_t2 {
      * this test blob carries its own enter_erlang_frame prologue instead
      * of the entry stub, so it can be entered directly by the re-entry
      * trampoline (see erts_t2_exec, t2_emit.cpp) as if freshly called. */
+    struct T2EmitResult;
+
     const void *t2_emit_blob(const T2LirFunction &fn,
                              std::string *err,
-                             std::string *disasm);
+                             std::string *disasm,
+                             T2EmitResult *out = nullptr);
 
     /* Result of an emission that must be owned/installed afterwards:
      * `entry` is the branch target (the entry stub for install-mode

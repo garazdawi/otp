@@ -36,6 +36,7 @@
  * error, never an aborted load.
  */
 
+#include <ctime>
 #include <string>
 
 extern "C"
@@ -133,11 +134,29 @@ namespace {
             return T2CompileStatus::IselUnsupported;
         }
 
-        if (!t2_emit_blob_install(lir, l_f, &blob, &err, nullptr)) {
+        bool dump = getenv("T2_DUMP") != nullptr;
+        std::string disasm;
+
+        if (!t2_emit_blob_install(lir,
+                                  l_f,
+                                  &blob,
+                                  &err,
+                                  dump ? &disasm : nullptr)) {
             if (diag) {
                 *diag = err;
             }
             return T2CompileStatus::EmitFailed;
+        }
+
+        if (dump) {
+            erts_fprintf(stderr,
+                         "t2_compile: %T:%T/%u L_f=%p\n%s\n--- disasm ---\n",
+                         hir.module,
+                         hir.function,
+                         (unsigned)hir.arity,
+                         l_f,
+                         t2_lir_dump(lir).c_str());
+            fwrite(disasm.data(), 1, disasm.size(), stderr);
         }
 
         ErtsT2InstallResult res =
@@ -153,6 +172,137 @@ namespace {
     }
 
 } /* anonymous namespace */
+
+/* ------------------------------------------------------------------ *
+ * +JT2enable synchronous compile-at-load driver (map §5)             *
+ * ------------------------------------------------------------------ */
+
+/* Cumulative statistics. Loads are serialized by load permission (and
+ * early boot is single-threaded), so plain counters suffice; reads
+ * from the t2_stats debug hook are advisory. */
+static struct {
+    Uint64 modules;          /* modules the driver processed           */
+    Uint64 functions;        /* eligible functions built OK            */
+    Uint64 installed;        /* blobs installed                        */
+    Uint64 isel_unsupported; /* outside the P1 identity table          */
+    Uint64 emit_failed;
+    Uint64 install_rejected; /* bp/prologue/reach/dup/state            */
+    Uint64 build_failed;     /* SSA build/validate failures            */
+    Uint64 compile_ns;       /* wall time inside the driver            */
+} t2_stats;
+
+/* Bisection knobs (debugging aids for the identity gate):
+ *   T2_INSTALL_LIMIT=N   install at most N blobs process-wide (the
+ *                        pipeline still runs; only the install is
+ *                        skipped past the limit);
+ *   T2_INSTALL_TRACE=1   print every installed MFA, in order.
+ * Unset means unlimited / quiet. */
+static Sint64 t2_install_limit() {
+    static Sint64 limit = -2;
+
+    if (limit == -2) {
+        const char *env = getenv("T2_INSTALL_LIMIT");
+        limit = (env != NULL && env[0] != '\0') ? (Sint64)atoll(env) : -1;
+    }
+    return limit;
+}
+
+static int t2_install_trace() {
+    static int on = -1;
+
+    if (on < 0) {
+        const char *env = getenv("T2_INSTALL_TRACE");
+        on = (env != NULL && env[0] == '1') ? 1 : 0;
+    }
+    return on;
+}
+
+/* Raw monotonic ns, deliberately independent of the ERTS time
+ * subsystem: the driver also runs while preloaded modules load, long
+ * before erl_init finishes. */
+static Uint64 t2_now_ns() {
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return (Uint64)ts.tv_sec * UINT64_C(1000000000) + (Uint64)ts.tv_nsec;
+}
+
+extern "C" void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
+                                       const void *code_hdr_v,
+                                       struct erl_module_instance *mi) {
+    const BeamCodeHeader *code_hdr = (const BeamCodeHeader *)code_hdr_v;
+    Uint64 t0;
+    std::string err;
+    int build_failures = 0;
+
+    if (!erts_jit_t2_force || ret == NULL || code_hdr == NULL ||
+        mi == NULL) {
+        return;
+    }
+
+    t0 = t2_now_ns();
+
+    (void)t2_build_each(
+            ret,
+            [&](const T2Function &hir) {
+                Sint64 limit = t2_install_limit();
+
+                t2_stats.functions++;
+
+                if (limit >= 0 && (Sint64)t2_stats.installed >= limit) {
+                    return;
+                }
+
+                switch (t2_compile_install_one(hir,
+                                               ret,
+                                               code_hdr,
+                                               mi,
+                                               nullptr)) {
+                case T2CompileStatus::Installed:
+                    t2_stats.installed++;
+                    if (t2_install_trace()) {
+                        erts_fprintf(stderr,
+                                     "t2_install: %4lu %T:%T/%u\n",
+                                     (unsigned long)t2_stats.installed,
+                                     hir.module,
+                                     hir.function,
+                                     (unsigned)hir.arity);
+                    }
+                    break;
+                case T2CompileStatus::IselUnsupported:
+                    t2_stats.isel_unsupported++;
+                    break;
+                case T2CompileStatus::EmitFailed:
+                    t2_stats.emit_failed++;
+                    break;
+                default:
+                    t2_stats.install_rejected++;
+                    break;
+                }
+            },
+            &build_failures,
+            &err);
+
+    t2_stats.build_failed += (Uint64)build_failures;
+    t2_stats.modules++;
+    t2_stats.compile_ns += t2_now_ns() - t0;
+}
+
+extern "C" Eterm erts_t2_debug_stats(Process *p) {
+    Eterm *hp = HAlloc(p, 9);
+
+    return TUPLE8(hp,
+                  make_small((Uint)t2_stats.modules),
+                  make_small((Uint)t2_stats.functions),
+                  make_small((Uint)t2_stats.installed),
+                  make_small((Uint)t2_stats.isel_unsupported),
+                  make_small((Uint)t2_stats.emit_failed),
+                  make_small((Uint)t2_stats.install_rejected),
+                  make_small((Uint)t2_stats.build_failed),
+                  make_small((Uint)(t2_stats.compile_ns / 1000)));
+}
 
 /* ------------------------------------------------------------------ *
  * Debug hooks (erts_debug:get_internal_state; code mod permission is *

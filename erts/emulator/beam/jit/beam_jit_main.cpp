@@ -53,6 +53,8 @@ char etrs_jit_perf_directory[MAXPATHLEN] = "/tmp";
 #endif
 /* Force use of single-mapped RWX memory for JIT code */
 int erts_jit_single_map = 0;
+/* +JT2enable: tier-2 compile-at-load forcing flag (T2-Full P1). */
+int erts_jit_t2_force = 0;
 
 /*
  * Special Beam instructions.
