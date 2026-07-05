@@ -22,6 +22,7 @@
 
 #include "beam_asm.hpp"
 #include "t2_hir.hpp"
+#include "t2_emit.hpp"
 
 extern "C"
 {
@@ -83,6 +84,16 @@ static JitAllocator *jit_allocator;
 static BeamGlobalAssembler *bga;
 static BeamModuleAssembler *bma;
 static CpuInfo cpuinfo;
+
+/* Accessors for the T2-Full emitter (t2_emit.cpp / t2_compile.cpp), which
+ * lives in a separate translation unit but needs the process-wide global
+ * assembler and JIT allocator to build standalone tier-2 blobs. */
+BeamGlobalAssembler *erts_t2_global_assembler(void) {
+    return bga;
+}
+JitAllocator *erts_t2_jit_allocator(void) {
+    return jit_allocator;
+}
 
 #if defined(__aarch64__) && !(defined(WIN32) || defined(__APPLE__)) &&         \
         defined(__GNUC__) && defined(ERTS_THR_INSTRUCTION_BARRIER) &&          \
@@ -422,6 +433,20 @@ void beamasm_init() {
         }
 
         erts_fprintf(stderr, "T2 HIR + ranges self-tests passed\n");
+    }
+
+    /* T2-Full P1 (PLAN/T2FULL/08 §1, work-order commit 1): LIR + emitter
+     * scaffold round-trip. Hand-builds a 1-op LIR, emits it through a
+     * fresh BeamT2ModuleAssembler, and disassembles it. Gated on
+     * T2_EMIT_SELFTEST so default boots pay nothing. */
+    if (erts_t2_emit_selftest_enabled()) {
+        int res = erts_t2_emit_selftest();
+
+        if (res != 0) {
+            erts_exit(ERTS_ABORT_EXIT, "T2 emit self-test failed (%d)\n", res);
+        }
+
+        erts_fprintf(stderr, "T2 emit self-test passed\n");
     }
 }
 
