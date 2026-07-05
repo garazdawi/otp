@@ -24,12 +24,29 @@ corpus infrastructure.
 | M0.6 | Corpus extension: MongooseIM under Amoc, an Ecto-heavy service, a running Phoenix/Broadway app, plus the existing suite | [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §6 | all gates |
 | M0.7 | Dialyzer/compiler perf DSO split — **DONE** ([`../verification/M0_PROFILES.md`](../verification/M0_PROFILES.md)): dialyzer [JIT] = **34 %** of on-CPU (≈49 % of non-GC emulator; GC ≈ 18 % of the C bucket), Elixir compiler = **23.8 %**; compute-application addressable band is **24–34 %**, confirming the 5–15 % honest target with 20 % as the all-pillars stretch. `erl_types` family alone is ≥13–17 % of dialyzer CPU — the G3-2 subject; elimination-rich inlining (M0.1) is what must move it. | Linux perf leg (per-pid `-p`, not `-a` — idle mis-attribution) | compute-class targets |
 
-**Gate G-M0** (scope, not kill): sum the measured pools against the
-per-class targets of [`00_goal_and_thesis.md`](00_goal_and_thesis.md)
-§1.1. If pillars 1–3 cannot arithmetically reach ≥20 % on the
-compute corpus, the finding goes to the project owner *before* P3+
-is funded — with the loop tier (P0–P2) unaffected, since its
-evidence is already banked.
+**Gate G-M0 — RESOLVED (2026-07-05, owner decision: rescope).**
+The measured pools (M0.1 thin, M0.2 missing, M0.7 addressable
+24–34 %) do not fund P3-broad or P5-standalone. Owner-approved
+rescope:
+
+- **P0–P2 loop tier: unchanged** (evidence banked; build underway).
+- **P3 narrowed** to the measured-positive enabler form:
+  literal-fun collapse + monomorphic-site guard-subsumption +
+  construct/deconstruct fusion (the P5a-lite subset folded in).
+  Framestates + eager-CP-push ship only in the scope this needs.
+  ~6–8 weeks (was 10–12).
+- **P4 unchanged** — the classic loop-opt suite carries the
+  biggest measured wins (unrolling/SWAR ≥4× gate).
+- **P5 deleted as a standalone phase.** P5b (cross-iteration
+  virtuals in fused loops — the only shape M0.2 found the real
+  pool in) is re-priced by running sinkscan on fused-region IR
+  after P2; it reopens only on that evidence.
+- Revised total: **~44–52 engineering weeks** to the shipped
+  aarch64 tier (was 60–68); P7 port unchanged.
+- Goal restatement stands as measured: **≥20 % on compute
+  kernels/parsers; 5–10 % on compute applications; JSON-class
+  compound on services; single digits on brokers.** The 20 %-on-
+  servers route remains the VM-internal track, outside this plan.
 
 ## P0–P2 — The loop tier (16–20 weeks; ≡ 08's Track B, absorbed)
 
