@@ -138,7 +138,12 @@ namespace erts_t2 {
                 TailTarget, /* value = local tail-callee T1 entry         */
                 TailExport, /* value = Export* of a remote tail-callee    */
                 SideExitPc, /* value = unconditional side-exit T1 PC      */
-                FailExitPc  /* value = arith side-exit trampoline T1 PC   */
+                FailExitPc, /* value = arith side-exit trampoline T1 PC   */
+                BifExport,  /* value = Export* of a light-BIF callee      */
+                BifSitePc,  /* value = the BIF site's own T1 PC (ARG3:
+                             * yield resume + raise address)              */
+                BifContPc   /* value = the BIF site's T1 continuation
+                             * (ARG5: trap/trace CP)                      */
             } kind;
             uint32_t beam_idx;
             uint64_t value;
@@ -444,6 +449,9 @@ namespace erts_t2 {
             case T2LirKind::TailCall:
             case T2LirKind::TailCallExt:
                 emit_lir_call(op, /*is_tail=*/true);
+                break;
+            case T2LirKind::CallBif:
+                emit_lir_call_bif(op);
                 break;
             case T2LirKind::SideExit:
                 /* Unconditional transfer to a T1 PC: an error-exit op's
@@ -763,6 +771,42 @@ namespace erts_t2 {
                 a.br(SUPER_TMP);
             }
             mark_unreachable();
+        }
+
+        /* A light-BIF call: T1's call_light_bif with the two T2
+         * redirections, via the t2_call_light_bif_shared fragment
+         * (instr_bif.cpp). Mirrors emit_call_light_bif exactly except
+         * that the entry (ARG3) is the site's *T1* PC rather than the
+         * emission's own address, and the T1 continuation rides in
+         * ARG5 for the trap/trace CP. The success path returns here
+         * (plain `bl` return) and execution continues in the blob —
+         * the only outcome that stays in T2; yield/trap/trace demote
+         * the invocation to T1 with only T1 addresses in c_p->i / on
+         * the stack. Reductions: the fragment's own `subs FCALLS`
+         * charge, identical to T1. */
+        void emit_lir_call_bif(const T2LirOp &op) {
+            fact(EmitFact::BifExport, op.beam_idx, op.exp);
+            fact(EmitFact::BifSitePc, op.beam_idx, op.t1_pc_fail);
+            fact(EmitFact::BifContPc, op.beam_idx, op.t1_pc_cont);
+
+            if (logger.file()) {
+                comment("T2 BIF: %T:%T/%u",
+                        op.mfa_m,
+                        op.mfa_f,
+                        (unsigned)op.arity);
+            }
+
+            mov_imm(ARG8, (Uint64)op.target); /* BIF C function      */
+            mov_imm(ARG4, (Uint64)op.exp);    /* Export*             */
+            mov_imm(ARG3, (Uint64)op.t1_pc_fail); /* T1 site         */
+            mov_imm(ARG5, (Uint64)op.t1_pc_cont); /* T1 continuation */
+
+            fragment_call(ga->get_t2_call_light_bif_shared());
+
+            /* The fragment clobbers everything caller-saved; the
+             * offset-keyed register cache self-invalidates, but be
+             * explicit for the reused emitters that follow. */
+            reg_cache.invalidate();
         }
 
     public:

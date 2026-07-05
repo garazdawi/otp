@@ -157,6 +157,18 @@ namespace erts_t2 {
         TailCall,
         TailCallExt,
 
+        /* A light-BIF call (T1's call_light_bif), via the T2 variant of
+         * the shared fragment (t2_call_light_bif_shared). NOT a
+         * terminator: the success path returns into the blob and
+         * execution continues; yield/trap/trace demote to T1 through
+         * the two T1 addresses this op carries (t1_pc_fail = the site,
+         * t1_pc_cont = the continuation). `exp` is the Export*,
+         * `target` the BIF's C function from bif_table. Tail-shaped
+         * sites (call_ext_last/only) lower to CallBif + Deallocate +
+         * Return, mirroring T1's own transform, which calls the BIF
+         * with the frame intact and only then deallocates. */
+        CallBif,
+
         /* An unconditional side-exit: branch to t1_pc_fail. Used to lower
          * error-exit blocks (badmatch/if_end/case_end) -- T2 never raises
          * (surprise #7). */

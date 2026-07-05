@@ -371,10 +371,41 @@ static Eterm debug_call_light_bif(Process *c_p,
  * ARG3 = entry
  * ARG4 = export entry
  * ARG8 = BIF pointer
+ *
+ * The T2 variant below shares this body via the helper; both fragments
+ * are emitted from the same code so they cannot drift apart.
  */
 void BeamGlobalAssembler::emit_call_light_bif_shared() {
+    emit_call_light_bif_shared_helper(false);
+}
+
+/* T2-Full P1 (PLAN/T2FULL/08 §4.3): the tier-2 light-BIF call fragment.
+ *
+ * Identical to call_light_bif_shared except that a T2 caller cannot let
+ * any address of its blob escape into runtime state (no CPs into blobs,
+ * the basis of O(1) jettison and the empty c_p->i translation). The
+ * blob passes the two T1 addresses of the BIF site instead:
+ *
+ * ARG3 = the site's T1 PC (the call_light_bif op in the T1 body). The
+ *        yield path already publishes ARG3 as the resume PC, and the
+ *        error path uses it as the raise PC — a yield fires before the
+ *        BIF has run, so resuming T1 at the site re-executes the whole
+ *        call; identical to T1, where ARG3 is the same address.
+ * ARG5 = the site's T1 continuation (the post-call_light_bif T1 PC).
+ *        Published as the CP wherever T1 would publish its own LR:
+ *        the trap path's stack frame and the traced/save_calls export
+ *        dispatch. Yield/trap/trace thereby demote the invocation to
+ *        T1; only the plain success path returns into the blob (via
+ *        the machine LR, which never escapes).
+ * ARG4 = export entry, ARG8 = BIF pointer (as T1).
+ */
+void BeamGlobalAssembler::emit_t2_call_light_bif_shared() {
+    emit_call_light_bif_shared_helper(true);
+}
+
+void BeamGlobalAssembler::emit_call_light_bif_shared_helper(bool t2) {
     a64::Mem entry_mem = TMP_MEM1q, export_mem = TMP_MEM2q,
-             mbuf_mem = TMP_MEM3q;
+             mbuf_mem = TMP_MEM3q, t2_cont_mem = TMP_MEM4q;
 
     Label trace = a.new_label(), yield = a.new_label();
 
@@ -382,6 +413,12 @@ void BeamGlobalAssembler::emit_call_light_bif_shared() {
     a.ldr(TMP1, a64::Mem(c_p, offsetof(Process, mbuf)));
     a.stp(ARG3, ARG4, TMP_MEM1q);
     a.str(TMP1, mbuf_mem);
+
+    if (t2) {
+        /* The T1 continuation, needed on the trace and trap paths after
+         * the argument registers have been clobbered. */
+        a.str(ARG5, t2_cont_mem);
+    }
 
     /* Check if we should trace this bif call or handle save_calls. Both
      * variants dispatch through the export entry. */
@@ -528,6 +565,11 @@ void BeamGlobalAssembler::emit_call_light_bif_shared() {
                  *
                  * The BIF_TRAP macros all set up c_p->arity and c_p->current,
                  * so we can use a simplified context switch. */
+                if (t2) {
+                    /* The CP must be the site's T1 continuation, never
+                     * the T2 blob return address in LR. */
+                    a.ldr(a64::x30, t2_cont_mem);
+                }
                 emit_enter_erlang_frame();
                 a.ldr(ARG3, a64::Mem(c_p, offsetof(Process, i)));
                 a.b(labels[context_switch_simplified]);
@@ -574,6 +616,12 @@ void BeamGlobalAssembler::emit_call_light_bif_shared() {
     a.bind(trace);
     {
         /* Call the export entry instead of the BIF. */
+        if (t2) {
+            /* The dispatched callee publishes LR as its frame CP; hand
+             * it the T1 continuation so it returns into T1 (identical
+             * to T1, where LR holds the same address). */
+            a.ldr(a64::x30, t2_cont_mem);
+        }
         branch(emit_setup_dispatchable_call(ARG4));
     }
 

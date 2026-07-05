@@ -167,6 +167,23 @@ namespace erts_t2 {
                                 return fail("side exit without a T1 PC");
                             }
                             break;
+                        case T2LirKind::CallBif:
+                            /* Both T1 addresses and both callee handles
+                             * must be resolved: the site (yield/error),
+                             * the continuation (trap/trace CP), the
+                             * export and the BIF C function. */
+                            if (op.t1_pc_fail == nullptr) {
+                                return fail("bif call without a T1 site");
+                            }
+                            if (op.t1_pc_cont == nullptr) {
+                                return fail("bif call without a T1 "
+                                            "continuation");
+                            }
+                            if (op.exp == nullptr || op.target == nullptr) {
+                                return fail("bif call without a resolved "
+                                            "export/function");
+                            }
+                            break;
                         default:
                             break;
                         }

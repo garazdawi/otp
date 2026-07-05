@@ -37,6 +37,7 @@ extern "C"
 #include "code_ix.h"
 #include "export.h"
 #include "beam_code.h"
+#include "erl_bif_table.h"
 
 #include "t2_retain.h"
 #include "t2_pctab.h"
@@ -338,16 +339,33 @@ namespace erts_t2 {
                 return false;
             }
 
-            /* External call target: the export entry, dispatched through
-             * the active code index at run time (identical to T1's
-             * i_call_ext). BIF targets are rejected — T1 lowers those to
-             * inlined BIF calls with different reduction accounting, which
-             * the identity tier must not approximate. Loader-transformed
-             * specials are rejected for the same reason (see above). */
-            bool export_target(const T2Op *op, const Export **out) {
-                const Export *ep = erts_active_export_entry(op->mfa_m,
-                                                            op->mfa_f,
-                                                            op->index);
+            /* Classification of a call_ext-family target, mirroring the
+             * loader's transform (ops.tab): a real Erlang call (export
+             * dispatch, identical to T1's i_call_ext) or a light BIF
+             * (T1's call_light_bif; lowered via the T2 fragment with the
+             * yield/trap redirections). Heavy BIFs (is_heavy_bif ->
+             * i_call_ext to the BIF's export trampoline) and the
+             * loader-transformed specials are rejected — out of the P1
+             * lowering's scope. */
+            enum class ExtTarget { Erlang, LightBif };
+
+            bool export_target(const T2Op *op,
+                               const Export **out,
+                               ExtTarget *kind) {
+                const Export *ep;
+
+                if (is_transformed_call_ext(op->mfa_m,
+                                            op->mfa_f,
+                                            op->index)) {
+                    return fail_op(op,
+                                   "call_ext to a loader-transformed "
+                                   "special (i_yield/i_hibernate/...) "
+                                   "unsupported in P1 isel");
+                }
+
+                ep = erts_active_export_entry(op->mfa_m,
+                                              op->mfa_f,
+                                              op->index);
 
                 if (ep == nullptr) {
                     /* Not-yet-loaded remote callee: mirror T1's load-time
@@ -379,19 +397,44 @@ namespace erts_t2 {
                     }
                 }
                 if (ep->bif_number >= 0) {
-                    return fail_op(op,
-                                   "call_ext to a BIF unsupported in P1 "
-                                   "commit-3 isel");
+                    if (bif_table[ep->bif_number].kind == BIF_KIND_HEAVY) {
+                        /* T1 emits i_call_ext (a plain export call) for
+                         * these; the pctab CALL/CONT entries exist, but
+                         * lowering them is outside the decided P1 BIF
+                         * design — reject, the function stays T1. */
+                        return fail_op(op,
+                                       "call_ext to a heavy BIF "
+                                       "(i_call_ext dispatch) unsupported "
+                                       "in P1 isel");
+                    }
+                    *kind = ExtTarget::LightBif;
+                    *out = ep;
+                    return true;
                 }
-                if (is_transformed_call_ext(op->mfa_m,
-                                            op->mfa_f,
-                                            op->index)) {
-                    return fail_op(op,
-                                   "call_ext to a loader-transformed "
-                                   "special (i_yield/i_hibernate/...) "
-                                   "unsupported in P1 isel");
-                }
+                *kind = ExtTarget::Erlang;
                 *out = ep;
+                return true;
+            }
+
+            /* Rewrite a lowered CallExt-shaped LIR op into a CallBif
+             * (T1's call_light_bif). The caller has resolved lop->exp
+             * and lop->t1_pc_cont (the trap/trace CP); this adds the
+             * BIF's C function and the site's own T1 PC — the yield
+             * resume/raise address (the BIF has not run when a yield
+             * fires, so T1 re-executing the whole site is correct). */
+            bool lower_bif_call(const T2Op *op, T2LirOp *lop) {
+                const Export *ep = (const Export *)lop->exp;
+
+                ASSERT(ep != nullptr && ep->bif_number >= 0);
+
+                lop->kind = T2LirKind::CallBif;
+                lop->target = (const void *)bif_table[ep->bif_number].f;
+                lop->t1_pc_fail = pc_lookup(op->beam_idx, ERTS_T2_PC_BIF);
+                if (lop->t1_pc_fail == nullptr) {
+                    return fail_op(op,
+                                   "no BIF pctab entry for the bif call "
+                                   "site");
+                }
                 return true;
             }
 
@@ -696,12 +739,14 @@ namespace erts_t2 {
                     lop.mfa_m = op->mfa_m;
                     lop.mfa_f = op->mfa_f;
                     lop.arity = op->index;
+                    lop.live = op->live;
                     lop.dst = PhysLoc::xreg(0);
 
                     /* The CP: the T1 post-call continuation of this call's
                      * decode ordinal — never a T2 address (08 §4.3). The
                      * callee returns into T1; the rest of the invocation
-                     * runs T1 (demote-on-return). */
+                     * runs T1 (demote-on-return). A light-BIF site needs
+                     * the same address for its trap/trace CP. */
                     lop.t1_pc_cont = pc_lookup(op->beam_idx, ERTS_T2_PC_CONT);
                     if (lop.t1_pc_cont == nullptr) {
                         return fail_op(op,
@@ -711,11 +756,18 @@ namespace erts_t2 {
 
                     if (is_ext) {
                         const Export *ep;
+                        ExtTarget kind;
 
-                        if (!export_target(op, &ep)) {
+                        if (!export_target(op, &ep, &kind)) {
                             return false;
                         }
                         lop.exp = (const void *)ep;
+
+                        if (kind == ExtTarget::LightBif) {
+                            if (!lower_bif_call(op, &lop)) {
+                                return false;
+                            }
+                        }
                     } else {
                         lop.target = local_target(op->mfa_f, op->index);
                         if (lop.target == nullptr) {
@@ -729,6 +781,79 @@ namespace erts_t2 {
                 default:
                     return fail_op(op, "unsupported HIR op in P1 isel");
                 }
+            }
+
+            /* A tail call_ext to a light BIF. T1's transform makes these
+             * *body* calls followed by an epilogue:
+             *
+             *   call_ext_last Ar Bif D =>
+             *       call_light_bif Bif | deallocate D | return
+             *   call_ext_only Ar Bif =>
+             *       allocate 0 Ar | call_light_bif Bif
+             *                     | deallocate 0 | return
+             *
+             * i.e. the BIF runs with the frame *intact*, and only then
+             * the frame is dropped. The builder split the fused
+             * call_ext_last into Deallocate + TailCallExt (for the tail
+             * sync map); mirror T1 by popping that Deallocate back off
+             * and re-ordering to CallBif + Deallocate + Return. For the
+             * frameless call_ext_only shape, T1 inserts `allocate 0 Ar`
+             * (a stack/heap guard with live=arity) before the call;
+             * synthesize the same Allocate. Every T1 address then lines
+             * up: the site's BIF PC expects the frame intact (yield
+             * re-executes the call), and the CONT PC is T1's own
+             * deallocate+return epilogue (the trap/trace CP). */
+            bool emit_tail_bif(T2LirBlock &b, const T2Op *t, T2LirOp &lop) {
+                if (!lower_bif_call(t, &lop)) {
+                    return false;
+                }
+                lop.t1_pc_cont = pc_lookup(t->beam_idx, ERTS_T2_PC_CONT);
+                if (lop.t1_pc_cont == nullptr) {
+                    return fail_op(t,
+                                   "no CONT pctab entry for the tail bif "
+                                   "call's T1 epilogue");
+                }
+                lop.dst = PhysLoc::xreg(0);
+                lop.live = t->index;
+
+                Sint64 dealloc = 0;
+
+                if (!b.ops.empty() &&
+                    b.ops.back().kind == T2LirKind::Deallocate &&
+                    b.ops.back().beam_idx == t->beam_idx) {
+                    /* The split call_ext_last: un-split it. */
+                    dealloc = b.ops.back().imm;
+                    b.ops.pop_back();
+                } else {
+                    /* call_ext_only: T1's `allocate 0 Ar` guard. */
+                    T2LirOp alloc;
+
+                    alloc.kind = T2LirKind::Allocate;
+                    alloc.imm = 0;
+                    alloc.imm2 = 0;
+                    alloc.live = t->index;
+                    alloc.beam_idx = t->beam_idx;
+                    b.ops.push_back(alloc);
+                }
+
+                b.ops.push_back(lop);
+
+                T2LirOp de;
+
+                de.kind = T2LirKind::Deallocate;
+                de.imm = dealloc;
+                de.beam_idx = t->beam_idx;
+                b.ops.push_back(de);
+
+                T2LirOp ret;
+
+                ret.kind = T2LirKind::Return;
+                ret.beam_idx = t->beam_idx;
+                ret.num_srcs = 1;
+                ret.srcs[0] = T2LirSrc::slot(PhysLoc::xreg(0));
+                b.ops.push_back(ret);
+
+                return true;
             }
 
             bool emit_terminator(T2LirBlock &b, const T2Op *t) {
@@ -841,11 +966,16 @@ namespace erts_t2 {
                     lop.arity = t->index;
                     if (is_ext) {
                         const Export *ep;
+                        ExtTarget kind;
 
-                        if (!export_target(t, &ep)) {
+                        if (!export_target(t, &ep, &kind)) {
                             return false;
                         }
                         lop.exp = (const void *)ep;
+
+                        if (kind == ExtTarget::LightBif) {
+                            return emit_tail_bif(b, t, lop);
+                        }
                     } else {
                         /* Self-recursion included: identity only, the
                          * transfer goes to the (own) T1 entry — no

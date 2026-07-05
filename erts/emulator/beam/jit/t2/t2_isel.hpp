@@ -45,11 +45,18 @@
  *     is a valid `bl <raise function_clause>` on aarch64);
  *   - local call/tail-call targets resolve by MFA against the code
  *     header's function table; external ones through the export entry
- *     (dispatched via the active code index at run time).
+ *     (dispatched via the active code index at run time);
+ *   - call_ext to a *light* BIF lowers to CallBif (T1's
+ *     call_light_bif through the T2 fragment): the site's own T1 PC
+ *     (pctab BIF entry) is the yield-resume/raise address and the
+ *     T1 continuation (pctab CONT entry) the trap/trace CP, so no
+ *     blob address ever reaches c_p->i or the stack; tail shapes
+ *     mirror T1's transform (BIF with frame intact, then
+ *     deallocate + return).
  *
- * A missing pctab entry, a BIF call target, or any shape outside the
- * identity table is a clean "unsupported" failure — the function simply
- * stays T1.
+ * A missing pctab entry, a heavy-BIF or loader-transformed call
+ * target, or any shape outside the identity table is a clean
+ * "unsupported" failure — the function simply stays T1.
  */
 
 #ifndef _JIT_T2_ISEL_HPP

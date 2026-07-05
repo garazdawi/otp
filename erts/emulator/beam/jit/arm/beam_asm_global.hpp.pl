@@ -112,6 +112,7 @@ my @beam_global_funcs = qw(
     raise_exception_shared
     raise_shared
     store_unaligned
+    t2_call_light_bif_shared
     unloaded_fun
     unary_minus_body_shared
     update_map_assoc_shared
@@ -195,6 +196,8 @@ $decl_emit_funcs
     void emit_bitwise_fallback_body(const ErtsCodeMFA *mfa);
 
     void emit_i_length_common(Label fail, int state_size);
+
+    void emit_call_light_bif_shared_helper(bool t2);
 
     void emit_raise_badarg(const ErtsCodeMFA *mfa);
 
