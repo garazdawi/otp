@@ -163,9 +163,15 @@ namespace {
                 erts_t2_install(mi, ci, blob.entry, blob.base, blob.size);
 
         if (res != ERTS_T2_INSTALL_OK) {
-            /* The blob was never reachable by anyone; release the span
-             * directly. */
-            beamasm_t2_jit_release((void *)blob.base);
+            /* The blob was never reachable by anyone, but its emission
+             * flushed the icache on this thread; route the release
+             * through the code-barrier free so the barrier the flush
+             * requires is scheduled (DEBUG-asserted at thread
+             * progress). */
+            erts_t2_free_spans_after_barrier((void *)blob.base,
+                                             blob.size,
+                                             NULL,
+                                             0);
         }
 
         return map_install_result(res);

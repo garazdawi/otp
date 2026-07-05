@@ -336,12 +336,14 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
  * Jettison                                                           *
  * ------------------------------------------------------------------ */
 
-/* Unlink + revert one install. The caller has dealt with sealing;
- * `rw_ready` says the module is unsealed and this thread is in
- * JIT-write mode. */
-static void t2_jettison_one(struct erl_module_instance *mi,
-                            ErtsT2Install **prevp,
-                            int revert_prologue) {
+/* Unlink + revert one install; returns the unlinked node. The caller
+ * has dealt with sealing and MUST, after any flush/reseal, schedule
+ * the deferred span release (t2_release_node) -- the DEBUG barrier
+ * discipline requires the code barrier to be scheduled *after* the
+ * last icache flush of the operation. */
+static ErtsT2Install *t2_jettison_one(struct erl_module_instance *mi,
+                                      ErtsT2Install **prevp,
+                                      int revert_prologue) {
     ErtsT2Install *inst = *prevp;
 
     if (revert_prologue) {
@@ -359,15 +361,19 @@ static void t2_jettison_one(struct erl_module_instance *mi,
                         -(erts_aint_t)(inst->blob_size + inst->bridge_size));
 
     *prevp = inst->next;
+    inst->next = NULL;
+    return inst;
+}
 
-    /* The blob (and its bridge -- a racing caller may sit right on the
-     * bridge's `br`) stays mapped until every scheduler has passed a
-     * code barrier. */
+/* Schedule the node's spans for release behind a code barrier and free
+ * the node. The blob (and its bridge -- a racing caller may sit right
+ * on the bridge's `br`) stays mapped until every scheduler has passed
+ * the barrier. */
+static void t2_release_node(ErtsT2Install *inst) {
     erts_t2_free_spans_after_barrier((void *)inst->blob_base,
                                      inst->blob_size,
                                      inst->bridge_base,
                                      inst->bridge_size);
-
     erts_free(ERTS_ALC_T_T2_CODE, inst);
 }
 
@@ -381,6 +387,7 @@ int erts_t2_jettison_function(struct erl_module_instance *mi,
          prevp = &(*prevp)->next) {
         if ((*prevp)->ci == ci_exec) {
             int was_sealed = !mi->unsealed;
+            ErtsT2Install *inst;
 
             if (was_sealed) {
                 erts_unseal_module(mi);
@@ -391,11 +398,15 @@ int erts_t2_jettison_function(struct erl_module_instance *mi,
                                       mi->code_length);
             }
 
-            t2_jettison_one(mi, prevp, 1);
+            inst = t2_jettison_one(mi, prevp, 1);
 
             if (was_sealed) {
                 erts_seal_module(mi);
             }
+
+            /* After the flush: the scheduled code barrier both frees
+             * the spans and satisfies the barrier the flush requires. */
+            t2_release_node(inst);
             return 1;
         }
     }
@@ -405,6 +416,7 @@ int erts_t2_jettison_function(struct erl_module_instance *mi,
 
 void erts_t2_jettison_instance(struct erl_module_instance *mi,
                                int revert_prologue) {
+    ErtsT2Install *chain = NULL;
     int was_sealed;
 
     t2_assert_write_permission();
@@ -426,11 +438,23 @@ void erts_t2_jettison_instance(struct erl_module_instance *mi,
     }
 
     while (mi->t2_installs != NULL) {
-        t2_jettison_one(mi, &mi->t2_installs, revert_prologue);
+        ErtsT2Install *inst = t2_jettison_one(mi,
+                                              &mi->t2_installs,
+                                              revert_prologue);
+
+        inst->next = chain;
+        chain = inst;
     }
 
     if (revert_prologue && was_sealed) {
         erts_seal_module(mi);
+    }
+
+    while (chain != NULL) {
+        ErtsT2Install *inst = chain;
+
+        chain = inst->next;
+        t2_release_node(inst);
     }
 }
 

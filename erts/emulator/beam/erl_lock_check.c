@@ -176,6 +176,12 @@ static erts_lc_lock_order_t erts_lock_order[] = {
     LEVEL,
     {"record_staging_lock",                     NULL},
     {"global_literals",                         NULL},
+    /* Both allocate/deallocate while held, so they must order before
+     * the allocator locks: the T2-Full blob range array (jit/t2/
+     * t2_ranges.c) and the allocation-profiling site list
+     * (erl_process.c:erts_galloc_*). */
+    {"t2_ranges",				NULL},
+    {"alloc_profile",				NULL},
     LEVEL,
     {"alcu_allocator",			        "index"},
     LEVEL,

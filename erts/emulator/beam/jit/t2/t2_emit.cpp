@@ -151,13 +151,18 @@ namespace erts_t2 {
         }
 
     public:
+        /* NB: the base constructor eagerly creates rawLabels
+         * 1..num_labels-1, and the DEBUG codegen verifier requires every
+         * created label to be bound — so num_labels must be exactly
+         * 1 + block count (block b binds label 1+b; fail trampolines
+         * allocate + bind their own labels from next_label up). */
         BeamT2ModuleAssembler(BeamGlobalAssembler *ga,
                               Eterm mod,
                               int num_labels,
                               const T2LirFunction &fn_)
                 : BeamModuleAssembler(ga, mod, num_labels, t2_synth_beamfile()),
                   fn(fn_),
-                  next_label((unsigned)fn_.blocks.size() + 2) {
+                  next_label((unsigned)fn_.blocks.size() + 1) {
             entry_label = a.new_label();
         }
 
@@ -845,7 +850,7 @@ namespace erts_t2 {
             return nullptr;
         }
 
-        int num_labels = (int)fn.blocks.size() + 2;
+        int num_labels = (int)fn.blocks.size() + 1;
 
         BeamT2ModuleAssembler ma(ga, fn.module, num_labels, fn);
 
@@ -902,7 +907,7 @@ namespace erts_t2 {
             return false;
         }
 
-        int num_labels = (int)fn.blocks.size() + 2;
+        int num_labels = (int)fn.blocks.size() + 1;
 
         BeamT2ModuleAssembler ma(ga, fn.module, num_labels, fn);
 
@@ -956,7 +961,7 @@ namespace erts_t2 {
         T2LirFunction empty;
         empty.module = am_undefined;
 
-        BeamT2ModuleAssembler ma(ga, empty.module, 2, empty);
+        BeamT2ModuleAssembler ma(ga, empty.module, 1, empty);
         cached = (ErtsT2ReentryFn)ma.emit_reentry_trampoline_blob();
         return cached;
     }
@@ -1403,7 +1408,7 @@ namespace {
                         return;
                     }
 
-                    int num_labels = (int)lir.blocks.size() + 2;
+                    int num_labels = (int)lir.blocks.size() + 1;
                     BeamT2ModuleAssembler ma(ga,
                                              lir.module,
                                              num_labels,
