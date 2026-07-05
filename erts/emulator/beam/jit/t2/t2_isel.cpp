@@ -720,6 +720,11 @@ namespace erts_t2 {
                 case T2OpKind::Switch: {
                     lop.kind = T2LirKind::Switch;
                     lop.num_srcs = 1;
+                    /* imm=1 marks a select_tuple_arity switch: emission
+                     * compares the tuple header against make_arityval(N)
+                     * instead of the value against the case term
+                     * (T2_OP_SWITCH_ARITY, t2_hir.hpp). */
+                    lop.imm = (t->flags & T2_OP_SWITCH_ARITY) ? 1 : 0;
                     if (!src_of(t, 0, &lop.srcs[0])) {
                         return false;
                     }

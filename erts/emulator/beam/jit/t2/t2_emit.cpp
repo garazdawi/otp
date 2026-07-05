@@ -663,11 +663,47 @@ namespace erts_t2 {
         }
 
         void emit_lir_switch(const T2LirOp &op) {
+            mov_arg(TMP1, ArgSource(src_argval(op.srcs[0])));
+
+            if (op.imm != 0) {
+                /* select_tuple_arity (isel imm=1): mirror T1's
+                 * emit_i_select_tuple_arity — boxed check, load the
+                 * header word, require the arityval header tag, then
+                 * compare against make_arityval(N). The LIR case values
+                 * carry the arity as make_small(N). */
+                const Label &dflt = rawLabels.at(1 + op.default_target);
+
+                emit_is_boxed(resolve_label(dflt, disp1MB), TMP1);
+
+                a64::Gp boxed_ptr = emit_ptr_val(TMP2, TMP1);
+                a.ldur(TMP1, emit_boxed_val(boxed_ptr, 0));
+
+                ERTS_CT_ASSERT(_TAG_HEADER_ARITYVAL == 0);
+                a.tst(TMP1, imm(_TAG_HEADER_MASK));
+                a.b_ne(resolve_label(dflt, disp1MB));
+
+                for (uint32_t i = 0; i < op.num_cases; i++) {
+                    const T2LirSwitchCase &c =
+                            fn.switch_cases[op.first_case + i];
+
+                    if (!is_small(c.value)) {
+                        fail("arity switch case is not a small");
+                        return;
+                    }
+                    cmp_arg(TMP1,
+                            ArgWord(make_arityval(unsigned_val(c.value))));
+                    a.b_eq(resolve_label(rawLabels.at(1 + c.target),
+                                         disp1MB));
+                }
+
+                a.b(block_label(op.default_target));
+                mark_unreachable();
+                return;
+            }
+
             /* A linear compare chain, semantically identical to T1's
              * i_select_val_lins on immediates (exact-equal compare per
              * case, then the default). */
-            mov_arg(TMP1, ArgSource(src_argval(op.srcs[0])));
-
             for (uint32_t i = 0; i < op.num_cases; i++) {
                 const T2LirSwitchCase &c = fn.switch_cases[op.first_case + i];
 

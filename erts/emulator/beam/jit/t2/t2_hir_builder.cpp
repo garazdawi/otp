@@ -997,6 +997,13 @@ namespace erts_t2 {
                 fn->set_operands(sw, {src.v});
                 set_operand_regs(sw, {src});
 
+                if (on_arity) {
+                    /* select_tuple_arity: the cases carry make_small(N)
+                     * arities, but dispatch compares the tuple *header*
+                     * against make_arityval(N) (see T2_OP_SWITCH_ARITY). */
+                    sw->flags |= T2_OP_SWITCH_ARITY;
+                }
+
                 uint32_t num_cases = (uint32_t)(count / 2);
                 sw->num_cases = num_cases;
                 sw->cases = fn->arena.alloc_array<T2SwitchCase>(num_cases);

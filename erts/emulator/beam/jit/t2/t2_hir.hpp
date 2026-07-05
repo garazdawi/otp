@@ -378,7 +378,15 @@ namespace erts_t2 {
          * is synthesized and no sync map attached; the P1 backend must
          * not lower such an op (these targets are raising BIFs / known
          * no-return calls, outside the identity tier's call lowering). */
-        T2_OP_GARBAGE_DEALLOC = 1 << 3
+        T2_OP_GARBAGE_DEALLOC = 1 << 3,
+        /* Switch translated from select_tuple_arity: the case values are
+         * small-tagged *arities* (make_small(N)), and the dispatch
+         * semantics compare the operand's tuple header word against
+         * make_arityval(N) — never the operand value itself. The backend
+         * must emit the header-load shape (T1's
+         * emit_i_select_tuple_arity); a value-compare lowering silently
+         * sends every input to the default edge. */
+        T2_OP_SWITCH_ARITY = 1 << 4
     };
 
     /* One arm of a `switch` terminator. */
