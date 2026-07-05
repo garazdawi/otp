@@ -25,12 +25,38 @@
 %%%
 %%% For each corpus function this harness compares:
 %%%
-%%%   (a) the AOT SSA the compiler produces at the `dssaopt' listing point
-%%%       (`compile:forms(Abstr, [dssaopt,binary|Opts])' returns the live
-%%%       `#b_module{}' term, one lowering *above* code generation), against
+%%%   (a) the AOT SSA the compiler produces at a chosen listing point, against
 %%%   (b) the tier-2 reconstruction that t2_hir_builder rebuilds from the
 %%%       *post-`beam_ssa_codegen'* generic BEAM ops retained at load, fetched
 %%%       with `erts_debug:get_internal_state({t2_build_ssa,M,F,A})'.
+%%%
+%%% The AOT reference point is selectable (compare_module/3, run/2), because
+%%% *where* on the compiler pipeline we sample the AOT SSA determines how much
+%%% of the divergence is legitimate lowering vs. reconstruction infidelity:
+%%%
+%%%   * `dssaopt' -- after beam_ssa_opt, before beam_ssa_pre_codegen.  This is
+%%%     the optimiser's output, one lowering *above* codegen.  Every synthetic
+%%%     failure edge is still a `match_fail' scaffold: a `match_fail' body op
+%%%     immediately followed by `succeeded:body' and a branch to a dead block
+%%%     that calls `erlang:error/1'.  Those dead `erlang:error' blocks (and the
+%%%     un-lowered binary-match/`update_tuple' pseudo-ops) inflate the AOT op
+%%%     multiset with content the loaded code -- and hence the reconstruction
+%%%     -- never carries.
+%%%   * `dprecg' -- after beam_ssa_pre_codegen, *immediately before* codegen
+%%%     (the `{listing,"precodegen"}' point).  beam_ssa_pre_codegen has already
+%%%     run `sanitize' (drops the dead `succeeded'/`erlang:error' scaffold
+%%%     behind a `match_fail'), `expand_match_fail' (badmatch/case_end/if_end/
+%%%     function_clause stay `match_fail'; a general `match_fail' becomes
+%%%     `put_tuple' + `call erlang:error/1'; an inlined function_clause becomes
+%%%     a local stub `call'), `fix_bs' (bs_match+bs_extract -> bs_get) and
+%%%     register allocation.  This is the closest SSA to the loaded code the
+%%%     compiler ever materialises, so it is the honest reference point for a
+%%%     reconstruction that is rebuilt one lowering *below* it.
+%%%
+%%% Both points return the live `#b_module{}' term: `compile:forms(Abstr,
+%%% [dssaopt,binary|Opts])' resp. `[dprecg,binary|Opts]' -- the `{listing,_}'
+%%% pass truncates the pass pipeline and, with `binary' set, `compile' hands
+%%% back the intermediate SSA as the "object code".
 %%%
 %%% The two representations sit on opposite sides of code generation, so an
 %%% exact match is neither expected nor the goal (PLAN/T2FULL/07 §"G1 corpus
@@ -88,6 +114,23 @@
 %%%   * AOT `{bif,tuple_size}'+`{bif,'=:='}' <->  T2 `test_arity'
 %%%   * AOT non-tail `call'+`ret'            <->  T2 `tail_call*' (codegen LCO)
 %%%   * T2 materialises constants/params as ops; AOT inlines them as operands.
+%%%   * Error exits are spelled differently on the two sides.  On the AOT side
+%%%     a clause/guard failure is a `match_fail' (badmatch/case_end/if_end/
+%%%     function_clause) that lowers, at codegen, to a dedicated BEAM op; the
+%%%     T2 builder reads that BEAM op back as an `erlang:error' tail call
+%%%     (`translate_error_exit'/`get_error_block', t2_hir_builder.cpp), the
+%%%     function_clause edges collapsed to one shared error block.  So the
+%%%     canonical `call' multiset differs by `{call,erlang,error,any}' entries
+%%%     wherever a function has error exits -- a codegen spelling, not lost
+%%%     content.  `classify_calls/1' separates this class from a genuinely
+%%%     missing/extra *user-level* call so the gate can be judged honestly.
+%%%
+%%% dprecg-only ops folded here (introduced by beam_ssa_pre_codegen, so they
+%%% never appear at dssaopt and leave the dssaopt numbers untouched):
+%%%   * bare `succeeded' (sanitize rewrites `{succeeded,_}' -> `succeeded')
+%%%   * `copy' (y-register save scaffolding)              -> ignore
+%%%   * `bs_get'/`bs_*' (fix_bs lowering of bs_match)      -> {bs,_}
+%%%   * `set_tuple_element' (update_tuple/record lowering) -> {data,_}
 %%% =====================================================================
 
 -module(t2_g1_SUITE).
@@ -100,12 +143,17 @@
 
 %% Standalone driver (runs on a node started with T2_RETAIN=1). Handy for
 %% manual runs: `T2_RETAIN=1 erl ... -run t2_g1_SUITE run -s init stop'.
--export([run/0, run/1, compare_module/2, format_report/1]).
+-export([run/0, run/1, run/2,
+         compare_module/2, compare_module/3,
+         format_report/1, classify_calls/1]).
 
 %% Called by name over erpc from the controlling node onto the T2 peer.
 -export([module_exports/1, load_plan_module/2]).
 
 -include_lib("common_test/include/ct.hrl").
+
+%% AOT reference points, closest-to-loaded last.  Both legs report both.
+-define(MODES, [dssaopt, dprecg]).
 
 suite() ->
     [{timetrap, {minutes, 10}}].
@@ -185,35 +233,45 @@ start_t2_peer() ->
 experiment_subjects(Config) ->
     Node = ?config(peer_node, Config),
     Root = erpc:call(Node, code, root_dir, []),
-    Reports =
-        [begin
-             ok = ensure_corpus_module(Node, M, Src, Root),
-             erpc:call(Node, ?MODULE, compare_module, [M, FAs])
-         end || {M, FAs, Src} <- experiment_corpus()],
-    emit_and_assert(experiment_subjects, Reports).
+    %% Loading is mode-independent -- do it once, then compare at every point.
+    _ = [ok = ensure_corpus_module(Node, M, Src, Root)
+         || {M, _FAs, Src} <- experiment_corpus()],
+    run_leg(experiment_subjects,
+            fun(Mode) ->
+                    [erpc:call(Node, ?MODULE, compare_module, [M, FAs, Mode])
+                     || {M, FAs, _Src} <- experiment_corpus()]
+            end).
 
 stdlib_slice(Config) ->
     Node = ?config(peer_node, Config),
-    Reports =
-        [begin
-             _ = erpc:call(Node, code, ensure_loaded, [M]),
-             FAs = erpc:call(Node, ?MODULE, module_exports, [M]),
-             erpc:call(Node, ?MODULE, compare_module, [M, FAs])
-         end || M <- stdlib_corpus()],
-    emit_and_assert(stdlib_slice, Reports).
+    _ = [erpc:call(Node, code, ensure_loaded, [M]) || M <- stdlib_corpus()],
+    run_leg(stdlib_slice,
+            fun(Mode) ->
+                    [begin
+                         FAs = erpc:call(Node, ?MODULE, module_exports, [M]),
+                         erpc:call(Node, ?MODULE, compare_module, [M, FAs, Mode])
+                     end || M <- stdlib_corpus()]
+            end).
 
-%% The gate is "runnable / emits a diff report" -- divergences are the
-%% expected output, not a failure. We only fail if the machinery is broken:
-%% the reconstruction BIF produced *nothing* usable across the whole leg.
-emit_and_assert(Tag, Reports) ->
-    Agg = aggregate(Reports),
-    ct:log("~ts", [format_report({Tag, Agg})]),
-    #{reconstructed := Recon} = Agg,
-    case Recon of
-        0 -> ct:fail({no_reconstructions, Tag});
-        _ -> ok
-    end,
-    {comment, report_comment(Agg)}.
+%% Compare the corpus at every reference point (?MODES) and log a report per
+%% point.  The gate is "runnable / emits a diff report" -- divergences are the
+%% expected output, not a failure.  We only fail if the machinery is broken:
+%% the reconstruction BIF produced *nothing* usable at some reference point.
+run_leg(Tag, MkReports) ->
+    Results = [{Mode, aggregate(MkReports(Mode))} || Mode <- ?MODES],
+    _ = [ct:log("~ts", [format_report({{Tag, Mode}, Agg})])
+         || {Mode, Agg} <- Results],
+    _ = [case Recon of
+             0 -> ct:fail({no_reconstructions, Tag, Mode});
+             _ -> ok
+         end || {Mode, #{reconstructed := Recon}} <- Results],
+    {comment, legs_comment(Results)}.
+
+legs_comment(Results) ->
+    lists:flatten(
+      lists:join("; ",
+                 [io_lib:format("~w: ~ts", [Mode, report_comment(Agg)])
+                  || {Mode, Agg} <- Results])).
 
 %% Exported so the peer can call them by name over erpc.
 module_exports(M) ->
@@ -226,7 +284,13 @@ module_exports(M) ->
 run() ->
     run(all).
 
+%% Drive the corpus at every reference point, print a report per point, and
+%% return `[{Mode, Agg}]'.  Each `Agg' keeps the full per-function diff
+%% (`diverged'), so a caller can post-process (see classify_calls/1).
 run(Which) ->
+    [{Mode, run(Which, Mode)} || Mode <- ?MODES].
+
+run(Which, Mode) ->
     _ = erts_debug:set_internal_state(available_internal_state, true),
     Root = code:root_dir(),
     Experiment =
@@ -235,7 +299,7 @@ run(Which) ->
             _ ->
                 [begin
                      ok = ensure_corpus_module(node(), M, Src, Root),
-                     compare_module(M, FAs)
+                     compare_module(M, FAs, Mode)
                  end || {M, FAs, Src} <- experiment_corpus()]
         end,
     Stdlib =
@@ -244,12 +308,12 @@ run(Which) ->
             _ ->
                 [begin
                      _ = code:ensure_loaded(M),
-                     compare_module(M, module_exports(M))
+                     compare_module(M, module_exports(M), Mode)
                  end || M <- stdlib_corpus()]
         end,
     Reports = Experiment ++ Stdlib,
     Agg = aggregate(Reports),
-    io:format("~ts~n", [format_report({run, Agg})]),
+    io:format("~ts~n", [format_report({{run, Mode}, Agg})]),
     Agg.
 
 %% ---------------------------------------------------------------------
@@ -285,7 +349,10 @@ load_plan_module(M, Src) ->
 %% ---------------------------------------------------------------------
 
 compare_module(M, FAs) ->
-    Aot = aot_functions(M),
+    compare_module(M, FAs, dssaopt).
+
+compare_module(M, FAs, Mode) ->
+    Aot = aot_functions(M, Mode),
     Fns = [compare_fn(M, FA, Aot) || FA <- FAs],
     {M, Fns}.
 
@@ -346,8 +413,8 @@ canon_t2_op({Kind, _Result, _Type, Operands, Attrs}) ->
 %% AOT side: compile to dssaopt and summarise every function
 %% ---------------------------------------------------------------------
 
-aot_functions(M) ->
-    case aot_module(M) of
+aot_functions(M, Mode) ->
+    case aot_module(M, Mode) of
         {ok, Body} ->
             maps:from_list(
               [{fn_key(Anno), aot_summarise(M, Bs)}
@@ -356,28 +423,29 @@ aot_functions(M) ->
             #{}
     end.
 
-%% Obtain the AOT beam_ssa at the `dssaopt' point. Prefer the loaded beam's
-%% abstract_code; for the PLAN experiment modules `code:which/1' resolves to
-%% the `.erl' source they were loaded from (code:load_binary), so compile
-%% that directly.
+%% Obtain the AOT beam_ssa at the reference point `Mode' (dssaopt | dprecg).
+%% Prefer the loaded beam's abstract_code; for the PLAN experiment modules
+%% `code:which/1' resolves to the `.erl' source they were loaded from
+%% (code:load_binary), so compile that directly.
 %%
-%% The `dssaopt' listing pass unconditionally writes `<Mod>.ssaopt'
-%% (compile.erl:listing/3), so it is directed to a scratch dir and removed.
-aot_module(M) ->
-    Result = aot_module_1(M),
-    _ = file:delete(filename:join(ssaopt_tmp(), atom_to_list(M) ++ ".ssaopt")),
+%% The listing pass unconditionally writes `<Mod>.<ext>' (compile.erl:
+%% listing/3), so it is directed to a scratch dir and removed.
+aot_module(M, Mode) ->
+    Result = aot_module_1(M, Mode),
+    _ = file:delete(filename:join(ssaopt_tmp(),
+                                  atom_to_list(M) ++ listing_ext(Mode))),
     Result.
 
-aot_module_1(M) ->
+aot_module_1(M, Mode) ->
     case code:which(M) of
         Path when is_list(Path) ->
             case filename:extension(Path) of
                 ".erl" ->
-                    aot_forms(fun() -> compile:file(Path, aot_opts(M)) end, M);
+                    aot_forms(fun() -> compile:file(Path, aot_opts(M, Mode)) end, M);
                 ".beam" ->
                     case beam_lib:chunks(Path, [abstract_code]) of
                         {ok, {M, [{abstract_code, {raw_abstract_v1, Abstr}}]}} ->
-                            aot_forms(fun() -> compile:forms(Abstr, aot_opts(M)) end, M);
+                            aot_forms(fun() -> compile:forms(Abstr, aot_opts(M, Mode)) end, M);
                         _ ->
                             error
                     end;
@@ -388,8 +456,18 @@ aot_module_1(M) ->
             error
     end.
 
-aot_opts(M) ->
-    [dssaopt, binary, return_errors, {outdir, ssaopt_tmp()} | opt_opts(M)].
+%% The `{listing,_}' pass at the chosen point truncates the pipeline; with
+%% `binary' set, `compile' returns the intermediate `#b_module{}' as the
+%% "object code" (aot_forms/2 unpacks it).
+aot_opts(M, Mode) ->
+    [listing_flag(Mode), binary, return_errors,
+     {outdir, ssaopt_tmp()} | opt_opts(M)].
+
+listing_flag(dssaopt) -> dssaopt;
+listing_flag(dprecg)  -> dprecg.
+
+listing_ext(dssaopt) -> ".ssaopt";
+listing_ext(dprecg)  -> ".precodegen".
 
 ssaopt_tmp() ->
     Base = case os:getenv("TMPDIR") of
@@ -521,9 +599,15 @@ canon_aot(bs_ensure, _, _)        -> {bs, bs_ensure};
 canon_aot(bs_ensured_match, _, _) -> {bs, bs_match};
 canon_aot(bs_ensured_skip, _, _)  -> {bs, bs_skip};
 canon_aot(bs_skip, _, _)          -> {bs, bs_skip};
+canon_aot(set_tuple_element, _, _)-> {data, set_tuple_element};
 %% Structural / scaffolding ops with no cross-representation counterpart.
 canon_aot(phi, _, _)              -> ignore;
 canon_aot({succeeded, _}, _, _)   -> ignore;
+%% dprecg: `sanitize' rewrites `{succeeded,_}' -> bare `succeeded'.
+canon_aot(succeeded, _, _)        -> ignore;
+%% dprecg: `copy' saves a value to a y register before a call; pure
+%% register-allocation scaffolding with no semantic content.
+canon_aot(copy, _, _)             -> ignore;
 canon_aot(match_fail, _, _)       -> ignore;
 canon_aot(executable_line, _, _)  -> ignore;
 canon_aot(debug_line, _, _)       -> ignore;
@@ -535,6 +619,15 @@ canon_aot(extract, _, _)          -> ignore;
 canon_aot(landingpad, _, _)       -> ignore;
 canon_aot(resume, _, _)           -> ignore;
 canon_aot(catch_end, _, _)        -> ignore;
+%% dprecg: `fix_bs' lowers bs_match+bs_extract to bs_get and friends. Keep
+%% every binary-match op in the `bs' bucket so bs functions stay counted at
+%% both reference points (the P0 T2 builder emits no bs ops, so `bs' is a
+%% known-diverging bucket regardless of where we sample the AOT side).
+canon_aot(Op, _Args, _Self) when is_atom(Op) ->
+    case atom_to_list(Op) of
+        "bs_" ++ _ -> {bs, Op};
+        _          -> {other, Op}
+    end;
 canon_aot(Op, _Args, _Self)       -> {other, Op}.
 
 canon_call_target({b_local, {b_literal, F}, A}, SelfMod) -> {call, SelfMod, F, A};
@@ -720,8 +813,25 @@ format_report({Tag, Agg}) ->
                     [M, maps:get(functions, MS), maps:get(reconstructed, MS),
                      maps:get(cfg_pass, MS), maps:get(sem_pass, MS)])
       || {M, MS} <- PerMod],
+     format_call_bucket(Diverged),
      "-- semantic divergences (sample, <=20) --\n",
      [format_diverged(D) || D <- lists:sublist(Diverged, 20)]].
+
+%% Call-bucket decomposition: of the semantically-diverging functions, how
+%% many differ *only* in the call bucket by benign lowering (error-exit
+%% spelling, apply/fun materialisation, synthetic clause stubs) vs. a genuine
+%% missing/extra user-level call (candidate reconstruction loss)?
+format_call_bucket(Diverged) ->
+    {Cats, Loss} = classify_calls(Diverged),
+    ["-- call-bucket decomposition (over semantically-diverged fns) --\n",
+     [io_lib:format("   ~-20w ~p~n", [Cat, N]) || {Cat, N} <- Cats],
+     case Loss of
+         [] -> "   (no genuine missing/extra user-level call found)\n";
+         _  ->
+             ["   !! candidate reconstruction loss:\n",
+              [io_lib:format("      ~w:~w/~w  ~p~n", [M, F, A, Detail])
+               || {{M, F, A}, Detail} <- Loss]]
+     end].
 
 format_diverged(#{mfa := {M, F, A}, classes := Cs, canon_diff := {OnlyA, OnlyT}}) ->
     io_lib:format("   ~w:~w/~w classes=~w~n"
@@ -736,6 +846,76 @@ fmt_bag(Bag) ->
 
 pct(_, 0) -> "n/a";
 pct(N, D) -> io_lib:format("~.1f%", [100.0 * N / D]).
+
+%% ---------------------------------------------------------------------
+%% Call-bucket classifier (analysis; supports the G1 gate decision)
+%% ---------------------------------------------------------------------
+%%
+%% Given a run's `diverged' list (or the whole Agg), fold every diverging
+%% function into one call-bucket category and separate benign lowering from a
+%% candidate reconstruction loss.  Returns {[{Category, Count}], LossDetail}:
+%%
+%%   non_call            divergence is not in the call/call_fun bucket at all
+%%   error_exit_only     only `{call,erlang,error,any}' counts differ
+%%   apply_or_fun        only `{call_fun,dynamic}' counts differ (+/- errexit)
+%%   synth_stub_only     only synthetic (`-inlined-'/compiler) stub calls differ
+%%   missing_user_call   a concrete user M:F/A is on AOT but not T2   (LOSS?)
+%%   extra_user_call     a concrete user M:F/A is on T2 but not AOT   (LOSS?)
+%%   mixed_user_call     concrete user calls differ on both sides     (LOSS?)
+classify_calls(#{diverged := Diverged}) ->
+    classify_calls(Diverged);
+classify_calls(Diverged) when is_list(Diverged) ->
+    Tagged = [{maps:get(mfa, D), classify_one(D)} || D <- Diverged],
+    Cats = tally([Cat || {_Mfa, {Cat, _}} <- Tagged]),
+    LossCats = [missing_user_call, extra_user_call, mixed_user_call],
+    Loss = [{Mfa, Detail} || {Mfa, {Cat, Detail}} <- Tagged,
+                             lists:member(Cat, LossCats)],
+    {lists:reverse(lists:keysort(2, Cats)), Loss}.
+
+classify_one(#{canon_diff := {OnlyA, OnlyT}}) ->
+    #{err := Ae, dyn := Ad, user := Au, synth := As} = call_tokens(OnlyA),
+    #{err := Te, dyn := Td, user := Tu, synth := Ts} = call_tokens(OnlyT),
+    AnyCall = (Ae + Ad + Te + Td) > 0
+        orelse Au =/= [] orelse As =/= [] orelse Tu =/= [] orelse Ts =/= [],
+    case {Au, Tu} of
+        {[], []} when not AnyCall -> {non_call, []};
+        {[], []} ->
+            %% Only benign lowering differs.  Name the dominant sub-class.
+            if Ad + Td > 0        -> {apply_or_fun, #{dyn => {Ad, Td},
+                                                      err => {Ae, Te}}};
+               As =/= [] orelse Ts =/= [] -> {synth_stub_only, #{synth => {As, Ts},
+                                                                 err => {Ae, Te}}};
+               true               -> {error_exit_only, #{err => {Ae, Te}}}
+            end;
+        {[_|_], []} -> {missing_user_call, Au};
+        {[], [_|_]} -> {extra_user_call, Tu};
+        {[_|_], [_|_]} -> {mixed_user_call, {Au, Tu}}
+    end.
+
+%% Split a canon-delta bag's call/call_fun tokens into: erlang:error count,
+%% call_fun count, concrete *user* calls, and concrete *synthetic* (compiler-
+%% generated `-...-' name) calls.
+call_tokens(Bag) ->
+    Toks = [{Tok, N} || {Tok, N} <- maps:to_list(Bag),
+                        element(1, Tok) =:= call orelse
+                            element(1, Tok) =:= call_fun],
+    Err = lists:sum([N || {{call, erlang, error, any}, N} <- Toks]),
+    Dyn = lists:sum([N || {{call_fun, dynamic}, N} <- Toks]),
+    Concrete = [{Tok, N} || {{call, _M, _F, _A} = Tok, N} <- Toks,
+                            Tok =/= {call, erlang, error, any}],
+    {Synth, User} =
+        lists:partition(fun({{call, _M, F, _A}, _N}) -> synthetic_name(F) end,
+                        Concrete),
+    #{err => Err, dyn => Dyn, user => User, synth => Synth}.
+
+%% Compiler-synthesised names (inlined function_clause stubs, list/funs, etc.)
+%% are spelled with a leading `-'; they are never user-level calls.
+synthetic_name(F) when is_atom(F) ->
+    case atom_to_list(F) of
+        "-" ++ _ -> true;
+        _        -> false
+    end;
+synthetic_name(_) -> false.
 
 %% ---------------------------------------------------------------------
 %% Small helpers
