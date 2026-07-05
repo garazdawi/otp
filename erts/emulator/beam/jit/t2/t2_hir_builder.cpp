@@ -78,10 +78,13 @@ extern "C"
 }
 
 #include <cstring>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "t2_isel.hpp"
 
 namespace erts_t2 {
 
@@ -1775,11 +1778,23 @@ static int t2_debug_output_enabled(void) {
     return enabled;
 }
 
-extern "C" int erts_t2_build_all(const ErtsT2RetainedCode *ret) {
+static int t2_isel_sweep_enabled(void) {
+    static const int enabled = []() {
+        const char *env = getenv("T2_ISEL");
+        return (env != nullptr && env[0] == '1') ? 1 : 0;
+    }();
+    return enabled;
+}
+
+extern "C" int erts_t2_build_all(const ErtsT2RetainedCode *ret,
+                                 const void *code_hdr) {
     ModuleDecode md;
     std::string err;
     int failures = 0;
     int built = 0;
+    int isel_ok = 0, isel_no = 0;
+    std::map<std::string, int> isel_reasons;
+    bool sweep = t2_isel_sweep_enabled() && code_hdr != nullptr;
 
     if (!decode_module(ret, md, &err)) {
         erts_fprintf(stderr, "t2_build: decode failed: %s\n", err.c_str());
@@ -1825,6 +1840,25 @@ extern "C" int erts_t2_build_all(const ErtsT2RetainedCode *ret) {
         if (t2_dump_enabled()) {
             erts_fprintf(stderr, "%s\n", t2_dump(*fn).c_str());
         }
+
+        /* T2_ISEL=1: identity-backend coverage. An isel rejection is a
+         * scope report, not a failure — the P1 lowering table is
+         * partial by design. */
+        if (sweep) {
+            T2IselContext ctx;
+            T2LirFunction lir;
+            std::string ierr;
+
+            ctx.ret = ret;
+            ctx.code_hdr = code_hdr;
+
+            if (t2_isel(*fn, ctx, lir, &ierr) && t2_regalloc(lir, &ierr)) {
+                isel_ok++;
+            } else {
+                isel_no++;
+                isel_reasons[ierr]++;
+            }
+        }
     }
 
     if (t2_debug_output_enabled() && !md.functions.empty()) {
@@ -1833,6 +1867,22 @@ extern "C" int erts_t2_build_all(const ErtsT2RetainedCode *ret) {
                      md.functions[0].module,
                      built,
                      failures);
+    }
+
+    if (sweep && !md.functions.empty()) {
+        erts_fprintf(stderr,
+                     "t2_isel: module=%T lowered=%d unsupported=%d\n",
+                     md.functions[0].module,
+                     isel_ok,
+                     isel_no);
+        if (t2_debug_output_enabled()) {
+            for (const auto &r : isel_reasons) {
+                erts_fprintf(stderr,
+                             "t2_isel:   %d x %s\n",
+                             r.second,
+                             r.first.c_str());
+            }
+        }
     }
 
     md.cleanup();

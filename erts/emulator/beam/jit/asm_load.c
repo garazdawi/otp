@@ -1284,6 +1284,25 @@ void beam_load_finalize_code(LoaderState *stp,
                             stp->ba,
                             (const byte *)beamasm_get_base(stp->ba));
 
+        /* T2_BUILD=1: reconstruct + validate SSA for every eligible
+         * function as a load-time corpus test (plus isel coverage with
+         * T2_ISEL=1, which consults the pctab just built). */
+        if (erts_t2_build_enabled()) {
+            int failures = erts_t2_build_all(committed,
+                                             (const void *)stp->code_hdr);
+
+            if (failures != 0) {
+                erts_fprintf(stderr,
+                             "t2_build: %d function(s) failed in %T\n",
+                             failures,
+                             stp->module);
+            }
+        }
+
+        /* P1 commit-3 structural selftest (T2_EMIT_SELFTEST; no-op for
+         * modules other than t2_mvp). Needs the pctab, hence here. */
+        erts_t2_emit_selftest_module(committed, stp->code_hdr);
+
         stp->t2_retained = NULL;
     }
 

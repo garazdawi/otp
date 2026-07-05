@@ -668,6 +668,17 @@ void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
         t2_pc_record(before, ERTS_T2_PC_EFFECT);
         break;
 
+    /* Error-exit op sites (P1): a T2 side exit branches here and T1
+     * re-executes the op and raises. NB: the `case_end/badmatch
+     * NotInX=cy` transform splits off a leading move, so `before` is
+     * after that move; the T2 backend therefore only lowers error ops
+     * whose decoded source already was an X register (or if_end). */
+    case op_badmatch_s:
+    case op_case_end_s:
+    case op_if_end:
+        t2_pc_record(before, ERTS_T2_PC_ERROR);
+        break;
+
     default:
         break;
     }

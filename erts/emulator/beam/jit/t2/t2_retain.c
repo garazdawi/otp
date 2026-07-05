@@ -194,18 +194,9 @@ void erts_t2_retain_commit(ErtsT2RetainedCode *ret,
                      (unsigned long)erts_t2_retained_sz());
     }
 
-    /* T2_BUILD=1: immediately reconstruct + validate SSA for every
-     * eligible function, as a load-time corpus test of the builder. */
-    if (erts_t2_build_enabled()) {
-        int failures = erts_t2_build_all(ret);
-
-        if (failures != 0) {
-            erts_fprintf(stderr,
-                         "t2_build: %d function(s) failed in %T\n",
-                         failures,
-                         beam->module);
-        }
-    }
+    /* T2_BUILD=1 corpus testing runs from beam_load_finalize_code (after
+     * the PC side table is built, which the T2_ISEL=1 coverage sweep
+     * consults); see asm_load.c. */
 }
 
 void erts_t2_retained_free(ErtsT2RetainedCode *ret) {

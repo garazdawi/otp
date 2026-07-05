@@ -21,25 +21,35 @@
  */
 
 /*
- * T2-Full tier-2 JIT: instruction selection + register allocation
- * (PLAN/T2FULL/08 §1).
+ * T2-Full tier-2 JIT: instruction selection + LIR verification
+ * (PLAN/T2FULL/08 §1–§2).
  *
- * Isel walks the HIR ops 1:1 to LIR ops, emitting operands as
- * PhysLoc::phys(value_id) placeholders. Regalloc runs the P1
- * *sync-everything* policy: every op boundary is a sync point, so each
- * SSA value is pinned to a canonical BEAM slot for its whole (one-op)
- * live range and the placeholders are rewritten to Xn/Yn.
+ * P1 identity isel walks the HIR 1:1 to LIR ops with *concrete*
+ * canonical slots taken from the decoded homes the builder recorded
+ * (dst_reg/operand_regs; see t2_hir.hpp). The sync-everything policy is
+ * therefore satisfied by construction: every value sits in the register
+ * T1 would keep it in at every boundary, and the HIR validator has
+ * already proven each sync map against the walked register state.
  *
- * P1 scope note (a real, source-grounded constraint): the P0 HIR builder
- * reconstructs SSA and does *not* record which BEAM register/slot each
- * value originally occupied. For a leaf function whose only slots are the
- * parameter X registers and the return value (X0), the canonical slots
- * are fully recoverable from the calling convention (param i -> X_i,
- * return -> X0), which is what these passes implement. A function with
- * values live across a call (needing specific Y slots + T1's exact
- * allocate/trim/deallocate frame) needs register-origin metadata the HIR
- * abstracts away; t2_regalloc reports that case as unsupported rather
- * than emit a mis-framed body.
+ * Cross-tier addresses are resolved here, against the loaded module:
+ *
+ *   - non-tail calls get their CP (the T1 post-call continuation) from
+ *     the pctab CONT entry of the call's decode ordinal — never a T2
+ *     address (PLAN/T2/08 §4.3);
+ *   - gc_bif arithmetic with a {f,0} fail gets its side-exit PC from
+ *     the pctab EFFECT entry of its own ordinal (T1 re-executes the op
+ *     and raises; T2 never raises);
+ *   - decoded error exits (badmatch/case_end/if_end) get theirs from
+ *     the pctab ERROR entry; the shared function_clause exit branches
+ *     to the function's func_info (its ErtsCodeInfo, whose first word
+ *     is a valid `bl <raise function_clause>` on aarch64);
+ *   - local call/tail-call targets resolve by MFA against the code
+ *     header's function table; external ones through the export entry
+ *     (dispatched via the active code index at run time).
+ *
+ * A missing pctab entry, a BIF call target, or any shape outside the
+ * identity table is a clean "unsupported" failure — the function simply
+ * stays T1.
  */
 
 #ifndef _JIT_T2_ISEL_HPP
@@ -50,16 +60,31 @@
 #include "t2_hir.hpp"
 #include "t2_lir.hpp"
 
+struct ErtsT2RetainedCode;
+
 namespace erts_t2 {
 
-    /* Lower HIR to LIR (operands as value-id placeholders). Returns false
-     * with *err set on an unsupported HIR op. */
-    bool t2_isel(const T2Function &hir, T2LirFunction &lir, std::string *err);
+    /* Cross-tier resolution context. `code_hdr` is the loaded module's
+     * BeamCodeHeader (its functions[] array of ErtsCodeInfo*, in the
+     * same chunk order as the retained function index). Passed as
+     * void* to keep this header free of beam_code.h. */
+    struct T2IselContext {
+        const ErtsT2RetainedCode *ret = nullptr;
+        const void *code_hdr = nullptr; /* const BeamCodeHeader * */
+    };
 
-    /* Assign canonical slots (sync-everything) and compute per-op GC live
-     * counts, rewriting placeholders in place. Returns false with *err set
-     * when the function needs frame/Y-slot placement P1's leaf allocator
-     * does not reconstruct. */
+    /* Lower HIR to LIR with concrete canonical slots and resolved
+     * cross-tier addresses. Returns false with *err set on any op or
+     * shape outside the P1 identity table. Requires hir.sync_complete. */
+    bool t2_isel(const T2Function &hir,
+                 const T2IselContext &ctx,
+                 T2LirFunction &lir,
+                 std::string *err);
+
+    /* LIR verifier (the P1 stand-in for register allocation; the pin
+     * API becomes a real allocator in P2): checks that every operand is
+     * a concrete slot or immediate, terminators are last, CFG edges are
+     * in range, and cross-tier addresses are present where required. */
     bool t2_regalloc(T2LirFunction &lir, std::string *err);
 
 } /* namespace erts_t2 */

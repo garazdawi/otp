@@ -47,6 +47,7 @@ extern "C"
 #include "module.h"
 
 #include "t2_retain.h"
+#include "t2_pctab.h"
 }
 
 #include "t2_lir.hpp"
@@ -56,7 +57,9 @@ extern "C"
 
 #include <cstdio>
 #include <functional>
+#include <set>
 #include <unordered_map>
+#include <vector>
 
 using namespace asmjit;
 
@@ -117,6 +120,31 @@ namespace erts_t2 {
         std::string emit_error;
 
     public:
+        /* Emit-time facts, recorded for the structural asserts of
+         * T2_EMIT_SELFTEST (repeatable verification that CPs, transfer
+         * targets and side exits carry the exact cross-tier addresses
+         * the pctab/loaded module prescribe). */
+        struct EmitFact {
+            enum Kind {
+                CpCont,     /* value = the T1 continuation moved into LR  */
+                CallTarget, /* value = local callee T1 entry              */
+                CallExport, /* value = Export* of a remote callee         */
+                TailTarget, /* value = local tail-callee T1 entry         */
+                TailExport, /* value = Export* of a remote tail-callee    */
+                SideExitPc, /* value = unconditional side-exit T1 PC      */
+                FailExitPc  /* value = arith side-exit trampoline T1 PC   */
+            } kind;
+            uint32_t beam_idx;
+            uint64_t value;
+        };
+        std::vector<EmitFact> facts;
+
+    private:
+        void fact(EmitFact::Kind kind, uint32_t beam_idx, const void *value) {
+            facts.push_back(EmitFact{kind, beam_idx, (uint64_t)value});
+        }
+
+    public:
         BeamT2ModuleAssembler(BeamGlobalAssembler *ga,
                               Eterm mod,
                               int num_labels,
@@ -151,7 +179,14 @@ namespace erts_t2 {
             emit_enter_erlang_frame();
 
             for (const T2LirBlock &b : fn.blocks) {
-                a.bind(block_label(b.id));
+                /* Mirror emit_label: a block entry invalidates the
+                 * register cache the reused T1 emitters maintain, and
+                 * long bodies must give pending veneers a chance to
+                 * flush. */
+                reg_cache.invalidate();
+                check_pending_stubs();
+
+                bind_veneer_target(block_label(b.id));
                 for (const T2LirOp &op : b.ops) {
                     if (failed()) {
                         return;
@@ -214,12 +249,14 @@ namespace erts_t2 {
 
         void emit_fail_trampolines() {
             for (const auto &pair : fail_labels) {
-                a.bind(rawLabels.at(pair.second));
+                reg_cache.invalidate();
+                bind_veneer_target(rawLabels.at(pair.second));
                 /* Absolute branch to the T1 PC. mov_imm materializes the
                  * 64-bit address; br transfers control. T1 re-executes and
                  * (for error paths) raises a byte-identical exception. */
                 mov_imm(TMP1, (Uint64)pair.first);
                 a.br(TMP1);
+                mark_unreachable();
             }
         }
 
@@ -257,12 +294,111 @@ namespace erts_t2 {
             case T2LirKind::Move:
                 emit_lir_move(op);
                 break;
+            case T2LirKind::Swap:
+                emit_swap(ArgRegister(loc_argval(op.dst)),
+                          ArgRegister(loc_argval(op.dst2)));
+                break;
             case T2LirKind::Add:
             case T2LirKind::Sub:
-                emit_lir_arith2(op);
+            case T2LirKind::Mul:
+            case T2LirKind::IDiv:
+            case T2LirKind::Rem:
+            case T2LirKind::Band:
+            case T2LirKind::Bor:
+            case T2LirKind::Bxor:
+            case T2LirKind::Bsl:
+            case T2LirKind::Bsr:
+            case T2LirKind::Bnot:
+            case T2LirKind::Neg:
+                emit_lir_arith(op);
+                break;
+            case T2LirKind::IsInteger:
+            case T2LirKind::IsAtom:
+            case T2LirKind::IsNil:
+            case T2LirKind::IsList:
+            case T2LirKind::IsNonemptyList:
+            case T2LirKind::IsTuple:
+            case T2LirKind::TestArity:
+            case T2LirKind::IsTaggedTuple:
+            case T2LirKind::CmpEqExact:
+            case T2LirKind::CmpNeExact:
+            case T2LirKind::CmpEq:
+            case T2LirKind::CmpNe:
+            case T2LirKind::CmpLt:
+            case T2LirKind::CmpGe:
+                emit_lir_guard(op);
+                break;
+            case T2LirKind::GetHd:
+                emit_get_hd(ArgRegister(src_argval(op.srcs[0])),
+                            ArgRegister(loc_argval(op.dst)));
+                break;
+            case T2LirKind::GetTl:
+                emit_get_tl(ArgRegister(src_argval(op.srcs[0])),
+                            ArgRegister(loc_argval(op.dst)));
+                break;
+            case T2LirKind::GetList:
+                emit_get_list(ArgRegister(src_argval(op.srcs[0])),
+                              ArgRegister(loc_argval(op.dst)),
+                              ArgRegister(loc_argval(op.dst2)));
+                break;
+            case T2LirKind::GetTupleElement:
+                /* T1's transform pairs a load_tuple_ptr with each
+                 * (non-fused) element fetch; the element operand is the
+                 * byte offset past the arity header. */
+                emit_load_tuple_ptr(ArgSource(src_argval(op.srcs[0])));
+                emit_i_get_tuple_element(
+                        ArgSource(src_argval(op.srcs[0])),
+                        ArgWord(((UWord)op.imm + 1) * sizeof(Eterm)),
+                        ArgRegister(loc_argval(op.dst)));
+                break;
+            case T2LirKind::MakeList:
+                emit_put_list(ArgSource(src_argval(op.srcs[0])),
+                              ArgSource(src_argval(op.srcs[1])),
+                              ArgRegister(loc_argval(op.dst)));
+                break;
+            case T2LirKind::MakeTuple:
+                emit_lir_make_tuple(op);
+                break;
+            case T2LirKind::GcTest:
+                emit_test_heap(ArgWord((UWord)op.imm), ArgWord(op.live));
+                break;
+            case T2LirKind::Allocate:
+                emit_allocate_heap(ArgWord((UWord)op.imm),
+                                   ArgWord((UWord)op.imm2),
+                                   ArgWord(op.live));
+                break;
+            case T2LirKind::Deallocate:
+                emit_deallocate(ArgWord((UWord)op.imm));
+                break;
+            case T2LirKind::Trim:
+                emit_trim(ArgWord((UWord)op.imm), ArgWord((UWord)op.imm2));
+                break;
+            case T2LirKind::Jump:
+                a.b(block_label(op.succ_then));
+                mark_unreachable();
+                break;
+            case T2LirKind::Switch:
+                emit_lir_switch(op);
                 break;
             case T2LirKind::Return:
                 emit_return();
+                break;
+            case T2LirKind::Call:
+            case T2LirKind::CallExt:
+                emit_lir_call(op, /*is_tail=*/false);
+                break;
+            case T2LirKind::TailCall:
+            case T2LirKind::TailCallExt:
+                emit_lir_call(op, /*is_tail=*/true);
+                break;
+            case T2LirKind::SideExit:
+                /* Unconditional transfer to a T1 PC: an error-exit op's
+                 * own site or the function's func_info. T1 re-executes /
+                 * raises; T2 never raises. */
+                fact(EmitFact::SideExitPc, op.beam_idx, op.t1_pc_fail);
+                mov_imm(TMP1, (Uint64)op.t1_pc_fail);
+                a.br(TMP1);
+                mark_unreachable();
                 break;
             default:
                 fail("unsupported LIR op kind in P1 identity emit");
@@ -279,43 +415,264 @@ namespace erts_t2 {
                         ArgRegister(loc_argval(op.dst)));
         }
 
-        /* The Fail label of an arith op resolves to a trampoline branching
-         * to the op's T1 PC (side-exit; T2 never raises). Falls back to the
-         * function's T1 entry when the op carries no specific PC. */
+        /* The Fail label of an arith op with a {f,0} decoded fail: a
+         * trampoline branching to the op's own T1 EFFECT site (side-exit;
+         * T2 never raises). Ops with a real decoded fail label branch
+         * in-blob instead (succ_else). */
         ArgVal arith_fail_argval(const T2LirOp &op) {
-            const void *pc = op.t1_pc_fail ? op.t1_pc_fail : fn.t1_entry;
-            if (pc == nullptr) {
-                fail("arith op without a T1 fail target");
+            if (op.succ_else != T2_LIR_NO_BLOCK) {
+                return ArgVal(ArgVal::Type::Label, 1 + op.succ_else);
+            }
+            if (op.t1_pc_fail == nullptr) {
+                fail("arith op without a fail edge or T1 side exit");
                 return ArgVal(ArgVal::Type::Label, 1);
             }
-            return ArgVal(ArgVal::Type::Label, fail_label_num(pc));
+            fact(EmitFact::FailExitPc, op.beam_idx, op.t1_pc_fail);
+            return ArgVal(ArgVal::Type::Label, fail_label_num(op.t1_pc_fail));
         }
 
-        void emit_lir_arith2(const T2LirOp &op) {
-            if (op.num_srcs != 2 || op.dst.is_none()) {
-                fail("malformed binary arithmetic op");
-                return;
-            }
+        void emit_lir_arith(const T2LirOp &op) {
             ArgLabel failL(arith_fail_argval(op));
             if (failed()) {
                 return;
             }
-            ArgWord live((UWord)op.arity);
-            ArgSource lhs(src_argval(op.srcs[0]));
-            ArgSource rhs(src_argval(op.srcs[1]));
+            ArgWord live(op.live);
             ArgRegister dst(loc_argval(op.dst));
 
+            if (op.num_srcs == 2) {
+                ArgSource lhs(src_argval(op.srcs[0]));
+                ArgSource rhs(src_argval(op.srcs[1]));
+
+                switch (op.kind) {
+                case T2LirKind::Add:
+                    emit_i_plus(failL, live, lhs, rhs, dst);
+                    break;
+                case T2LirKind::Sub:
+                    emit_i_minus(failL, live, lhs, rhs, dst);
+                    break;
+                case T2LirKind::Mul:
+                    /* T1's transform for a plain '*' is
+                     * `i_mul_add Fail S1 S2 Dst i Dst` — the destination
+                     * as the (ignored) addend source and a zero small as
+                     * the increment. Mirror it exactly. */
+                    emit_i_mul_add(failL,
+                                   lhs,
+                                   rhs,
+                                   ArgSource(loc_argval(op.dst)),
+                                   ArgImmed(make_small(0)),
+                                   dst);
+                    break;
+                case T2LirKind::IDiv:
+                    emit_i_int_div(failL, live, lhs, rhs, dst);
+                    break;
+                case T2LirKind::Rem:
+                    emit_i_rem(failL, live, lhs, rhs, dst);
+                    break;
+                case T2LirKind::Band:
+                    emit_i_band(failL, live, lhs, rhs, dst);
+                    break;
+                case T2LirKind::Bor:
+                    emit_i_bor(failL, live, lhs, rhs, dst);
+                    break;
+                case T2LirKind::Bxor:
+                    emit_i_bxor(failL, live, lhs, rhs, dst);
+                    break;
+                case T2LirKind::Bsl:
+                    emit_i_bsl(failL, live, lhs, rhs, dst);
+                    break;
+                case T2LirKind::Bsr:
+                    emit_i_bsr(failL, live, lhs, rhs, dst);
+                    break;
+                default:
+                    fail("unhandled binary arithmetic op");
+                    break;
+                }
+            } else if (op.num_srcs == 1) {
+                ArgSource src(src_argval(op.srcs[0]));
+
+                switch (op.kind) {
+                case T2LirKind::Neg:
+                    emit_i_unary_minus(failL, live, src, dst);
+                    break;
+                case T2LirKind::Bnot:
+                    emit_i_bnot(failL, live, src, dst);
+                    break;
+                default:
+                    fail("unhandled unary arithmetic op");
+                    break;
+                }
+            } else {
+                fail("malformed arithmetic op");
+                return;
+            }
+
+            /* A folded fail edge means the op absorbed the block branch:
+             * fall through was rewritten to an explicit jump. */
+            if (op.succ_then != T2_LIR_NO_BLOCK && !failed()) {
+                a.b(block_label(op.succ_then));
+                mark_unreachable();
+            }
+        }
+
+        void emit_lir_guard(const T2LirOp &op) {
+            if (op.succ_then == T2_LIR_NO_BLOCK ||
+                op.succ_else == T2_LIR_NO_BLOCK) {
+                fail("guard without both branch edges");
+                return;
+            }
+
+            ArgLabel failL(ArgVal(ArgVal::Type::Label, 1 + op.succ_else));
+
             switch (op.kind) {
-            case T2LirKind::Add:
-                emit_i_plus(failL, live, lhs, rhs, dst);
+            case T2LirKind::IsInteger:
+                emit_is_integer(failL, ArgSource(src_argval(op.srcs[0])));
                 break;
-            case T2LirKind::Sub:
-                emit_i_minus(failL, live, lhs, rhs, dst);
+            case T2LirKind::IsAtom:
+                emit_is_atom(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsNil:
+                emit_is_nil(failL, ArgRegister(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsList:
+                emit_is_list(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsNonemptyList:
+                emit_is_nonempty_list(failL,
+                                      ArgRegister(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsTuple:
+                emit_i_is_tuple(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::TestArity:
+                emit_i_test_arity(failL,
+                                  ArgSource(src_argval(op.srcs[0])),
+                                  ArgWord(make_arityval((UWord)op.imm)));
+                break;
+            case T2LirKind::IsTaggedTuple:
+                emit_i_is_tagged_tuple(failL,
+                                       ArgSource(src_argval(op.srcs[0])),
+                                       ArgWord(make_arityval((UWord)op.imm)),
+                                       ArgAtom(ArgVal(ArgVal::Type::Immediate,
+                                                      op.imm_term)));
+                break;
+            case T2LirKind::CmpEqExact:
+                emit_is_eq_exact(failL,
+                                 ArgSource(src_argval(op.srcs[0])),
+                                 ArgSource(src_argval(op.srcs[1])));
+                break;
+            case T2LirKind::CmpNeExact:
+                emit_is_ne_exact(failL,
+                                 ArgSource(src_argval(op.srcs[0])),
+                                 ArgSource(src_argval(op.srcs[1])));
+                break;
+            case T2LirKind::CmpEq:
+                emit_is_eq(failL,
+                           ArgSource(src_argval(op.srcs[0])),
+                           ArgSource(src_argval(op.srcs[1])));
+                break;
+            case T2LirKind::CmpNe:
+                emit_is_ne(failL,
+                           ArgSource(src_argval(op.srcs[0])),
+                           ArgSource(src_argval(op.srcs[1])));
+                break;
+            case T2LirKind::CmpLt:
+                emit_is_lt(failL,
+                           ArgSource(src_argval(op.srcs[0])),
+                           ArgSource(src_argval(op.srcs[1])));
+                break;
+            case T2LirKind::CmpGe:
+                emit_is_ge(failL,
+                           ArgSource(src_argval(op.srcs[0])),
+                           ArgSource(src_argval(op.srcs[1])));
                 break;
             default:
-                fail("unhandled binary arithmetic op");
-                break;
+                fail("unhandled guard kind");
+                return;
             }
+
+            if (!failed()) {
+                a.b(block_label(op.succ_then));
+                mark_unreachable();
+            }
+        }
+
+        void emit_lir_make_tuple(const T2LirOp &op) {
+            std::vector<ArgVal> elems;
+            size_t count = op.num_srcs_ext > 0 ? op.num_srcs_ext
+                                               : op.num_srcs;
+
+            elems.reserve(count);
+            for (size_t i = 0; i < count; i++) {
+                const T2LirSrc &s = op.num_srcs_ext > 0
+                                            ? fn.src_pool[op.pool_first + i]
+                                            : op.srcs[i];
+                elems.push_back(src_argval(s));
+            }
+
+            emit_put_tuple2(ArgRegister(loc_argval(op.dst)),
+                            ArgWord(make_arityval(count)),
+                            Span<const ArgVal>(elems.data(), elems.size()));
+        }
+
+        void emit_lir_switch(const T2LirOp &op) {
+            /* A linear compare chain, semantically identical to T1's
+             * i_select_val_lins on immediates (exact-equal compare per
+             * case, then the default). */
+            mov_arg(TMP1, ArgSource(src_argval(op.srcs[0])));
+
+            for (uint32_t i = 0; i < op.num_cases; i++) {
+                const T2LirSwitchCase &c = fn.switch_cases[op.first_case + i];
+
+                cmp_arg(TMP1, ArgVal(ArgVal::Type::Immediate, c.value));
+                a.b_eq(resolve_label(rawLabels.at(1 + c.target), disp1MB));
+            }
+
+            a.b(block_label(op.default_target));
+            mark_unreachable();
+        }
+
+        /* Non-tail calls: establish nothing (the canonical state already
+         * holds by identity placement), materialize the T1 continuation
+         * as the CP and branch — never `bl` — to the callee's T1 entry
+         * (PLAN/T2/08 §4.3: no return addresses into T2 blobs; two
+         * instructions instead of bl). The callee's prologue pushes our
+         * LR as its frame CP; on return execution continues in T1
+         * (demote-on-return). Tail calls leave the frame and branch; the
+         * callee returns directly to our caller. Reductions are charged
+         * at the callee's entry, exactly as T1. */
+        void emit_lir_call(const T2LirOp &op, bool is_tail) {
+            bool is_ext = op.kind == T2LirKind::CallExt ||
+                          op.kind == T2LirKind::TailCallExt;
+
+            if (is_ext) {
+                /* Export dispatch through the active code index, exactly
+                 * like emit_i_call_ext / emit_i_call_ext_only (including
+                 * the save_calls fragment reached via a special index). */
+                mov_imm(ARG1, (Uint64)op.exp);
+                a64::Mem target = emit_setup_dispatchable_call(ARG1);
+
+                if (is_tail) {
+                    fact(EmitFact::TailExport, op.beam_idx, op.exp);
+                    emit_leave_erlang_frame();
+                } else {
+                    fact(EmitFact::CallExport, op.beam_idx, op.exp);
+                    fact(EmitFact::CpCont, op.beam_idx, op.t1_pc_cont);
+                    mov_imm(a64::x30, (Uint64)op.t1_pc_cont);
+                }
+                branch(target);
+            } else {
+                if (is_tail) {
+                    fact(EmitFact::TailTarget, op.beam_idx, op.target);
+                    emit_leave_erlang_frame();
+                } else {
+                    fact(EmitFact::CallTarget, op.beam_idx, op.target);
+                    fact(EmitFact::CpCont, op.beam_idx, op.t1_pc_cont);
+                    mov_imm(a64::x30, (Uint64)op.t1_pc_cont);
+                }
+                mov_imm(SUPER_TMP, (Uint64)op.target);
+                a.br(SUPER_TMP);
+            }
+            mark_unreachable();
         }
 
     public:
@@ -488,19 +845,24 @@ extern "C" Eterm erts_t2_debug_exec(Process *p,
     Uint ar = unsigned_val(arity);
 
     Module *modp = erts_get_module(mod, erts_active_code_ix());
-    if (modp == NULL || modp->curr.t2_retained == NULL) {
+    if (modp == NULL || modp->curr.t2_retained == NULL ||
+        modp->curr.code_hdr == NULL) {
         return am_undefined;
     }
     const ErtsT2RetainedCode *ret = modp->curr.t2_retained;
 
-    /* T1 entry of the function, the fail-branch (side-exit) target. */
+    /* T1 entry of the function (kept on the LIR for reference/debug). */
     const Export *e =
             erts_find_function(mod, func, (unsigned)ar, erts_active_code_ix());
     const void *t1_entry =
             e ? (const void *)e->dispatch.addresses[erts_active_code_ix()]
               : NULL;
 
-    /* Build HIR -> isel -> regalloc -> emit, all while the module decode
+    T2IselContext ctx;
+    ctx.ret = ret;
+    ctx.code_hdr = (const void *)modp->curr.code_hdr;
+
+    /* Build HIR -> isel -> verify -> emit, all while the module decode
      * (and any literals the HIR references) is still alive. */
     const void *blob = NULL;
     std::string build_err;
@@ -512,7 +874,7 @@ extern "C" Eterm erts_t2_debug_exec(Process *p,
             (unsigned)ar,
             [&](const T2Function &hir) {
                 T2LirFunction lir;
-                if (!t2_isel(hir, lir, &pipe_err)) {
+                if (!t2_isel(hir, ctx, lir, &pipe_err)) {
                     return;
                 }
                 lir.t1_entry = t1_entry;
@@ -651,4 +1013,346 @@ extern "C" int erts_t2_emit_selftest(void) {
                  "T2 emit self-test: emitted 1-op blob at %p\n",
                  code);
     return 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Module structural selftest (T2_EMIT_SELFTEST; P1 commit 3)         *
+ *                                                                    *
+ * Runs at retain-commit (after the pctab is built) when the loaded   *
+ * module is t2_mvp: pushes total/2 through build -> isel -> verify ->*
+ * emit and asserts the emitted blob's cross-tier structure against   *
+ * the pctab and the loaded code:                                     *
+ *                                                                    *
+ *   1. the CP materialized at the diff/2 call site is exactly the    *
+ *      pctab's post-call continuation for that op (and not the       *
+ *      function entry or the call site itself);                      *
+ *   2. the Y-slot stores preceding the call cover exactly the slots  *
+ *      the call's sync map declares live;                            *
+ *   3. the '+' side exit targets the op's own T1 EFFECT site (never  *
+ *      the entry fallback);                                          *
+ *   4. the shared function_clause side exit targets the function's   *
+ *      func_info (its ErtsCodeInfo);                                 *
+ *   5. the self-recursive tail call transfers to total/2's own T1    *
+ *      entry (identity; no back-edge optimization).                  *
+ * ------------------------------------------------------------------ */
+
+namespace {
+
+    int t2_selftest_total2(const ErtsT2RetainedCode *ret,
+                           const BeamCodeHeader *hdr) {
+        ERTS_DECL_AM(total);
+        ERTS_DECL_AM(diff);
+        std::string build_err;
+        int failures = 0;
+        bool ran = false;
+
+        T2IselContext ctx;
+        ctx.ret = ret;
+        ctx.code_hdr = (const void *)hdr;
+
+#define T2_STRUCT_CHECK(Cond, What)                                           \
+    do {                                                                      \
+        if (!(Cond)) {                                                        \
+            erts_fprintf(stderr,                                              \
+                         "T2 emit module self-test FAILED: %s\n",             \
+                         (What));                                             \
+            failures++;                                                       \
+        }                                                                     \
+    } while (0)
+
+        T2BuildStatus status = t2_build_for_debug(
+                ret,
+                AM_total,
+                2,
+                [&](const T2Function &hir) {
+                    T2LirFunction lir;
+                    std::string err;
+
+                    ran = true;
+
+                    if (!t2_isel(hir, ctx, lir, &err) ||
+                        !t2_regalloc(lir, &err)) {
+                        erts_fprintf(stderr,
+                                     "T2 emit module self-test FAILED: "
+                                     "pipeline: %s\n",
+                                     err.c_str());
+                        failures++;
+                        return;
+                    }
+
+                    /* Reference addresses from the pctab / loaded code. */
+                    const ErtsCodeInfo *ci = hdr->functions[hir.fn_index];
+                    const void *own_entry =
+                            (const void *)erts_codeinfo_to_code(ci);
+                    const void *entry_pc =
+                            (const void *)erts_t2_pc_lookup_kind(
+                                    ret,
+                                    hir.fn_index,
+                                    0,
+                                    ERTS_T2_PC_ENTRY);
+
+                    /* Locate the HIR call op (diff/2) + its sync map. */
+                    const T2Op *hir_call = nullptr;
+                    for (const T2BasicBlock *b : hir.blocks) {
+                        for (const T2Op *op = b->ops_head; op != nullptr;
+                             op = op->next) {
+                            if (op->kind == T2OpKind::Call &&
+                                op->mfa_f == AM_diff) {
+                                hir_call = op;
+                            }
+                        }
+                    }
+                    T2_STRUCT_CHECK(hir_call != nullptr &&
+                                            hir_call->sync != nullptr,
+                                    "no diff/2 call with a sync map in the "
+                                    "HIR");
+                    if (hir_call == nullptr || hir_call->sync == nullptr) {
+                        return;
+                    }
+
+                    const void *cont = (const void *)erts_t2_pc_lookup_kind(
+                            ret,
+                            hir.fn_index,
+                            hir_call->beam_idx,
+                            ERTS_T2_PC_CONT);
+                    const void *call_site =
+                            (const void *)erts_t2_pc_lookup_kind(
+                                    ret,
+                                    hir.fn_index,
+                                    hir_call->beam_idx,
+                                    ERTS_T2_PC_CALL);
+
+                    T2_STRUCT_CHECK(cont != nullptr,
+                                    "no CONT pctab entry for diff/2");
+                    T2_STRUCT_CHECK(cont != entry_pc && cont != call_site,
+                                    "CONT must be the post-call PC, not the "
+                                    "entry/call site");
+
+                    /* LIR-level: find the Call and check its block. */
+                    const T2LirOp *lir_call = nullptr;
+                    const T2LirBlock *call_block = nullptr;
+                    std::set<uint16_t> y_stores;
+
+                    for (const T2LirBlock &b : lir.blocks) {
+                        for (const T2LirOp &op : b.ops) {
+                            if (op.kind == T2LirKind::Call &&
+                                op.mfa_f == AM_diff) {
+                                lir_call = &op;
+                                call_block = &b;
+                                break;
+                            }
+                        }
+                    }
+                    T2_STRUCT_CHECK(lir_call != nullptr,
+                                    "no diff/2 Call op in the LIR");
+                    if (lir_call == nullptr) {
+                        return;
+                    }
+
+                    T2_STRUCT_CHECK(lir_call->t1_pc_cont == cont,
+                                    "LIR call CP != pctab CONT");
+                    T2_STRUCT_CHECK(lir_call->target == own_entry ||
+                                            lir_call->target != nullptr,
+                                    "LIR call target unresolved");
+
+                    /* 2: Y stores before the call == the sync map's live
+                     * frame slots. */
+                    for (const T2LirOp &op : call_block->ops) {
+                        if (&op == lir_call) {
+                            break;
+                        }
+                        if (op.kind == T2LirKind::Move && op.dst.is_yreg()) {
+                            y_stores.insert(op.dst.num);
+                        }
+                    }
+                    {
+                        const T2SyncMap *m = hir_call->sync;
+                        bool y_ok = m->frame_size >= 0 &&
+                                    y_stores.size() ==
+                                            (size_t)m->frame_size;
+
+                        for (int32_t i = 0; y_ok && i < m->frame_size; i++) {
+                            y_ok = y_stores.count((uint16_t)i) != 0;
+                        }
+                        T2_STRUCT_CHECK(y_ok,
+                                        "Y stores before the call do not "
+                                        "match the sync map's frame");
+                    }
+
+                    /* 3: the '+' side exit is the op-specific EFFECT PC. */
+                    const T2LirOp *lir_add = nullptr;
+                    for (const T2LirBlock &b : lir.blocks) {
+                        for (const T2LirOp &op : b.ops) {
+                            if (op.kind == T2LirKind::Add) {
+                                lir_add = &op;
+                            }
+                        }
+                    }
+                    T2_STRUCT_CHECK(lir_add != nullptr, "no Add op in LIR");
+                    if (lir_add != nullptr) {
+                        const void *eff = (const void *)
+                                erts_t2_pc_lookup_kind(ret,
+                                                       hir.fn_index,
+                                                       lir_add->beam_idx,
+                                                       ERTS_T2_PC_EFFECT);
+
+                        T2_STRUCT_CHECK(lir_add->t1_pc_fail != nullptr &&
+                                                lir_add->t1_pc_fail == eff,
+                                        "arith side exit != its own EFFECT "
+                                        "site");
+                        T2_STRUCT_CHECK(lir_add->t1_pc_fail != entry_pc,
+                                        "arith side exit fell back to the "
+                                        "entry");
+                    }
+
+                    /* 4 + 5 at LIR level. */
+                    const T2LirOp *side_exit = nullptr;
+                    const T2LirOp *tail_call = nullptr;
+                    for (const T2LirBlock &b : lir.blocks) {
+                        for (const T2LirOp &op : b.ops) {
+                            if (op.kind == T2LirKind::SideExit) {
+                                side_exit = &op;
+                            }
+                            if (op.kind == T2LirKind::TailCall) {
+                                tail_call = &op;
+                            }
+                        }
+                    }
+                    T2_STRUCT_CHECK(side_exit != nullptr &&
+                                            side_exit->t1_pc_fail ==
+                                                    (const void *)ci,
+                                    "shared error exit != func_info "
+                                    "ErtsCodeInfo");
+                    T2_STRUCT_CHECK(tail_call != nullptr &&
+                                            tail_call->target == own_entry,
+                                    "self tail call != own T1 entry");
+
+                    /* Emit through a fresh assembler and check the same
+                     * facts at the emitted-code level. */
+                    BeamGlobalAssembler *ga = erts_t2_global_assembler();
+
+                    if (ga == nullptr || erts_t2_jit_allocator() == nullptr) {
+                        erts_fprintf(stderr,
+                                     "T2 emit module self-test FAILED: JIT "
+                                     "not initialized\n");
+                        failures++;
+                        return;
+                    }
+
+                    int num_labels = (int)lir.blocks.size() + 2;
+                    BeamT2ModuleAssembler ma(ga,
+                                             lir.module,
+                                             num_labels,
+                                             lir);
+                    StringLogger slog;
+
+                    ma.set_string_logger(&slog);
+                    ma.emit_all();
+
+                    if (ma.failed()) {
+                        erts_fprintf(stderr,
+                                     "T2 emit module self-test FAILED: "
+                                     "emit: %s\n",
+                                     ma.error().c_str());
+                        failures++;
+                        return;
+                    }
+
+                    const void *blob = ma.finalize_to_allocator();
+
+                    T2_STRUCT_CHECK(blob != nullptr, "no blob produced");
+
+                    bool saw_cp = false, saw_side = false, saw_tail = false,
+                         saw_fail = false;
+                    for (const auto &f : ma.facts) {
+                        switch (f.kind) {
+                        case BeamT2ModuleAssembler::EmitFact::CpCont:
+                            saw_cp = true;
+                            T2_STRUCT_CHECK(f.value == (uint64_t)cont,
+                                            "emitted CP != pctab CONT");
+                            break;
+                        case BeamT2ModuleAssembler::EmitFact::SideExitPc:
+                            saw_side = true;
+                            T2_STRUCT_CHECK(f.value == (uint64_t)ci,
+                                            "emitted side exit != func_info");
+                            break;
+                        case BeamT2ModuleAssembler::EmitFact::TailTarget:
+                            saw_tail = true;
+                            T2_STRUCT_CHECK(f.value == (uint64_t)own_entry,
+                                            "emitted tail target != own T1 "
+                                            "entry");
+                            break;
+                        case BeamT2ModuleAssembler::EmitFact::FailExitPc:
+                            saw_fail = true;
+                            T2_STRUCT_CHECK(f.value != (uint64_t)entry_pc,
+                                            "emitted fail exit fell back to "
+                                            "the entry");
+                            break;
+                        default:
+                            break;
+                        }
+                    }
+                    T2_STRUCT_CHECK(saw_cp, "no CP fact emitted");
+                    T2_STRUCT_CHECK(saw_side, "no side-exit fact emitted");
+                    T2_STRUCT_CHECK(saw_tail, "no tail-target fact emitted");
+                    T2_STRUCT_CHECK(saw_fail, "no arith-fail fact emitted");
+
+                    if (failures == 0) {
+                        erts_fprintf(stderr,
+                                     "T2 emit module self-test: total/2 blob "
+                                     "at %p, %lu facts verified\n",
+                                     blob,
+                                     (unsigned long)ma.facts.size());
+                        if (getenv("T2_DUMP") != NULL) {
+                            erts_fprintf(stderr,
+                                         "%s\nT2 emit module self-test "
+                                         "disassembly:\n%.*s\n",
+                                         t2_lir_dump(lir).c_str(),
+                                         (int)slog.data_size(),
+                                         slog.data());
+                        }
+                    }
+                },
+                &build_err);
+
+#undef T2_STRUCT_CHECK
+
+        if (status != T2BuildStatus::Ok || !ran) {
+            erts_fprintf(stderr,
+                         "T2 emit module self-test FAILED: build: %s\n",
+                         build_err.empty() ? "not run" : build_err.c_str());
+            return 1;
+        }
+
+        return failures;
+    }
+
+} /* anonymous namespace */
+
+extern "C" void erts_t2_emit_selftest_module(
+        const struct ErtsT2RetainedCode *ret,
+        const void *code_hdr) {
+    ERTS_DECL_AM(t2_mvp);
+
+    if (!erts_t2_emit_selftest_enabled() || ret == NULL ||
+        code_hdr == NULL) {
+        return;
+    }
+
+    const BeamCodeHeader *hdr = (const BeamCodeHeader *)code_hdr;
+
+    /* Only the t2_mvp corpus module is checked. */
+    if (ret->atom_count < 2 || ret->atoms[1] != AM_t2_mvp) {
+        return;
+    }
+
+    int failures = t2_selftest_total2(ret, hdr);
+
+    if (failures != 0) {
+        erts_exit(ERTS_ABORT_EXIT,
+                  "T2 emit module self-test failed (%d)\n",
+                  failures);
+    }
+
+    erts_fprintf(stderr, "T2 emit module self-test passed\n");
 }

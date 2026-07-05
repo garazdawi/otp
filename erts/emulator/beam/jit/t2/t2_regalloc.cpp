@@ -21,206 +21,165 @@
  */
 
 /*
- * T2-Full tier-2 JIT: register allocation (PLAN/T2FULL/08 §1).
+ * T2-Full tier-2 JIT: LIR verification (PLAN/T2FULL/08 §1).
  *
- * The P1 policy is *sync-everything*: every op boundary is a sync point,
- * so no value's live range spans a register across ops -- allocation is a
- * trivial per-value canonical-slot pin. The intervals/pin API is real (a
- * per-value slot map + a per-op live-set giving the GC live count); P2
- * relaxes it by demoting non-sync-point boundaries so ranges start living
- * in registers across ops.
- *
- * Commit-2 scope: leaf, single-block straight-line bodies (parameters in
- * X0..X(arity-1), the return value in X0). Functions with control flow,
- * calls, or values live across a call need Y-slot + T1-frame placement
- * that the reconstructed HIR does not carry; those are reported
- * unsupported here rather than mis-allocated.
+ * The P1 policy is *sync-everything*, and under the identity transform
+ * it is satisfied by construction: isel places every value in its
+ * decoded canonical BEAM slot (the homes the builder recorded and the
+ * HIR validator proved against the per-sync-point register maps), so
+ * there is nothing left to allocate. What remains — and what this pass
+ * provides — is the backend-side verification that the LIR the emitter
+ * is about to trust is well-formed: every operand is a concrete
+ * canonical slot or an immediate (no placeholder ever reaches
+ * emission), terminators sit last and only last, CFG edges are in
+ * range, and every op that transfers to T1 carries its resolved T1
+ * address. P2 replaces this with a real Wimmer-style allocator that
+ * relaxes non-sync-point boundaries; the entry point is kept stable
+ * for that reason.
  */
 
 #include "t2_isel.hpp"
-
-#include <vector>
 
 namespace erts_t2 {
 
     namespace {
 
-        constexpr int T2_REGALLOC_MAX_X = 64;
-
-        bool is_arith(T2LirKind k) {
-            switch (k) {
-            case T2LirKind::Add:
-            case T2LirKind::Sub:
-            case T2LirKind::Mul:
-            case T2LirKind::IDiv:
-            case T2LirKind::Rem:
-            case T2LirKind::Band:
-            case T2LirKind::Bor:
-            case T2LirKind::Bxor:
-            case T2LirKind::Bsl:
-            case T2LirKind::Bsr:
-            case T2LirKind::Bnot:
-            case T2LirKind::Neg:
-            case T2LirKind::GuardBif:
-                return true;
-            default:
-                return false;
-            }
-        }
-
-        struct RegAlloc {
+        struct Verify {
             T2LirFunction &lir;
             std::string *err;
-            std::vector<int32_t> slot;     /* value id -> X slot, or -1 */
-            std::vector<int32_t> last_use; /* value id -> flat op idx, or -1 */
 
-            bool fail(const char *msg) {
+            bool fail(const std::string &msg) {
                 if (err) {
                     *err = msg;
                 }
                 return false;
             }
 
-            bool supported() {
-                if (lir.blocks.size() != 1) {
-                    return fail("multi-block function unsupported in P1 leaf "
-                                "regalloc (commit 3)");
+            bool check_src(const T2LirSrc &s, const char *what) {
+                if (s.is_const) {
+                    return true;
                 }
-                for (const T2LirBlock &b : lir.blocks) {
-                    for (const T2LirOp &op : b.ops) {
-                        if (t2_lir_kind_is_terminator(op.kind) &&
-                            op.kind != T2LirKind::Return) {
-                            return fail("non-return terminator unsupported "
-                                        "in P1 leaf regalloc");
-                        }
-                        if (!op.dst.is_none() && op.dst.is_yreg()) {
-                            return fail("Y-slot result unsupported in P1 leaf "
-                                        "regalloc");
-                        }
-                    }
+                if (!s.loc.is_slot()) {
+                    return fail(std::string(what) +
+                                ": operand is not a canonical slot or "
+                                "immediate");
                 }
                 return true;
             }
 
-            void note_use(const T2LirSrc &s, int idx) {
-                if (!s.is_const && s.loc.is_phys()) {
-                    last_use[s.loc.num] = idx;
-                }
-            }
-
-            /* Rewrite a placeholder into its assigned canonical slot. */
-            bool lower_loc(PhysLoc &l) {
-                if (l.is_phys()) {
-                    int32_t s = slot[l.num];
-                    if (s < 0) {
-                        return fail("value used before slot assignment");
-                    }
-                    l = PhysLoc::xreg((uint16_t)s);
+            bool check_block_ref(uint32_t id, const char *what) {
+                if (id == T2_LIR_NO_BLOCK || id >= lir.blocks.size()) {
+                    return fail(std::string(what) +
+                                ": successor block out of range");
                 }
                 return true;
             }
 
             bool run() {
-                if (!supported()) {
-                    return false;
-                }
+                for (const T2LirBlock &b : lir.blocks) {
+                    for (size_t i = 0; i < b.ops.size(); i++) {
+                        const T2LirOp &op = b.ops[i];
+                        const char *name = t2_lir_kind_name(op.kind);
+                        bool is_term = t2_lir_kind_is_terminator(op.kind) ||
+                                       op.kind == T2LirKind::Call ||
+                                       op.kind == T2LirKind::CallExt ||
+                                       /* folded guards absorb the branch */
+                                       op.succ_else != T2_LIR_NO_BLOCK;
 
-                uint32_t nv = lir.num_values;
-                slot.assign(nv, -1);
-                last_use.assign(nv, -1);
-
-                T2LirBlock &b = lir.blocks[0];
-
-                /* Pass 1: last use of every value. */
-                int idx = 0;
-                for (const T2LirOp &op : b.ops) {
-                    for (uint8_t i = 0; i < op.num_srcs; i++) {
-                        note_use(op.srcs[i], idx);
-                    }
-                    idx++;
-                }
-
-                /* Parameters occupy their X slot from function entry. */
-                std::vector<bool> x_used(T2_REGALLOC_MAX_X, false);
-                for (uint32_t v = 0; v < nv; v++) {
-                    if (lir.param_x[v] >= 0) {
-                        if (lir.param_x[v] >= T2_REGALLOC_MAX_X) {
-                            return fail("parameter X slot out of range");
+                        if (op.kind == T2LirKind::Invalid) {
+                            return fail("invalid LIR op");
                         }
-                        slot[v] = lir.param_x[v];
-                        x_used[slot[v]] = true;
-                    }
-                }
 
-                /* Pass 2: assign result slots + GC live counts. */
-                idx = 0;
-                for (T2LirOp &op : b.ops) {
-                    if (is_arith(op.kind)) {
-                        int live = 0;
-                        for (int s = 0; s < T2_REGALLOC_MAX_X; s++) {
-                            if (x_used[s]) {
-                                live = s + 1;
+                        for (uint8_t s = 0; s < op.num_srcs; s++) {
+                            if (!check_src(op.srcs[s], name)) {
+                                return false;
                             }
                         }
-                        op.arity = (uint32_t)live;
-                    }
-
-                    /* Reclaim X slots of src values whose last use is here
-                     * (their slot may back this op's own result). */
-                    for (uint8_t i = 0; i < op.num_srcs; i++) {
-                        const T2LirSrc &s = op.srcs[i];
-                        if (!s.is_const && s.loc.is_phys()) {
-                            uint32_t vid = s.loc.num;
-                            if (last_use[vid] == idx && slot[vid] >= 0) {
-                                x_used[slot[vid]] = false;
+                        for (uint32_t s = 0; s < op.num_srcs_ext; s++) {
+                            if (op.pool_first + s >= lir.src_pool.size()) {
+                                return fail("operand pool out of range");
+                            }
+                            if (!check_src(lir.src_pool[op.pool_first + s],
+                                           name)) {
+                                return false;
                             }
                         }
-                    }
-
-                    if (!op.dst.is_none() && op.dst.is_phys()) {
-                        uint32_t vid = op.dst.num;
-                        int s = 0;
-                        while (s < T2_REGALLOC_MAX_X && x_used[s]) {
-                            s++;
+                        if (!op.dst.is_none() && !op.dst.is_slot()) {
+                            return fail(std::string(name) +
+                                        ": destination is not a canonical "
+                                        "slot");
                         }
-                        if (s >= T2_REGALLOC_MAX_X) {
-                            return fail("out of X slots in P1 leaf regalloc");
+                        if (!op.dst2.is_none() && !op.dst2.is_slot()) {
+                            return fail(std::string(name) +
+                                        ": second destination is not a "
+                                        "canonical slot");
                         }
-                        slot[vid] = s;
-                        x_used[s] = true;
-                    }
 
-                    idx++;
-                }
-
-                /* Pass 3: rewrite placeholders to canonical slots. */
-                for (T2LirOp &op : b.ops) {
-                    if (!lower_loc(op.dst)) {
-                        return false;
-                    }
-                    for (uint8_t i = 0; i < op.num_srcs; i++) {
-                        if (!op.srcs[i].is_const &&
-                            !lower_loc(op.srcs[i].loc)) {
+                        /* Edges. */
+                        if (op.succ_then != T2_LIR_NO_BLOCK &&
+                            !check_block_ref(op.succ_then, name)) {
                             return false;
                         }
-                    }
-                }
+                        if (op.succ_else != T2_LIR_NO_BLOCK &&
+                            !check_block_ref(op.succ_else, name)) {
+                            return false;
+                        }
+                        if (op.kind == T2LirKind::Switch) {
+                            if (op.first_case + op.num_cases >
+                                lir.switch_cases.size()) {
+                                return fail("switch case pool out of range");
+                            }
+                            for (uint32_t c = 0; c < op.num_cases; c++) {
+                                if (!check_block_ref(
+                                            lir.switch_cases[op.first_case + c]
+                                                    .target,
+                                            name)) {
+                                    return false;
+                                }
+                            }
+                            if (!check_block_ref(op.default_target, name)) {
+                                return false;
+                            }
+                        }
 
-                /* The return value must be in X0 (return convention). If it
-                 * landed elsewhere, insert an explicit move ahead of the
-                 * return terminator. */
-                if (!b.ops.empty()) {
-                    T2LirOp &ret = b.ops.back();
-                    if (ret.kind == T2LirKind::Return && ret.num_srcs == 1 &&
-                        !ret.srcs[0].is_const && ret.srcs[0].loc.is_xreg() &&
-                        ret.srcs[0].loc.num != 0) {
-                        T2LirOp mv;
-                        mv.kind = T2LirKind::Move;
-                        mv.dst = PhysLoc::xreg(0);
-                        mv.num_srcs = 1;
-                        mv.srcs[0] = ret.srcs[0];
-                        ret.srcs[0] = T2LirSrc::slot(PhysLoc::xreg(0));
-                        b.ops.insert(b.ops.end() - 1, mv);
+                        /* Cross-tier addresses. */
+                        switch (op.kind) {
+                        case T2LirKind::Call:
+                        case T2LirKind::CallExt:
+                            if (op.t1_pc_cont == nullptr) {
+                                return fail("call without a T1 continuation");
+                            }
+                            /* fall through */
+                        case T2LirKind::TailCall:
+                        case T2LirKind::TailCallExt:
+                            if (op.kind == T2LirKind::Call ||
+                                op.kind == T2LirKind::TailCall) {
+                                if (op.target == nullptr) {
+                                    return fail("local call without a "
+                                                "resolved target");
+                                }
+                            } else if (op.exp == nullptr) {
+                                return fail("remote call without an export");
+                            }
+                            break;
+                        case T2LirKind::SideExit:
+                            if (op.t1_pc_fail == nullptr) {
+                                return fail("side exit without a T1 PC");
+                            }
+                            break;
+                        default:
+                            break;
+                        }
+
+                        /* Terminators (and the ops that absorb them, or end
+                         * the T2 region: non-tail calls demote-on-return)
+                         * must be last in the block. */
+                        if (is_term && i + 1 != b.ops.size() &&
+                            op.kind != T2LirKind::Call &&
+                            op.kind != T2LirKind::CallExt) {
+                            return fail(std::string(name) +
+                                        ": terminator not last in block");
+                        }
                     }
                 }
 
@@ -231,8 +190,8 @@ namespace erts_t2 {
     } /* anonymous namespace */
 
     bool t2_regalloc(T2LirFunction &lir, std::string *err) {
-        RegAlloc ra{lir, err};
-        return ra.run();
+        Verify v{lir, err};
+        return v.run();
     }
 
 } /* namespace erts_t2 */

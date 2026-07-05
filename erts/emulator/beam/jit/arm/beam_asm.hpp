@@ -846,8 +846,18 @@ protected:
 
 #include "beam_asm_global.hpp"
 
+namespace erts_t2 {
+class BeamT2ModuleAssembler;
+}
+
 class BeamModuleAssembler : public BeamAssembler,
                             public BeamModuleAssemblerCommon {
+    /* The T2-Full P1 identity backend subclasses this assembler to reuse
+     * the per-op emitters and needs the emitter-internal plumbing
+     * (reg_cache invalidation at its block labels, mark_unreachable
+     * after its hand-emitted transfers, the displacement constants). */
+    friend class erts_t2::BeamT2ModuleAssembler;
+
     BeamGlobalAssembler *ga;
 
     /* Sequence number used to create unique named labels by

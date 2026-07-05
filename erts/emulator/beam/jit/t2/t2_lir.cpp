@@ -34,6 +34,11 @@ namespace erts_t2 {
     const char *t2_lir_kind_name(T2LirKind kind) {
         switch (kind) {
         case T2LirKind::Move: return "move";
+        case T2LirKind::Swap: return "swap";
+        case T2LirKind::GetList: return "get_list";
+        case T2LirKind::Allocate: return "allocate";
+        case T2LirKind::Deallocate: return "deallocate";
+        case T2LirKind::Trim: return "trim";
         case T2LirKind::IsInteger: return "is_integer";
         case T2LirKind::IsFloat: return "is_float";
         case T2LirKind::IsNumber: return "is_number";
@@ -137,6 +142,10 @@ namespace erts_t2 {
                 os << "    ";
                 if (!op.dst.is_none()) {
                     dump_loc(os, op.dst);
+                    if (!op.dst2.is_none()) {
+                        os << ",";
+                        dump_loc(os, op.dst2);
+                    }
                     os << " = ";
                 }
                 os << t2_lir_kind_name(op.kind);
@@ -144,12 +153,42 @@ namespace erts_t2 {
                     os << " ";
                     dump_src(os, op.srcs[i]);
                 }
-                if (t2_lir_kind_is_terminator(op.kind)) {
-                    if (op.kind == T2LirKind::Jump) {
-                        os << " -> b" << op.succ_then;
-                    } else if (op.kind == T2LirKind::Branch) {
-                        os << " -> b" << op.succ_then << " / b" << op.succ_else;
+                for (uint32_t i = 0; i < op.num_srcs_ext; i++) {
+                    os << " ";
+                    dump_src(os, fn.src_pool[op.pool_first + i]);
+                }
+                if (op.kind == T2LirKind::Allocate ||
+                    op.kind == T2LirKind::Deallocate ||
+                    op.kind == T2LirKind::Trim || op.kind == T2LirKind::GcTest) {
+                    os << " " << op.imm;
+                    if (op.imm2 != 0) {
+                        os << "/" << op.imm2;
                     }
+                    os << " live=" << op.live;
+                }
+                if (op.succ_then != T2_LIR_NO_BLOCK) {
+                    os << " -> b" << op.succ_then;
+                }
+                if (op.succ_else != T2_LIR_NO_BLOCK) {
+                    os << " / b" << op.succ_else;
+                }
+                if (op.kind == T2LirKind::Switch) {
+                    for (uint32_t i = 0; i < op.num_cases; i++) {
+                        const T2LirSwitchCase &c =
+                                fn.switch_cases[op.first_case + i];
+                        os << " [" << (SWord)c.value << "->b" << c.target
+                           << "]";
+                    }
+                    os << " default b" << op.default_target;
+                }
+                if (op.t1_pc_cont != nullptr) {
+                    os << " [cont=" << op.t1_pc_cont << "]";
+                }
+                if (op.target != nullptr) {
+                    os << " [target=" << op.target << "]";
+                }
+                if (op.exp != nullptr) {
+                    os << " [export=" << op.exp << "]";
                 }
                 if (op.t1_pc_fail != nullptr) {
                     os << " [fail=" << op.t1_pc_fail << "]";

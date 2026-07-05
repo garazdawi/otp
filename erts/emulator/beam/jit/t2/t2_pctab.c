@@ -50,8 +50,10 @@ typedef struct {
     Uint32 arity;
     Uint32 call_count;   /* number of call generic ops                  */
     Uint32 effect_count; /* number of gc_bif generic ops                */
+    Uint32 error_count;  /* number of badmatch/case_end/if_end ops      */
     Uint32 *call_ords;   /* their decode ordinals, in program order     */
     Uint32 *effect_ords;
+    Uint32 *error_ords;
 } PctabFnDecode;
 
 static void pctab_view_init(BeamFile *view, const ErtsT2RetainedCode *ret) {
@@ -117,6 +119,19 @@ static int pctab_is_effect(int op) {
     }
 }
 
+/* Error-exit ops. Note the case_end/badmatch NotInX=cy transform emits a
+ * separate leading move, so the specific op count still matches 1:1. */
+static int pctab_is_error(int op) {
+    switch (op) {
+    case genop_badmatch_1:
+    case genop_case_end_1:
+    case genop_if_end_0:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 /* Decode the retained code chunk and record, per function, the decode
  * ordinals (matching t2_hir_builder's numbering: entry label == 0, then
  * one per generic op) of every call op and every gc_bif op. Returns a
@@ -142,7 +157,7 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
      * per-function ordinal arrays are allocated, and pass 1 fills them. */
     for (pass = 0; pass < 2; pass++) {
         Uint32 idx = 0;
-        Uint32 call_cur = 0, eff_cur = 0;
+        Uint32 call_cur = 0, eff_cur = 0, err_cur = 0;
 
         pctab_view_init(&view, ret);
         beamopallocator_init(&op_alloc);
@@ -158,6 +173,7 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                 idx = 0;
                 call_cur = 0;
                 eff_cur = 0;
+                err_cur = 0;
                 if (pass == 0 && fn_idx < fc) {
                     fns[fn_idx].function = (Eterm)op->a[3].val;
                     fns[fn_idx].arity = (Uint32)op->a[4].val;
@@ -183,6 +199,12 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                             fns[fn_idx].effect_count++;
                         } else {
                             fns[fn_idx].effect_ords[eff_cur++] = ord;
+                        }
+                    } else if (pctab_is_error(op->op)) {
+                        if (pass == 0) {
+                            fns[fn_idx].error_count++;
+                        } else {
+                            fns[fn_idx].error_ords[err_cur++] = ord;
                         }
                     }
                     idx++;
@@ -210,6 +232,11 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                             erts_alloc(ERTS_ALC_T_T2_CODE,
                                        fns[i].effect_count * sizeof(Uint32));
                 }
+                if (fns[i].error_count > 0) {
+                    fns[i].error_ords =
+                            erts_alloc(ERTS_ALC_T_T2_CODE,
+                                       fns[i].error_count * sizeof(Uint32));
+                }
             }
         }
     }
@@ -229,6 +256,9 @@ static void pctab_decode_free(PctabFnDecode *fns, Sint32 fc) {
         }
         if (fns[i].effect_ords != NULL) {
             erts_free(ERTS_ALC_T_T2_CODE, fns[i].effect_ords);
+        }
+        if (fns[i].error_ords != NULL) {
+            erts_free(ERTS_ALC_T_T2_CODE, fns[i].error_ords);
         }
     }
     erts_free(ERTS_ALC_T_T2_CODE, fns);
@@ -369,10 +399,11 @@ void erts_t2_pctab_build(ErtsT2RetainedCode *ret,
      * ordinals by position, when the per-kind counts agree. */
     for (f = 0; f < fc; f++) {
         ErtsT2PcFunc *fn = &tab->funcs[f];
-        Uint32 call_n = 0, eff_n = 0;
-        Uint32 call_i = 0, eff_i = 0, last_call_bi = ERTS_T2_PC_BEAM_IDX_UNKNOWN;
+        Uint32 call_n = 0, eff_n = 0, err_n = 0;
+        Uint32 call_i = 0, eff_i = 0, err_i = 0;
+        Uint32 last_call_bi = ERTS_T2_PC_BEAM_IDX_UNKNOWN;
         Uint32 e;
-        int call_exact, eff_exact;
+        int call_exact, eff_exact, err_exact;
 
         for (e = 0; e < fn->entry_count; e++) {
             switch (fn->entries[e].kind) {
@@ -382,6 +413,9 @@ void erts_t2_pctab_build(ErtsT2RetainedCode *ret,
             case ERTS_T2_PC_EFFECT:
                 eff_n++;
                 break;
+            case ERTS_T2_PC_ERROR:
+                err_n++;
+                break;
             default:
                 break;
             }
@@ -389,18 +423,22 @@ void erts_t2_pctab_build(ErtsT2RetainedCode *ret,
 
         call_exact = (call_n == dec[f].call_count);
         eff_exact = (eff_n == dec[f].effect_count);
+        err_exact = (err_n == dec[f].error_count);
 
         if (pctab_debug_enabled() && fn->entry_count > 0 &&
-            (!call_exact || !eff_exact)) {
+            (!call_exact || !eff_exact || !err_exact)) {
             erts_fprintf(stderr,
                          "t2_pctab: %T/%u count mismatch "
-                         "(emit call=%u eff=%u; decode call=%u eff=%u)\n",
+                         "(emit call=%u eff=%u err=%u; "
+                         "decode call=%u eff=%u err=%u)\n",
                          fn->function,
                          (unsigned)fn->arity,
                          (unsigned)call_n,
                          (unsigned)eff_n,
+                         (unsigned)err_n,
                          (unsigned)dec[f].call_count,
-                         (unsigned)dec[f].effect_count);
+                         (unsigned)dec[f].effect_count,
+                         (unsigned)dec[f].error_count);
         }
 
         for (e = 0; e < fn->entry_count; e++) {
@@ -422,6 +460,11 @@ void erts_t2_pctab_build(ErtsT2RetainedCode *ret,
             case ERTS_T2_PC_EFFECT:
                 ent->beam_idx =
                         eff_exact ? dec[f].effect_ords[eff_i++]
+                                  : ERTS_T2_PC_BEAM_IDX_UNKNOWN;
+                break;
+            case ERTS_T2_PC_ERROR:
+                ent->beam_idx =
+                        err_exact ? dec[f].error_ords[err_i++]
                                   : ERTS_T2_PC_BEAM_IDX_UNKNOWN;
                 break;
             default:
@@ -468,14 +511,16 @@ void erts_t2_pctab_free(ErtsT2RetainedCode *ret) {
  * Lookup                                                             *
  * ------------------------------------------------------------------ */
 
-ErtsCodePtr erts_t2_pc_lookup(const ErtsT2RetainedCode *ret,
-                              Uint fn_index,
-                              Uint beam_idx) {
+ErtsCodePtr erts_t2_pc_lookup_kind(const ErtsT2RetainedCode *ret,
+                                   Uint fn_index,
+                                   Uint beam_idx,
+                                   ErtsT2PcKind kind) {
     const ErtsT2PcTable *tab;
     const ErtsT2PcFunc *fn;
     Uint32 e;
 
-    if (ret == NULL || ret->pc_table == NULL) {
+    if (ret == NULL || ret->pc_table == NULL ||
+        beam_idx == ERTS_T2_PC_BEAM_IDX_UNKNOWN) {
         return NULL;
     }
     tab = ret->pc_table;
@@ -484,16 +529,23 @@ ErtsCodePtr erts_t2_pc_lookup(const ErtsT2RetainedCode *ret,
     }
     fn = &tab->funcs[fn_index];
 
-    /* The re-call target is the call site with this decode ordinal. Entries
-     * are offset-sorted; within a function offset and beam_idx both follow
-     * program order, but the table is small so a linear scan is used. */
+    /* Entries are offset-sorted; within a function offset and beam_idx
+     * both follow program order, but the table is small so a linear scan
+     * is used. */
     for (e = 0; e < fn->entry_count; e++) {
-        if (fn->entries[e].kind == ERTS_T2_PC_CALL &&
+        if (fn->entries[e].kind == (byte)kind &&
             fn->entries[e].beam_idx == (Uint32)beam_idx) {
             return (ErtsCodePtr)(tab->module_base + fn->entries[e].offset);
         }
     }
     return NULL;
+}
+
+ErtsCodePtr erts_t2_pc_lookup(const ErtsT2RetainedCode *ret,
+                              Uint fn_index,
+                              Uint beam_idx) {
+    /* The re-call target is the call site with this decode ordinal. */
+    return erts_t2_pc_lookup_kind(ret, fn_index, beam_idx, ERTS_T2_PC_CALL);
 }
 
 /* ------------------------------------------------------------------ *
@@ -513,6 +565,9 @@ static Eterm pctab_kind_atom(byte kind) {
                              ERTS_ATOM_ENC_LATIN1, 1);
     case ERTS_T2_PC_EFFECT:
         return erts_atom_put((const byte *)"effect", 6,
+                             ERTS_ATOM_ENC_LATIN1, 1);
+    case ERTS_T2_PC_ERROR:
+        return erts_atom_put((const byte *)"error", 5,
                              ERTS_ATOM_ENC_LATIN1, 1);
     default:
         return am_undefined;

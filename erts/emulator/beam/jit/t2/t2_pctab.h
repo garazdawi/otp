@@ -63,12 +63,15 @@
 
 struct ErtsT2RetainedCode;
 
-/* The four re-entry kinds (PLAN/T2FULL/07 §4). */
+/* The re-entry kinds (PLAN/T2FULL/07 §4; ERROR added in P1). */
 typedef enum {
     ERTS_T2_PC_ENTRY = 0,  /* function entry (i_test_yield)          */
     ERTS_T2_PC_CALL = 1,   /* call site (before the call emitter)    */
     ERTS_T2_PC_CONT = 2,   /* post-call continuation (after a return)*/
-    ERTS_T2_PC_EFFECT = 3  /* post-BIF/effect boundary               */
+    ERTS_T2_PC_EFFECT = 3, /* gc_bif/effect op site (before the op)  */
+    ERTS_T2_PC_ERROR = 4   /* error-exit op site (badmatch/case_end/
+                            * if_end; before the op, so a T2 side
+                            * exit re-executes it and T1 raises)     */
 } ErtsT2PcKind;
 
 /* Sentinel for a beam_idx that could not be reconciled (see header). */
@@ -114,6 +117,17 @@ void erts_t2_pctab_free(struct ErtsT2RetainedCode *ret);
 ErtsCodePtr erts_t2_pc_lookup(const struct ErtsT2RetainedCode *ret,
                               Uint fn_index,
                               Uint beam_idx);
+
+/* Kind-aware variant (P1 backend): the T1 PC of the entry with the
+ * given decode ordinal and kind — CONT gives the post-call continuation
+ * a non-tail T2 call pushes as its CP; EFFECT gives a gc_bif op's own
+ * site for a side exit; ERROR gives a badmatch/case_end/if_end site.
+ * NULL when there is no such entry (including UNKNOWN beam_idx from a
+ * zip mismatch — the caller must treat that as "cannot lower"). */
+ErtsCodePtr erts_t2_pc_lookup_kind(const struct ErtsT2RetainedCode *ret,
+                                   Uint fn_index,
+                                   Uint beam_idx,
+                                   ErtsT2PcKind kind);
 
 /* Debug BIF backing erts_debug:get_internal_state({t2_pc_table,M,F,A}):
  * returns [ {Offset, BeamIdx, KindAtom, Addr} ] for the function, or

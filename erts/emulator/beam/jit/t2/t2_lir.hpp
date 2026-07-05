@@ -71,6 +71,9 @@ namespace erts_t2 {
     enum class T2LirKind : uint16_t {
         /* Data movement + constant materialization (emit_i_move / mov_arg). */
         Move,
+        /* Register exchange (emit_swap; a decoded pair whose reads must
+         * precede both writes). dst/dst2 name the two registers. */
+        Swap,
 
         /* Type tests (emit_is_X / emit_i_is_tuple / emit_i_test_arity).
          * Fail redirects to the op's T1 PC. */
@@ -125,11 +128,19 @@ namespace erts_t2 {
         GetTupleElement,
         GetHd,
         GetTl,
+        GetList, /* fused hd+tl (emit_get_list; dst=hd, dst2=tl — the
+                  * destinations may alias the source)                 */
         MakeList,
         MakeTuple,
 
         /* Heap reservation (emit_gc_test / emit_test_heap). */
         GcTest,
+
+        /* Stack-frame ops (emit_allocate_heap / emit_deallocate /
+         * emit_trim), first-class as in the HIR. */
+        Allocate,   /* imm = slots, imm2 = fused heap words, live      */
+        Deallocate, /* imm = slots                                     */
+        Trim,       /* imm = dropped slots, imm2 = remaining           */
 
         /* Terminators. */
         Jump,   /* unconditional branch to succ_then                     */
@@ -249,34 +260,50 @@ namespace erts_t2 {
         }
     };
 
+    /* Sentinel for "no successor edge" (block 0 is a real block). */
+    static constexpr uint32_t T2_LIR_NO_BLOCK = 0xFFFFFFFFu;
+
     struct T2LirOp {
         T2LirKind kind;
 
         PhysLoc dst;                 /* result slot, or None            */
+        PhysLoc dst2;                /* second result (GetList tl, Swap) */
         T2LirSrc srcs[T2_LIR_MAX_SRCS];
         uint8_t num_srcs;
 
         /* Op-specific immediates. */
-        Sint64 imm;    /* raw immediate (tuple/element index, arity, ...) */
+        Sint64 imm;    /* raw immediate (tuple/element index, arity,
+                        * frame slots, ...)                               */
+        Sint64 imm2;   /* second immediate (Allocate heap words, Trim
+                        * remaining)                                      */
         Eterm imm_term;/* tagged immediate (Move of const / switch key)    */
 
         /* Call target (Call/TailCall/CallExt/TailCallExt and arith BIF
          * provenance). */
         Eterm mfa_m;
         Eterm mfa_f;
-        uint32_t arity;      /* call arity / heap need / gc live count etc. */
+        uint32_t arity;      /* call arity                                  */
+        uint32_t live;       /* decoded GC live count (arith/GcTest/Alloc)  */
         const void *exp;     /* resolved Export* for a remote call          */
         const void *target;  /* resolved ErtsCodePtr for a local call/tail  */
 
-        /* The T1 PC this op side-exits to on failure (arith/guard/type
-         * test) or unconditionally (SideExit / error-block lowering). NULL
-         * when the op has no fail edge. */
+        /* The T1 PC this op side-exits to on failure (arith with a {f,0}
+         * fail — the op's own EFFECT site) or unconditionally (SideExit:
+         * an ERROR site or the function's func_info). NULL when the op
+         * has no side exit. */
         const void *t1_pc_fail;
+
+        /* The T1 post-call continuation a non-tail Call/CallExt pushes
+         * as its CP (PLAN/T2/08 §4.3: no return addresses into blobs). */
+        const void *t1_pc_cont;
 
         /* Shared decode ordinal with the HIR/pctab (PLAN/T2FULL/07 §4). */
         uint32_t beam_idx;
 
-        /* Terminator CFG edges (block ids into T2LirFunction::blocks). */
+        /* CFG edges (block ids into T2LirFunction::blocks, or
+         * T2_LIR_NO_BLOCK). Tests/compares/arith-with-fail-edge use
+         * succ_else as the in-blob fail target and succ_then as the
+         * continuation. */
         uint32_t succ_then;
         uint32_t succ_else;
 
@@ -286,12 +313,21 @@ namespace erts_t2 {
         uint32_t num_cases;
         uint32_t default_target;
 
+        /* MakeTuple with more than T2_LIR_MAX_SRCS elements: operands
+         * live in T2LirFunction::src_pool[pool_first..pool_first+
+         * num_srcs_ext) and num_srcs is 0. */
+        uint32_t pool_first;
+        uint32_t num_srcs_ext;
+
         T2LirOp()
-                : kind(T2LirKind::Invalid), dst(), num_srcs(0), imm(0),
-                  imm_term(0), mfa_m(0), mfa_f(0), arity(0), exp(nullptr),
-                  target(nullptr), t1_pc_fail(nullptr), beam_idx(0),
-                  succ_then(0), succ_else(0), first_case(0), num_cases(0),
-                  default_target(0) {}
+                : kind(T2LirKind::Invalid), dst(), dst2(), num_srcs(0),
+                  imm(0), imm2(0), imm_term(0), mfa_m(0), mfa_f(0), arity(0),
+                  live(0), exp(nullptr), target(nullptr), t1_pc_fail(nullptr),
+                  t1_pc_cont(nullptr), beam_idx(0),
+                  succ_then(T2_LIR_NO_BLOCK), succ_else(T2_LIR_NO_BLOCK),
+                  first_case(0), num_cases(0),
+                  default_target(T2_LIR_NO_BLOCK), pool_first(0),
+                  num_srcs_ext(0) {}
     };
 
     /* One arm of a Switch terminator. */
@@ -317,10 +353,12 @@ namespace erts_t2 {
         std::vector<T2LirBlock> blocks;
         std::vector<T2LirSwitchCase> switch_cases;
 
-        /* Isel emits LIR operands as PhysLoc::phys(value_id) placeholders
-         * that regalloc lowers to canonical X/Y slots. num_values sizes the
-         * value->slot maps; param_x[value_id] is the fixed X slot of a
-         * parameter value (== its parameter index), or -1 for non-params. */
+        /* Overflow operand pool (MakeTuple with many elements). */
+        std::vector<T2LirSrc> src_pool;
+
+        /* P1 identity isel emits concrete canonical slots directly (the
+         * HIR carries decoded homes); these fields remain from the
+         * placeholder scheme for the P2 allocator's benefit. */
         uint32_t num_values;
         std::vector<int32_t> param_x;
 

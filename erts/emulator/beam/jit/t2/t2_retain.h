@@ -142,6 +142,17 @@ void erts_t2_account_bytes(Sint delta);
 /* t2_eligible.c: true iff the tier supports this generic opcode. */
 int erts_t2_genop_supported(int genop);
 
+/* t2_emit.cpp: P1 commit-3 structural selftest (T2_EMIT_SELFTEST=1).
+ * Called from beam_load_finalize_code right after the pctab is built;
+ * for the t2_mvp corpus module it runs total/2 through the full
+ * build->isel->verify->emit pipeline and asserts the blob's cross-tier
+ * structure (CP == pctab CONT, sync-map Y stores, op-specific side
+ * exits, self tail target) — aborting on any mismatch. No-op for all
+ * other modules or when the env var is unset. `code_hdr` is the
+ * instance's BeamCodeHeader. */
+void erts_t2_emit_selftest_module(const ErtsT2RetainedCode *ret,
+                                  const void *code_hdr);
+
 /* t2_hir_builder.cpp: true iff T2_BUILD=1 (build SSA for every eligible
  * function right after retention commits, as a load-time corpus
  * crash/validation test). */
@@ -149,8 +160,13 @@ int erts_t2_build_enabled(void);
 
 /* t2_hir_builder.cpp: builds + validates SSA for every eligible
  * function in \p ret. Returns the number of functions that failed to
- * build or validate (0 = green). Reports failures on stderr. */
-int erts_t2_build_all(const ErtsT2RetainedCode *ret);
+ * build or validate (0 = green). Reports failures on stderr.
+ * When T2_ISEL=1 is also set and \p code_hdr (the instance's
+ * BeamCodeHeader) is non-null, every built function is additionally
+ * pushed through isel + LIR verification and per-module coverage is
+ * reported (isel failures are expected — the P1 identity table is
+ * partial — and are not counted as build failures). */
+int erts_t2_build_all(const ErtsT2RetainedCode *ret, const void *code_hdr);
 
 /* t2_eligible.c: scans every function's generic ops; returns a bitmap
  * with one bit per function (caller frees, ERTS_ALC_T_T2_CODE), or
