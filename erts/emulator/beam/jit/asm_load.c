@@ -225,6 +225,12 @@ int beam_load_prepared_dtor(Binary *magic) {
     /* This should have been freed earlier! */
     ASSERT(stp->op_allocator.beamop_blocks == NULL);
 
+    /* T2-Full: prepared but never committed (loading failed). */
+    if (stp->t2_retained != NULL) {
+        erts_t2_retained_free(stp->t2_retained);
+        stp->t2_retained = NULL;
+    }
+
     beamfile_free(&stp->beam);
     beamopallocator_dtor(&stp->op_allocator);
 
@@ -1254,15 +1260,13 @@ void beam_load_finalize_code(LoaderState *stp,
     /* Register debug / profiling info with external tools. */
     inst_p->metadata = beamasm_register_metadata(stp->ba, stp->code_hdr);
 
-    /* T2-Full: retain the decoded-code tables needed for tier-2 SSA
-     * reconstruction. Must run after beamfile_move_literals (above) so
-     * the literal map resolves to literal-area terms, and before the
-     * BeamFile dies with the loader state. Gated so default runs pay
-     * nothing. on_load modules are skipped in P0: their instance
-     * ownership moves in erts_finish_after_on_load, which would need
-     * release hooks on the failure path. */
-    if (erts_t2_enabled() && !stp->on_load) {
-        erts_t2_retain(&stp->beam, inst_p);
+    /* T2-Full: commit the retention struct prepared during
+     * erts_prepare_loading. Must run after beamfile_move_literals
+     * (above) so the literal map resolves to literal-area terms, and
+     * before the BeamFile dies with the loader state. */
+    if (stp->t2_retained != NULL) {
+        erts_t2_retain_commit(stp->t2_retained, &stp->beam, inst_p);
+        stp->t2_retained = NULL;
     }
 
     erts_seal_module(inst_p);

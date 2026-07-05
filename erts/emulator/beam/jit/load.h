@@ -103,6 +103,13 @@ struct LoaderState_ {
     int function_number;
     int last_label;
 
+    /* T2-Full: half-built retention struct, created during prepare
+     * (while the input binary that code.data points into is still
+     * alive) and committed to the module instance at finalize. Owned
+     * by the loader state until then; freed by the dtor if loading
+     * fails. See jit/t2/t2_retain.h. */
+    struct ErtsT2RetainedCode *t2_retained;
+
     BeamOpAllocator op_allocator;
     BeamFile beam;
 };

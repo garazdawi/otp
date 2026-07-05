@@ -73,7 +73,7 @@ static size_t align_up(size_t size) {
     return (size + (sizeof(UWord) - 1)) & ~(sizeof(UWord) - 1);
 }
 
-void erts_t2_retain(BeamFile *beam, struct erl_module_instance *inst_p) {
+ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     ErtsT2RetainedCode *ret;
     Uint32 *bitmap;
     int any_eligible = 0;
@@ -82,9 +82,6 @@ void erts_t2_retain(BeamFile *beam, struct erl_module_instance *inst_p) {
     size_t code_size, total;
     size_t offset;
     byte *base;
-    Sint32 i;
-
-    ASSERT(inst_p->t2_retained == NULL);
 
     bitmap = erts_t2_eligibility_scan(beam, &any_eligible);
     if (t2_debug_enabled()) {
@@ -98,7 +95,7 @@ void erts_t2_retain(BeamFile *beam, struct erl_module_instance *inst_p) {
         if (bitmap != NULL) {
             erts_free(ERTS_ALC_T_T2_CODE, bitmap);
         }
-        return;
+        return NULL;
     }
 
     atoms_size = beam->atoms.count * sizeof(Eterm);
@@ -136,20 +133,20 @@ void erts_t2_retain(BeamFile *beam, struct erl_module_instance *inst_p) {
     sys_memcpy(ret->types, beam->types.entries, types_size);
     offset += align_up(types_size);
 
-    /* beamfile_move_literals has already run, so entry values are
-     * literal-area terms that stay valid until purge. */
+    /* Slots only; the values are filled by erts_t2_retain_commit once
+     * beamfile_move_literals has produced literal-area terms. */
     ret->literal_map = (Eterm *)(base + offset);
     ret->literal_count = beam->static_literals.count;
-    for (i = 0; i < beam->static_literals.count; i++) {
-        ASSERT(beam->static_literals.entries[i].heap_fragments == NULL);
-        ret->literal_map[i] = beam->static_literals.entries[i].value;
-    }
+    sys_memset(ret->literal_map, 0, literals_size);
     offset += align_up(literals_size);
 
     ret->eligible_bitmap = (Uint32 *)(base + offset);
     sys_memcpy(ret->eligible_bitmap, bitmap, bitmap_size);
     offset += align_up(bitmap_size);
 
+    /* The input binary that code.data points into is only guaranteed
+     * to be alive here, during prepare; this copy is the reason this
+     * function cannot run at finalize. */
     ret->code = base + offset;
     ret->code_size = beam->code.size;
     ret->function_count = beam->code.function_count;
@@ -163,15 +160,39 @@ void erts_t2_retain(BeamFile *beam, struct erl_module_instance *inst_p) {
 
     erts_free(ERTS_ALC_T_T2_CODE, bitmap);
 
+    return ret;
+}
+
+void erts_t2_retain_commit(ErtsT2RetainedCode *ret,
+                           BeamFile *beam,
+                           struct erl_module_instance *inst_p) {
+    Sint32 i;
+
+    ASSERT(inst_p->t2_retained == NULL);
+    ASSERT(ret->literal_count == beam->static_literals.count);
+
+    /* beamfile_move_literals has run: entry values are literal-area
+     * terms that stay valid until the module instance is purged. */
+    for (i = 0; i < ret->literal_count; i++) {
+        ASSERT(beam->static_literals.entries[i].heap_fragments == NULL);
+        ret->literal_map[i] = beam->static_literals.entries[i].value;
+    }
+
     inst_p->t2_retained = ret;
-    erts_atomic_add_nob(&t2_retained_bytes, (erts_aint_t)total);
+    erts_atomic_add_nob(&t2_retained_bytes, (erts_aint_t)ret->bytes);
 
     if (t2_debug_enabled()) {
         erts_fprintf(stderr,
                      "t2_retain: module=%T bytes=%lu total_retained=%lu\n",
                      beam->module,
-                     (unsigned long)total,
+                     (unsigned long)ret->bytes,
                      (unsigned long)erts_t2_retained_sz());
+    }
+}
+
+void erts_t2_retained_free(ErtsT2RetainedCode *ret) {
+    if (ret != NULL) {
+        erts_free(ERTS_ALC_T_T2_CODE, ret);
     }
 }
 

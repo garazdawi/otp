@@ -45,6 +45,10 @@
 #include "erl_unicode.h"
 #include "beam_file.h"
 
+#ifdef BEAMASM
+#include "jit/t2/t2_retain.h"
+#endif
+
 Uint erts_total_code_size;
 
 static int load_code(LoaderState *stp);
@@ -224,6 +228,20 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
     if (!load_code(stp)) {
         goto load_error;
     }
+
+#ifdef BEAMASM
+    /* T2-Full: prepare the tier-2 retention copy while `code` (which
+     * beam->code.data points into) is still alive; it is not
+     * guaranteed to survive until erts_finish_loading. Committed to
+     * the module instance at finalize; freed by the dtor if loading
+     * fails. Gated so default runs pay nothing. on_load modules are
+     * skipped in P0: their instance ownership moves in
+     * erts_finish_after_on_load, which would need release hooks on the
+     * failure path. */
+    if (erts_t2_enabled() && !stp->on_load) {
+        stp->t2_retained = erts_t2_prepare(&stp->beam);
+    }
+#endif
 
     /* Good so far */
     retval = NIL;

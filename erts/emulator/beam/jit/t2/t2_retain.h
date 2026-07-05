@@ -98,13 +98,29 @@ int erts_t2_enabled(void);
 /* One-time initialization; called from beamasm_init(). */
 void erts_t2_init(void);
 
-/* Runs the eligibility scan over \p beam and, if any function is
- * eligible, copies the tables above into \c inst_p->t2_retained .
+/* Phase 1, during prepare (erts_prepare_loading, after load_code):
+ * runs the eligibility scan and, if any function is eligible, copies
+ * every table above except the literal-map values, which do not exist
+ * until beamfile_move_literals runs at finalize.
  *
- * Must be called after beamfile_move_literals() (so the literal map
- * resolves to literal-area terms) and while the BeamFile is still
- * alive, i.e. from beam_load_finalize_code(). */
-void erts_t2_retain(BeamFile *beam, struct erl_module_instance *inst_p);
+ * MUST run during prepare: beam->code.data points into the caller's
+ * module binary, which is not guaranteed to stay alive through
+ * erts_finish_loading.
+ *
+ * Returns the half-built struct (owned by the loader state), or NULL
+ * when disabled / nothing eligible. */
+ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam);
+
+/* Phase 2, at finalize (beam_load_finalize_code, after
+ * beamfile_move_literals): fills the literal map from the moved
+ * literal entries, attaches the struct to \p inst_p and starts
+ * accounting for it. Takes ownership from the loader state. */
+void erts_t2_retain_commit(ErtsT2RetainedCode *ret,
+                           BeamFile *beam,
+                           struct erl_module_instance *inst_p);
+
+/* Frees a prepared-but-never-committed struct (loader error paths). */
+void erts_t2_retained_free(ErtsT2RetainedCode *ret);
 
 /* Frees \c inst_p->t2_retained , if any. Called at module purge. */
 void erts_t2_release(struct erl_module_instance *inst_p);
