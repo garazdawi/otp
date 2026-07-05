@@ -43,6 +43,13 @@ struct erl_module_instance {
      * module has eligible functions. See jit/t2/t2_retain.h. */
     struct ErtsT2RetainedCode* t2_retained;
 
+    /* T2-Full P1: head of the per-instance list of installed tier-2
+     * blobs (prologue-patched functions). NULL when nothing is
+     * installed -- the cheap guard the trace/NIF jettison hooks test
+     * before calling into jit/t2/t2_install.c. Protected by code
+     * modification permission. */
+    struct ErtsT2Install* t2_installs;
+
     /* Protected by code modification permission. */
     int unsealed;
 };

@@ -95,6 +95,31 @@ JitAllocator *erts_t2_jit_allocator(void) {
     return jit_allocator;
 }
 
+/* C bridge over the global JitAllocator for jit/t2/t2_install.c (plain
+ * C): raw span allocation for near-side bridge veneers, and span release
+ * for blob/bridge tombstone frees. Returns 0 on success. */
+extern "C" int beamasm_t2_jit_alloc(void **rx, void **rw, size_t size) {
+    JitAllocator::Span span;
+
+    if (jit_allocator == nullptr) {
+        return -1;
+    }
+
+    Out<JitAllocator::Span> out(span);
+    if (jit_allocator->alloc(out, size) != Error::kOk) {
+        return -1;
+    }
+
+    *rx = span.rx();
+    *rw = span.rw();
+    return 0;
+}
+
+extern "C" void beamasm_t2_jit_release(void *rx) {
+    ASSERT(jit_allocator != nullptr);
+    jit_allocator->release(rx);
+}
+
 #if defined(__aarch64__) && !(defined(WIN32) || defined(__APPLE__)) &&         \
         defined(__GNUC__) && defined(ERTS_THR_INSTRUCTION_BARRIER) &&          \
         ETHR_HAVE_GCC_ASM_ARM_IC_IVAU_INSTRUCTION &&                           \

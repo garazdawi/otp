@@ -117,6 +117,11 @@ namespace erts_t2 {
         std::unordered_map<const void *, unsigned> fail_labels;
         unsigned next_label;
 
+        /* When non-null, emit_all lays down the install entry stub
+         * (PLAN/T2/06 §2.3) instead of the exec-harness frame prologue;
+         * the value is the function's public T1 entry L_f. */
+        const void *install_entry = nullptr;
+
         std::string emit_error;
 
     public:
@@ -159,6 +164,15 @@ namespace erts_t2 {
             code.set_logger(slog);
         }
 
+        void set_install_entry(const void *lf) {
+            install_entry = lf;
+        }
+
+        /* Span of the finalized blob (valid after finalize_to_allocator),
+         * for t2_ranges registration and eventual release. */
+        const void *blob_base = nullptr;
+        size_t blob_size = 0;
+
         bool failed() const {
             return !emit_error.empty();
         }
@@ -172,11 +186,20 @@ namespace erts_t2 {
         void emit_all() {
             a.bind(entry_label);
 
-            /* Mirror a normal callee: push the return address onto the
-             * Erlang stack. The standalone test blob supplies its own
-             * prologue (the installed blob uses the entry stub instead --
-             * P1 install wave). */
-            emit_enter_erlang_frame();
+            if (install_entry != nullptr) {
+                /* Installed blob: the patched `b` at L_f+4 lands here
+                 * *after* L_f+0's enter_erlang_frame, so the frame is
+                 * already pushed and must not be pushed again; T1's
+                 * i_test_yield at L_f+12 is bypassed, so the stub does
+                 * its own reduction bookkeeping (PLAN/T2/06 §2.3). */
+                emit_t2_entry_stub();
+            } else {
+                /* Mirror a normal callee: push the return address onto
+                 * the Erlang stack. The standalone test blob supplies
+                 * its own prologue so the exec-harness trampoline can
+                 * enter it directly as if freshly called. */
+                emit_enter_erlang_frame();
+            }
 
             for (const T2LirBlock &b : fn.blocks) {
                 /* Mirror emit_label: a block entry invalidates the
@@ -224,10 +247,35 @@ namespace erts_t2 {
             beamasm_flush_icache(exec, code.code_size());
             beamasm_seal_module(exec, rw, code.code_size());
 
+            blob_base = exec;
+            blob_size = code.code_size();
+
             return (const void *)getCode(entry_label);
         }
 
     private:
+        /* The install entry stub (PLAN/T2/06 §2.3, map §3): a 1:1 mirror
+         * of emit_i_test_yield (arm/instr_common.cpp) minus the frame
+         * push -- L_f+0 already ran. ARG3 = L_f keeps the MFA-derivation
+         * contract of i_test_yield_shared (`sub ARG2, ARG3,
+         * sizeof(ErtsCodeMFA)`), and its resume PC computation
+         * (ARG3 + TEST_YIELD_RETURN_OFFSET = L_f + 24 = the T1 body)
+         * transparently demotes an entry-yielded invocation to T1 --
+         * hence no c_p->i ever points into a P1 blob (map §4). */
+        void emit_t2_entry_stub() {
+            mov_imm(ARG3, (Uint64)install_entry);
+
+            if (erts_alcu_enable_code_atags) {
+                /* Keep the point-of-origin allocation tags exactly as
+                 * accurate as T1's i_test_yield does. */
+                a.str(ARG3, a64::Mem(c_p, offsetof(Process, i)));
+            }
+
+            a.subs(FCALLS, FCALLS, imm(1));
+            a.b_le(resolve_fragment(ga->get_i_test_yield_shared(), disp1MB));
+            /* Fall through into the body (blocks[0]). */
+        }
+
         const Label &block_label(uint32_t id) {
             /* Block b uses BEAM label number 1 + b (reserved in the ctor's
              * num_labels). */
@@ -789,6 +837,66 @@ namespace erts_t2 {
             *err = "codegen produced no entry";
         }
         return entry;
+    }
+
+    bool t2_emit_blob_install(const T2LirFunction &fn,
+                              const void *install_entry,
+                              T2EmitResult *out,
+                              std::string *err,
+                              std::string *disasm) {
+        BeamGlobalAssembler *ga = erts_t2_global_assembler();
+
+        if (ga == nullptr || erts_t2_jit_allocator() == nullptr) {
+            if (err) {
+                *err = "T2 JIT not initialized";
+            }
+            return false;
+        }
+        if (install_entry == nullptr) {
+            if (err) {
+                *err = "no install entry (L_f)";
+            }
+            return false;
+        }
+
+        int num_labels = (int)fn.blocks.size() + 2;
+
+        BeamT2ModuleAssembler ma(ga, fn.module, num_labels, fn);
+
+        StringLogger slog;
+        if (disasm) {
+            ma.set_string_logger(&slog);
+        }
+
+        ma.set_install_entry(install_entry);
+        ma.emit_all();
+
+        if (ma.failed()) {
+            if (err) {
+                *err = ma.error();
+            }
+            if (disasm) {
+                *disasm = std::string(slog.data(), slog.data_size());
+            }
+            return false;
+        }
+
+        const void *entry = ma.finalize_to_allocator();
+
+        if (disasm) {
+            *disasm = std::string(slog.data(), slog.data_size());
+        }
+        if (entry == nullptr) {
+            if (err && err->empty()) {
+                *err = "codegen produced no entry";
+            }
+            return false;
+        }
+
+        out->entry = entry;
+        out->base = ma.blob_base;
+        out->size = ma.blob_size;
+        return true;
     }
 
     ErtsT2ReentryFn t2_get_reentry_trampoline(void) {

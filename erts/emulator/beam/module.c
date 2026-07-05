@@ -81,6 +81,7 @@ void erts_module_instance_init(struct erl_module_instance* modi)
     modi->num_breakpoints = 0;
     modi->num_traced_exports = 0;
     modi->t2_retained = NULL;
+    modi->t2_installs = NULL;
     modi->unsealed = 0;
 }
 

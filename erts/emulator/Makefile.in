@@ -1129,11 +1129,13 @@ endif
 # Tier-2 (T2-Full) mid-end. Architecture-independent; the arch-specific
 # emitter hooks live in the per-arch files above. See PLAN/T2FULL/.
 JIT_OBJS += \
+	$(OBJDIR)/t2/t2_compile.o \
 	$(OBJDIR)/t2/t2_debug.o \
 	$(OBJDIR)/t2/t2_eligible.o \
 	$(OBJDIR)/t2/t2_emit.o \
 	$(OBJDIR)/t2/t2_hir.o \
 	$(OBJDIR)/t2/t2_hir_builder.o \
+	$(OBJDIR)/t2/t2_install.o \
 	$(OBJDIR)/t2/t2_isel.o \
 	$(OBJDIR)/t2/t2_lir.o \
 	$(OBJDIR)/t2/t2_pctab.o \

@@ -61,6 +61,32 @@ namespace erts_t2 {
                              std::string *err,
                              std::string *disasm);
 
+    /* Result of an emission that must be owned/installed afterwards:
+     * `entry` is the branch target (the entry stub for install-mode
+     * blobs), [base, base+size) the JitAllocator span holding it (the
+     * unit of release/tombstoning and of t2_ranges registration). */
+    struct T2EmitResult {
+        const void *entry = nullptr;
+        const void *base = nullptr;
+        size_t size = 0;
+    };
+
+    /* Emit an *installable* blob for `fn`: instead of the exec-harness
+     * enter_erlang_frame prologue, the blob head is the T2 entry stub of
+     * PLAN/T2/06 §2.3 — the patched `b` at L_f+4 lands here with the
+     * frame already pushed by L_f+0 and FCALLS not yet decremented, so
+     * the stub mirrors i_test_yield only: ARG3 = `install_entry` (the
+     * function's public T1 entry L_f, the MFA-derivation contract), own
+     * `subs FCALLS, #1`, and a b.le into i_test_yield_shared whose
+     * computed resume PC (L_f + TEST_YIELD_RETURN_OFFSET) demotes an
+     * entry-yielded invocation to T1. Returns false with *err filled on
+     * failure; on success fills *out. */
+    bool t2_emit_blob_install(const T2LirFunction &fn,
+                              const void *install_entry,
+                              T2EmitResult *out,
+                              std::string *err,
+                              std::string *disasm);
+
     /* The re-entry trampoline: a JIT-emitted stub, entered from C, that
      * loads the Erlang machine registers (E/HTOP/FCALLS/X regs) from the
      * process the way process_main's schedule-in does, jumps into a

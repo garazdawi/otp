@@ -1,0 +1,357 @@
+/*
+ * %CopyrightBegin%
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Copyright Ericsson AB 2026. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * %CopyrightEnd%
+ */
+
+/*
+ * T2-Full tier-2 JIT: the compile pipeline driver (PLAN/T2FULL/08 §5).
+ *
+ * Chains the P0/P1 stages -- SSA build -> identity isel -> LIR verify
+ * -> installable-blob emission -> prologue install -- for one function
+ * at a time. Consumers:
+ *
+ *   - the erts_debug:get_internal_state({t2_install|t2_jettison|
+ *     t2_installed, M, F, A}) debug hooks (this file), used by the
+ *     install-wave tests;
+ *   - the +JT2enable synchronous compile-at-load driver.
+ *
+ * A failure at any stage degrades to T1 for that function -- never an
+ * error, never an aborted load.
+ */
+
+#include <string>
+
+extern "C"
+{
+#ifdef HAVE_CONFIG_H
+#    include "config.h"
+#endif
+
+#include "sys.h"
+#include "global.h"
+#include "big.h"
+#include "code_ix.h"
+#include "module.h"
+#include "export.h"
+#include "beam_code.h"
+#include "beam_asm.h"
+
+#include "t2_retain.h"
+#include "t2_install.h"
+#include "t2_ranges.h"
+}
+
+#include "t2_hir.hpp"
+#include "t2_isel.hpp"
+#include "t2_lir.hpp"
+#include "t2_emit.hpp"
+
+using namespace erts_t2;
+
+namespace {
+
+    /* Outcome of one function's trip through the pipeline; the failure
+     * cases name the stage for diagnostics/statistics. */
+    enum class T2CompileStatus {
+        Installed,
+        IselUnsupported, /* outside the P1 identity table (expected)   */
+        EmitFailed,
+        RejectedBp,
+        RejectedProloguePatched,
+        RejectedReach,
+        RejectedDup,
+        RejectedState
+    };
+
+    T2CompileStatus map_install_result(ErtsT2InstallResult r) {
+        switch (r) {
+        case ERTS_T2_INSTALL_OK:
+            return T2CompileStatus::Installed;
+        case ERTS_T2_INSTALL_REJECTED_BP:
+            return T2CompileStatus::RejectedBp;
+        case ERTS_T2_INSTALL_REJECTED_PROLOGUE:
+            return T2CompileStatus::RejectedProloguePatched;
+        case ERTS_T2_INSTALL_REJECTED_REACH:
+            return T2CompileStatus::RejectedReach;
+        case ERTS_T2_INSTALL_REJECTED_DUP:
+            return T2CompileStatus::RejectedDup;
+        case ERTS_T2_INSTALL_REJECTED_STATE:
+        default:
+            return T2CompileStatus::RejectedState;
+        }
+    }
+
+    /* Lower + emit + install one built HIR function against the loaded
+     * module instance. Called from inside the builder's emit callback
+     * (the module decode is still alive). */
+    T2CompileStatus t2_compile_install_one(const T2Function &hir,
+                                           const ErtsT2RetainedCode *ret,
+                                           const BeamCodeHeader *code_hdr,
+                                           struct erl_module_instance *mi,
+                                           std::string *diag) {
+        T2IselContext ctx;
+        T2LirFunction lir;
+        T2EmitResult blob;
+        std::string err;
+
+        ctx.ret = ret;
+        ctx.code_hdr = (const void *)code_hdr;
+
+        if (!t2_isel(hir, ctx, lir, &err)) {
+            if (diag) {
+                *diag = err;
+            }
+            return T2CompileStatus::IselUnsupported;
+        }
+
+        const ErtsCodeInfo *ci = code_hdr->functions[hir.fn_index];
+        const void *l_f = (const void *)erts_codeinfo_to_code(ci);
+
+        lir.t1_entry = l_f;
+
+        if (!t2_regalloc(lir, &err)) {
+            if (diag) {
+                *diag = err;
+            }
+            return T2CompileStatus::IselUnsupported;
+        }
+
+        if (!t2_emit_blob_install(lir, l_f, &blob, &err, nullptr)) {
+            if (diag) {
+                *diag = err;
+            }
+            return T2CompileStatus::EmitFailed;
+        }
+
+        ErtsT2InstallResult res =
+                erts_t2_install(mi, ci, blob.entry, blob.base, blob.size);
+
+        if (res != ERTS_T2_INSTALL_OK) {
+            /* The blob was never reachable by anyone; release the span
+             * directly. */
+            beamasm_t2_jit_release((void *)blob.base);
+        }
+
+        return map_install_result(res);
+    }
+
+} /* anonymous namespace */
+
+/* ------------------------------------------------------------------ *
+ * Debug hooks (erts_debug:get_internal_state; code mod permission is *
+ * seized by the erl_bif_info.c wrapper)                              *
+ * ------------------------------------------------------------------ */
+
+namespace {
+
+    /* Locate the active instance + retained tables for `mod`. */
+    bool t2_debug_context(Eterm mod,
+                          struct erl_module_instance **mi_out,
+                          const ErtsT2RetainedCode **ret_out,
+                          const BeamCodeHeader **hdr_out) {
+        Module *modp = erts_get_module(mod, erts_active_code_ix());
+
+        if (modp == NULL || modp->curr.code_hdr == NULL) {
+            return false;
+        }
+
+        *mi_out = &modp->curr;
+        *ret_out = modp->curr.t2_retained;
+        *hdr_out = modp->curr.code_hdr;
+        return true;
+    }
+
+    /* The ErtsCodeInfo of F/A in `hdr`, or NULL. Walks the function
+     * table so unexported functions are found too. */
+    const ErtsCodeInfo *t2_find_ci(const BeamCodeHeader *hdr,
+                                   Eterm func,
+                                   Uint arity) {
+        for (Uint i = 0; i < (Uint)hdr->num_functions; i++) {
+            const ErtsCodeInfo *ci = hdr->functions[i];
+
+            if (ci->mfa.function == func && ci->mfa.arity == arity) {
+                return ci;
+            }
+        }
+        return NULL;
+    }
+
+    Eterm t2_error2(Process *p, Eterm reason) {
+        Eterm *hp = HAlloc(p, 3);
+        return TUPLE2(hp, am_error, reason);
+    }
+
+    Eterm t2_status_atom(T2CompileStatus st) {
+        switch (st) {
+        case T2CompileStatus::Installed:
+            return am_ok;
+        case T2CompileStatus::IselUnsupported:
+            return ERTS_MAKE_AM("isel_unsupported");
+        case T2CompileStatus::EmitFailed:
+            return ERTS_MAKE_AM("emit_failed");
+        case T2CompileStatus::RejectedBp:
+            return ERTS_MAKE_AM("rejected_bp");
+        case T2CompileStatus::RejectedProloguePatched:
+            return ERTS_MAKE_AM("rejected_prologue");
+        case T2CompileStatus::RejectedReach:
+            return ERTS_MAKE_AM("rejected_reach");
+        case T2CompileStatus::RejectedDup:
+            return ERTS_MAKE_AM("rejected_dup");
+        case T2CompileStatus::RejectedState:
+        default:
+            return ERTS_MAKE_AM("rejected_state");
+        }
+    }
+
+} /* anonymous namespace */
+
+extern "C" Eterm erts_t2_debug_install(Process *p,
+                                       Eterm mod,
+                                       Eterm func,
+                                       Eterm arity) {
+    struct erl_module_instance *mi;
+    const ErtsT2RetainedCode *ret;
+    const BeamCodeHeader *hdr;
+
+    if (!is_atom(mod) || !is_atom(func) || !is_small(arity) ||
+        signed_val(arity) < 0) {
+        return am_undefined;
+    }
+    if (!t2_debug_context(mod, &mi, &ret, &hdr) || ret == NULL) {
+        return am_undefined;
+    }
+
+    T2CompileStatus st = T2CompileStatus::RejectedState;
+    std::string build_err;
+    bool ran = false;
+
+    T2BuildStatus bst = t2_build_for_debug(
+            ret,
+            func,
+            (unsigned)unsigned_val(arity),
+            [&](const T2Function &hir) {
+                ran = true;
+                st = t2_compile_install_one(hir, ret, hdr, mi, nullptr);
+            },
+            &build_err);
+
+    switch (bst) {
+    case T2BuildStatus::Ok:
+        break;
+    case T2BuildStatus::NotFound:
+        return t2_error2(p, ERTS_MAKE_AM("not_found"));
+    case T2BuildStatus::NotEligible:
+        return t2_error2(p, ERTS_MAKE_AM("not_eligible"));
+    case T2BuildStatus::Failed:
+    default:
+        return t2_error2(p, ERTS_MAKE_AM("build_failed"));
+    }
+
+    if (!ran) {
+        return t2_error2(p, ERTS_MAKE_AM("build_failed"));
+    }
+    if (st == T2CompileStatus::Installed) {
+        return am_ok;
+    }
+    return t2_error2(p, t2_status_atom(st));
+}
+
+extern "C" Eterm erts_t2_debug_jettison(Process *p,
+                                        Eterm mod,
+                                        Eterm func,
+                                        Eterm arity) {
+    struct erl_module_instance *mi;
+    const ErtsT2RetainedCode *ret;
+    const BeamCodeHeader *hdr;
+    const ErtsCodeInfo *ci;
+
+    (void)p;
+
+    if (!is_atom(mod) || !is_atom(func) || !is_small(arity) ||
+        signed_val(arity) < 0) {
+        return am_undefined;
+    }
+    if (!t2_debug_context(mod, &mi, &ret, &hdr)) {
+        return am_undefined;
+    }
+
+    ci = t2_find_ci(hdr, func, (Uint)unsigned_val(arity));
+    if (ci == NULL) {
+        return am_undefined;
+    }
+
+    if (erts_t2_jettison_function(mi, ci)) {
+        return am_ok;
+    }
+    return ERTS_MAKE_AM("not_installed");
+}
+
+extern "C" Eterm erts_t2_debug_installed(Process *p,
+                                         Eterm mod,
+                                         Eterm func,
+                                         Eterm arity) {
+    struct erl_module_instance *mi;
+    const ErtsT2RetainedCode *ret;
+    const BeamCodeHeader *hdr;
+    const ErtsCodeInfo *ci;
+    const ErtsT2Install *inst;
+
+    if (!is_atom(mod) || !is_atom(func) || !is_small(arity) ||
+        signed_val(arity) < 0) {
+        return am_undefined;
+    }
+    if (!t2_debug_context(mod, &mi, &ret, &hdr)) {
+        return am_undefined;
+    }
+
+    ci = t2_find_ci(hdr, func, (Uint)unsigned_val(arity));
+    if (ci == NULL) {
+        return am_undefined;
+    }
+
+    for (inst = mi->t2_installs; inst != NULL; inst = inst->next) {
+        if (inst->ci == ci) {
+            /* Exercise the t2_ranges population: a PC in the blob's
+             * interior must resolve back to this function's MFA. */
+            ErtsCodePtr mid = (ErtsCodePtr)((const char *)inst->blob_base +
+                                            (inst->blob_size / 2));
+            const ErtsT2Blob *blob = erts_t2_find_blob(mid);
+            Eterm find_mfa = am_undefined;
+            Eterm start = erts_make_integer((Uint)(UWord)inst->blob_base, p);
+            Eterm *hp;
+
+            if (blob != NULL) {
+                hp = HAlloc(p, 4);
+                find_mfa = TUPLE3(hp,
+                                  blob->mfa.module,
+                                  blob->mfa.function,
+                                  make_small(blob->mfa.arity));
+            }
+
+            hp = HAlloc(p, 4);
+            return TUPLE3(hp,
+                          start,
+                          make_small((Uint)inst->blob_size),
+                          find_mfa);
+        }
+    }
+
+    return am_false;
+}

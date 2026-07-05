@@ -66,6 +66,9 @@
  * common file off that path — must match t2_retain.h / t2_pctab.h). */
 Eterm erts_t2_debug_build_ssa(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_pc_table(Process *p, Eterm mod, Eterm func, Eterm arity);
+Eterm erts_t2_debug_install(Process *p, Eterm mod, Eterm func, Eterm arity);
+Eterm erts_t2_debug_jettison(Process *p, Eterm mod, Eterm func, Eterm arity);
+Eterm erts_t2_debug_installed(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_exec(Process *p, Eterm mod, Eterm func, Eterm arity,
                          Eterm args);
 #endif
@@ -4891,6 +4894,37 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	    else if (ERTS_IS_ATOM_STR("t2_pc_table", tp[1])) {
 #ifdef BEAMASM
 		BIF_RET(erts_t2_debug_pc_table(BIF_P, tp[2], tp[3], tp[4]));
+#else
+		BIF_RET(am_undefined);
+#endif
+	    }
+	    /* T2-Full P1 install wave (PLAN/T2FULL/08 §3-§4): dynamic
+	       per-function install/jettison plus introspection of the
+	       installed blob + its t2_ranges registration. The prologue
+	       is mutated under code modification permission, exactly
+	       like the trace/NIF prologue writers. */
+	    else if (ERTS_IS_ATOM_STR("t2_install", tp[1]) ||
+		     ERTS_IS_ATOM_STR("t2_jettison", tp[1]) ||
+		     ERTS_IS_ATOM_STR("t2_installed", tp[1])) {
+#ifdef BEAMASM
+		Eterm res;
+
+		if (!erts_try_seize_code_mod_permission(BIF_P)) {
+		    ERTS_BIF_YIELD1(BIF_TRAP_EXPORT(
+					    BIF_erts_debug_get_internal_state_1),
+				    BIF_P, BIF_ARG_1);
+		}
+
+		if (ERTS_IS_ATOM_STR("t2_install", tp[1])) {
+		    res = erts_t2_debug_install(BIF_P, tp[2], tp[3], tp[4]);
+		} else if (ERTS_IS_ATOM_STR("t2_jettison", tp[1])) {
+		    res = erts_t2_debug_jettison(BIF_P, tp[2], tp[3], tp[4]);
+		} else {
+		    res = erts_t2_debug_installed(BIF_P, tp[2], tp[3], tp[4]);
+		}
+
+		erts_release_code_mod_permission();
+		BIF_RET(res);
 #else
 		BIF_RET(am_undefined);
 #endif
