@@ -35,6 +35,7 @@
 #include "module.h"
 
 #include "t2_retain.h"
+#include "t2_pctab.h"
 
 static erts_atomic_t t2_retained_bytes;
 
@@ -67,6 +68,10 @@ void erts_t2_init(void) {
 
 UWord erts_t2_retained_sz(void) {
     return (UWord)erts_atomic_read_nob(&t2_retained_bytes);
+}
+
+void erts_t2_account_bytes(Sint delta) {
+    erts_atomic_add_nob(&t2_retained_bytes, (erts_aint_t)delta);
 }
 
 static size_t align_up(size_t size) {
@@ -215,6 +220,9 @@ void erts_t2_release(struct erl_module_instance *inst_p) {
     if (ret == NULL) {
         return;
     }
+
+    /* Free + un-account the separately-allocated PC side table first. */
+    erts_t2_pctab_free(ret);
 
     erts_atomic_add_nob(&t2_retained_bytes, -(erts_aint_t)ret->bytes);
     erts_free(ERTS_ALC_T_T2_CODE, ret);

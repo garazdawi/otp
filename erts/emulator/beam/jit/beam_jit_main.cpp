@@ -31,6 +31,7 @@ extern "C"
 #include "export.h"
 #include "erl_threads.h"
 #include "t2_retain.h"
+#include "t2_pctab.h"
 
 #if defined(__APPLE__)
 #    include <libkern/OSCacheControl.h>
@@ -664,6 +665,29 @@ extern "C"
     char *beamasm_get_base(void *instance) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
         return (char *)ba->getBaseAddress();
+    }
+
+    /* T2-Full P0 (PLAN/T2FULL/07 §4): PC side-table collection bridges. */
+    void beamasm_set_t2_collect(void *instance, int on) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        ba->t2_pc_collect = (on != 0);
+    }
+
+    size_t beamasm_t2_pc_raw_count(void *instance) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return ba->t2_pc_raw.size();
+    }
+
+    void beamasm_t2_pc_raw_get(void *instance,
+                               size_t i,
+                               Uint32 *offset,
+                               Uint32 *fn_index,
+                               byte *kind) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        const BeamModuleAssembler::T2PcRaw &e = ba->t2_pc_raw[i];
+        *offset = e.offset;
+        *fn_index = e.fn_index;
+        *kind = e.kind;
     }
 
     size_t beamasm_get_offset(void *instance) {

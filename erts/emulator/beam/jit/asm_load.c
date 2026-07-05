@@ -36,6 +36,7 @@
 
 #include "beam_asm.h"
 #include "t2_retain.h"
+#include "t2_pctab.h"
 
 #ifdef ADDRESS_SANITIZER
 #    include <sanitizer/lsan_interface.h>
@@ -53,6 +54,14 @@ int beam_load_prepare_emit(LoaderState *stp) {
                                     stp->beam.code.label_count,
                                     stp->beam.code.function_count,
                                     &stp->beam);
+
+    /* T2-Full P0 (PLAN/T2FULL/07 §4): enable PC side-table offset
+     * collection when T2 retention is on. The eligibility bitmap does not
+     * exist yet (erts_t2_prepare runs after this whole codegen pass), so
+     * offsets are collected for every function and filtered to the
+     * eligible ones at retain-commit. Default, non-T2 loads collect
+     * nothing. */
+    beamasm_set_t2_collect(stp->ba, erts_t2_enabled());
 
     /* Initialize code header */
     stp->codev_size = stp->beam.code.function_count + 1;
@@ -1265,7 +1274,16 @@ void beam_load_finalize_code(LoaderState *stp,
      * (above) so the literal map resolves to literal-area terms, and
      * before the BeamFile dies with the loader state. */
     if (stp->t2_retained != NULL) {
-        erts_t2_retain_commit(stp->t2_retained, &stp->beam, inst_p);
+        ErtsT2RetainedCode *committed = stp->t2_retained;
+
+        erts_t2_retain_commit(committed, &stp->beam, inst_p);
+
+        /* Build the T1 PC side table (§4) now that codegen is done and
+         * the final module base is known; the committed struct owns it. */
+        erts_t2_pctab_build(committed,
+                            stp->ba,
+                            (const byte *)beamasm_get_base(stp->ba));
+
         stp->t2_retained = NULL;
     }
 

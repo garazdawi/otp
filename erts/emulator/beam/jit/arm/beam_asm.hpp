@@ -1128,6 +1128,39 @@ public:
      * t2_entries. Called once, near the end of module codegen. */
     void emit_t2_specializations();
 
+    /* T2-Full P0 (PLAN/T2FULL/07 §4): T1 PC side-table collection. The
+     * emitter records, in emission order, the code offset of the four
+     * re-entry kinds. beam_idx is not known here (see t2_pctab.h); it is
+     * reconciled at retain-commit, which is also where entries are
+     * filtered to the eligible functions — the eligibility bitmap does not
+     * exist yet during codegen (erts_t2_prepare runs after load_code), so
+     * collection is gated only on `t2_pc_collect` (set iff T2 retention is
+     * enabled). Default, non-T2 loads record nothing. */
+    struct T2PcRaw {
+        uint32_t offset;
+        uint32_t fn_index;
+        uint8_t kind;
+    };
+    std::vector<T2PcRaw> t2_pc_raw;
+    bool t2_pc_collect = false;
+
+    /* True iff re-entry offsets should be recorded for the current op. */
+    bool t2_pc_collecting() const {
+        return t2_pc_collect && !functions.empty();
+    }
+
+    /* Record a re-entry point for the current function. */
+    void t2_pc_record(uint32_t offset, uint8_t kind) {
+        t2_pc_raw.push_back(
+                {offset, (uint32_t)(functions.size() - 1), kind});
+    }
+
+    /* Classify a just-emitted specific op into a re-entry kind and record
+     * it for the current (eligible) function. `before`/`after` are the
+     * code offsets bracketing the op's emission. Defined in
+     * beam_asm_module.cpp. */
+    void t2_pc_classify(unsigned specific_op, uint32_t before, uint32_t after);
+
     /* Per-MFA hand-coded specializations. */
     void emit_t2_total_2(const T2FunctionEntry &entry);
 

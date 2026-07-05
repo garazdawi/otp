@@ -1133,6 +1133,7 @@ JIT_OBJS += \
 	$(OBJDIR)/t2/t2_eligible.o \
 	$(OBJDIR)/t2/t2_hir.o \
 	$(OBJDIR)/t2/t2_hir_builder.o \
+	$(OBJDIR)/t2/t2_pctab.o \
 	$(OBJDIR)/t2/t2_retain.o
 
 JIT_OBJS += $(ASMJIT_OBJS)

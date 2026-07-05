@@ -31,6 +31,7 @@ extern "C"
 #include "beam_bp.h"
 #include "erl_bits.h"
 #include "erl_map.h"
+#include "t2_pctab.h" /* ErtsT2PcKind constants for the PC side table */
 }
 
 using namespace asmjit;
@@ -569,6 +570,11 @@ bool BeamModuleAssembler::emit(unsigned specific_op,
     size_t before = a.offset();
 #endif
 
+    /* T2-Full P0 (PLAN/T2FULL/07 §4): bracket the op's emission to record
+     * T1 re-entry offsets (filtered to eligible functions at retain-commit). */
+    bool t2_pc_elig = t2_pc_collecting();
+    uint32_t t2_pc_before = t2_pc_elig ? (uint32_t)a.offset() : 0;
+
     comment(opc[specific_op].name);
 
 #define InstrCnt()
@@ -577,6 +583,10 @@ bool BeamModuleAssembler::emit(unsigned specific_op,
     default:
         ERTS_ASSERT(0 && "Invalid instruction");
         break;
+    }
+
+    if (t2_pc_elig) {
+        t2_pc_classify(specific_op, t2_pc_before, (uint32_t)a.offset());
     }
 
 #ifdef BEAMASM_DUMP_SIZES
@@ -589,6 +599,78 @@ bool BeamModuleAssembler::emit(unsigned specific_op,
 #endif
 
     return true;
+}
+
+/* Map a just-emitted specific op to a T1 re-entry kind and record its
+ * offset (PLAN/T2FULL/07 §4). Only the four re-entry kinds are recorded;
+ * everything else is ignored. See t2_pctab.h for how these offsets are
+ * later paired with SSA decode ordinals. */
+void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
+                                         uint32_t before,
+                                         uint32_t after) {
+    switch (specific_op) {
+    case op_i_test_yield:
+        /* Function entry: the SSA builder's beam_idx 0. */
+        t2_pc_record(before, ERTS_T2_PC_ENTRY);
+        break;
+
+    /* Non-tail calls: the call site, plus the continuation the callee
+     * returns to. */
+    case op_i_call_f:
+    case op_i_call_ext_e:
+        t2_pc_record(before, ERTS_T2_PC_CALL);
+        t2_pc_record(after, ERTS_T2_PC_CONT);
+        break;
+
+    /* Tail calls (including the move-fused variants): call site only.
+     * These specific ops are emitted only for local calls and call_ext to
+     * non-BIF targets; call_ext to a BIF lowers to a bif dispatch instead,
+     * which the decode side likewise excludes from its call count so the
+     * zip stays aligned (see pctab_genop_is_call in t2_pctab.c). */
+    case op_i_call_last_ft:
+    case op_i_call_only_f:
+    case op_i_call_ext_last_et:
+    case op_i_call_ext_only_e:
+    case op_move_call_last_ydft:
+    case op_move_call_ext_last_ydet:
+        t2_pc_record(before, ERTS_T2_PC_CALL);
+        break;
+
+    /* Post-BIF/effect boundaries: the gc_bif-lowered arithmetic ops and
+     * the generic i_bif fallbacks. Recorded at the op's site (`before`) so
+     * the offset stays distinct from the following op's site — a
+     * post-effect offset would coincide exactly with an immediately
+     * adjacent call site (both name the same instruction boundary). */
+    case op_i_plus_jIssd:
+    case op_i_minus_jIssd:
+    case op_i_mul_add_jssssd:
+    case op_i_unary_minus_jIsd:
+    case op_i_m_div_jIssd:
+    case op_i_int_div_jIssd:
+    case op_i_rem_jIssd:
+    case op_i_band_jIssd:
+    case op_i_bor_jIssd:
+    case op_i_bxor_jIssd:
+    case op_i_bnot_jIsd:
+    case op_i_bsr_jIssd:
+    case op_i_bsl_jIssd:
+    case op_i_rem_div_jIssdd:
+    case op_i_div_rem_jIssdd:
+    case op_i_bif1_sjbd:
+    case op_i_bif2_ssjbd:
+    case op_i_bif3_sssjbd:
+    /* gc_bif1 to the size/length BIFs; i_length lowers to a setup + the
+     * op below, so only the latter (one per source gc_bif) is counted. */
+    case op_bif_bit_size_jsd:
+    case op_bif_byte_size_jsd:
+    case op_bif_map_size_jsd:
+    case op_i_length_jtd:
+        t2_pc_record(before, ERTS_T2_PC_EFFECT);
+        break;
+
+    default:
+        break;
+    }
 }
 
 /*

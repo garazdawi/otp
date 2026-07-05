@@ -90,6 +90,12 @@ typedef struct ErtsT2RetainedCode {
 
     /* Total size of this allocation, for accounting. */
     Uint bytes;
+
+    /* T1 PC side table (PLAN/T2FULL/07 §4), built at retain-commit after
+     * codegen from the assembler's collected offsets. NULL until then,
+     * or when the module has no eligible functions. Separately
+     * allocated; freed and un-accounted in erts_t2_release. */
+    struct ErtsT2PcTable *pc_table;
 } ErtsT2RetainedCode;
 
 /* True iff tier-2 retention is enabled (T2_RETAIN=1; read once). */
@@ -127,6 +133,11 @@ void erts_t2_release(struct erl_module_instance *inst_p);
 
 /* Total retained bytes, for erlang:memory(code) accounting. */
 UWord erts_t2_retained_sz(void);
+
+/* Adjust the retained-bytes total by \p delta (may be negative). Used by
+ * t2_pctab.c to fold the separately-allocated PC side table into the same
+ * erlang:memory(code) accounting. */
+void erts_t2_account_bytes(Sint delta);
 
 /* t2_eligible.c: true iff the tier supports this generic opcode. */
 int erts_t2_genop_supported(int genop);
