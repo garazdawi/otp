@@ -313,7 +313,33 @@ namespace erts_t2 {
                                                             op->index);
 
                 if (ep == nullptr) {
-                    return fail_op(op, "no export entry for remote target");
+                    /* Not-yet-loaded remote callee: mirror T1's load-time
+                     * erts_export_get_or_make_stub (asm_load.c import
+                     * resolution) — the same permanent Export* T1
+                     * dispatches through, whose entry is filled when the
+                     * target module loads (until then it dispatches to the
+                     * undefined-function handler, exactly as T1). This
+                     * mutates the *staging* export table, so it is only
+                     * safe while we hold the loader's code-load permission
+                     * (the corpus sweep + the P1 compile-at-load driver run
+                     * inside beam_load_finalize_code, which asserts it).
+                     * Without it (e.g. the standalone debug-exec BIF) we
+                     * must not touch staging — reject and stay T1. A BIF
+                     * always has an active export from init, so a missing
+                     * active entry is never a BIF; the stub's bif_number is
+                     * -1 and the check below passes it through as a normal
+                     * remote call. */
+                    if (!ctx.allow_stub) {
+                        return fail_op(op,
+                                       "no export entry for remote target");
+                    }
+                    ep = erts_export_get_or_make_stub(op->mfa_m,
+                                                      op->mfa_f,
+                                                      op->index);
+                    if (ep == nullptr) {
+                        return fail_op(op,
+                                       "no export entry for remote target");
+                    }
                 }
                 if (ep->bif_number >= 0) {
                     return fail_op(op,

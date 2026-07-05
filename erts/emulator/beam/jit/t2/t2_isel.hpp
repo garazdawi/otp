@@ -71,6 +71,14 @@ namespace erts_t2 {
     struct T2IselContext {
         const ErtsT2RetainedCode *ret = nullptr;
         const void *code_hdr = nullptr; /* const BeamCodeHeader * */
+
+        /* True when isel runs inside the loader (beam_load_finalize_code,
+         * holding code-load permission), so it may mirror T1's load-time
+         * erts_export_get_or_make_stub for a not-yet-loaded remote callee.
+         * Defaults on for the corpus sweep / compile-at-load driver, which
+         * hold that permission; the standalone debug-exec BIF turns it off
+         * (it must never mutate the staging export table). */
+        bool allow_stub = true;
     };
 
     /* Lower HIR to LIR with concrete canonical slots and resolved

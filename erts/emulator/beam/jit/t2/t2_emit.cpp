@@ -861,6 +861,8 @@ extern "C" Eterm erts_t2_debug_exec(Process *p,
     T2IselContext ctx;
     ctx.ret = ret;
     ctx.code_hdr = (const void *)modp->curr.code_hdr;
+    /* Standalone exec: no loader permission, must not create export stubs. */
+    ctx.allow_stub = false;
 
     /* Build HIR -> isel -> verify -> emit, all while the module decode
      * (and any literals the HIR references) is still alive. */
