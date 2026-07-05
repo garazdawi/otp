@@ -60,7 +60,12 @@
 #include "erl_iolist.h"
 #include "erl_debugger.h"
 #include "erl_record.h"
-#include "t2_retain.h" /* erts_t2_debug_build_ssa (T2-Full debug BIF) */
+#ifdef BEAMASM
+/* T2-Full debug BIF, defined in jit/t2/t2_debug.cpp (JIT-only; its header
+ * lives on the jit-only include path, so forward-declare it here to keep
+ * this common file off that path — must match t2_retain.h). */
+Eterm erts_t2_debug_build_ssa(Process *p, Eterm mod, Eterm func, Eterm arity);
+#endif
 
 #ifdef ERTS_ENABLE_LOCK_COUNT
 #include "erl_lock_count.h"
@@ -4872,7 +4877,13 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	       term. Requires the module to have been loaded with T2_RETAIN=1;
 	       returns 'undefined' otherwise. */
 	    if (ERTS_IS_ATOM_STR("t2_build_ssa", tp[1])) {
+#ifdef BEAMASM
 		BIF_RET(erts_t2_debug_build_ssa(BIF_P, tp[2], tp[3], tp[4]));
+#else
+		/* No tier-2 in the interpreter: nothing is ever retained, so
+		   this is indistinguishable from an unretained module. */
+		BIF_RET(am_undefined);
+#endif
 	    }
 	    break;
 	}
