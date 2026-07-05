@@ -21,6 +21,7 @@
  */
 
 #include "beam_asm.hpp"
+#include "t2_hir.hpp"
 
 extern "C"
 {
@@ -400,6 +401,17 @@ void beamasm_init() {
             (ErtsCodePtr)bga->get_i_line_breakpoint_cleanup();
 
     beamasm_metadata_late_init();
+
+    /* T2-Full P0: HIR round-trip self-test, gated on T2_SELFTEST=1 so
+     * default boots pay nothing. */
+    if (erts_t2_selftest_enabled()) {
+        int res = erts_t2_hir_selftest();
+
+        if (res != 0) {
+            erts_exit(ERTS_ABORT_EXIT, "T2 HIR self-test failed (%d)\n", res);
+        }
+        erts_fprintf(stderr, "T2 HIR self-test passed\n");
+    }
 }
 
 bool BeamAssemblerCommon::hasCpuFeature(uint32_t featureId) {
