@@ -66,6 +66,8 @@
  * common file off that path — must match t2_retain.h / t2_pctab.h). */
 Eterm erts_t2_debug_build_ssa(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_pc_table(Process *p, Eterm mod, Eterm func, Eterm arity);
+Eterm erts_t2_debug_exec(Process *p, Eterm mod, Eterm func, Eterm arity,
+                         Eterm args);
 #endif
 
 #ifdef ERTS_ENABLE_LOCK_COUNT
@@ -4889,6 +4891,21 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	    else if (ERTS_IS_ATOM_STR("t2_pc_table", tp[1])) {
 #ifdef BEAMASM
 		BIF_RET(erts_t2_debug_pc_table(BIF_P, tp[2], tp[3], tp[4]));
+#else
+		BIF_RET(am_undefined);
+#endif
+	    }
+	    break;
+	}
+	case 5: {
+	    /* T2-Full P1 exec harness (PLAN/T2FULL/08 §1, work-order commit
+	       2): build + emit a tier-2 blob for F/A and run it directly with
+	       Args, returning its result (== the T1 result for a non-raising
+	       input). The debugging workhorse before the P1 install wave.
+	       Requires T2_RETAIN=1. */
+	    if (ERTS_IS_ATOM_STR("t2_exec", tp[1])) {
+#ifdef BEAMASM
+		BIF_RET(erts_t2_debug_exec(BIF_P, tp[2], tp[3], tp[4], tp[5]));
 #else
 		BIF_RET(am_undefined);
 #endif

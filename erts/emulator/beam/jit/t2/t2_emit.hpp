@@ -61,6 +61,25 @@ namespace erts_t2 {
                              std::string *err,
                              std::string *disasm);
 
+    /* The re-entry trampoline: a JIT-emitted stub, entered from C, that
+     * loads the Erlang machine registers (E/HTOP/FCALLS/X regs) from the
+     * process the way process_main's schedule-in does, jumps into a
+     * standalone T2 blob, and returns the blob's result (XREG0) to C.
+     * This is the P1 pre-install exec path (erts_debug t2_exec).
+     *
+     * Signature at the ABI level: (Process *c_p, const void *entry,
+     * ErtsSchedulerRegisters *regs) -> Eterm. Types are void* here to keep
+     * this header off the JIT-only include path. The blob's fail branches
+     * are never taken for a non-raising input; a raising input would
+     * side-exit into T1's raise path, which does not return to this
+     * trampoline (see the note in t2_emit.cpp), so exec is used only for
+     * non-raising validation before the install wave. Lazily built +
+     * cached; returns nullptr if the JIT is not initialized. */
+    typedef Eterm (*ErtsT2ReentryFn)(void *c_p,
+                                     const void *entry,
+                                     void *sched_regs);
+    ErtsT2ReentryFn t2_get_reentry_trampoline(void);
+
 } /* namespace erts_t2 */
 
 /* ------------------------------------------------------------------ *

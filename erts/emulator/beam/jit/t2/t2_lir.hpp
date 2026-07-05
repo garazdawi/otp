@@ -317,8 +317,16 @@ namespace erts_t2 {
         std::vector<T2LirBlock> blocks;
         std::vector<T2LirSwitchCase> switch_cases;
 
+        /* Isel emits LIR operands as PhysLoc::phys(value_id) placeholders
+         * that regalloc lowers to canonical X/Y slots. num_values sizes the
+         * value->slot maps; param_x[value_id] is the fixed X slot of a
+         * parameter value (== its parameter index), or -1 for non-params. */
+        uint32_t num_values;
+        std::vector<int32_t> param_x;
+
         T2LirFunction()
-                : module(0), function(0), arity(0), t1_entry(nullptr) {}
+                : module(0), function(0), arity(0), t1_entry(nullptr),
+                  num_values(0) {}
 
         T2LirBlock &new_block() {
             T2LirBlock b;

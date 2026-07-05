@@ -40,12 +40,22 @@
 extern "C"
 {
 #include "beam_common.h"
+#include "global.h"
+#include "erl_vm.h"
+#include "code_ix.h"
+#include "export.h"
+#include "module.h"
+
+#include "t2_retain.h"
 }
 
 #include "t2_lir.hpp"
 #include "t2_emit.hpp"
+#include "t2_hir.hpp"
+#include "t2_isel.hpp"
 
 #include <cstdio>
+#include <functional>
 #include <unordered_map>
 
 using namespace asmjit;
@@ -239,6 +249,10 @@ namespace erts_t2 {
             case T2LirKind::Move:
                 emit_lir_move(op);
                 break;
+            case T2LirKind::Add:
+            case T2LirKind::Sub:
+                emit_lir_arith2(op);
+                break;
             case T2LirKind::Return:
                 emit_return();
                 break;
@@ -255,6 +269,109 @@ namespace erts_t2 {
             }
             emit_i_move(ArgSource(src_argval(op.srcs[0])),
                         ArgRegister(loc_argval(op.dst)));
+        }
+
+        /* The Fail label of an arith op resolves to a trampoline branching
+         * to the op's T1 PC (side-exit; T2 never raises). Falls back to the
+         * function's T1 entry when the op carries no specific PC. */
+        ArgVal arith_fail_argval(const T2LirOp &op) {
+            const void *pc = op.t1_pc_fail ? op.t1_pc_fail : fn.t1_entry;
+            if (pc == nullptr) {
+                fail("arith op without a T1 fail target");
+                return ArgVal(ArgVal::Type::Label, 1);
+            }
+            return ArgVal(ArgVal::Type::Label, fail_label_num(pc));
+        }
+
+        void emit_lir_arith2(const T2LirOp &op) {
+            if (op.num_srcs != 2 || op.dst.is_none()) {
+                fail("malformed binary arithmetic op");
+                return;
+            }
+            ArgLabel failL(arith_fail_argval(op));
+            if (failed()) {
+                return;
+            }
+            ArgWord live((UWord)op.arity);
+            ArgSource lhs(src_argval(op.srcs[0]));
+            ArgSource rhs(src_argval(op.srcs[1]));
+            ArgRegister dst(loc_argval(op.dst));
+
+            switch (op.kind) {
+            case T2LirKind::Add:
+                emit_i_plus(failL, live, lhs, rhs, dst);
+                break;
+            case T2LirKind::Sub:
+                emit_i_minus(failL, live, lhs, rhs, dst);
+                break;
+            default:
+                fail("unhandled binary arithmetic op");
+                break;
+            }
+        }
+
+    public:
+        /* Emit the standalone C-callable re-entry trampoline (see
+         * t2_emit.hpp). Reuses emit_leave_runtime / emit_enter_runtime to
+         * mirror process_main's schedule-in / schedule-out exactly. */
+        const void *emit_reentry_trampoline_blob() {
+            Label tr = a.new_label();
+            a.bind(tr);
+
+            /* Preserve the C caller's callee-saved GPRs (x19..x28 hold the
+             * scheduler machine registers while the blob runs). */
+            a.stp(a64::x19, a64::x20, a64::Mem(a64::sp, -16).pre());
+            a.stp(a64::x21, a64::x22, a64::Mem(a64::sp, -16).pre());
+            a.stp(a64::x23, a64::x24, a64::Mem(a64::sp, -16).pre());
+            a.stp(a64::x25, a64::x26, a64::Mem(a64::sp, -16).pre());
+            a.stp(a64::x27, a64::x28, a64::Mem(a64::sp, -16).pre());
+            a.stp(a64::x29, a64::x30, a64::Mem(a64::sp, -16).pre());
+
+            /* ARG1=c_p, ARG2=entry, ARG3=ErtsSchedulerRegisters*. */
+            a.mov(scheduler_registers, ARG3);
+            a.mov(c_p, ARG1);
+            a.mov(TMP1, ARG2); /* entry, saved before ARGs are clobbered */
+
+            /* Load E/HTOP and the register-backed X regs from the process /
+             * X array (args were written into the array by the C caller). */
+            emit_leave_runtime<Update::eStack | Update::eHeap |
+                               Update::eXRegs>();
+
+            /* Keep reductions well above zero so emit_return's dispatch does
+             * not context-switch out of the harness. */
+            mov_imm(FCALLS, CONTEXT_REDS);
+
+            mov_imm(SUPER_TMP, (Uint64)(UWord)&the_active_code_index);
+            a.ldr(active_code_ix.w(), a64::Mem(SUPER_TMP));
+
+            /* Return address of the blob = the sync-back label below. */
+            Label after = a.new_label();
+            a.adr(a64::x30, after);
+            a.br(TMP1);
+
+            a.bind(after);
+            /* Blob returned; result is in XREG0. Sync E/HTOP/X regs back to
+             * the process the way a schedule-out does. */
+            emit_enter_runtime<Update::eStack | Update::eHeap |
+                               Update::eXRegs>();
+
+            a.ldr(ARG1, getXRef(0)); /* result -> return value */
+
+            a.ldp(a64::x29, a64::x30, a64::Mem(a64::sp).post(16));
+            a.ldp(a64::x27, a64::x28, a64::Mem(a64::sp).post(16));
+            a.ldp(a64::x25, a64::x26, a64::Mem(a64::sp).post(16));
+            a.ldp(a64::x23, a64::x24, a64::Mem(a64::sp).post(16));
+            a.ldp(a64::x21, a64::x22, a64::Mem(a64::sp).post(16));
+            a.ldp(a64::x19, a64::x20, a64::Mem(a64::sp).post(16));
+            a.ret(a64::x30);
+
+            emit_int_code_end();
+
+            const void *exec = nullptr;
+            void *rw = nullptr;
+            codegen(erts_t2_jit_allocator(), &exec, &rw);
+
+            return getCode(tr);
         }
     };
 
@@ -305,13 +422,169 @@ namespace erts_t2 {
         return entry;
     }
 
+    ErtsT2ReentryFn t2_get_reentry_trampoline(void) {
+        static ErtsT2ReentryFn cached = nullptr;
+        if (cached != nullptr) {
+            return cached;
+        }
+
+        BeamGlobalAssembler *ga = erts_t2_global_assembler();
+        if (ga == nullptr || erts_t2_jit_allocator() == nullptr) {
+            return nullptr;
+        }
+
+        T2LirFunction empty;
+        empty.module = am_undefined;
+
+        BeamT2ModuleAssembler ma(ga, empty.module, 2, empty);
+        cached = (ErtsT2ReentryFn)ma.emit_reentry_trampoline_blob();
+        return cached;
+    }
+
 } /* namespace erts_t2 */
+
+/* ------------------------------------------------------------------ *
+ * Exec harness debug BIF (erts_debug:get_internal_state(             *
+ *   {t2_exec, M, F, A, Args}))                                        *
+ * ------------------------------------------------------------------ */
+
+using namespace erts_t2;
+
+namespace {
+    Eterm t2_exec_error(Process *p, const char *s) {
+        Uint sz = 0;
+        Eterm *hp;
+        (void)erts_bld_string_n(NULL, &sz, s, (Sint)sys_strlen(s));
+        sz += 3;
+        hp = HAlloc(p, sz);
+        Eterm str = erts_bld_string_n(&hp, NULL, s, (Sint)sys_strlen(s));
+        return TUPLE2(hp, am_error, str);
+    }
+}
+
+extern "C" Eterm erts_t2_debug_exec(Process *p,
+                                    Eterm mod,
+                                    Eterm func,
+                                    Eterm arity,
+                                    Eterm args) {
+    if (!is_atom(mod) || !is_atom(func) || !is_small(arity)) {
+        return am_undefined;
+    }
+    if (signed_val(arity) < 0 || signed_val(arity) > MAX_ARG) {
+        return am_undefined;
+    }
+    Uint ar = unsigned_val(arity);
+
+    Module *modp = erts_get_module(mod, erts_active_code_ix());
+    if (modp == NULL || modp->curr.t2_retained == NULL) {
+        return am_undefined;
+    }
+    const ErtsT2RetainedCode *ret = modp->curr.t2_retained;
+
+    /* T1 entry of the function, the fail-branch (side-exit) target. */
+    const Export *e =
+            erts_find_function(mod, func, (unsigned)ar, erts_active_code_ix());
+    const void *t1_entry =
+            e ? (const void *)e->dispatch.addresses[erts_active_code_ix()]
+              : NULL;
+
+    /* Build HIR -> isel -> regalloc -> emit, all while the module decode
+     * (and any literals the HIR references) is still alive. */
+    const void *blob = NULL;
+    std::string build_err;
+    std::string pipe_err;
+
+    T2BuildStatus status = t2_build_for_debug(
+            ret,
+            func,
+            (unsigned)ar,
+            [&](const T2Function &hir) {
+                T2LirFunction lir;
+                if (!t2_isel(hir, lir, &pipe_err)) {
+                    return;
+                }
+                lir.t1_entry = t1_entry;
+                if (!t2_regalloc(lir, &pipe_err)) {
+                    return;
+                }
+                blob = t2_emit_blob(lir, &pipe_err, nullptr);
+            },
+            &build_err);
+
+    switch (status) {
+    case T2BuildStatus::Ok:
+        break;
+    case T2BuildStatus::NotFound:
+        return t2_exec_error(p, "not_found");
+    case T2BuildStatus::NotEligible:
+        return t2_exec_error(p, "not_eligible");
+    case T2BuildStatus::Failed:
+    default:
+        return t2_exec_error(p, build_err.empty() ? "build_failed"
+                                                   : build_err.c_str());
+    }
+
+    if (blob == NULL) {
+        return t2_exec_error(
+                p, pipe_err.empty() ? "emit_failed" : pipe_err.c_str());
+    }
+
+    ErtsT2ReentryFn tramp = t2_get_reentry_trampoline();
+    if (tramp == NULL) {
+        return am_undefined;
+    }
+
+    /* The JIT spilled this BIF caller's live X registers into the X array
+     * on the way in; the blob (and the trampoline's schedule-in/out) reads
+     * and clobbers the low slots. Save every slot we may touch and restore
+     * it afterwards so returning to the caller preserves its X state. The
+     * 6 register-backed X registers are always synced by
+     * emit_leave/enter_runtime; args past those live in the array. */
+    ErtsSchedulerRegisters *regs = erts_proc_sched_data(p)->registers;
+    Eterm *xreg = regs->x_reg_array.d;
+
+    Uint nsave = ar > 6 ? ar : 6;
+    Eterm saved[MAX_ARG + 8];
+    for (Uint i = 0; i < nsave; i++) {
+        saved[i] = xreg[i];
+    }
+
+    Eterm lst = args;
+    for (Uint i = 0; i < ar; i++) {
+        if (is_not_list(lst)) {
+            for (Uint j = 0; j < nsave; j++) {
+                xreg[j] = saved[j];
+            }
+            return t2_exec_error(p, "argument_list_too_short");
+        }
+        Eterm *cons = list_val(lst);
+        xreg[i] = CAR(cons);
+        lst = CDR(cons);
+    }
+    if (is_not_nil(lst)) {
+        for (Uint j = 0; j < nsave; j++) {
+            xreg[j] = saved[j];
+        }
+        return t2_exec_error(p, "argument_list_too_long");
+    }
+
+    /* Enter the blob and capture its result. NB: valid for non-raising
+     * inputs only; a raising input side-exits into T1's raise path, which
+     * unwinds via the scheduler (to an enclosing Erlang catch) rather than
+     * back through this trampoline -- so the restore below is skipped on
+     * that path, but the unwind trims the caller off the stack anyway. */
+    Eterm result = tramp((void *)p, blob, (void *)regs);
+
+    for (Uint i = 0; i < nsave; i++) {
+        xreg[i] = saved[i];
+    }
+
+    return result;
+}
 
 /* ------------------------------------------------------------------ *
  * Selftest (T2_EMIT_SELFTEST)                                        *
  * ------------------------------------------------------------------ */
-
-using namespace erts_t2;
 
 extern "C" int erts_t2_emit_selftest_enabled(void) {
     static int enabled = -1;
