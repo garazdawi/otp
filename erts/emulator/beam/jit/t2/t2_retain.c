@@ -188,6 +188,19 @@ void erts_t2_retain_commit(ErtsT2RetainedCode *ret,
                      (unsigned long)ret->bytes,
                      (unsigned long)erts_t2_retained_sz());
     }
+
+    /* T2_BUILD=1: immediately reconstruct + validate SSA for every
+     * eligible function, as a load-time corpus test of the builder. */
+    if (erts_t2_build_enabled()) {
+        int failures = erts_t2_build_all(ret);
+
+        if (failures != 0) {
+            erts_fprintf(stderr,
+                         "t2_build: %d function(s) failed in %T\n",
+                         failures,
+                         beam->module);
+        }
+    }
 }
 
 void erts_t2_retained_free(ErtsT2RetainedCode *ret) {

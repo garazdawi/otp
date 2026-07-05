@@ -33,6 +33,7 @@ extern "C"
 #include "erl_alloc.h"
 }
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -95,6 +96,10 @@ namespace erts_t2 {
             return "is_function";
         case T2OpKind::IsTaggedTuple:
             return "is_tagged_tuple";
+        case T2OpKind::TestArity:
+            return "test_arity";
+        case T2OpKind::Succeeded:
+            return "succeeded";
         case T2OpKind::CmpEqExact:
             return "cmp_eq_exact";
         case T2OpKind::CmpNeExact:
@@ -242,6 +247,8 @@ namespace erts_t2 {
         case T2OpKind::IsReference:
         case T2OpKind::IsFunction:
         case T2OpKind::IsTaggedTuple:
+        case T2OpKind::TestArity:
+        case T2OpKind::Succeeded:
         case T2OpKind::CmpEqExact:
         case T2OpKind::CmpNeExact:
         case T2OpKind::CmpEq:
@@ -563,31 +570,32 @@ namespace erts_t2 {
     }
 
     void T2Function::finalize() {
-        /* Reset and count predecessors. */
-        for (T2BasicBlock *b : blocks) {
-            b->num_preds = 0;
-            b->preds = nullptr;
-        }
+        /* Compute the predecessor arrays. A terminator can name the same
+         * successor more than once (e.g. a switch with several values
+         * mapping to one target); CFG edges are deduplicated so a
+         * predecessor appears once and phis carry one input per edge. */
+        std::vector<std::vector<T2BasicBlock *>> preds(blocks.size());
 
         for (T2BasicBlock *b : blocks) {
             for_each_succ(b->terminator, [&](T2BasicBlock *succ) {
                 if (succ != nullptr) {
-                    succ->num_preds++;
+                    auto &v = preds[succ->id];
+
+                    if (std::find(v.begin(), v.end(), b) == v.end()) {
+                        v.push_back(b);
+                    }
                 }
             });
         }
 
         for (T2BasicBlock *b : blocks) {
-            b->preds = arena.alloc_array<T2BasicBlock *>(b->num_preds);
-            b->num_preds = 0; /* reused as a fill cursor below */
-        }
+            const auto &v = preds[b->id];
 
-        for (T2BasicBlock *b : blocks) {
-            for_each_succ(b->terminator, [&](T2BasicBlock *succ) {
-                if (succ != nullptr) {
-                    succ->preds[succ->num_preds++] = b;
-                }
-            });
+            b->num_preds = static_cast<uint32_t>(v.size());
+            b->preds = arena.alloc_array<T2BasicBlock *>(v.size());
+            for (size_t i = 0; i < v.size(); i++) {
+                b->preds[i] = v[i];
+            }
         }
     }
 
@@ -923,6 +931,13 @@ namespace erts_t2 {
                                 b->num_preds);
                 }
 
+                if (phi->num_operands == 0 && reachable[b->id]) {
+                    /* An empty phi in reachable code is an undefined
+                     * read that leaked through construction. */
+                    return fail("block %u: empty phi in reachable block",
+                                b->id);
+                }
+
                 if (phi->num_operands > 0 && phi->phi_blocks == nullptr) {
                     return fail(
                             "block %u: phi with inputs but no incoming blocks",
@@ -1082,6 +1097,7 @@ namespace erts_t2 {
         case T2OpKind::GetTupleElement:
         case T2OpKind::IsFunction:
         case T2OpKind::IsTaggedTuple:
+        case T2OpKind::TestArity:
         case T2OpKind::MakeFun:
             snprintf(buf, sizeof(buf), " #%u", op->index);
             out += buf;

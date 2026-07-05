@@ -131,6 +131,16 @@ UWord erts_t2_retained_sz(void);
 /* t2_eligible.c: true iff the tier supports this generic opcode. */
 int erts_t2_genop_supported(int genop);
 
+/* t2_hir_builder.cpp: true iff T2_BUILD=1 (build SSA for every eligible
+ * function right after retention commits, as a load-time corpus
+ * crash/validation test). */
+int erts_t2_build_enabled(void);
+
+/* t2_hir_builder.cpp: builds + validates SSA for every eligible
+ * function in \p ret. Returns the number of functions that failed to
+ * build or validate (0 = green). Reports failures on stderr. */
+int erts_t2_build_all(const ErtsT2RetainedCode *ret);
+
 /* t2_eligible.c: scans every function's generic ops; returns a bitmap
  * with one bit per function (caller frees, ERTS_ALC_T_T2_CODE), or
  * NULL when the module has no functions. Sets \p *any_eligible . */

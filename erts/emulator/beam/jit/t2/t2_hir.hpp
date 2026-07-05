@@ -87,6 +87,8 @@ namespace erts_t2 {
         IsReference,
         IsFunction,
         IsTaggedTuple,
+        TestArity, /* tuple arity check (BEAM test_arity) */
+        Succeeded, /* did the preceding op succeed (beam_ssa 'succeeded') */
 
         /* Comparisons */
         CmpEqExact,
