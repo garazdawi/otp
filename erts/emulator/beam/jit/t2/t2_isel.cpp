@@ -143,6 +143,36 @@ namespace erts_t2 {
                 return PhysLoc::xreg((uint16_t)t2_reg_index(reg));
             }
 
+            /* A boxed ConstLiteral term is safe to embed in a standalone
+             * blob as a bare immediate (a tagged pointer into the literal
+             * area) only when it is a *persistent static* literal of this
+             * module: the retained literal_map keeps it alive for as long
+             * as the module — and therefore the blob — is loaded. Dynamic
+             * literals (bignum immediates synthesized during this decode;
+             * the builder recorded index 0 for them, PLAN/T2FULL/07 §"read
+             * TAG_q") live only in the transient decode view and must never
+             * be embedded. A T2 blob cannot use ArgLiteral either: the JIT
+             * literal ArgVal defers to a loader patch (beam_asm_module.cpp
+             * emit_constant embeds LLONG_MAX + records literals[i].patches),
+             * which standalone blobs never run — so the retained term is the
+             * only usable handle. Returns the retained term on success. */
+            bool safe_literal_term(const T2Op *def, Eterm *out) {
+                if (def->kind != T2OpKind::ConstLiteral || ctx.ret == nullptr) {
+                    return false;
+                }
+                if (def->index >= (Uint32)ctx.ret->literal_count) {
+                    return false;
+                }
+                Eterm term = ctx.ret->literal_map[def->index];
+                if (term != def->imm_term) {
+                    /* Index-0 placeholder for a dynamic literal, or a stale
+                     * mismatch: not the persistent static literal. */
+                    return false;
+                }
+                *out = term;
+                return true;
+            }
+
             /* The canonical home of operand i of `op`: its decoded source
              * register when it came from one, otherwise the operand must
              * be an inline-able constant. */
@@ -167,12 +197,48 @@ namespace erts_t2 {
                                      ? make_small(def->imm_int)
                                      : def->imm_term;
                 if (!is_immed(term)) {
-                    return fail_op(op,
-                                   "boxed literal operand unsupported in P1 "
-                                   "commit-3 isel");
+                    /* Boxed literal operand: only a persistent static
+                     * literal may be materialized as a bare immediate (a
+                     * tagged literal-area pointer). Correct for value-carrying
+                     * contexts (move, put_list/put_tuple2 elements, mixed
+                     * arithmetic — the tagged pointer IS the term). Callers
+                     * that need term-deep semantics (exact/ordering compares)
+                     * reject boxed operands separately (guard_reject_boxed). */
+                    if (!safe_literal_term(def, &term)) {
+                        return fail_op(op,
+                                       "boxed literal operand unsupported in P1 "
+                                       "commit-3 isel");
+                    }
                 }
                 *out = T2LirSrc::immediate(term);
                 return true;
+            }
+
+            /* Type tests and comparisons must never receive a boxed literal
+             * as a bare immediate: emit_is_eq_exact/… only take the term-deep
+             * path for an ArgLiteral (loader-resolved), and fall back to a
+             * *shallow pointer* compare for a plain immediate — wrong for a
+             * boxed term. A T2 blob has no ArgLiteral, so reject and let the
+             * function stay T1 for these sites. */
+            bool guard_has_boxed_literal(const T2Op *op) {
+                for (uint16_t i = 0; i < op->num_operands; i++) {
+                    bool from_reg = op->operand_regs != nullptr &&
+                                    op->operand_regs[i] != T2_REG_NONE;
+                    if (from_reg) {
+                        continue;
+                    }
+                    const T2Op *def = op->operands[i]->def;
+                    if (!is_const_kind(def->kind)) {
+                        continue;
+                    }
+                    Eterm term = def->kind == T2OpKind::ConstInt
+                                         ? make_small(def->imm_int)
+                                         : def->imm_term;
+                    if (!is_immed(term)) {
+                        return true;
+                    }
+                }
+                return false;
             }
 
             bool fill_srcs(const T2Op *op, T2LirOp *lop) {
@@ -337,6 +403,12 @@ namespace erts_t2 {
                                        "guard result not consumed by this "
                                        "block's branch");
                     }
+                    if (guard_has_boxed_literal(op)) {
+                        return fail_op(op,
+                                       "boxed literal operand in comparison/"
+                                       "test unsupported (needs literal-pool "
+                                       "deep compare) in P1 isel");
+                    }
                     const T2Op *term = op->block->terminator;
 
                     lop.kind = gk;
@@ -379,7 +451,8 @@ namespace erts_t2 {
                                              ? make_small(op->imm_int)
                                              : op->imm_term;
 
-                        if (!is_immed(term)) {
+                        if (!is_immed(term) &&
+                            !safe_literal_term(op, &term)) {
                             return fail_op(op,
                                            "boxed literal move unsupported "
                                            "in P1 commit-3 isel");
