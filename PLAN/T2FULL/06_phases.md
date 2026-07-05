@@ -69,6 +69,28 @@ rescope:
 > needed. Caveat: 120/295 corpus functions were `not_eligible` at
 > P0's op set (binaries/maps/complex guards) — the suite re-runs
 > as eligibility widens in P2. Next: P1.
+>
+> **P1 status: functionally COMPLETE (2026-07-06, HEAD
+> `6920ba6306`), full-sweep confirmation pending.** Identity
+> pipeline (HIR→LIR→isel→sync-everything regalloc→emission via
+> reused T1 emitters), sync-point register maps + frame ops (7
+> pinned design decisions), prologue-patch install/revert +
+> `+JT2enable` (compile-at-load ~75 ms, 4 808 blobs at boot),
+> trace-always-wins jettison, full purge integration, light-BIF
+> demote-on-yield/trap (`ERTS_T2_PC_BIF`; yield ARG3 = T1 site PC,
+> trap CP = T1 CONT; shared emission helper with T1 so fragments
+> cannot drift). Coverage **87.7 %** of eligible functions (94.3 %
+> excluding never-lowerable BIF stubs). Gate slice green
+> (process/exception/trace×6/code/nif + stdlib smoke); reductions
+> byte-identical incl. multi-timeslice BIF yields; G1 unchanged.
+> Real bugs the gate caught: `select_tuple_arity` header-vs-value
+> compare, loader-transformed pseudo-BIF reduction inflation,
+> BIF-stub dead-chunk install, debug-emulator lock-order (incl. a
+> pre-existing branch-wide `alloc_profile` one). Remaining for P1
+> close: the full multi-hour emulator sweep at final coverage +
+> the server-ARM leg (M0.5 workflow). Rejected-in-P1 (documented):
+> heavy-BIF sites (~23), non-arith gc_bifs (~91), exact-compare
+> literal operands (~97), on_load modules.
 
 Identical scope, gates, and estimates to
 [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §8 Track B —
