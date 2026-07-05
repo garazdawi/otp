@@ -30,6 +30,7 @@ extern "C"
 #include "code_ix.h"
 #include "export.h"
 #include "erl_threads.h"
+#include "t2_retain.h"
 
 #if defined(__APPLE__)
 #    include <libkern/OSCacheControl.h>
@@ -292,6 +293,7 @@ void beamasm_init() {
 
     beamasm_metadata_early_init();
     init_cache_info();
+    erts_t2_init();
 
     /*
      * Ensure that commonly used fields in the PCB can be accessed with

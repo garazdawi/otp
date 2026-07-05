@@ -44,6 +44,7 @@
 #include "erl_record.h"
 
 #include "jit/beam_asm.h"
+#include "jit/t2/t2_retain.h"
 
 #if defined(BEAMASM) && defined(ADDRESS_SANITIZER)
 #  include <sanitizer/lsan_interface.h>
@@ -2231,6 +2232,9 @@ BIF_RETTYPE erts_internal_purge_module_2(BIF_ALIST_2)
                 beamasm_purge_module(modp->old.executable_region,
                                      modp->old.writable_region,
                                      modp->old.code_length);
+
+                /* T2-Full: free any retained tier-2 tables. */
+                erts_t2_release(&modp->old);
 #endif
 
                 modp->old.code_hdr = NULL;

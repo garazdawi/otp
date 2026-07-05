@@ -38,6 +38,11 @@ struct erl_module_instance {
     void *writable_region;
     void *metadata;
 
+    /* T2-Full: retained decoded-code tables for tier-2 SSA
+     * reconstruction. NULL unless tier-2 retention is enabled and the
+     * module has eligible functions. See jit/t2/t2_retain.h. */
+    struct ErtsT2RetainedCode* t2_retained;
+
     /* Protected by code modification permission. */
     int unsealed;
 };

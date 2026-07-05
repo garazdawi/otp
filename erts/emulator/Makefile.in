@@ -1129,7 +1129,9 @@ endif
 # Tier-2 (T2-Full) mid-end. Architecture-independent; the arch-specific
 # emitter hooks live in the per-arch files above. See PLAN/T2FULL/.
 JIT_OBJS += \
-	$(OBJDIR)/t2/t2_hir.o
+	$(OBJDIR)/t2/t2_eligible.o \
+	$(OBJDIR)/t2/t2_hir.o \
+	$(OBJDIR)/t2/t2_retain.o
 
 JIT_OBJS += $(ASMJIT_OBJS)
 
@@ -1396,6 +1398,7 @@ BEAM_SRC=$(wildcard beam/*.c)
 ifeq ($(FLAVOR),emu)
 BEAM_SRC+=$(wildcard beam/emu/*.c)
 else
+BEAM_SRC+=$(wildcard beam/jit/t2/*.c)
 BEAM_CPP_SRC=$(wildcard beam/*.cpp) $(wildcard beam/jit/*.cpp) $(wildcard beam/jit/t2/*.cpp) $(wildcard beam/jit/$(JIT_ARCH)/*.cpp)
 endif
 DRV_COMMON_SRC=$(wildcard drivers/common/*.c)
