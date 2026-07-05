@@ -1,0 +1,343 @@
+## %CopyrightBegin%
+##
+## SPDX-License-Identifier: Apache-2.0
+##
+## Copyright Ericsson AB 2026. All Rights Reserved.
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+##
+## %CopyrightEnd%
+
+## T2-Full M0.5 — server-ARM validation of the T2 experiment kit.
+##
+## Builds the JIT emulator on a GitHub-hosted ubuntu-24.04-arm (Neoverse)
+## runner, runs the T2 infrastructure checks (self-test, corpus+isel sweep,
+## g1 fidelity) and the rule-5 measurement kit (the env-gated hand-written
+## specializations whose Apple-Silicon nulls/wins PLAN/T2/08 §2.3 rule 5 asks
+## to re-price on server ARM), then uploads a results dir and prints a compact
+## experiment -> key-ratio summary.
+##
+## Snapshot branch of lukas/erts/beamjit2. Runs on the garazdawi/otp fork only
+## (free arm64 hosted runners for public forks).
+
+name: T2 ARM bench
+
+on:
+  ## Manual trigger is how the snapshot branch (lukas/erts/beamjit2-armci) is
+  ## run; the push trigger watches the real work branch per the M0.5 brief.
+  workflow_dispatch:
+  push:
+    branches:
+      - lukas/erts/beamjit2
+
+permissions:
+  contents: read
+
+env:
+  ERL_TOP: ${{ github.workspace }}
+  ## Keep stray crash dumps (e.g. scanbench's halt/1 with a tuple) out of the
+  ## workspace and the artifact.
+  ERL_CRASH_DUMP: /dev/null
+  ERL_CRASH_DUMP_SECONDS: "0"
+
+jobs:
+  t2-arm-bench:
+    name: Build + T2 kit on Neoverse (ubuntu-24.04-arm)
+    ## Fork-only: the hosted arm64 runners are free for public forks; never let
+    ## this run if the branch ever lands on erlang/otp.
+    if: github.repository == 'garazdawi/otp'
+    runs-on: ubuntu-24.04-arm
+    ## Bounded well under the hosted-runner 6h hard limit (build ~40-60 min,
+    ## kit ~15 min).
+    timeout-minutes: 330
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install build dependencies
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential autoconf m4 libncurses-dev libssl-dev ccache
+          ## Put ccache's compiler shims first on PATH for every later step, so
+          ## a plain ./configure && make transparently uses ccache.
+          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
+
+      - name: Restore ccache
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: ~/.cache/ccache
+          key: t2-arm-ccache-${{ github.sha }}
+          restore-keys: |
+            t2-arm-ccache-
+
+      - name: Configure
+        run: |
+          set -eux
+          ccache --zero-stats || true
+          ./configure
+
+      - name: Build (make)
+        run: |
+          set -eux
+          make -j"$(nproc)"
+          ccache --show-stats || true
+
+      - name: Verify JIT flavor
+        run: |
+          set -eux
+          FLAVOR=$("$ERL_TOP/bin/erl" -noshell \
+            -eval 'io:format("~p~n",[erlang:system_info(emu_flavor)]), halt()')
+          echo "emu_flavor=$FLAVOR"
+          test "$FLAVOR" = jit
+
+      - name: Prepare corpus (compile experiment modules + generate JSON corpus)
+        run: |
+          set -eux
+          ERLC="$ERL_TOP/bin/erlc"
+          PLANV="$ERL_TOP/PLAN/verification"
+          mkdir -p "$ERL_TOP/t2-results"
+          mkdir -p "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/gbin" "$RUNNER_TEMP/scan" \
+                   "$RUNNER_TEMP/sb_stock" "$RUNNER_TEMP/sb_scan"
+
+          ## Experiment + gate harnesses, the MVP module, and the g1 driver.
+          "$ERLC" -o "$RUNNER_TEMP/corpus" \
+            "$PLANV/t2_gmap.erl" "$PLANV/t2_g31.erl" "$PLANV/t2_g3.erl" \
+            "$PLANV/t2_gbin.erl" "$PLANV/recv_srv.erl" "$PLANV/recv_bench.erl" \
+            "$ERL_TOP/PLAN/mvp/t2_mvp.erl" \
+            "$ERL_TOP/erts/emulator/test/t2_g1_SUITE.erl"
+
+          ## json_decode_bench.erl declares module `bench2', so it must be
+          ## compiled from a matching filename.
+          cp "$PLANV/json_decode_bench.erl" "$RUNNER_TEMP/bench2.erl"
+          "$ERLC" -o "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/bench2.erl"
+
+          ## scanbench: A1 scan_loop is a compile option -> build stock and
+          ## +scan_loop copies of the same module. A1 is supplementary; if the
+          ## scan_loop option is gone/broken on this HEAD, note-and-skip rather
+          ## than fail the whole job.
+          "$ERLC"            -o "$RUNNER_TEMP/sb_stock" "$PLANV/scanbench.erl" || true
+          "$ERLC" +scan_loop -o "$RUNNER_TEMP/sb_scan"  "$PLANV/scanbench.erl" || true
+
+          ## bench2 hardcodes code:load_abs("/tmp/scan/json"); build a
+          ## +scan_loop stdlib json there (best-effort, same reason).
+          mkdir -p /tmp/scan
+          "$ERLC" +scan_loop -o /tmp/scan "$ERL_TOP/lib/stdlib/src/json.erl" || true
+
+          ## Synthetic nativejson-shaped corpus (string / structure / number
+          ## heavy) for the G-bin decode benches; deterministic seed.
+          "$ERL_TOP/bin/escript" .github/scripts/t2_gen_json_corpus.es \
+            "$RUNNER_TEMP/gbin" | tee "$ERL_TOP/t2-results/_corpus_gen.txt" || true
+
+      - name: T2 infrastructure checks (self-test, corpus+isel sweep, g1 fidelity)
+        continue-on-error: true
+        run: |
+          set -ux
+          ERL="$ERL_TOP/bin/erl"
+          RES="$ERL_TOP/t2-results"
+          C="$RUNNER_TEMP/corpus"
+          DIA="$ERL_TOP/lib/dialyzer/ebin"
+
+          ## (1) T2_SELFTEST=1 boot: HIR + ranges + emit round-trip self-tests.
+          T2_SELFTEST=1 T2_EMIT_SELFTEST=1 "$ERL" -noshell -eval 'halt()' \
+            > "$RES/00_selftest.txt" 2>&1 || true
+          echo "--- 00_selftest.txt ---"; cat "$RES/00_selftest.txt"
+
+          ## (2) T2_BUILD corpus sweep + T2_ISEL sweep: reconstruct+validate SSA
+          ## and run identity-backend isel for every eligible function at load,
+          ## over the boot modules + the experiment/stdlib corpus.
+          T2_RETAIN=1 T2_BUILD=1 T2_ISEL=1 T2_DEBUG=1 "$ERL" -noshell \
+            -pa "$C" -pa "$DIA" \
+            -eval '[code:ensure_loaded(M) || M <- [t2_mvp,t2_gmap,t2_g31,t2_g3,t2_gbin,lists,maps,binary,string,base64,json,unicode,erl_types]], halt()' \
+            > "$RES/01_sweep.txt" 2>&1 || true
+          echo "--- 01_sweep.txt (isel/build summary) ---"
+          grep -E '^t2_(isel|build): module=' "$RES/01_sweep.txt" | head -20 || true
+
+          ## (3) g1 fidelity: AOT beam_ssa vs tier-2 reconstruction diff report.
+          T2_RETAIN=1 "$ERL" -noshell -pa "$C" -pa "$DIA" \
+            -eval 'erts_debug:set_internal_state(available_internal_state,true), _=t2_g1_SUITE:run(), halt()' \
+            > "$RES/02_g1.txt" 2>&1 || true
+          echo "--- 02_g1.txt (head) ---"
+          grep -E 'fidelity report|reconstructed=|CFG-shape|Semantic' "$RES/02_g1.txt" | head -20 || true
+
+      - name: T2 measurement kit (rule-5 nulls/wins re-priced on Neoverse)
+        continue-on-error: true
+        run: |
+          set -ux
+          ERL="$ERL_TOP/bin/erl"
+          RES="$ERL_TOP/t2-results"
+          C="$RUNNER_TEMP/corpus"
+          DIA="$ERL_TOP/lib/dialyzer/ebin"
+          GBIN="$RUNNER_TEMP/gbin"
+
+          ## MVP (static hook, always on in this build; no clean off/on toggle):
+          ## record absolute steady-state timing for the record.
+          "$ERL" -noshell -pa "$C" \
+            -eval 'M=t2_mvp:time_run(1000000,200), io:format("min=~p median=~p ns_per_iter=~p~n",[maps:get(min,M),maps:get(median,M),maps:get(ns_per_iter,M)]), halt()' \
+            > "$RES/09_mvp.txt" 2>&1 || true
+
+          ## G3 subject 2 (call-crossing / overhead-only inlining) -- Apple: a
+          ## null, b 2.25x micro. off | a | b in one build.
+          for m in off a b; do
+            T2_G3=$m "$ERL" -noshell -pa "$C" -pa "$DIA" \
+              -eval 't2_g3:check(), t2_g3:bench(15), halt().' \
+              > "$RES/03_g3_$m.txt" 2>&1 || true
+          done
+
+          ## G3 subject 1 (branchy dispatch, null) + G-map (flatmap shape, 1.64x
+          ## win). Baseline then treatment.
+          "$ERL" -noshell -pa "$C" \
+            -eval 't2_g31:check(), t2_gmap:check(), t2_g31:bench(11), t2_gmap:bench(11), halt().' \
+            > "$RES/04_g31gmap_base.txt" 2>&1 || true
+          T2_G31=1 T2_GMAP=1 "$ERL" -noshell -pa "$C" \
+            -eval 't2_g31:check(), t2_gmap:check(), t2_g31:bench(11), t2_gmap:bench(11), halt().' \
+            > "$RES/04_g31gmap_treat.txt" 2>&1 || true
+
+          ## G-bin (json scan fusion) -- Apple: 5.6x isolated / 6-10% e2e.
+          ## Synthetic corpus, so the e2e ratio is the rule-5 signal, not the
+          ## absolute us. check hash must match across modes.
+          "$ERL" -noshell -pa "$C" \
+            -eval 't2_gbin:check("'"$GBIN"'"), t2_gbin:bench("'"$GBIN"'",15), halt().' \
+            > "$RES/05_gbin_base.txt" 2>&1 || true
+          T2_GBIN=1 "$ERL" -noshell -pa "$C" \
+            -eval 't2_gbin:check("'"$GBIN"'"), t2_gbin:bench("'"$GBIN"'",15), halt().' \
+            > "$RES/05_gbin_treat.txt" 2>&1 || true
+
+          ## scanbench (A1 scalar/SWAR scan_loop) -- isolated bytewise scan.
+          "$ERL" -noshell -pa "$RUNNER_TEMP/sb_stock" -eval 'scanbench:go()' \
+            > "$RES/06_scan_stock.txt" 2>&1 || true
+          "$ERL" -noshell -pa "$RUNNER_TEMP/sb_scan"  -eval 'scanbench:go()' \
+            > "$RES/06_scan_loop.txt" 2>&1 || true
+
+          ## json_decode_bench (bench2): stock json vs +scan_loop json, e2e.
+          "$ERL" -noshell -pa "$C" -eval 'bench2:go()' \
+            > "$RES/07_bench2.txt" 2>&1 || true
+
+          ## recv_bench: receive-path classification (counters always on;
+          ## arch-invariant structure -- a clean rule-5 cross-check). Skip w3
+          ## (Bandit/Elixir) and w4 (dialyzer PLT) here.
+          "$ERL" -noshell -pa "$C" \
+            -eval 'recv_bench:validate(), recv_bench:w1_genserver(64,5000), recv_bench:w2_ring(200,4000,5000), recv_bench:w2_flood(200000,40), halt().' \
+            > "$RES/08_recv.txt" 2>&1 || true
+
+          echo "results dir:"; ls -la "$RES" || true
+
+      - name: Build summary table
+        if: always()
+        run: |
+          # shellcheck disable=SC2016  # awk field refs like $(i+1) are single-quoted on purpose
+          set -u
+          RES="$ERL_TOP/t2-results"
+          SUM="$RES/SUMMARY.md"
+
+          minof() { # file, first-column-tag  -> number after "min"
+            grep -m1 "$2" "$1" 2>/dev/null \
+              | awk '{for(i=1;i<=NF;i++) if($i=="min"){print $(i+1); exit}}'
+          }
+          gbps() { # file, tag(plain|digit) -> GB/s value in parens
+            grep -m1 "$2:" "$1" 2>/dev/null \
+              | sed -E 's/.*\(([0-9.]+) GB\/s.*/\1/'
+          }
+          ratio() { # base treat (lower-us faster) -> base/treat
+            awk -v b="$1" -v t="$2" 'BEGIN{
+              if (b+0>0 && t+0>0) printf "%.2f", b/t; else printf "n/a"; }'
+          }
+          rgbps() { # stock treat (higher GB/s faster) -> treat/stock
+            awk -v s="$1" -v t="$2" 'BEGIN{
+              if (s+0>0 && t+0>0) printf "%.2f", t/s; else printf "n/a"; }'
+          }
+          v() { local x; x=$(eval "$1"); echo "${x:-?}"; }
+
+          ## --- infra ---
+          if grep -q 'self-tests passed' "$RES/00_selftest.txt" 2>/dev/null; then
+            SELFTEST=PASS; else SELFTEST=FAIL/skip; fi
+          ISEL_MODS=$(grep -c '^t2_isel: module=' "$RES/01_sweep.txt" 2>/dev/null); ISEL_MODS=${ISEL_MODS:-0}
+          ISEL_LOW=$(grep '^t2_isel: module=' "$RES/01_sweep.txt" 2>/dev/null \
+            | awk -F'[= ]' '{for(i=1;i<=NF;i++){if($i=="lowered")l+=$(i+1)}} END{print l+0}')
+          ISEL_UNS=$(grep '^t2_isel: module=' "$RES/01_sweep.txt" 2>/dev/null \
+            | awk -F'[= ]' '{for(i=1;i<=NF;i++){if($i=="unsupported")u+=$(i+1)}} END{print u+0}')
+          BUILD_FAIL=$(grep -c 'build failed\|validation failed\|function(s) failed' "$RES/01_sweep.txt" 2>/dev/null); BUILD_FAIL=${BUILD_FAIL:-0}
+          G1_LINE=$(grep -m1 'reconstructed=' "$RES/02_g1.txt" 2>/dev/null || echo "n/a")
+
+          ## --- benches ---
+          G3B_OFF=$(v 'minof "$RES/03_g3_off.txt" "^leafy"')
+          G3B_A=$(v   'minof "$RES/03_g3_a.txt" "^leafy"')
+          G3B_B=$(v   'minof "$RES/03_g3_b.txt" "^leafy"')
+          G31_BASE=$(v  'minof "$RES/04_g31gmap_base.txt" "^dispatch"')
+          G31_TREAT=$(v 'minof "$RES/04_g31gmap_treat.txt" "^dispatch"')
+          GMAP_BASE=$(v  'minof "$RES/04_g31gmap_base.txt" "sum_scores"')
+          GMAP_TREAT=$(v 'minof "$RES/04_g31gmap_treat.txt" "sum_scores"')
+          GBIN_BASE=$(v  'minof "$RES/05_gbin_base.txt" "twitter.json"')
+          GBIN_TREAT=$(v 'minof "$RES/05_gbin_treat.txt" "twitter.json"')
+          SCP_S=$(v 'gbps "$RES/06_scan_stock.txt" "plain"')
+          SCP_T=$(v 'gbps "$RES/06_scan_loop.txt" "plain"')
+          SCD_S=$(v 'gbps "$RES/06_scan_stock.txt" "digit"')
+          SCD_T=$(v 'gbps "$RES/06_scan_loop.txt" "digit"')
+          ## bench2 prints a size line and a result line per doc; keep the one
+          ## carrying the "Nx" speedup.
+          B2_TW=$(grep 'twitter' "$RES/07_bench2.txt" 2>/dev/null | grep -oE '[0-9.]+x' | head -1)
+          B2_TW=${B2_TW:-?}
+
+          ## correctness hashes (must match across modes)
+          GBIN_H_BASE=$(grep -m1 'decode hash' "$RES/05_gbin_base.txt" 2>/dev/null | awk '{print $NF}')
+          GBIN_H_TREAT=$(grep -m1 'decode hash' "$RES/05_gbin_treat.txt" 2>/dev/null | awk '{print $NF}')
+          if [ -n "$GBIN_H_BASE" ] && [ "$GBIN_H_BASE" = "$GBIN_H_TREAT" ]; then GBIN_OK="hash-ok"; else GBIN_OK="HASH-DIFF"; fi
+
+          RECV_W1=$(grep -A2 'W1 gen_server' "$RES/08_recv.txt" 2>/dev/null | grep -m1 'hit ' | grep -oE '[0-9.]+%' | head -1 || echo "?")
+          RECV_RING=$(grep -A2 'W2 ring' "$RES/08_recv.txt" 2>/dev/null | grep -m1 'hit ' | grep -oE '[0-9.]+%' | head -1 || echo "?")
+          RECV_FLOOD=$(grep -A2 'W2b flood' "$RES/08_recv.txt" 2>/dev/null | grep -m1 'hit ' | grep -oE '[0-9.]+%' | head -1 || echo "?")
+
+          {
+            echo "# T2 ARM bench — Neoverse (ubuntu-24.04-arm)"
+            echo ""
+            echo "Commit \`${GITHUB_SHA:-local}\`. JSON corpus is synthetic (nativejson-shaped);"
+            echo "G-bin absolute us differ from the Apple OUTCOME files — the **ratio** is the rule-5 signal."
+            echo ""
+            echo "## Infrastructure checks (structural — should hold identically to Apple)"
+            echo ""
+            echo "| check | result |"
+            echo "|---|---|"
+            echo "| T2_SELFTEST (HIR+ranges+emit) | $SELFTEST |"
+            echo "| T2_BUILD+T2_ISEL sweep | modules=$ISEL_MODS lowered=$ISEL_LOW unsupported=$ISEL_UNS build_failures=$BUILD_FAIL |"
+            echo "| g1 fidelity (dssaopt) | $G1_LINE |"
+            echo ""
+            echo "## Measurement kit (rule-5: do the Apple nulls/wins hold on server ARM?)"
+            echo ""
+            echo "| experiment | Apple (OUTCOME) | arm-runner | ratio |"
+            echo "|---|---|---|---|"
+            echo "| MVP total/2 (static, no toggle) | 1.97x min vs T1 | $(cat "$RES/09_mvp.txt" 2>/dev/null | tr -d '\n' | sed 's/|/ /g') | n/a (static) |"
+            echo "| G3-2 stage a (call-cross, leafy) | ~1.0x (null) | off=$G3B_OFF a=$G3B_A us | $(ratio "$G3B_OFF" "$G3B_A") |"
+            echo "| G3-2 stage b (inline header, leafy) | 2.25x | off=$G3B_OFF b=$G3B_B us | $(ratio "$G3B_OFF" "$G3B_B") |"
+            echo "| G3-1 branchy dispatch | 1.02x (null) | base=$G31_BASE treat=$G31_TREAT us | $(ratio "$G31_BASE" "$G31_TREAT") |"
+            echo "| G-map flatmap shape | 1.64x | base=$GMAP_BASE treat=$GMAP_TREAT us | $(ratio "$GMAP_BASE" "$GMAP_TREAT") |"
+            echo "| G-bin json e2e (twitter) | 1.10x | base=$GBIN_BASE treat=$GBIN_TREAT us ($GBIN_OK) | $(ratio "$GBIN_BASE" "$GBIN_TREAT") |"
+            echo "| A1 scanbench plain (scan_loop) | 2.93x | stock=$SCP_S scan=$SCP_T GB/s | $(rgbps "$SCP_S" "$SCP_T") |"
+            echo "| A1 scanbench digit (scan_loop) | 4.08x | stock=$SCD_S scan=$SCD_T GB/s | $(rgbps "$SCD_S" "$SCD_T") |"
+            echo "| A1 json_decode_bench twitter | 1.03-1.04x | $B2_TW | $B2_TW |"
+            echo "| recv classify (arch-invariant) | W1 49.98% / ring 99.38% / flood 99.75% | W1 $RECV_W1 / ring $RECV_RING / flood $RECV_FLOOD | — |"
+            echo ""
+            echo "Ratios >1.0 mean the arm-runner speedup; null experiments should stay ~1.0."
+          } | tee "$SUM"
+
+          ## Also surface the table in the GitHub run summary.
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$SUM" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: t2-arm-bench-results
+          path: t2-results/
+          if-no-files-found: warn
