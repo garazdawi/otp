@@ -46,6 +46,16 @@
  * jumps to the function's func_info label and the badmatch/if_end/
  * case_end ops become synthesized error-exit blocks terminated by a
  * tail call to erlang:error. No exception CFG is modelled.
+ *
+ * P1: the builder additionally snapshots its own Braun reg->value
+ * bookkeeping at every sync-point op into T2SyncMap metadata, makes
+ * allocate/deallocate/trim first-class ops, and records the decoded
+ * canonical home of every value (see t2_hir.hpp's P1 header comment
+ * for the conventions and their rationale). The stack-frame size at
+ * every point comes from a small fixpoint pre-pass over the decoded
+ * ops (frame size is a property of program points, not of SSA values,
+ * and a label may be reached only by edges that appear later in the
+ * stream).
  */
 
 #include "t2_hir.hpp"
@@ -251,13 +261,32 @@ namespace erts_t2 {
          * Function builder                                                   *
          * ------------------------------------------------------------------ */
 
-        /* Braun-variable keys: X registers as-is, Y registers offset. */
-        constexpr uint32_t Y_VAR_BASE = 0x10000;
+        /* Braun-variable keys: X registers as-is, Y registers offset. The
+         * key doubles as the canonical-home register encoding recorded on
+         * ops and sync maps (t2_hir.hpp). */
+        constexpr uint32_t Y_VAR_BASE = (uint32_t)T2_YREG_BASE;
+
+        /* Frame size at a point: T2_NO_FRAME, a slot count, unknown
+         * (label never reached by the fixpoint — unreachable code), or
+         * conflicting (an error-exit label reached from guard fails at
+         * differing frame depths — legal BEAM; such blocks only raise,
+         * so nothing frame-dependent may appear in them). */
+        constexpr int32_t FRAME_UNKNOWN = -2;
+        constexpr int32_t FRAME_CONFLICT = -3;
+
+        /* An operand read: the SSA value plus the BEAM register it was
+         * read from (T2_REG_NONE for constants). */
+        struct SrcVal {
+            T2Value *v;
+            int32_t reg;
+        };
 
         class FunctionBuilder {
         public:
-            FunctionBuilder(ModuleDecode &md_, const FunctionCode &fc_)
-                    : md(md_), ret(md_.ret), fc(fc_) {
+            FunctionBuilder(ModuleDecode &md_,
+                            const FunctionCode &fc_,
+                            uint32_t fn_index_)
+                    : md(md_), ret(md_.ret), fc(fc_), fn_index(fn_index_) {
             }
 
             std::unique_ptr<T2Function> build(std::string *err);
@@ -266,6 +295,7 @@ namespace erts_t2 {
             ModuleDecode &md;
             const ErtsT2RetainedCode *ret;
             const FunctionCode &fc;
+            uint32_t fn_index;
 
             std::unique_ptr<T2Function> fn;
 
@@ -273,6 +303,11 @@ namespace erts_t2 {
             T2BasicBlock *error_block = nullptr;
             T2BasicBlock *cur = nullptr;
             const DecodedOp *cur_op = nullptr;
+
+            /* Stack-frame size at the current translation point, and the
+             * per-label frame-in map from the pre-pass. */
+            int32_t cur_frame = T2_NO_FRAME;
+            std::unordered_map<UWord, int32_t> label_frame;
 
             /* Braun state, indexed by block id. */
             std::vector<std::unordered_map<uint32_t, T2Value *>> defs;
@@ -337,6 +372,8 @@ namespace erts_t2 {
                 if (!b->sealed) {
                     T2Op *phi = fn->new_phi(b, T2Type::any());
                     phi->beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
+                    /* The phi's canonical home is the register it merges. */
+                    phi->dst_reg = (int32_t)var;
                     incomplete[b->id].push_back({var, phi});
                     val = phi->result;
                 } else if (preds[b->id].size() == 1) {
@@ -347,6 +384,7 @@ namespace erts_t2 {
                 } else {
                     T2Op *phi = fn->new_phi(b, T2Type::any());
                     phi->beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
+                    phi->dst_reg = (int32_t)var;
                     /* Break lookup cycles through loops before filling. */
                     write_var(b, var, phi->result);
                     val = add_phi_operands(b, var, phi);
@@ -452,6 +490,36 @@ namespace erts_t2 {
                 }
             }
 
+            /* read_arg plus the canonical home the value was read from
+             * (T2_REG_NONE for constants). */
+            SrcVal read_arg_r(const DecodedArg &a) {
+                int32_t reg = (a.type == TAG_x || a.type == TAG_y)
+                                      ? (int32_t)reg_var(a)
+                                      : T2_REG_NONE;
+                return SrcVal{read_arg(a), reg};
+            }
+
+            /* Attach the operand-register array when any operand came
+             * from a BEAM register. */
+            void set_operand_regs(T2Op *op, const std::vector<SrcVal> &srcs) {
+                bool any = false;
+
+                for (const SrcVal &s : srcs) {
+                    if (s.reg != T2_REG_NONE) {
+                        any = true;
+                        break;
+                    }
+                }
+                if (!any) {
+                    return;
+                }
+
+                op->operand_regs = fn->arena.alloc_array<int32_t>(srcs.size());
+                for (size_t i = 0; i < srcs.size(); i++) {
+                    op->operand_regs[i] = srcs[i].reg;
+                }
+            }
+
             void write_dst(const DecodedArg &a, T2Value *v) {
                 if (a.type != TAG_x && a.type != TAG_y) {
                     fail("unexpected destination operand tag");
@@ -462,6 +530,76 @@ namespace erts_t2 {
                 }
                 seed_type(v, a.val);
                 write_var(cur, reg_var(a), v);
+            }
+
+            /* write_dst for a freshly created op: additionally records the
+             * decoded destination register as the value's canonical home.
+             * Every op result that lands in a BEAM register must go
+             * through here (identity-placement discipline). */
+            void write_dst_new(const DecodedArg &a, T2Value *v) {
+                if (v != nullptr && a.type != TAG_x && a.type != TAG_y) {
+                    fail("unexpected destination operand tag");
+                    return;
+                }
+                if (v != nullptr) {
+                    if (v->def->dst_reg != T2_REG_NONE) {
+                        fail("value rebound to a second home (builder drift)");
+                        return;
+                    }
+                    v->def->dst_reg = (int32_t)reg_var(a);
+                }
+                write_dst(a, v);
+            }
+
+            /* ---- sync-point snapshots -------------------------------- */
+
+            /* Snapshot the exact BEAM register state at the current
+             * boundary from the Braun maps: X0..x_live-1 plus the whole
+             * frame. See T2SyncMap in t2_hir.hpp for the conventions. */
+            T2SyncMap *snapshot_sync(uint32_t x_live) {
+                if (failed) {
+                    return nullptr;
+                }
+                if (cur_frame == FRAME_UNKNOWN || cur_frame == FRAME_CONFLICT) {
+                    fail(cur_frame == FRAME_UNKNOWN
+                                 ? "sync point with unknown frame size "
+                                   "(unreachable label?)"
+                                 : "sync point in a frame-polymorphic error "
+                                   "block");
+                    return nullptr;
+                }
+
+                T2SyncMap *m = fn->arena.create<T2SyncMap>();
+
+                m->x_live = x_live;
+                m->x = fn->arena.alloc_array<T2Value *>(x_live);
+                for (uint32_t i = 0; i < x_live; i++) {
+                    T2Value *v = read_var(cur, i);
+
+                    if (v == nullptr) {
+                        fail("sync map: live X register undefined");
+                        return nullptr;
+                    }
+                    m->x[i] = v;
+                }
+
+                m->frame_size = cur_frame;
+                m->y = nullptr;
+                if (cur_frame > 0) {
+                    m->y = fn->arena.alloc_array<T2Value *>((size_t)cur_frame);
+                    for (int32_t i = 0; i < cur_frame; i++) {
+                        T2Value *v = read_var(cur, Y_VAR_BASE + (uint32_t)i);
+
+                        if (v == nullptr) {
+                            fail("sync map: frame Y slot undefined (compiler "
+                                 "init contract violated?)");
+                            return nullptr;
+                        }
+                        m->y[i] = v;
+                    }
+                }
+
+                return m;
             }
 
             /* ---- control-flow helpers --------------------------------------
@@ -478,6 +616,13 @@ namespace erts_t2 {
                     op->mfa_m = am_erlang;
                     op->mfa_f = am_error;
                     op->index = 0;
+
+                    /* The shared function_clause exit: P1 lowers it to a
+                     * side exit to the function's func_info. No sync map
+                     * by design — predecessors reach it with differing
+                     * frame states, exactly as T1 guard sites jump to one
+                     * func_info label (see T2_OP_ERR_EXIT_SHARED). */
+                    op->flags |= T2_OP_ERR_EXIT_SHARED;
 
                     error_block = b;
                 }
@@ -531,17 +676,22 @@ namespace erts_t2 {
              */
 
             T2Value *emit_result_op(T2OpKind kind,
-                                    std::vector<T2Value *> &&ops,
+                                    const std::vector<SrcVal> &srcs,
                                     T2Type ty) {
-                for (T2Value *v : ops) {
-                    if (v == nullptr) {
+                std::vector<T2Value *> vals;
+
+                vals.reserve(srcs.size());
+                for (const SrcVal &s : srcs) {
+                    if (s.v == nullptr) {
                         return nullptr;
                     }
+                    vals.push_back(s.v);
                 }
 
                 T2Op *op = fn->new_op(cur, kind, ty);
                 op->beam_idx = cur_op->beam_idx;
-                fn->set_operands(op, ops);
+                fn->set_operands(op, vals);
+                set_operand_regs(op, srcs);
                 return op->result;
             }
 
@@ -551,7 +701,7 @@ namespace erts_t2 {
 
             void translate_type_test(T2OpKind kind, const DecodedOp &dop) {
                 T2Value *v = emit_result_op(kind,
-                                            {read_arg(dop.args[1])},
+                                            {read_arg_r(dop.args[1])},
                                             bool_type());
                 guard_branch(v, dop.args[0]);
             }
@@ -559,7 +709,7 @@ namespace erts_t2 {
             void translate_compare(T2OpKind kind, const DecodedOp &dop) {
                 T2Value *v = emit_result_op(
                         kind,
-                        {read_arg(dop.args[1]), read_arg(dop.args[2])},
+                        {read_arg_r(dop.args[1]), read_arg_r(dop.args[2])},
                         bool_type());
                 guard_branch(v, dop.args[0]);
             }
@@ -607,6 +757,7 @@ namespace erts_t2 {
             void translate_gc_bif(const DecodedOp &dop, int num_sources) {
                 /* (Fail, Live, BifImportIndex, Src..., Dst) */
                 const DecodedArg &fail = dop.args[0];
+                UWord live = dop.args[1].val;
                 UWord import_index = dop.args[2].val;
                 const DecodedArg &dst = dop.args[3 + num_sources];
 
@@ -618,13 +769,12 @@ namespace erts_t2 {
                 const BeamFile_ImportEntry &mfa = ret->imports[import_index];
                 T2OpKind kind = bif_kind(mfa.module, mfa.function, mfa.arity);
 
-                std::vector<T2Value *> srcs;
+                std::vector<SrcVal> srcs;
                 for (int i = 0; i < num_sources; i++) {
-                    srcs.push_back(read_arg(dop.args[3 + i]));
+                    srcs.push_back(read_arg_r(dop.args[3 + i]));
                 }
 
-                T2Value *v =
-                        emit_result_op(kind, std::move(srcs), T2Type::any());
+                T2Value *v = emit_result_op(kind, srcs, T2Type::any());
                 if (v == nullptr) {
                     return;
                 }
@@ -633,15 +783,21 @@ namespace erts_t2 {
                 op->mfa_m = mfa.module;
                 op->mfa_f = mfa.function;
                 op->index = (uint32_t)num_sources;
+                op->live = (uint32_t)live;
+
+                /* gc_bifs may GC (and, with a {f,0} fail, trap): a sync
+                 * point. The map is the boundary before the op; T1's own
+                 * Live count bounds the live X prefix. */
+                op->sync = snapshot_sync((uint32_t)live);
 
                 if (fail.type == TAG_f) {
                     T2Value *ok = emit_result_op(T2OpKind::Succeeded,
-                                                 {v},
+                                                 {SrcVal{v, T2_REG_NONE}},
                                                  bool_type());
                     guard_branch(ok, fail);
                 }
 
-                write_dst(dst, v);
+                write_dst_new(dst, v);
             }
 
             void fail_op(const DecodedOp &dop, const char *what) {
@@ -666,7 +822,8 @@ namespace erts_t2 {
 
             void translate_call(const DecodedOp &dop,
                                 bool is_tail,
-                                bool is_ext) {
+                                bool is_ext,
+                                bool has_dealloc) {
                 uint32_t arity = (uint32_t)dop.args[0].val;
                 Eterm m, f;
                 uint32_t target_arity;
@@ -692,6 +849,7 @@ namespace erts_t2 {
                 }
 
                 std::vector<T2Value *> args;
+                std::vector<int32_t> arg_regs;
                 for (uint32_t i = 0; i < arity; i++) {
                     T2Value *v = read_var(cur, i);
 
@@ -700,6 +858,37 @@ namespace erts_t2 {
                         return;
                     }
                     args.push_back(v);
+                    arg_regs.push_back(t2_xreg(i));
+                }
+
+                /* A fused call_last deallocates before transferring; split
+                 * that into an explicit Deallocate op so the tail-call sync
+                 * map records the transfer state (no frame) and the frame
+                 * layout stays derivable op by op.
+                 *
+                 * When the Deallocate operand does not match the tracked
+                 * frame (or a call_only carries a live frame), this is the
+                 * compiler's garbage-Deallocate shape for calls it proved
+                 * cannot succeed (see T2_OP_GARBAGE_DEALLOC); translate
+                 * without a frame op or sync map. */
+                bool garbage_dealloc = false;
+
+                if (has_dealloc) {
+                    UWord dealloc = dop.args[2].val;
+
+                    if (cur_frame != (int32_t)dealloc) {
+                        garbage_dealloc = true;
+                    } else {
+                        T2Op *dop_op = fn->new_op(cur,
+                                                  T2OpKind::Deallocate,
+                                                  T2Type::none());
+                        dop_op->beam_idx = dop.beam_idx;
+                        fn->set_operands(dop_op, {});
+                        dop_op->index = (uint32_t)dealloc;
+                        cur_frame = T2_NO_FRAME;
+                    }
+                } else if (is_tail && cur_frame != T2_NO_FRAME) {
+                    garbage_dealloc = true;
                 }
 
                 T2OpKind kind;
@@ -715,44 +904,83 @@ namespace erts_t2 {
                 op->mfa_m = m;
                 op->mfa_f = f;
                 op->index = arity;
+                op->live = arity;
+                if (!args.empty()) {
+                    op->operand_regs =
+                            fn->arena.alloc_array<int32_t>(args.size());
+                    for (size_t i = 0; i < args.size(); i++) {
+                        op->operand_regs[i] = arg_regs[i];
+                    }
+                }
+
+                /* Call boundary sync map: args in X0..arity-1 (by
+                 * construction identical to the operands — the validator
+                 * asserts it), plus the live frame for a non-tail call /
+                 * no frame for a tail transfer. Garbage-dealloc transfers
+                 * carry no map (nothing may consume their frame state). */
+                if (garbage_dealloc) {
+                    op->flags |= T2_OP_GARBAGE_DEALLOC;
+                } else {
+                    op->sync = snapshot_sync(arity);
+                }
 
                 if (is_tail) {
                     end_block();
                 } else {
                     /* The result lands in x0; other X registers die. */
+                    op->dst_reg = t2_xreg(0);
                     write_var(cur, 0, op->result);
                 }
             }
 
             void translate_error_exit(const DecodedOp &dop, bool has_value) {
-                std::vector<T2Value *> args;
+                std::vector<SrcVal> args;
 
                 if (has_value) {
-                    T2Value *v = read_arg(dop.args[0]);
+                    SrcVal s = read_arg_r(dop.args[0]);
 
-                    if (v == nullptr) {
+                    if (s.v == nullptr) {
                         return;
                     }
-                    args.push_back(v);
+                    args.push_back(s);
                 }
 
                 T2Op *op =
                         fn->new_op(cur, T2OpKind::TailCallExt, T2Type::none());
                 op->beam_idx = dop.beam_idx;
-                fn->set_operands(op, args);
+                {
+                    std::vector<T2Value *> vals;
+
+                    for (const SrcVal &s : args) {
+                        vals.push_back(s.v);
+                    }
+                    fn->set_operands(op, vals);
+                }
+                set_operand_regs(op, args);
                 op->mfa_m = am_erlang;
                 op->mfa_f = am_error;
                 op->index = (uint32_t)args.size();
+
+                /* A decoded error op (badmatch/case_end/if_end): P1 lowers
+                 * it to a side exit to the op's own T1 PC, which re-reads
+                 * the source operand from its decoded register and raises.
+                 * No sync map: error labels are frame-polymorphic (one
+                 * raise label is reached from guard fails at differing
+                 * frame depths — see FRAME_CONFLICT), and the raise
+                 * consumes no mapped state; the boundary state is
+                 * established by the predecessors under full sync, exactly
+                 * as in T1. */
+                op->flags |= T2_OP_ERR_EXIT_OP;
 
                 end_block();
             }
 
             void translate_select(const DecodedOp &dop, bool on_arity) {
-                T2Value *src = read_arg(dop.args[0]);
+                SrcVal src = read_arg_r(dop.args[0]);
                 const DecodedArg &fail = dop.args[1];
                 UWord count = dop.args[2].val;
 
-                if (src == nullptr) {
+                if (src.v == nullptr) {
                     return;
                 }
                 if (fail.type != TAG_f || (count % 2) != 0 ||
@@ -763,7 +991,8 @@ namespace erts_t2 {
 
                 T2Op *sw = fn->new_op(cur, T2OpKind::Switch, T2Type::none());
                 sw->beam_idx = dop.beam_idx;
-                fn->set_operands(sw, {src});
+                fn->set_operands(sw, {src.v});
+                set_operand_regs(sw, {src});
 
                 uint32_t num_cases = (uint32_t)(count / 2);
                 sw->num_cases = num_cases;
@@ -815,6 +1044,141 @@ namespace erts_t2 {
             }
 
             void translate_op(const DecodedOp &dop);
+
+            /* ---- frame-size pre-pass ---------------------------------- *
+             * Computes the stack-frame size at every body label by a
+             * fixpoint simulation of the decoded op stream. Needed
+             * up front because a label may be reached only by edges that
+             * appear later in the stream (e.g. a loop header entered via
+             * a forward jump further down). Frame sizes only move
+             * unknown -> known; disagreeing predecessors are a hard
+             * error (the compiler never produces them). */
+            bool is_stream_terminator(int op) {
+                switch (op) {
+                case genop_return_0:
+                case genop_jump_1:
+                case genop_select_val_3:
+                case genop_select_tuple_arity_3:
+                case genop_call_last_3:
+                case genop_call_only_2:
+                case genop_call_ext_last_3:
+                case genop_call_ext_only_2:
+                case genop_badmatch_1:
+                case genop_case_end_1:
+                case genop_if_end_0:
+                    return true;
+                default:
+                    return false;
+                }
+            }
+
+            void merge_label_frame(UWord label, int32_t f, bool *changed) {
+                if (f == FRAME_UNKNOWN) {
+                    return;
+                }
+                if (label_block.find(label) == label_block.end()) {
+                    /* Not a body label of this function (a call target or
+                     * the func_info label): no frame to track. */
+                    return;
+                }
+
+                auto it = label_frame.find(label);
+                if (it == label_frame.end() ||
+                    it->second == FRAME_UNKNOWN) {
+                    label_frame[label] = f;
+                    *changed = true;
+                } else if (it->second != f && it->second != FRAME_CONFLICT) {
+                    /* Frame-polymorphic label (shared raise block reached
+                     * from differing frame depths). Legal; nothing
+                     * frame-dependent may appear under it. */
+                    label_frame[label] = FRAME_CONFLICT;
+                    *changed = true;
+                }
+            }
+
+            bool compute_label_frames() {
+                size_t rounds = fc.ops.size() + 2;
+                bool changed = true;
+
+                while (changed && rounds-- > 0 && !failed) {
+                    int32_t frame = T2_NO_FRAME;
+                    bool live = true;
+
+                    changed = false;
+
+                    for (const DecodedOp &dop : fc.ops) {
+                        if (dop.op == genop_label_1) {
+                            UWord label = dop.args[0].val;
+
+                            if (live) {
+                                /* Fall-through edge into the label. */
+                                merge_label_frame(label, frame, &changed);
+                            }
+                            {
+                                auto it = label_frame.find(label);
+                                frame = it != label_frame.end()
+                                                ? it->second
+                                                : FRAME_UNKNOWN;
+                            }
+                            live = true;
+                            continue;
+                        }
+                        if (!live) {
+                            continue;
+                        }
+
+                        /* Branch edges: any local-label argument is a
+                         * potential target (guard fails, jump/select
+                         * targets) — except call targets, which are entry
+                         * labels, not branch edges (a self-recursive call
+                         * names this function's own entry label). Foreign
+                         * labels are filtered by merge_label_frame. */
+                        switch (dop.op) {
+                        case genop_call_2:
+                        case genop_call_only_2:
+                        case genop_call_last_3:
+                        case genop_call_ext_2:
+                        case genop_call_ext_only_2:
+                        case genop_call_ext_last_3:
+                            break;
+                        default:
+                            for (const DecodedArg &a : dop.args) {
+                                if (a.type == TAG_f) {
+                                    merge_label_frame(a.val, frame, &changed);
+                                }
+                            }
+                            break;
+                        }
+
+                        switch (dop.op) {
+                        case genop_allocate_2:
+                        case genop_allocate_heap_3:
+                            frame = (int32_t)dop.args[0].val;
+                            break;
+                        case genop_deallocate_1:
+                            frame = T2_NO_FRAME;
+                            break;
+                        case genop_trim_2:
+                            if (frame != FRAME_UNKNOWN) {
+                                frame -= (int32_t)dop.args[0].val;
+                            }
+                            break;
+                        default:
+                            break;
+                        }
+
+                        if (is_stream_terminator(dop.op)) {
+                            live = false;
+                        }
+                    }
+
+                    if (failed) {
+                        return false;
+                    }
+                }
+
+                return !failed;
+            }
         };
 
         void FunctionBuilder::translate_op(const DecodedOp &dop) {
@@ -830,6 +1194,13 @@ namespace erts_t2 {
                     add_edge(cur, b);
                 }
                 cur = b;
+
+                /* Frame size at block entry, from the pre-pass. */
+                {
+                    auto it = label_frame.find(dop.args[0].val);
+                    cur_frame = it != label_frame.end() ? it->second
+                                                        : FRAME_UNKNOWN;
+                }
                 break;
             }
 
@@ -838,15 +1209,45 @@ namespace erts_t2 {
                 break;
 
             case genop_move_2:
-                write_dst(dop.args[1], read_arg(dop.args[0]));
+                if (dop.args[0].type == TAG_x || dop.args[0].type == TAG_y) {
+                    /* Register-to-register move: a Copy op, so the value
+                     * is materialized in its new canonical home (mirrors
+                     * beam_ssa_pre_codegen's `copy`). */
+                    SrcVal s = read_arg_r(dop.args[0]);
+
+                    if (s.v == nullptr) {
+                        return;
+                    }
+                    write_dst_new(dop.args[1],
+                                  emit_result_op(T2OpKind::Copy,
+                                                 {s},
+                                                 s.v->type));
+                } else {
+                    /* Constant move: the materialization op itself is the
+                     * write; its home is the destination register. */
+                    write_dst_new(dop.args[1], read_arg(dop.args[0]));
+                }
                 break;
 
             case genop_swap_2: {
-                T2Value *a = read_arg(dop.args[0]);
-                T2Value *b = read_arg(dop.args[1]);
+                SrcVal a = read_arg_r(dop.args[0]);
+                SrcVal b = read_arg_r(dop.args[1]);
 
-                write_dst(dop.args[0], b);
-                write_dst(dop.args[1], a);
+                if (a.v == nullptr || b.v == nullptr) {
+                    return;
+                }
+
+                /* Two Copies whose reads both precede the writes; the
+                 * PAIR_HEAD flag makes the backend emit them fused
+                 * (emit_swap) and the validator walk them atomically. */
+                T2Value *cb = emit_result_op(T2OpKind::Copy, {b}, b.v->type);
+                if (cb != nullptr) {
+                    cb->def->flags |= T2_OP_PAIR_HEAD;
+                }
+                T2Value *ca = emit_result_op(T2OpKind::Copy, {a}, a.v->type);
+
+                write_dst_new(dop.args[0], cb);
+                write_dst_new(dop.args[1], ca);
                 break;
             }
 
@@ -854,25 +1255,72 @@ namespace erts_t2 {
                 UWord count = dop.args[0].val;
 
                 for (UWord i = 0; i < count; i++) {
-                    write_dst(dop.args[1 + i], fn->emit_const_nil(cur));
+                    /* A killed Y slot is written as const_nil — T1's own
+                     * kill representation (init_yregs stores NIL), so a
+                     * later sync map reads the kill, never a stale value. */
+                    T2Value *v = fn->emit_const_nil(cur);
+
+                    v->def->beam_idx = dop.beam_idx;
+                    write_dst_new(dop.args[1 + i], v);
                 }
                 break;
             }
 
             case genop_allocate_2:
-            case genop_deallocate_1:
-                /* Stack-frame bookkeeping only; Y-register state is tracked
-                 * through the SSA variable maps. */
-                break;
+            case genop_allocate_heap_3: {
+                /* First-class frame op. allocate may GC (stack need) with
+                 * Live X registers, *before* the frame is pushed, so the
+                 * sync boundary is the pre-frame state. allocate_heap
+                 * additionally reserves heap words in the same test
+                 * (fused, as T1's emit_allocate_heap does). */
+                bool has_heap = dop.op == genop_allocate_heap_3;
+                UWord slots = dop.args[0].val;
+                UWord heap = has_heap ? dop.args[1].val : 0;
+                UWord live = dop.args[has_heap ? 2 : 1].val;
 
-            case genop_allocate_heap_3:
+                if (cur_frame != T2_NO_FRAME) {
+                    fail_op(dop, "allocate with a live frame");
+                    return;
+                }
+
+                T2Op *op = fn->new_op(cur, T2OpKind::Allocate, T2Type::none());
+                op->beam_idx = dop.beam_idx;
+                fn->set_operands(op, {});
+                op->index = (uint32_t)slots;
+                op->imm_int = (Sint64)heap;
+                op->live = (uint32_t)live;
+                op->sync = snapshot_sync((uint32_t)live);
+
+                cur_frame = (int32_t)slots;
+                break;
+            }
+
+            case genop_deallocate_1: {
+                UWord slots = dop.args[0].val;
+
+                if (cur_frame != (int32_t)slots) {
+                    fail_op(dop, "deallocate != frame size");
+                    return;
+                }
+
+                T2Op *op =
+                        fn->new_op(cur, T2OpKind::Deallocate, T2Type::none());
+                op->beam_idx = dop.beam_idx;
+                fn->set_operands(op, {});
+                op->index = (uint32_t)slots;
+
+                cur_frame = T2_NO_FRAME;
+                break;
+            }
+
             case genop_test_heap_2: {
-                int words_ix = dop.op == genop_allocate_heap_3 ? 1 : 0;
                 T2Op *op = fn->new_op(cur, T2OpKind::GcTest, T2Type::none());
 
                 op->beam_idx = dop.beam_idx;
                 fn->set_operands(op, {});
-                op->index = (uint32_t)dop.args[words_ix].val;
+                op->index = (uint32_t)dop.args[0].val;
+                op->live = (uint32_t)dop.args[1].val;
+                op->sync = snapshot_sync(op->live);
                 break;
             }
 
@@ -881,6 +1329,22 @@ namespace erts_t2 {
                 UWord remaining = dop.args[1].val;
                 std::vector<T2Value *> vals;
 
+                if (cur_frame != (int32_t)(n + remaining)) {
+                    fail_op(dop, "trim != frame size");
+                    return;
+                }
+
+                /* First-class frame op: T1 moves E, renumbering the
+                 * surviving slots without moving data. */
+                T2Op *op = fn->new_op(cur, T2OpKind::Trim, T2Type::none());
+                op->beam_idx = dop.beam_idx;
+                fn->set_operands(op, {});
+                op->index = (uint32_t)n;
+                op->imm_int = (Sint64)remaining;
+
+                /* Renumber the Braun Y variables to post-trim numbering;
+                 * every later sync map is therefore post-trim, matching
+                 * what the loaded code's continuation expects. */
                 for (UWord i = 0; i < remaining; i++) {
                     T2Value *v = read_var(cur, Y_VAR_BASE + (uint32_t)(i + n));
 
@@ -893,22 +1357,28 @@ namespace erts_t2 {
                 for (UWord i = 0; i < remaining; i++) {
                     write_var(cur, Y_VAR_BASE + (uint32_t)i, vals[i]);
                 }
+
+                cur_frame = (int32_t)remaining;
                 break;
             }
 
             case genop_call_2:
-                translate_call(dop, false, false);
+                translate_call(dop, false, false, false);
                 break;
             case genop_call_only_2:
+                translate_call(dop, true, false, false);
+                break;
             case genop_call_last_3:
-                translate_call(dop, true, false);
+                translate_call(dop, true, false, true);
                 break;
             case genop_call_ext_2:
-                translate_call(dop, false, true);
+                translate_call(dop, false, true, false);
                 break;
             case genop_call_ext_only_2:
+                translate_call(dop, true, true, false);
+                break;
             case genop_call_ext_last_3:
-                translate_call(dop, true, true);
+                translate_call(dop, true, true, true);
                 break;
 
             case genop_return_0: {
@@ -922,6 +1392,13 @@ namespace erts_t2 {
                 T2Op *op = fn->new_op(cur, T2OpKind::Return, T2Type::none());
                 op->beam_idx = dop.beam_idx;
                 fn->set_operands(op, {v});
+                op->operand_regs = fn->arena.alloc_array<int32_t>(1);
+                op->operand_regs[0] = t2_xreg(0);
+
+                /* Return boundary: X0 = the return value, frame already
+                 * deallocated (the validator asserts both). */
+                op->sync = snapshot_sync(1);
+
                 end_block();
                 break;
             }
@@ -970,7 +1447,7 @@ namespace erts_t2 {
 
             case genop_test_arity_3: {
                 T2Value *v = emit_result_op(T2OpKind::TestArity,
-                                            {read_arg(dop.args[1])},
+                                            {read_arg_r(dop.args[1])},
                                             bool_type());
 
                 if (v != nullptr) {
@@ -982,7 +1459,7 @@ namespace erts_t2 {
 
             case genop_is_tagged_tuple_4: {
                 T2Value *v = emit_result_op(T2OpKind::IsTaggedTuple,
-                                            {read_arg(dop.args[1])},
+                                            {read_arg_r(dop.args[1])},
                                             bool_type());
 
                 if (v != nullptr) {
@@ -1013,60 +1490,71 @@ namespace erts_t2 {
                 break;
 
             case genop_get_list_3: {
-                T2Value *src = read_arg(dop.args[0]);
+                SrcVal src = read_arg_r(dop.args[0]);
 
-                write_dst(
-                        dop.args[1],
-                        emit_result_op(T2OpKind::GetHd, {src}, T2Type::any()));
-                write_dst(
-                        dop.args[2],
-                        emit_result_op(T2OpKind::GetTl, {src}, T2Type::any()));
+                if (src.v == nullptr) {
+                    return;
+                }
+
+                /* A decoded pair: both reads precede both writes (a
+                 * destination may alias the source), so the backend must
+                 * emit it fused (emit_get_list, as T1 does). */
+                T2Value *hd =
+                        emit_result_op(T2OpKind::GetHd, {src}, T2Type::any());
+                if (hd != nullptr) {
+                    hd->def->flags |= T2_OP_PAIR_HEAD;
+                }
+                T2Value *tl =
+                        emit_result_op(T2OpKind::GetTl, {src}, T2Type::any());
+
+                write_dst_new(dop.args[1], hd);
+                write_dst_new(dop.args[2], tl);
                 break;
             }
             case genop_get_hd_2:
-                write_dst(dop.args[1],
-                          emit_result_op(T2OpKind::GetHd,
-                                         {read_arg(dop.args[0])},
-                                         T2Type::any()));
+                write_dst_new(dop.args[1],
+                              emit_result_op(T2OpKind::GetHd,
+                                             {read_arg_r(dop.args[0])},
+                                             T2Type::any()));
                 break;
             case genop_get_tl_2:
-                write_dst(dop.args[1],
-                          emit_result_op(T2OpKind::GetTl,
-                                         {read_arg(dop.args[0])},
-                                         T2Type::any()));
+                write_dst_new(dop.args[1],
+                              emit_result_op(T2OpKind::GetTl,
+                                             {read_arg_r(dop.args[0])},
+                                             T2Type::any()));
                 break;
 
             case genop_get_tuple_element_3: {
                 T2Value *v = emit_result_op(T2OpKind::GetTupleElement,
-                                            {read_arg(dop.args[0])},
+                                            {read_arg_r(dop.args[0])},
                                             T2Type::any());
 
                 if (v != nullptr) {
                     v->def->index = (uint32_t)dop.args[1].val;
                 }
-                write_dst(dop.args[2], v);
+                write_dst_new(dop.args[2], v);
                 break;
             }
 
             case genop_put_list_3:
-                write_dst(dop.args[2],
-                          emit_result_op(T2OpKind::MakeList,
-                                         {read_arg(dop.args[0]),
-                                          read_arg(dop.args[1])},
-                                         T2Type::of(BEAM_TYPE_CONS)));
+                write_dst_new(dop.args[2],
+                              emit_result_op(T2OpKind::MakeList,
+                                             {read_arg_r(dop.args[0]),
+                                              read_arg_r(dop.args[1])},
+                                             T2Type::of(BEAM_TYPE_CONS)));
                 break;
 
             case genop_put_tuple2_2: {
                 UWord count = dop.args[1].val;
-                std::vector<T2Value *> elems;
+                std::vector<SrcVal> elems;
 
                 for (UWord i = 0; i < count; i++) {
-                    elems.push_back(read_arg(dop.args[2 + i]));
+                    elems.push_back(read_arg_r(dop.args[2 + i]));
                 }
-                write_dst(dop.args[0],
-                          emit_result_op(T2OpKind::MakeTuple,
-                                         std::move(elems),
-                                         T2Type::of(BEAM_TYPE_TUPLE)));
+                write_dst_new(dop.args[0],
+                              emit_result_op(T2OpKind::MakeTuple,
+                                             elems,
+                                             T2Type::of(BEAM_TYPE_TUPLE)));
                 break;
             }
 
@@ -1100,6 +1588,7 @@ namespace erts_t2 {
             fn->module = fc.module;
             fn->function = fc.function;
             fn->arity = fc.arity;
+            fn->fn_index = fn_index;
 
             /* Pass 1: a block per label, in stream order; the entry label is
              * the first label and becomes blocks[0]. */
@@ -1112,6 +1601,12 @@ namespace erts_t2 {
 
             if (fn->blocks.empty()) {
                 *err = "function has no labels";
+                return nullptr;
+            }
+
+            /* Frame-size pre-pass (needs the body-label set from pass 1). */
+            if (!compute_label_frames()) {
+                *err = error;
                 return nullptr;
             }
 
@@ -1132,12 +1627,16 @@ namespace erts_t2 {
                 translate_op(dop);
 
                 if (dop.op == genop_label_1 && cur == fn->blocks[0] &&
-                    defs[0].find(0) == defs[0].end() && fc.arity > 0) {
-                    /* First entry into the entry block: bind parameters. */
+                    defs[0].find(0) == defs[0].end()) {
+                    /* First entry into the entry block: bind parameters
+                     * (canonical homes X0..arity-1) and take the entry
+                     * sync map (no frame). */
                     for (uint32_t i = 0; i < fc.arity; i++) {
                         T2Value *p = fn->emit_param(cur, i, T2Type::any());
+                        p->def->dst_reg = t2_xreg(i);
                         write_var(cur, i, p);
                     }
+                    fn->entry_sync = snapshot_sync(fc.arity);
                 }
 
                 if (failed) {
@@ -1163,6 +1662,10 @@ namespace erts_t2 {
                 *err = error;
                 return nullptr;
             }
+
+            /* All P1 metadata (sync maps, frame ops, canonical homes) is
+             * attached; arm the validator's coherence checks. */
+            fn->sync_complete = true;
 
             fn->finalize();
             return std::move(fn);
@@ -1210,7 +1713,7 @@ namespace erts_t2 {
                 break;
             }
 
-            FunctionBuilder builder(md, fc);
+            FunctionBuilder builder(md, fc, (uint32_t)i);
             std::unique_ptr<T2Function> fn = builder.build(&local_err);
 
             if (fn == nullptr) {
@@ -1292,7 +1795,7 @@ extern "C" int erts_t2_build_all(const ErtsT2RetainedCode *ret) {
             continue;
         }
 
-        FunctionBuilder builder(md, fc);
+        FunctionBuilder builder(md, fc, (uint32_t)i);
         std::unique_ptr<T2Function> fn = builder.build(&err);
 
         if (fn == nullptr) {

@@ -181,6 +181,14 @@ namespace erts_t2 {
 
             codegen(erts_t2_jit_allocator(), &exec, &rw);
 
+            /* codegen leaves the calling thread in JIT-write mode
+             * (protect_jit_memory(kReadWrite)); executing any JIT page in
+             * that state faults on Apple Silicon outside a debugger.
+             * Mirror erts_seal_module: flush the icache for the fresh
+             * blob, then flip the thread back to execute mode. */
+            beamasm_flush_icache(exec, code.code_size());
+            beamasm_seal_module(exec, rw, code.code_size());
+
             return (const void *)getCode(entry_label);
         }
 
@@ -370,6 +378,10 @@ namespace erts_t2 {
             const void *exec = nullptr;
             void *rw = nullptr;
             codegen(erts_t2_jit_allocator(), &exec, &rw);
+
+            /* See finalize_to_allocator: flush + reseal after codegen. */
+            beamasm_flush_icache(exec, code.code_size());
+            beamasm_seal_module(exec, rw, code.code_size());
 
             return getCode(tr);
         }

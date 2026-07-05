@@ -34,6 +34,36 @@
  * (PLAN/T2FULL/01 §2, rung 1), so framestates arrive with general
  * inlining (P3). Nothing here is backend-specific; per
  * PLAN/T2FULL/04_backend.md the HIR must not depend on asmjit types.
+ *
+ * P1 additions (PLAN/T2/01 §6.4's "stackmap-style metadata"):
+ *
+ *   - Sync maps (T2SyncMap). Every op at which T2 can exit, trap or GC
+ *     (function entry, calls, returns, GC tests, frame allocation,
+ *     gc_bif arithmetic, decoded error exits) carries a snapshot of the
+ *     exact BEAM register state at that instruction boundary as decoded:
+ *     {X0..X(x_live-1) -> value, Y0..Y(frame_size-1) -> value} plus the
+ *     current stack-frame size in slots. The boundary convention is
+ *     pinned as: the state T1 would observe when *about to execute* the
+ *     op — i.e. after all preceding ops (including argument moves) have
+ *     taken effect, before the op itself transfers control/traps. For a
+ *     call this is exactly the state the T1-continuation contract needs
+ *     (Y slots live across the call + args in X0..; X0 holds the result
+ *     on return). For a fused call_last, the deallocation is split into
+ *     an explicit preceding Deallocate op so the tail-call map records
+ *     the post-dealloc (transfer) state.
+ *
+ *   - First-class frame ops (Allocate/Deallocate/Trim), so the frame
+ *     layout is derivable at any program point and the identity backend
+ *     emits the same frame motion T1 does.
+ *
+ *   - Canonical homes. Each op records the BEAM register its result was
+ *     decoded into (dst_reg) and the register each operand was read
+ *     from (operand_regs); phis record the Braun variable they merge as
+ *     their home. Thus every live value at a rung-1 sync point has a
+ *     canonical home *by construction*, and the validator cross-checks
+ *     every sync map against a per-block register-state walk (a value
+ *     appearing in a map without being materialized in that register is
+ *     a hard error, never silent).
  */
 
 #ifndef _JIT_T2_HIR_HPP
@@ -72,6 +102,12 @@ namespace erts_t2 {
         ConstLiteral,
         Param,
         Phi,
+
+        /* Register copy (BEAM `move`/`swap`; mirrors beam_ssa_pre_codegen's
+         * `copy`). SSA-wise an identity of its operand; its purpose is
+         * placement: dst_reg names the BEAM register the copy fills so
+         * later sync points find the value in its canonical home. */
+        Copy,
 
         /* Type tests (produce a boolean) */
         IsInteger,
@@ -162,6 +198,20 @@ namespace erts_t2 {
         ScheduleOut,
         FrameState, /* reserved marker, never generated in P0 */
 
+        /* Stack-frame ops (P1; first-class so frame layout is derivable
+         * at any point — PLAN/T2FULL/08 §"sync maps"). Allocate carries
+         * the slot count (index), a fused heap need (imm_int; nonzero
+         * for allocate_heap) and the GC live count (live). Deallocate
+         * carries the popped slot count (index). Trim carries the
+         * number of dropped slots (index) and the remaining count
+         * (imm_int); it moves no data — E moves, renumbering the
+         * surviving slots, and the builder renumbers its Braun Y
+         * variables to match, so all later sync maps are in post-trim
+         * numbering (what the loaded code's continuation expects). */
+        Allocate,
+        Deallocate,
+        Trim,
+
         /* Sentinel */
         Invalid
     };
@@ -236,6 +286,101 @@ namespace erts_t2 {
         T2Op *def;   /* defining op */
     };
 
+    /* ------------------------------------------------------------------ *
+     * BEAM register encoding + sync maps (P1)                            *
+     * ------------------------------------------------------------------ */
+
+    /* A BEAM register is encoded in one int32: X regs as their index,
+     * Y regs offset by T2_YREG_BASE, T2_REG_NONE for "no register"
+     * (consts, boolean guard results that are never materialized). The
+     * same encoding is the Braun SSA variable key in the builder. */
+    constexpr int32_t T2_REG_NONE = -1;
+    constexpr int32_t T2_YREG_BASE = 0x10000;
+
+    constexpr bool t2_reg_is_x(int32_t r) {
+        return r >= 0 && r < T2_YREG_BASE;
+    }
+    constexpr bool t2_reg_is_y(int32_t r) {
+        return r >= T2_YREG_BASE;
+    }
+    constexpr int32_t t2_xreg(uint32_t n) {
+        return (int32_t)n;
+    }
+    constexpr int32_t t2_yreg(uint32_t n) {
+        return T2_YREG_BASE + (int32_t)n;
+    }
+    constexpr uint32_t t2_reg_index(int32_t r) {
+        return (uint32_t)(t2_reg_is_y(r) ? r - T2_YREG_BASE : r);
+    }
+
+    /* No stack frame (as opposed to a zero-slot frame, which does not
+     * exist in BEAM: `allocate 0` still pushes the CP slot — frame_size
+     * counts the Y slots, so it is 0 then). */
+    constexpr int32_t T2_NO_FRAME = -1;
+
+    /*
+     * The sync-point register map (PLAN/T2/01 §6.4): the exact BEAM
+     * register state at an instruction boundary, as decoded.
+     *
+     * Boundary convention (design decision, load-bearing): the state T1
+     * would observe when *about to execute* the op the map is attached
+     * to — after every preceding op (including argument moves) has taken
+     * effect, before the op itself runs/transfers/traps. This is the
+     * state the deopt/continuation contract consumes: a side exit
+     * branches to the op's own T1 PC and T1 re-executes the op from this
+     * state; a non-tail call transfers with args in X0.. and the frame
+     * live, and the T1 continuation resumes from the Y slots + X0.
+     *
+     * X liveness is a prefix (BEAM's Live discipline): X0..x_live-1 are
+     * live and every entry holds a value; X regs at or above x_live are
+     * dead at this boundary (T1's GC would not scan them, so T2 may
+     * leave anything there). There are no "dead holes" below x_live.
+     *
+     * Y slots cover the whole frame (frame_size slots). T1's stack
+     * walker scans exactly these slots, so every entry must hold a value
+     * that is a valid term at runtime. A slot killed at this boundary
+     * (init_yregs) reads as the builder's const_nil value — precisely
+     * T1's own representation of a killed slot (init_yregs stores NIL);
+     * it can never read a stale pre-kill value because the kill was
+     * written through the same Braun variable map this snapshot reads.
+     */
+    struct T2SyncMap {
+        uint32_t x_live;    /* X0..x_live-1 are live                     */
+        T2Value **x;        /* arena array [x_live]; no null entries     */
+        int32_t frame_size; /* Y slot count, or T2_NO_FRAME              */
+        T2Value **y;        /* arena array [frame_size]; no null entries */
+    };
+
+    /* T2Op::flags bits. */
+    enum : uint8_t {
+        /* A decoded error-exit op (badmatch/case_end/if_end): lowers to
+         * a side exit to the op's own T1 PC. Carries a sync map. */
+        T2_OP_ERR_EXIT_OP = 1 << 0,
+        /* The synthesized, shared function_clause exit block: lowers to
+         * a side exit to the function's func_info (ErtsCodeInfo). No
+         * sync map — the state contract is each predecessor guard's
+         * boundary, which full sync establishes; this mirrors T1, where
+         * many guard sites jump to one func_info with differing frame
+         * states. */
+        T2_OP_ERR_EXIT_SHARED = 1 << 1,
+        /* First op of a two-op decoded pair whose reads must precede
+         * both writes (get_list's GetHd/GetTl, swap's Copy/Copy). The
+         * pair shares a beam_idx; the backend must emit it fused (T1
+         * does), and the validator's register-state walk treats it
+         * atomically. */
+        T2_OP_PAIR_HEAD = 1 << 2,
+        /* A tail call whose decoded Deallocate operand does not match
+         * the tracked frame (or a call_only with a live frame). The
+         * compiler emits garbage Deallocate values when it has proven
+         * the call cannot succeed (beam_validator's will_call_succeed
+         * `no` arm: "the compiler is allowed to emit garbage values"),
+         * e.g. `call_ext_last erlang:throw/1` after a trim. No frame op
+         * is synthesized and no sync map attached; the P1 backend must
+         * not lower such an op (these targets are raising BIFs / known
+         * no-return calls, outside the identity tier's call lowering). */
+        T2_OP_GARBAGE_DEALLOC = 1 << 3
+    };
+
     /* One arm of a `switch` terminator. */
     struct T2SwitchCase {
         Eterm value; /* the matched term (atom / small / literal) */
@@ -260,13 +405,30 @@ namespace erts_t2 {
 
         /* Op-specific attributes. Only the field relevant to `kind` is
          * meaningful. */
-        Sint64 imm_int;   /* ConstInt */
+        Sint64 imm_int;   /* ConstInt; Allocate heap words; Trim remaining */
         Eterm imm_term;   /* ConstAtom, ConstNil, ConstLiteral term */
         Eterm mfa_m;      /* Call / CallExt / TailCall* target module */
         Eterm mfa_f;      /* ... function */
         uint32_t index;   /* param index, tuple-element index, call arity,
-                           * type-test arity, literal index */
+                           * type-test arity, literal index, GcTest heap
+                           * words, Allocate/Deallocate/Trim slot count */
         uint32_t bif_num; /* Bif/GuardBif number (reserved) */
+        uint32_t live;    /* decoded GC live count (GcTest / Allocate /
+                           * gc_bif arithmetic)                          */
+
+        /* Canonical homes (P1; see the file header). dst_reg is the BEAM
+         * register the op's result was decoded into (T2_REG_NONE when the
+         * result never lands in a register — guard booleans, operand
+         * materializations). operand_regs[i] is the register operand i
+         * was read from (T2_REG_NONE for constants); the array is null
+         * when no operand came from a register. */
+        int32_t dst_reg = T2_REG_NONE; /* NSDMI: arena zero-init would be x0 */
+        int32_t *operand_regs; /* arena array [num_operands] or null */
+
+        uint8_t flags; /* T2_OP_* bits */
+
+        /* Sync-point register map (P1); null on non-sync ops. */
+        T2SyncMap *sync;
 
         /* Terminator successors. */
         T2BasicBlock *succ_then;      /* Branch-true / Jump target */
@@ -323,6 +485,21 @@ namespace erts_t2 {
         Eterm module;
         Eterm function;
         uint32_t arity;
+
+        /* Index of this function within the module (== the retained
+         * code's function ordinal; keys the pctab + code-header lookups
+         * downstream). Set by the builder; 0 for hand-built functions. */
+        uint32_t fn_index = 0;
+
+        /* Sync map at function entry: X0..arity-1 = the Param values, no
+         * frame. Null for hand-built functions. */
+        T2SyncMap *entry_sync = nullptr;
+
+        /* True when the builder attached sync maps + canonical homes;
+         * gates the validator's sync/frame/home checks so hand-built
+         * (selftest) functions remain valid without them. The P1
+         * backend refuses functions without it. */
+        bool sync_complete = false;
 
         /* Dense node lists. These live in the function object (not in the
          * arena) so they release their own storage on destruction; the arena

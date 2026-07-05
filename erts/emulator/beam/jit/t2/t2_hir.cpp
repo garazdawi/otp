@@ -62,6 +62,8 @@ namespace erts_t2 {
             return "param";
         case T2OpKind::Phi:
             return "phi";
+        case T2OpKind::Copy:
+            return "copy";
         case T2OpKind::IsInteger:
             return "is_integer";
         case T2OpKind::IsFloat:
@@ -200,6 +202,12 @@ namespace erts_t2 {
             return "schedule_out";
         case T2OpKind::FrameState:
             return "framestate";
+        case T2OpKind::Allocate:
+            return "allocate";
+        case T2OpKind::Deallocate:
+            return "deallocate";
+        case T2OpKind::Trim:
+            return "trim";
         case T2OpKind::Invalid:
             break;
         }
@@ -230,6 +238,7 @@ namespace erts_t2 {
         case T2OpKind::ConstLiteral:
         case T2OpKind::Param:
         case T2OpKind::Phi:
+        case T2OpKind::Copy:
         case T2OpKind::IsInteger:
         case T2OpKind::IsFloat:
         case T2OpKind::IsNumber:
@@ -981,6 +990,610 @@ namespace erts_t2 {
                 return true;
             }
 
+            /* ---------------------------------------------------------- *
+             * P1 sync-map / frame / canonical-home checks                *
+             * (run only when fn.sync_complete; see t2_hir.hpp)           *
+             * ---------------------------------------------------------- */
+
+            /* Op kinds whose boundary is a rung-1 sync point and must
+             * carry a map (PLAN/T2/01 §6.1's exit/trap/GC set restricted
+             * to what the eligible op set can produce). */
+            static bool sync_required(const T2Op *op) {
+                switch (op->kind) {
+                case T2OpKind::Call:
+                case T2OpKind::CallExt:
+                case T2OpKind::Return:
+                case T2OpKind::GcTest:
+                case T2OpKind::Allocate:
+                /* gc_bif-lowered arithmetic + generic BIFs may GC/trap. */
+                case T2OpKind::Add:
+                case T2OpKind::Sub:
+                case T2OpKind::Mul:
+                case T2OpKind::IDiv:
+                case T2OpKind::Rem:
+                case T2OpKind::Band:
+                case T2OpKind::Bor:
+                case T2OpKind::Bxor:
+                case T2OpKind::Bsl:
+                case T2OpKind::Bsr:
+                case T2OpKind::Bnot:
+                case T2OpKind::Neg:
+                case T2OpKind::Bif:
+                case T2OpKind::GuardBif:
+                    return true;
+                case T2OpKind::TailCall:
+                case T2OpKind::TailCallExt:
+                    /* Error exits (frame-polymorphic raise blocks) and
+                     * garbage-dealloc transfers carry no map by design;
+                     * see t2_hir.hpp. */
+                    return (op->flags &
+                            (T2_OP_ERR_EXIT_SHARED | T2_OP_ERR_EXIT_OP |
+                             T2_OP_GARBAGE_DEALLOC)) == 0;
+                default:
+                    return false;
+                }
+            }
+
+            /* A sync-map value must be defined strictly before the op the
+             * map is attached to (the map describes the boundary *before*
+             * the op). */
+            bool check_sync_value_def(const T2Op *op,
+                                      const T2Value *v,
+                                      const char *what,
+                                      uint32_t slot) {
+                if (v == nullptr || v->id >= fn.values.size() ||
+                    fn.values[v->id] != v) {
+                    return fail("block %u: sync map %s%u on %s holds an "
+                                "unregistered value",
+                                op->block->id,
+                                what,
+                                slot,
+                                t2_op_kind_name(op->kind));
+                }
+
+                const T2BasicBlock *db = v->def->block;
+                const T2BasicBlock *ub = op->block;
+
+                if (!reachable[ub->id]) {
+                    return true;
+                }
+                if (db == ub) {
+                    if (pos.at(v->def) >= pos.at(op)) {
+                        return fail("block %u: sync map %s%u on %s uses v%u "
+                                    "before its definition",
+                                    ub->id,
+                                    what,
+                                    slot,
+                                    t2_op_kind_name(op->kind),
+                                    v->id);
+                    }
+                } else if (!dominates(db->id, ub->id)) {
+                    return fail("block %u: sync map %s%u on %s uses v%u whose "
+                                "def does not dominate it",
+                                ub->id,
+                                what,
+                                slot,
+                                t2_op_kind_name(op->kind),
+                                v->id);
+                }
+                return true;
+            }
+
+            bool check_sync_map(const T2Op *op) {
+                const T2SyncMap *m = op->sync;
+
+                if (m == nullptr) {
+                    if (sync_required(op)) {
+                        return fail("block %u: sync-point op %s has no sync "
+                                    "map",
+                                    op->block->id,
+                                    t2_op_kind_name(op->kind));
+                    }
+                    return true;
+                }
+
+                for (uint32_t i = 0; i < m->x_live; i++) {
+                    if (!check_sync_value_def(op, m->x[i], "x", i)) {
+                        return false;
+                    }
+                }
+                if (m->frame_size != T2_NO_FRAME) {
+                    for (int32_t i = 0; i < m->frame_size; i++) {
+                        if (!check_sync_value_def(op,
+                                                  m->y[i],
+                                                  "y",
+                                                  (uint32_t)i)) {
+                            return false;
+                        }
+                    }
+                }
+
+                /* Boundary convention for calls: X0..arity-1 hold exactly
+                 * the call's operands (state after argument moves, before
+                 * the transfer). */
+                switch (op->kind) {
+                case T2OpKind::Call:
+                case T2OpKind::CallExt:
+                case T2OpKind::TailCall:
+                case T2OpKind::TailCallExt:
+                    if ((op->flags &
+                         (T2_OP_ERR_EXIT_OP | T2_OP_ERR_EXIT_SHARED)) != 0) {
+                        break; /* error exits: args are not a live X prefix */
+                    }
+                    if (m->x_live != op->index ||
+                        op->num_operands != op->index) {
+                        return fail("block %u: call sync map x_live %u != "
+                                    "arity %u",
+                                    op->block->id,
+                                    m->x_live,
+                                    op->index);
+                    }
+                    for (uint32_t i = 0; i < m->x_live; i++) {
+                        if (m->x[i] != op->operands[i]) {
+                            return fail("block %u: call sync map x%u does not "
+                                        "hold argument %u",
+                                        op->block->id,
+                                        i,
+                                        i);
+                        }
+                    }
+                    /* Tail transfers leave no frame behind. */
+                    if ((op->kind == T2OpKind::TailCall ||
+                         op->kind == T2OpKind::TailCallExt) &&
+                        m->frame_size != T2_NO_FRAME) {
+                        return fail("block %u: tail-call sync map still has a "
+                                    "frame",
+                                    op->block->id);
+                    }
+                    break;
+                case T2OpKind::Return:
+                    if (m->x_live != 1 || op->num_operands != 1 ||
+                        m->x[0] != op->operands[0]) {
+                        return fail("block %u: return sync map must be "
+                                    "exactly {x0 -> return value}",
+                                    op->block->id);
+                    }
+                    if (m->frame_size != T2_NO_FRAME) {
+                        return fail("block %u: return sync map still has a "
+                                    "frame (missing deallocate)",
+                                    op->block->id);
+                    }
+                    break;
+                default:
+                    break;
+                }
+
+                return true;
+            }
+
+            /* Forward dataflow of the frame size over the CFG. Preds that
+             * disagree on a block's incoming frame mark it
+             * frame-polymorphic (FRAME_CONFLICT) — legal for raise-only
+             * blocks; any frame-dependent op under a conflict is an
+             * error. */
+            static constexpr int32_t FRAME_UNKNOWN = -2;
+            static constexpr int32_t FRAME_CONFLICT = -3;
+
+            bool frame_transfer(const T2BasicBlock *b,
+                                int32_t in,
+                                int32_t *out) {
+                int32_t f = in;
+
+                for (const T2Op *op = b->ops_head; op != nullptr;
+                     op = op->next) {
+                    if (f == FRAME_CONFLICT) {
+                        switch (op->kind) {
+                        case T2OpKind::Allocate:
+                        case T2OpKind::Deallocate:
+                        case T2OpKind::Trim:
+                            return fail("block %u: frame op in a "
+                                        "frame-polymorphic block",
+                                        b->id);
+                        default:
+                            continue;
+                        }
+                    }
+                    switch (op->kind) {
+                    case T2OpKind::Allocate:
+                        if (f != T2_NO_FRAME) {
+                            return fail("block %u: allocate with a live frame",
+                                        b->id);
+                        }
+                        f = (int32_t)op->index;
+                        break;
+                    case T2OpKind::Deallocate:
+                        if (f != (int32_t)op->index) {
+                            return fail("block %u: deallocate %u but frame "
+                                        "size is %d",
+                                        b->id,
+                                        op->index,
+                                        f);
+                        }
+                        f = T2_NO_FRAME;
+                        break;
+                    case T2OpKind::Trim:
+                        if (f != (int32_t)(op->index + op->imm_int)) {
+                            return fail("block %u: trim %u/%lld but frame "
+                                        "size is %d",
+                                        b->id,
+                                        op->index,
+                                        (long long)op->imm_int,
+                                        f);
+                        }
+                        f = (int32_t)op->imm_int;
+                        break;
+                    default:
+                        break;
+                    }
+                }
+
+                *out = f;
+                return true;
+            }
+
+            bool run_sync_checks() {
+                size_t n = fn.blocks.size();
+
+                /* --- frame dataflow ------------------------------------ */
+                std::vector<int32_t> frame_in(n, FRAME_UNKNOWN);
+                std::vector<const T2BasicBlock *> work;
+
+                frame_in[0] = T2_NO_FRAME;
+                work.push_back(fn.blocks[0]);
+
+                while (!work.empty()) {
+                    const T2BasicBlock *b = work.back();
+                    int32_t out;
+
+                    work.pop_back();
+                    if (!frame_transfer(b, frame_in[b->id], &out)) {
+                        return false;
+                    }
+
+                    for_each_succ(b->terminator, [&](T2BasicBlock *succ) {
+                        if (succ == nullptr) {
+                            return;
+                        }
+                        if (frame_in[succ->id] == FRAME_UNKNOWN) {
+                            frame_in[succ->id] = out;
+                            work.push_back(succ);
+                        } else if (frame_in[succ->id] != out &&
+                                   frame_in[succ->id] != FRAME_CONFLICT) {
+                            /* Frame-polymorphic (raise-only) block. */
+                            frame_in[succ->id] = FRAME_CONFLICT;
+                            work.push_back(succ);
+                        }
+                    });
+                }
+
+                /* --- per-block register-state walk --------------------- *
+                 * Verifies that every sync-map entry names a value that is
+                 * actually materialized in that BEAM register at that
+                 * boundary (canonical-home discipline; hard error). State
+                 * unknown at block entry is adopted on first mention, so
+                 * the check is exact within a block and partial across
+                 * blocks (phi homes seed the known part). */
+                std::vector<std::unordered_map<int32_t, const T2Value *>>
+                        exit_state(n);
+                /* A result whose write is conditional on the block's
+                 * Succeeded/Branch (gc_bif with a fail edge): T1 writes
+                 * the destination only on the success path, so the write
+                 * belongs to the then-edge, not the block exit. */
+                struct PendingWrite {
+                    int32_t reg = T2_REG_NONE;
+                    const T2Value *val = nullptr;
+                };
+                std::vector<PendingWrite> then_write(n);
+
+                for (const T2BasicBlock *b : fn.blocks) {
+                    if (!reachable[b->id]) {
+                        continue;
+                    }
+
+                    std::unordered_map<int32_t, const T2Value *> state;
+                    int32_t frame = frame_in[b->id];
+
+                    for (const T2Op *phi = b->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        if (phi->dst_reg == T2_REG_NONE) {
+                            return fail("block %u: phi without a canonical "
+                                        "home",
+                                        b->id);
+                        }
+                        state[phi->dst_reg] = phi->result;
+                    }
+
+                    /* Reads-then-writes over one op (or an atomic pair). */
+                    auto read_checks = [&](const T2Op *op) -> bool {
+                        if (op->operand_regs == nullptr) {
+                            return true;
+                        }
+                        for (uint16_t i = 0; i < op->num_operands; i++) {
+                            int32_t r = op->operand_regs[i];
+
+                            if (r == T2_REG_NONE) {
+                                continue;
+                            }
+                            auto it = state.find(r);
+                            if (it == state.end()) {
+                                state[r] = op->operands[i];
+                            } else if (it->second != op->operands[i]) {
+                                return fail(
+                                        "block %u: op %s reads %c%u as v%u "
+                                        "but the register holds v%u",
+                                        b->id,
+                                        t2_op_kind_name(op->kind),
+                                        t2_reg_is_y(r) ? 'y' : 'x',
+                                        t2_reg_index(r),
+                                        op->operands[i]->id,
+                                        it->second->id);
+                            }
+                        }
+                        return true;
+                    };
+
+                    auto apply_frame_and_write = [&](const T2Op *op) {
+                        switch (op->kind) {
+                        case T2OpKind::Allocate:
+                            frame = (int32_t)op->index;
+                            /* Fresh frame: all Y slots are garbage. */
+                            for (auto it = state.begin();
+                                 it != state.end();) {
+                                if (t2_reg_is_y(it->first)) {
+                                    it = state.erase(it);
+                                } else {
+                                    ++it;
+                                }
+                            }
+                            break;
+                        case T2OpKind::Deallocate:
+                            frame = T2_NO_FRAME;
+                            for (auto it = state.begin();
+                                 it != state.end();) {
+                                if (t2_reg_is_y(it->first)) {
+                                    it = state.erase(it);
+                                } else {
+                                    ++it;
+                                }
+                            }
+                            break;
+                        case T2OpKind::Trim: {
+                            /* Post-trim Y_i = pre-trim Y_{i+N}. */
+                            uint32_t drop = op->index;
+                            std::unordered_map<int32_t, const T2Value *> ns;
+
+                            frame = (int32_t)op->imm_int;
+
+                            for (const auto &e : state) {
+                                if (!t2_reg_is_y(e.first)) {
+                                    ns.emplace(e);
+                                } else {
+                                    uint32_t idx = t2_reg_index(e.first);
+
+                                    if (idx >= drop) {
+                                        ns[t2_yreg(idx - drop)] = e.second;
+                                    }
+                                }
+                            }
+                            state = std::move(ns);
+                            break;
+                        }
+                        default:
+                            break;
+                        }
+                        if (op->dst_reg != T2_REG_NONE &&
+                            op->result != nullptr) {
+                            state[op->dst_reg] = op->result;
+                        }
+                    };
+
+                    auto sync_checks = [&](const T2Op *op) -> bool {
+                        const T2SyncMap *m = op->sync;
+
+                        if (m == nullptr) {
+                            return true;
+                        }
+                        if (m->frame_size != frame) {
+                            return fail("block %u: %s sync map frame %d but "
+                                        "walked frame is %d",
+                                        b->id,
+                                        t2_op_kind_name(op->kind),
+                                        m->frame_size,
+                                        frame);
+                        }
+                        for (uint32_t i = 0; i < m->x_live; i++) {
+                            auto it = state.find(t2_xreg(i));
+
+                            if (it == state.end()) {
+                                state[t2_xreg(i)] = m->x[i];
+                            } else if (it->second != m->x[i]) {
+                                return fail("block %u: %s sync map says x%u "
+                                            "= v%u but the register holds "
+                                            "v%u (no canonical home)",
+                                            b->id,
+                                            t2_op_kind_name(op->kind),
+                                            i,
+                                            m->x[i]->id,
+                                            it->second->id);
+                            }
+                        }
+                        for (int32_t i = 0;
+                             m->frame_size != T2_NO_FRAME &&
+                             i < m->frame_size;
+                             i++) {
+                            auto it = state.find(t2_yreg((uint32_t)i));
+
+                            if (it == state.end()) {
+                                state[t2_yreg((uint32_t)i)] = m->y[i];
+                            } else if (it->second != m->y[i]) {
+                                return fail("block %u: %s sync map says y%d "
+                                            "= v%u but the slot holds v%u "
+                                            "(no canonical home)",
+                                            b->id,
+                                            t2_op_kind_name(op->kind),
+                                            i,
+                                            m->y[i]->id,
+                                            it->second->id);
+                            }
+                        }
+                        return true;
+                    };
+
+                    const T2Op *op = b->ops_head;
+                    while (op != nullptr) {
+                        const T2Op *pair_tail = nullptr;
+
+                        if (op->flags & T2_OP_PAIR_HEAD) {
+                            pair_tail = op->next;
+                            if (pair_tail == nullptr ||
+                                pair_tail->beam_idx != op->beam_idx) {
+                                return fail("block %u: dangling pair-head op "
+                                            "%s",
+                                            b->id,
+                                            t2_op_kind_name(op->kind));
+                            }
+                        }
+
+                        if (!sync_checks(op) || !read_checks(op)) {
+                            return false;
+                        }
+                        if (pair_tail != nullptr &&
+                            !read_checks(pair_tail)) {
+                            return false;
+                        }
+
+                        /* Conditional destination write: op feeds a
+                         * Succeeded that the block's Branch consumes; the
+                         * write only happens on the success edge. */
+                        if (op->dst_reg != T2_REG_NONE &&
+                            op->result != nullptr && op->next != nullptr &&
+                            op->next->kind == T2OpKind::Succeeded &&
+                            op->next->num_operands == 1 &&
+                            op->next->operands[0] == op->result &&
+                            b->terminator != nullptr &&
+                            b->terminator->kind == T2OpKind::Branch &&
+                            b->terminator->num_operands == 1 &&
+                            b->terminator->operands[0] ==
+                                    op->next->result) {
+                            then_write[b->id].reg = op->dst_reg;
+                            then_write[b->id].val = op->result;
+                            /* Frame effects (none for gc_bifs) would still
+                             * apply; skip only the register write. */
+                        } else {
+                            apply_frame_and_write(op);
+                        }
+
+                        if (pair_tail != nullptr) {
+                            apply_frame_and_write(pair_tail);
+                            op = pair_tail->next;
+                        } else {
+                            op = op->next;
+                        }
+                    }
+
+                    if (b->terminator != nullptr) {
+                        if (!sync_checks(b->terminator) ||
+                            !read_checks(b->terminator)) {
+                            return false;
+                        }
+                    }
+
+                    exit_state[b->id] = std::move(state);
+                }
+
+                /* --- phi merge-slot verification ------------------------ *
+                 * Each phi input must sit in the phi's home register at
+                 * the corresponding predecessor's exit (where known). */
+                for (const T2BasicBlock *b : fn.blocks) {
+                    if (!reachable[b->id]) {
+                        continue;
+                    }
+                    for (const T2Op *phi = b->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        for (uint16_t i = 0; i < phi->num_operands; i++) {
+                            const T2BasicBlock *pred = phi->phi_blocks[i];
+
+                            if (!reachable[pred->id]) {
+                                continue;
+                            }
+
+                            /* A conditional write on the pred applies only
+                             * along its then-edge. */
+                            const PendingWrite &pw = then_write[pred->id];
+                            if (pw.reg == phi->dst_reg) {
+                                const T2Op *t = pred->terminator;
+                                bool is_then = t->succ_then == b;
+                                bool is_else = t->succ_else == b;
+
+                                if (is_then && !is_else) {
+                                    if (pw.val != phi->operands[i]) {
+                                        return fail(
+                                                "block %u: phi home holds "
+                                                "the conditional write v%u "
+                                                "on the then-edge from "
+                                                "block %u, expected v%u",
+                                                b->id,
+                                                pw.val->id,
+                                                pred->id,
+                                                phi->operands[i]->id);
+                                    }
+                                    continue;
+                                }
+                                if (is_then && is_else) {
+                                    continue; /* ambiguous edge; skip */
+                                }
+                                /* else-edge: fall through to the base
+                                 * (pre-write) state below. */
+                            }
+
+                            const auto &es = exit_state[pred->id];
+                            auto it = es.find(phi->dst_reg);
+
+                            if (it != es.end() &&
+                                it->second != phi->operands[i]) {
+                                return fail(
+                                        "block %u: phi home %c%u holds v%u "
+                                        "at exit of pred block %u, expected "
+                                        "v%u",
+                                        b->id,
+                                        t2_reg_is_y(phi->dst_reg) ? 'y' : 'x',
+                                        t2_reg_index(phi->dst_reg),
+                                        it->second->id,
+                                        pred->id,
+                                        phi->operands[i]->id);
+                            }
+                        }
+                    }
+                }
+
+                /* --- entry map ------------------------------------------ */
+                if (fn.entry_sync == nullptr) {
+                    return fail("sync_complete function without an entry "
+                                "sync map");
+                }
+                if (fn.entry_sync->x_live != fn.arity ||
+                    fn.entry_sync->frame_size != T2_NO_FRAME) {
+                    return fail("entry sync map must be {x0..x%u, no frame}",
+                                fn.arity);
+                }
+
+                /* Per-op structural map checks (presence + contents). */
+                for (const T2BasicBlock *b : fn.blocks) {
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if (!check_sync_map(op)) {
+                            return false;
+                        }
+                    }
+                    if (b->terminator != nullptr &&
+                        !check_sync_map(b->terminator)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
             bool run() {
                 if (fn.blocks.empty()) {
                     return fail("function has no blocks");
@@ -1058,6 +1671,11 @@ namespace erts_t2 {
                     }
                 }
 
+                /* P1: sync-map / frame / canonical-home coherence. */
+                if (fn.sync_complete && !run_sync_checks()) {
+                    return false;
+                }
+
                 return true;
             }
         };
@@ -1073,19 +1691,94 @@ namespace erts_t2 {
      * Dump                                                               *
      * ------------------------------------------------------------------ */
 
+    static void dump_reg(std::string &out, int32_t reg) {
+        char buf[32];
+
+        if (reg == T2_REG_NONE) {
+            return;
+        }
+        snprintf(buf,
+                 sizeof(buf),
+                 "%c%u",
+                 t2_reg_is_y(reg) ? 'y' : 'x',
+                 t2_reg_index(reg));
+        out += buf;
+    }
+
+    static void dump_sync_map(std::string &out, const T2SyncMap *m) {
+        char buf[64];
+
+        out += " sync={x:[";
+        for (uint32_t i = 0; i < m->x_live; i++) {
+            snprintf(buf, sizeof(buf), "%sv%u", i == 0 ? "" : ",", m->x[i]->id);
+            out += buf;
+        }
+        out += "]";
+        if (m->frame_size != T2_NO_FRAME) {
+            out += " y:[";
+            for (int32_t i = 0; i < m->frame_size; i++) {
+                snprintf(buf,
+                         sizeof(buf),
+                         "%sv%u",
+                         i == 0 ? "" : ",",
+                         m->y[i]->id);
+                out += buf;
+            }
+            snprintf(buf, sizeof(buf), "] frame:%d", m->frame_size);
+            out += buf;
+        } else {
+            out += " frame:none";
+        }
+        out += "}";
+    }
+
     static void dump_op(std::string &out, const T2Op *op) {
         char buf[192];
 
         out += "    ";
         if (op->result != nullptr) {
-            snprintf(buf, sizeof(buf), "v%u = ", op->result->id);
+            snprintf(buf, sizeof(buf), "v%u", op->result->id);
             out += buf;
+            if (op->dst_reg != T2_REG_NONE) {
+                out += "@";
+                dump_reg(out, op->dst_reg);
+            }
+            out += " = ";
         }
         out += t2_op_kind_name(op->kind);
 
         switch (op->kind) {
         case T2OpKind::ConstInt:
             snprintf(buf, sizeof(buf), " %lld", (long long)op->imm_int);
+            out += buf;
+            break;
+        case T2OpKind::Allocate:
+            snprintf(buf,
+                     sizeof(buf),
+                     " slots=%u heap=%lld live=%u",
+                     op->index,
+                     (long long)op->imm_int,
+                     op->live);
+            out += buf;
+            break;
+        case T2OpKind::Deallocate:
+            snprintf(buf, sizeof(buf), " slots=%u", op->index);
+            out += buf;
+            break;
+        case T2OpKind::Trim:
+            snprintf(buf,
+                     sizeof(buf),
+                     " drop=%u remaining=%lld",
+                     op->index,
+                     (long long)op->imm_int);
+            out += buf;
+            break;
+        case T2OpKind::GcTest:
+            snprintf(buf,
+                     sizeof(buf),
+                     " words=%u live=%u",
+                     op->index,
+                     op->live);
             out += buf;
             break;
         case T2OpKind::ConstAtom:
@@ -1125,6 +1818,11 @@ namespace erts_t2 {
                      i == 0 ? "" : ",",
                      op->operands[i]->id);
             out += buf;
+            if (op->operand_regs != nullptr &&
+                op->operand_regs[i] != T2_REG_NONE) {
+                out += "@";
+                dump_reg(out, op->operand_regs[i]);
+            }
             if (op->kind == T2OpKind::Phi && op->phi_blocks != nullptr) {
                 snprintf(buf, sizeof(buf), ":block%u", op->phi_blocks[i]->id);
                 out += buf;
@@ -1163,6 +1861,16 @@ namespace erts_t2 {
             break;
         }
 
+        if (op->sync != nullptr) {
+            dump_sync_map(out, op->sync);
+        }
+        if (op->flags & T2_OP_ERR_EXIT_OP) {
+            out += " !err_exit";
+        }
+        if (op->flags & T2_OP_ERR_EXIT_SHARED) {
+            out += " !err_exit_shared";
+        }
+
         out += "\n";
     }
 
@@ -1179,6 +1887,12 @@ namespace erts_t2 {
                       (unsigned)fn.blocks.size(),
                       (unsigned)fn.values.size());
         out += buf;
+
+        if (fn.entry_sync != nullptr) {
+            out += "  entry";
+            dump_sync_map(out, fn.entry_sync);
+            out += "\n";
+        }
 
         for (const T2BasicBlock *b : fn.blocks) {
             snprintf(buf, sizeof(buf), "  block%u:", b->id);

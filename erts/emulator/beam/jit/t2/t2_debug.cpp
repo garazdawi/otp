@@ -78,6 +78,20 @@
  *                % mfa   => {M,F,A}  (call / call_ext / tail_call / arith bif)
  *                % cases => [ {V,TargetBlockId} ]  (switch; V=literal for
  *                %                                  boxed match values)
+ *                % -- P1 metadata (additive; the G1 comparator ignores
+ *                %    unknown attrs and folds the frame/copy bookkeeping
+ *                %    ops to `ignore`) --
+ *                % frame => int      (allocate/deallocate slot count)
+ *                % heap  => int      (allocate fused heap words; gc_test
+ *                %                    heap words ride `index`)
+ *                % live  => int      (allocate/gc_test/arith GC live count)
+ *                % trim/remaining => int (trim drop / survivor count)
+ *                % dst   => {x,N} | {y,N}   (canonical home of the result)
+ *                % sync  => {XLive, [XValueId], Frame | none, [YValueId]}
+ *                %          (sync-point register map; see t2_hir.hpp)
+ *                % err_exit => op | shared  (error-exit lowering class)
+ *                % (the function-entry sync map is not serialized; the
+ *                %  T2_DUMP text carries it)
  *
  *   TypeTerm :=
  *         any
@@ -130,6 +144,18 @@ namespace erts_t2 {
             Eterm mfa;
             Eterm cases;
             Eterm literal;
+            Eterm frame;
+            Eterm heap;
+            Eterm live;
+            Eterm trim;
+            Eterm remaining;
+            Eterm dst;
+            Eterm sync;
+            Eterm err_exit;
+            Eterm op;
+            Eterm shared;
+            Eterm x;
+            Eterm y;
 
             static Eterm intern(const char *s) {
                 return erts_atom_put((const byte *)s,
@@ -148,6 +174,18 @@ namespace erts_t2 {
                 mfa = intern("mfa");
                 cases = intern("cases");
                 literal = intern("literal");
+                frame = intern("frame");
+                heap = intern("heap");
+                live = intern("live");
+                trim = intern("trim");
+                remaining = intern("remaining");
+                dst = intern("dst");
+                sync = intern("sync");
+                err_exit = intern("err_exit");
+                op = intern("op");
+                shared = intern("shared");
+                x = intern("x");
+                y = intern("y");
             }
         };
 
@@ -225,10 +263,75 @@ namespace erts_t2 {
                 return tuple3(m, f, uint_term(a));
             }
 
+            Eterm build_reg(int32_t reg) {
+                return tuple2(t2_reg_is_y(reg) ? atoms.y : atoms.x,
+                              uint_term(t2_reg_index(reg)));
+            }
+
+            Eterm build_sync(const T2SyncMap *m) {
+                Eterm xs = NIL;
+                Eterm ys = NIL;
+
+                for (uint32_t i = m->x_live; i > 0; i--) {
+                    xs = cons(make_small(m->x[i - 1]->id), xs);
+                }
+                if (m->frame_size != T2_NO_FRAME) {
+                    for (int32_t i = m->frame_size; i > 0; i--) {
+                        ys = cons(make_small(m->y[i - 1]->id), ys);
+                    }
+                }
+
+                Eterm frame = m->frame_size == T2_NO_FRAME
+                                      ? atoms.none
+                                      : uint_term((Uint)m->frame_size);
+
+                return erts_bld_tuple(szp ? nullptr : &hp,
+                                      szp,
+                                      4,
+                                      uint_term(m->x_live),
+                                      xs,
+                                      frame,
+                                      ys);
+            }
+
             Eterm build_attrs(const T2Op *op) {
                 Eterm tail = NIL;
 
+                /* P1 metadata common to every op kind. */
+                if (op->sync != nullptr) {
+                    tail = prop(atoms.sync, build_sync(op->sync), tail);
+                }
+                if (op->dst_reg != T2_REG_NONE) {
+                    tail = prop(atoms.dst, build_reg(op->dst_reg), tail);
+                }
+                if (op->flags & T2_OP_ERR_EXIT_OP) {
+                    tail = prop(atoms.err_exit, atoms.op, tail);
+                }
+                if (op->flags & T2_OP_ERR_EXIT_SHARED) {
+                    tail = prop(atoms.err_exit, atoms.shared, tail);
+                }
+
                 switch (op->kind) {
+                case T2OpKind::Allocate:
+                    tail = prop(atoms.frame, uint_term(op->index), tail);
+                    tail = prop(atoms.heap,
+                                uint_term((Uint)op->imm_int),
+                                tail);
+                    tail = prop(atoms.live, uint_term(op->live), tail);
+                    break;
+                case T2OpKind::Deallocate:
+                    tail = prop(atoms.frame, uint_term(op->index), tail);
+                    break;
+                case T2OpKind::Trim:
+                    tail = prop(atoms.trim, uint_term(op->index), tail);
+                    tail = prop(atoms.remaining,
+                                uint_term((Uint)op->imm_int),
+                                tail);
+                    break;
+                case T2OpKind::GcTest:
+                    tail = prop(atoms.index, uint_term(op->index), tail);
+                    tail = prop(atoms.live, uint_term(op->live), tail);
+                    break;
                 case T2OpKind::ConstInt:
                     tail = prop(atoms.value, sint_term(op->imm_int), tail);
                     break;
@@ -280,6 +383,7 @@ namespace erts_t2 {
                                               op->num_operands),
                                     tail);
                     }
+                    tail = prop(atoms.live, uint_term(op->live), tail);
                     break;
                 case T2OpKind::Switch: {
                     Eterm clist = NIL;
