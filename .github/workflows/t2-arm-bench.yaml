@@ -33,12 +33,15 @@
 name: T2 ARM bench
 
 on:
-  ## Manual trigger is how the snapshot branch (lukas/erts/beamjit2-armci) is
-  ## run; the push trigger watches the real work branch per the M0.5 brief.
+  ## workflow_dispatch is kept for when this lands on the default branch, but
+  ## the snapshot branch (lukas/erts/beamjit2-armci) is not on default, so it
+  ## is driven by its own push trigger below. The work branch
+  ## (lukas/erts/beamjit2) is watched per the M0.5 brief.
   workflow_dispatch:
   push:
     branches:
       - lukas/erts/beamjit2
+      - lukas/erts/beamjit2-armci
 
 permissions:
   contents: read
