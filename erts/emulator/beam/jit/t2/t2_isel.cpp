@@ -302,11 +302,48 @@ namespace erts_t2 {
                 return (const void *)ci;
             }
 
+            /* The closed set of call_ext targets the loader transforms
+             * into dedicated instructions (ops.tab `u$func:` rules) that
+             * are NOT plain BIFs, so ep->bif_number cannot flag them:
+             * i_yield / i_hibernate / i_apply* / the load_nif and
+             * on_load sequences / the os:perf_counter inline. T1 never
+             * emits an export call for these — their instructions have
+             * their own scheduling and reduction accounting (found the
+             * hard way: a generic export call for erlang:yield/0 charges
+             * ~1000 extra reductions per call vs T1's i_yield, breaking
+             * process_SUITE:yield's measurement). */
+            bool is_transformed_call_ext(Eterm m, Eterm f, Uint arity) {
+                /* Non-predefined atoms interned once. */
+                static const Eterm hibernate = ERTS_MAKE_AM("hibernate");
+                static const Eterm load_nif = ERTS_MAKE_AM("load_nif");
+                static const Eterm on_load_fn =
+                        ERTS_MAKE_AM("call_on_load_function");
+                static const Eterm os_mod = ERTS_MAKE_AM("os");
+                static const Eterm perf_counter =
+                        ERTS_MAKE_AM("perf_counter");
+
+                if (m == am_erlang) {
+                    if ((f == am_yield && arity == 0) ||
+                        (f == hibernate && arity == 0) ||
+                        (f == am_apply && (arity == 2 || arity == 3)) ||
+                        (f == load_nif && arity == 2) ||
+                        (f == on_load_fn && arity == 1)) {
+                        return true;
+                    }
+                } else if (m == os_mod) {
+                    if (f == perf_counter && arity == 0) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             /* External call target: the export entry, dispatched through
              * the active code index at run time (identical to T1's
              * i_call_ext). BIF targets are rejected — T1 lowers those to
              * inlined BIF calls with different reduction accounting, which
-             * the identity tier must not approximate. */
+             * the identity tier must not approximate. Loader-transformed
+             * specials are rejected for the same reason (see above). */
             bool export_target(const T2Op *op, const Export **out) {
                 const Export *ep = erts_active_export_entry(op->mfa_m,
                                                             op->mfa_f,
@@ -345,6 +382,14 @@ namespace erts_t2 {
                     return fail_op(op,
                                    "call_ext to a BIF unsupported in P1 "
                                    "commit-3 isel");
+                }
+                if (is_transformed_call_ext(op->mfa_m,
+                                            op->mfa_f,
+                                            op->index)) {
+                    return fail_op(op,
+                                   "call_ext to a loader-transformed "
+                                   "special (i_yield/i_hibernate/...) "
+                                   "unsupported in P1 isel");
                 }
                 *out = ep;
                 return true;
