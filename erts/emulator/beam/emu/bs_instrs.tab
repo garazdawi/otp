@@ -1186,13 +1186,11 @@ bs_get_position.execute(Dst, Live) {
 
 %endif
 
-/*
- * Track A A1: byte-class scan-run. Advance the match context Ctx past a
- * maximal run of leading bytes matching a byte class, and set Dst to the
- * number of bytes consumed. Kind: 0 = range Lo..Hi, 1 = set {V0..V(NV-1)},
- * 2 = notset (range Lo..Hi excluding {V0..V(NV-1)}). The recognizer only
- * emits this for byte-aligned contexts; a non-aligned context consumes 0.
- */
+// Track A A1: byte-class scan-run. Advance the match context Ctx past a
+// maximal run of leading bytes matching a byte class, and set Dst to the
+// number of bytes consumed. Kind: 0 = range Lo..Hi, 1 = set {V0..V(NV-1)},
+// 2 = notset (range Lo..Hi excluding {V0..V(NV-1)}). The recognizer only
+// emits this for byte-aligned contexts; a non-aligned context consumes 0.
 bs_scan(Ctx, Kind, Range, VPack, Dst) {
     ErlSubBits *sb = (ErlSubBits*)bitstring_val($Ctx);
     Uint start = sb->start;
