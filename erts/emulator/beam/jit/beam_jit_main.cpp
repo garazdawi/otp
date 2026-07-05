@@ -32,6 +32,7 @@ extern "C"
 #include "erl_threads.h"
 #include "t2_retain.h"
 #include "t2_pctab.h"
+#include "t2_ranges.h"
 
 #if defined(__APPLE__)
 #    include <libkern/OSCacheControl.h>
@@ -295,6 +296,7 @@ void beamasm_init() {
     beamasm_metadata_early_init();
     init_cache_info();
     erts_t2_init();
+    erts_t2_ranges_init();
 
     /*
      * Ensure that commonly used fields in the PCB can be accessed with
@@ -405,15 +407,21 @@ void beamasm_init() {
 
     beamasm_metadata_late_init();
 
-    /* T2-Full P0: HIR round-trip self-test, gated on T2_SELFTEST=1 so
-     * default boots pay nothing. */
+    /* T2-Full P0: HIR round-trip + blob range self-tests, gated on
+     * T2_SELFTEST=1 so default boots pay nothing. */
     if (erts_t2_selftest_enabled()) {
         int res = erts_t2_hir_selftest();
 
         if (res != 0) {
             erts_exit(ERTS_ABORT_EXIT, "T2 HIR self-test failed (%d)\n", res);
         }
-        erts_fprintf(stderr, "T2 HIR self-test passed\n");
+
+        res = erts_t2_ranges_selftest();
+        if (res != 0) {
+            erts_exit(ERTS_ABORT_EXIT, "T2 ranges self-test failed (%d)\n", res);
+        }
+
+        erts_fprintf(stderr, "T2 HIR + ranges self-tests passed\n");
     }
 }
 
