@@ -1170,6 +1170,76 @@ namespace erts_t2 {
 
     } /* anonymous namespace */
 
+    /* ------------------------------------------------------------------ *
+     * Single-function builder entry (t2_build_ssa debug BIF; see         *
+     * t2_hir.hpp). Defined here — not in the anonymous namespace — so the *
+     * TU-local ModuleDecode / FunctionBuilder above remain reachable.     *
+     * ------------------------------------------------------------------ */
+
+    T2BuildStatus t2_build_for_debug(
+            const ErtsT2RetainedCode *ret,
+            Eterm function,
+            unsigned arity,
+            const std::function<void(const T2Function &)> &emit,
+            std::string *err) {
+        ModuleDecode md;
+        std::string local_err;
+
+        if (!decode_module(ret, md, &local_err)) {
+            if (err != nullptr) {
+                *err = "decode: " + local_err;
+            }
+            md.cleanup();
+            return T2BuildStatus::Failed;
+        }
+
+        T2BuildStatus status = T2BuildStatus::NotFound;
+
+        for (size_t i = 0; i < md.functions.size(); i++) {
+            const FunctionCode &fc = md.functions[i];
+
+            if (fc.function != function || fc.arity != arity) {
+                continue;
+            }
+
+            /* Found by name/arity; the SSA builder only handles functions
+             * the eligibility scan accepted. */
+            if (i >= (size_t)ret->function_count ||
+                !(ret->eligible_bitmap[i / 32] & (((Uint32)1) << (i % 32)))) {
+                status = T2BuildStatus::NotEligible;
+                break;
+            }
+
+            FunctionBuilder builder(md, fc);
+            std::unique_ptr<T2Function> fn = builder.build(&local_err);
+
+            if (fn == nullptr) {
+                if (err != nullptr) {
+                    *err = "build: " + local_err;
+                }
+                status = T2BuildStatus::Failed;
+                break;
+            }
+
+            if (!t2_validate(*fn, &local_err)) {
+                if (err != nullptr) {
+                    *err = "validate: " + local_err;
+                }
+                status = T2BuildStatus::Failed;
+                break;
+            }
+
+            /* md (and thus any dynamic-literal terms the IR points at) is
+             * still alive; serialization must happen inside `emit`. */
+            emit(*fn);
+            status = T2BuildStatus::Ok;
+            break;
+        }
+
+        md.cleanup();
+        return status;
+    }
+
 } /* namespace erts_t2 */
 
 /* ------------------------------------------------------------------ *

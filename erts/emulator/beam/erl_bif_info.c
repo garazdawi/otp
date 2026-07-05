@@ -60,6 +60,7 @@
 #include "erl_iolist.h"
 #include "erl_debugger.h"
 #include "erl_record.h"
+#include "t2_retain.h" /* erts_t2_debug_build_ssa (T2-Full debug BIF) */
 
 #ifdef ERTS_ENABLE_LOCK_COUNT
 #include "erl_lock_count.h"
@@ -4863,6 +4864,16 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
             else if (ERTS_IS_ATOM_STR("term_to_binary", tp[1])) {
                 return erts_debug_term_to_binary(BIF_P, tp[2], tp[3]);
             }
+	    break;
+	}
+	case 4: {
+	    /* T2-Full (PLAN/T2FULL/07 §6): reconstruct tier-2 SSA for one
+	       function from its retained code chunk and return a structured
+	       term. Requires the module to have been loaded with T2_RETAIN=1;
+	       returns 'undefined' otherwise. */
+	    if (ERTS_IS_ATOM_STR("t2_build_ssa", tp[1])) {
+		BIF_RET(erts_t2_debug_build_ssa(BIF_P, tp[2], tp[3], tp[4]));
+	    }
 	    break;
 	}
 	default:

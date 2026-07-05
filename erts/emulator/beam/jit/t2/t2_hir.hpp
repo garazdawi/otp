@@ -41,12 +41,16 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <new>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "t2_types.hpp"
+
+/* The C retention struct (jit/t2/t2_retain.h); only used by pointer here. */
+struct ErtsT2RetainedCode;
 
 namespace erts_t2 {
 
@@ -403,6 +407,30 @@ namespace erts_t2 {
 
     /* A compact human-readable dump of the CFG and ops. */
     std::string t2_dump(const T2Function &fn);
+
+    /* ------------------------------------------------------------------ *
+     * Single-function builder entry (used by the t2_build_ssa debug BIF) *
+     * ------------------------------------------------------------------ */
+
+    enum class T2BuildStatus {
+        Ok,          /* built + validated; `emit` was invoked */
+        NotFound,    /* no function with that name/arity in the module */
+        NotEligible, /* found, but not in the eligibility bitmap        */
+        Failed       /* decode/build/validate failed; *err filled       */
+    };
+
+    /* Decode the retained module (§2), locate the eligible function whose
+     * name/arity match, build + validate its SSA, and invoke `emit` with
+     * it while every term the IR references is still alive — the module
+     * decode (including any dynamic literals synthesized from the code
+     * chunk) is released only after `emit` returns. Implemented in
+     * t2_hir_builder.cpp. */
+    T2BuildStatus t2_build_for_debug(
+            const ErtsT2RetainedCode *ret,
+            Eterm function,
+            unsigned arity,
+            const std::function<void(const T2Function &)> &emit,
+            std::string *err);
 
 } /* namespace erts_t2 */
 

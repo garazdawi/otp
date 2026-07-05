@@ -146,4 +146,17 @@ int erts_t2_build_all(const ErtsT2RetainedCode *ret);
  * NULL when the module has no functions. Sets \p *any_eligible . */
 Uint32 *erts_t2_eligibility_scan(BeamFile *beam, int *any_eligible);
 
+/* t2_debug.cpp: debug BIF backing erts_debug:get_internal_state(
+ * {t2_build_ssa, M, F, A}). Looks up module M's active instance, runs the
+ * SSA builder on the retained chunk for F/A, and serializes the
+ * reconstructed T2Function into a structured Erlang term (see the format
+ * comment in t2_debug.cpp). Returns:
+ *   am_undefined              -- module not loaded / nothing retained
+ *   {error, not_found}        -- no such F/A in the module
+ *   {error, not_eligible}     -- F/A found but not tier-2 eligible
+ *   {error, build_failed, Rsn}-- decode/build/validate failed
+ *   {ok, SsaTerm}             -- success
+ * Requires the module to have been loaded with T2_RETAIN=1. */
+Eterm erts_t2_debug_build_ssa(Process *p, Eterm mod, Eterm func, Eterm arity);
+
 #endif /* ERL_T2_RETAIN_H__ */
