@@ -1119,8 +1119,11 @@ public:
 
     /* MVP T2 hook: returns true iff the function whose code is
      * currently being emitted is on the hardcoded T2 target list.
-     * Defined in beam_asm_module.cpp. */
+     * Defined in beam_asm_module.cpp. The static t2_mvp entries are
+     * gated on the T2_MVP env var (default off) so the P1 dynamic
+     * prologue install operates on an undisturbed T1 entry. */
     bool t2_mvp_is_target() const;
+    bool t2_mvp_enabled() const;
 
     /* MVP T2 step 3: per-function record of the labels needed to wire
      * up T2-specialized code. Populated by the hook in emit_i_test_yield;

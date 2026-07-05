@@ -253,11 +253,19 @@ bool BeamModuleAssembler::t2_mvp_is_target() const {
         return false;
     }
 
-    for (const auto &t : targets) {
-        if (erts_is_atom_str(t.mod, mod, 0) &&
-            erts_is_atom_str(t.fun, current_function, 0) &&
-            t.arity == current_arity) {
-            return true;
+    /* The static t2_mvp diversion is superseded experiment scaffolding:
+     * it reroutes the T1 entry of total/2 and diff/2 through the MVP
+     * region at codegen time, which conflicts with the P1 dynamic
+     * install (the prologue patch assumes an undisturbed T1 entry whose
+     * body is the pctab's side-exit landing zone). Gated on T2_MVP so
+     * the original experiment stays reproducible; default off. */
+    if (t2_mvp_enabled()) {
+        for (const auto &t : targets) {
+            if (erts_is_atom_str(t.mod, mod, 0) &&
+                erts_is_atom_str(t.fun, current_function, 0) &&
+                t.arity == current_arity) {
+                return true;
+            }
         }
     }
 
@@ -295,6 +303,14 @@ bool BeamModuleAssembler::t2_mvp_is_target() const {
     }
 
     return false;
+}
+
+bool BeamModuleAssembler::t2_mvp_enabled() const {
+    static bool enabled = []() {
+        const char *env = getenv("T2_MVP");
+        return env != nullptr && env[0] == '1';
+    }();
+    return enabled;
 }
 
 bool BeamModuleAssembler::t2_g31_enabled() const {
