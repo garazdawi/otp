@@ -118,6 +118,7 @@ MODULES= \
 	statistics_SUITE \
 	system_info_SUITE \
 	system_profile_SUITE \
+	t2_g1_SUITE \
 	time_SUITE \
 	timer_bif_SUITE \
 	trace_SUITE \
