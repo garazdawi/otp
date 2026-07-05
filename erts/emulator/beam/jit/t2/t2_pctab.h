@@ -24,9 +24,10 @@
  * T2-Full tier-2 JIT: T1 PC side table (PLAN/T2FULL/07 §4).
  *
  * For every tier-2-eligible function, this records the T1 (baseline JIT)
- * machine-code offsets of the four "re-entry" kinds a tier-2 deopt needs
- * to resume into: the function entry, each call site, each post-call
- * continuation, and each post-BIF/effect boundary. Each entry is tagged
+ * machine-code offsets of the "re-entry" kinds a tier-2 deopt needs to
+ * resume into: the function entry, each call site, each light-BIF call
+ * site, each post-call continuation, each post-BIF/effect boundary and
+ * each error-exit op site. Each entry is tagged
  * with the BEAM op's decode ordinal (`beam_idx`) so the tier-2 deopt
  * resolver can map an SSA op back to the T1 resume PC (T2/08 §4.2).
  *
@@ -47,11 +48,16 @@
  * call's ordinal.
  *
  * The zip is exact whenever the per-kind emit and decode counts agree,
- * which holds for the common case (calls and non-fused arithmetic).
- * A special-BIF call transform (apply/yield/...) or a fused rem/div can
- * make the counts disagree; when that happens for a kind, that kind's
- * entries in that function keep their offsets but carry
- * ERTS_T2_PC_BEAM_IDX_UNKNOWN rather than a guessed ordinal. Everything
+ * which holds for the common case (calls, light-BIF calls and non-fused
+ * arithmetic). The decode side mirrors the loader's call_ext transform
+ * three ways so both sides classify each call_ext by the specific op it
+ * actually becomes: loader-transformed specials (apply/yield/...) count
+ * as nothing (their dedicated instructions record no entries), heavy
+ * BIFs count as CALL (they emit i_call_ext, a plain export call), and
+ * the remaining BIF targets count as BIF (they emit call_light_bif).
+ * A fused rem/div can still make the counts disagree; when that happens
+ * for a kind, that kind's entries in that function keep their offsets
+ * but carry ERTS_T2_PC_BEAM_IDX_UNKNOWN rather than a guessed ordinal. Everything
  * here is gated on the module's eligibility bitmap, so ineligible
  * functions (and default, non-T2 loads) build no table at all.
  */
@@ -63,15 +69,24 @@
 
 struct ErtsT2RetainedCode;
 
-/* The re-entry kinds (PLAN/T2FULL/07 §4; ERROR added in P1). */
+/* The re-entry kinds (PLAN/T2FULL/07 §4; ERROR and BIF added in P1). */
 typedef enum {
     ERTS_T2_PC_ENTRY = 0,  /* function entry (i_test_yield)          */
     ERTS_T2_PC_CALL = 1,   /* call site (before the call emitter)    */
-    ERTS_T2_PC_CONT = 2,   /* post-call continuation (after a return)*/
+    ERTS_T2_PC_CONT = 2,   /* post-call continuation (after a return;
+                            * shared by CALL and BIF sites — the
+                            * beam_idx disambiguates)                */
     ERTS_T2_PC_EFFECT = 3, /* gc_bif/effect op site (before the op)  */
-    ERTS_T2_PC_ERROR = 4   /* error-exit op site (badmatch/case_end/
+    ERTS_T2_PC_ERROR = 4,  /* error-exit op site (badmatch/case_end/
                             * if_end; before the op, so a T2 side
                             * exit re-executes it and T1 raises)     */
+    ERTS_T2_PC_BIF = 5     /* light-BIF call site (call_light_bif;
+                            * before the emitter, so a T2 yield
+                            * re-executes the whole BIF call — the
+                            * BIF has not run when a yield fires).
+                            * Every BIF site also records a CONT
+                            * entry (the post-call_light_bif T1 PC,
+                            * the CP a T2 trap must publish)         */
 } ErtsT2PcKind;
 
 /* Sentinel for a beam_idx that could not be reconciled (see header). */

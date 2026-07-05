@@ -37,6 +37,7 @@
 #include "code_ix.h"
 #include "module.h"
 #include "export.h"
+#include "erl_bif_table.h"
 
 #include "t2_retain.h"
 #include "t2_pctab.h"
@@ -49,9 +50,11 @@ typedef struct {
     Eterm function;
     Uint32 arity;
     Uint32 call_count;   /* number of call generic ops                  */
+    Uint32 bif_count;    /* number of light-BIF call_ext generic ops    */
     Uint32 effect_count; /* number of gc_bif generic ops                */
     Uint32 error_count;  /* number of badmatch/case_end/if_end ops      */
     Uint32 *call_ords;   /* their decode ordinals, in program order     */
+    Uint32 *bif_ords;
     Uint32 *effect_ords;
     Uint32 *error_ords;
 } PctabFnDecode;
@@ -76,14 +79,59 @@ static void pctab_view_init(BeamFile *view, const ErtsT2RetainedCode *ret) {
     view->code.max_opcode = ret->max_opcode;
 }
 
-/* A generic call op counts as a "call" for the zip iff codegen would emit
- * one of the hooked call ops for it. Local calls always do. A call_ext to
- * a BIF (including apply/yield/hibernate/... which are themselves BIFs)
- * lowers to a bif/apply dispatch that codegen does not tag as a call, so
- * only non-BIF call_ext targets count -- matching t2_pc_classify's
- * emit-side op set exactly. */
-static int pctab_genop_is_call(const ErtsT2RetainedCode *ret,
-                               const BeamOp *op) {
+/* The closed set of call_ext targets the loader transforms into
+ * dedicated instructions (ops.tab `u$func:` rules): i_yield /
+ * i_hibernate / i_apply* / i_load_nif / i_call_on_load_function /
+ * i_perf_counter. None of their emissions record a pctab entry, so the
+ * decode side must classify them as "nothing" too (mirrors
+ * is_transformed_call_ext in t2_isel.cpp). */
+static int pctab_is_transformed_call_ext(Eterm m, Eterm f, Uint arity) {
+    /* Non-predefined atoms interned once. */
+    static Eterm hibernate = THE_NON_VALUE;
+    static Eterm load_nif = THE_NON_VALUE;
+    static Eterm on_load_fn = THE_NON_VALUE;
+    static Eterm os_mod = THE_NON_VALUE;
+    static Eterm perf_counter = THE_NON_VALUE;
+
+    if (hibernate == THE_NON_VALUE) {
+        hibernate = ERTS_MAKE_AM("hibernate");
+        load_nif = ERTS_MAKE_AM("load_nif");
+        on_load_fn = ERTS_MAKE_AM("call_on_load_function");
+        os_mod = ERTS_MAKE_AM("os");
+        perf_counter = ERTS_MAKE_AM("perf_counter");
+    }
+
+    if (m == am_erlang) {
+        if ((f == am_yield && arity == 0) ||
+            (f == hibernate && arity == 0) ||
+            (f == am_apply && (arity == 2 || arity == 3)) ||
+            (f == load_nif && arity == 2) ||
+            (f == on_load_fn && arity == 1)) {
+            return 1;
+        }
+    } else if (m == os_mod) {
+        if (f == perf_counter && arity == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Classify a generic call op by the pctab kind codegen records for the
+ * specific op it becomes, or -1 for none -- the two sides must agree
+ * per kind for the zip to hold (t2_pc_classify is the emit-side mirror).
+ * Mirrors the ops.tab call_ext transform exactly:
+ *
+ *   - the loader-transformed specials become dedicated instructions
+ *     that record nothing;
+ *   - heavy BIFs (is_heavy_bif) become i_call_ext, a plain export
+ *     call, recorded as CALL;
+ *   - all remaining BIF targets become call_light_bif (including the
+ *     is_exit_bif tails, which drop the trailing deallocate/return but
+ *     keep the one call_light_bif), recorded as BIF;
+ *   - everything else is a real Erlang call, recorded as CALL. */
+static int pctab_genop_call_kind(const ErtsT2RetainedCode *ret,
+                                 const BeamOp *op) {
     UWord import_index;
     const Export *ep;
 
@@ -91,20 +139,32 @@ static int pctab_genop_is_call(const ErtsT2RetainedCode *ret,
     case genop_call_2:
     case genop_call_last_3:
     case genop_call_only_2:
-        return 1;
+        return ERTS_T2_PC_CALL;
     case genop_call_ext_2:
     case genop_call_ext_last_3:
     case genop_call_ext_only_2:
         import_index = op->a[1].val;
         if (import_index >= (UWord)ret->import_count) {
-            return 1;
+            return ERTS_T2_PC_CALL;
+        }
+        if (pctab_is_transformed_call_ext(
+                    ret->imports[import_index].module,
+                    ret->imports[import_index].function,
+                    ret->imports[import_index].arity)) {
+            return -1;
         }
         ep = erts_active_export_entry(ret->imports[import_index].module,
                                       ret->imports[import_index].function,
                                       ret->imports[import_index].arity);
-        return (ep == NULL || ep->bif_number < 0) ? 1 : 0;
+        if (ep == NULL || ep->bif_number < 0) {
+            return ERTS_T2_PC_CALL;
+        }
+        if (bif_table[ep->bif_number].kind == BIF_KIND_HEAVY) {
+            return ERTS_T2_PC_CALL;
+        }
+        return ERTS_T2_PC_BIF;
     default:
-        return 0;
+        return -1;
     }
 }
 
@@ -134,7 +194,7 @@ static int pctab_is_error(int op) {
 
 /* Decode the retained code chunk and record, per function, the decode
  * ordinals (matching t2_hir_builder's numbering: entry label == 0, then
- * one per generic op) of every call op and every gc_bif op. Returns a
+ * one per generic op) of every call/bif/gc_bif/error op. Returns a
  * function_count-long array (caller frees via pctab_decode_free), or NULL
  * when there are no functions. */
 static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
@@ -157,7 +217,7 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
      * per-function ordinal arrays are allocated, and pass 1 fills them. */
     for (pass = 0; pass < 2; pass++) {
         Uint32 idx = 0;
-        Uint32 call_cur = 0, eff_cur = 0, err_cur = 0;
+        Uint32 call_cur = 0, bif_cur = 0, eff_cur = 0, err_cur = 0;
 
         pctab_view_init(&view, ret);
         beamopallocator_init(&op_alloc);
@@ -172,6 +232,7 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                 fn_idx++;
                 idx = 0;
                 call_cur = 0;
+                bif_cur = 0;
                 eff_cur = 0;
                 err_cur = 0;
                 if (pass == 0 && fn_idx < fc) {
@@ -187,12 +248,19 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
             default:
                 if (fn_idx >= 0 && fn_idx < fc) {
                     Uint32 ord = idx;
+                    int call_kind = pctab_genop_call_kind(ret, op);
 
-                    if (pctab_genop_is_call(ret, op)) {
+                    if (call_kind == ERTS_T2_PC_CALL) {
                         if (pass == 0) {
                             fns[fn_idx].call_count++;
                         } else {
                             fns[fn_idx].call_ords[call_cur++] = ord;
+                        }
+                    } else if (call_kind == ERTS_T2_PC_BIF) {
+                        if (pass == 0) {
+                            fns[fn_idx].bif_count++;
+                        } else {
+                            fns[fn_idx].bif_ords[bif_cur++] = ord;
                         }
                     } else if (pctab_is_effect(op->op)) {
                         if (pass == 0) {
@@ -227,6 +295,11 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                             erts_alloc(ERTS_ALC_T_T2_CODE,
                                        fns[i].call_count * sizeof(Uint32));
                 }
+                if (fns[i].bif_count > 0) {
+                    fns[i].bif_ords =
+                            erts_alloc(ERTS_ALC_T_T2_CODE,
+                                       fns[i].bif_count * sizeof(Uint32));
+                }
                 if (fns[i].effect_count > 0) {
                     fns[i].effect_ords =
                             erts_alloc(ERTS_ALC_T_T2_CODE,
@@ -253,6 +326,9 @@ static void pctab_decode_free(PctabFnDecode *fns, Sint32 fc) {
     for (i = 0; i < fc; i++) {
         if (fns[i].call_ords != NULL) {
             erts_free(ERTS_ALC_T_T2_CODE, fns[i].call_ords);
+        }
+        if (fns[i].bif_ords != NULL) {
+            erts_free(ERTS_ALC_T_T2_CODE, fns[i].bif_ords);
         }
         if (fns[i].effect_ords != NULL) {
             erts_free(ERTS_ALC_T_T2_CODE, fns[i].effect_ords);
@@ -395,20 +471,25 @@ void erts_t2_pctab_build(ErtsT2RetainedCode *ret,
         erts_free(ERTS_ALC_T_T2_CODE, emit_count);
     }
 
-    /* Per-function zip: pair emit-order call/effect entries with decode
-     * ordinals by position, when the per-kind counts agree. */
+    /* Per-function zip: pair emit-order call/bif/effect entries with
+     * decode ordinals by position, when the per-kind counts agree. */
     for (f = 0; f < fc; f++) {
         ErtsT2PcFunc *fn = &tab->funcs[f];
-        Uint32 call_n = 0, eff_n = 0, err_n = 0;
-        Uint32 call_i = 0, eff_i = 0, err_i = 0;
-        Uint32 last_call_bi = ERTS_T2_PC_BEAM_IDX_UNKNOWN;
+        Uint32 call_n = 0, bif_n = 0, eff_n = 0, err_n = 0;
+        Uint32 call_i = 0, bif_i = 0, eff_i = 0, err_i = 0;
+        /* A CONT entry is recorded immediately after its site (CALL or
+         * BIF) in emission order, so it takes the last site's ordinal. */
+        Uint32 last_site_bi = ERTS_T2_PC_BEAM_IDX_UNKNOWN;
         Uint32 e;
-        int call_exact, eff_exact, err_exact;
+        int call_exact, bif_exact, eff_exact, err_exact;
 
         for (e = 0; e < fn->entry_count; e++) {
             switch (fn->entries[e].kind) {
             case ERTS_T2_PC_CALL:
                 call_n++;
+                break;
+            case ERTS_T2_PC_BIF:
+                bif_n++;
                 break;
             case ERTS_T2_PC_EFFECT:
                 eff_n++;
@@ -422,21 +503,24 @@ void erts_t2_pctab_build(ErtsT2RetainedCode *ret,
         }
 
         call_exact = (call_n == dec[f].call_count);
+        bif_exact = (bif_n == dec[f].bif_count);
         eff_exact = (eff_n == dec[f].effect_count);
         err_exact = (err_n == dec[f].error_count);
 
         if (pctab_debug_enabled() && fn->entry_count > 0 &&
-            (!call_exact || !eff_exact || !err_exact)) {
+            (!call_exact || !bif_exact || !eff_exact || !err_exact)) {
             erts_fprintf(stderr,
                          "t2_pctab: %T/%u count mismatch "
-                         "(emit call=%u eff=%u err=%u; "
-                         "decode call=%u eff=%u err=%u)\n",
+                         "(emit call=%u bif=%u eff=%u err=%u; "
+                         "decode call=%u bif=%u eff=%u err=%u)\n",
                          fn->function,
                          (unsigned)fn->arity,
                          (unsigned)call_n,
+                         (unsigned)bif_n,
                          (unsigned)eff_n,
                          (unsigned)err_n,
                          (unsigned)dec[f].call_count,
+                         (unsigned)dec[f].bif_count,
                          (unsigned)dec[f].effect_count,
                          (unsigned)dec[f].error_count);
         }
@@ -452,10 +536,16 @@ void erts_t2_pctab_build(ErtsT2RetainedCode *ret,
                 ent->beam_idx =
                         call_exact ? dec[f].call_ords[call_i++]
                                    : ERTS_T2_PC_BEAM_IDX_UNKNOWN;
-                last_call_bi = ent->beam_idx;
+                last_site_bi = ent->beam_idx;
+                break;
+            case ERTS_T2_PC_BIF:
+                ent->beam_idx =
+                        bif_exact ? dec[f].bif_ords[bif_i++]
+                                  : ERTS_T2_PC_BEAM_IDX_UNKNOWN;
+                last_site_bi = ent->beam_idx;
                 break;
             case ERTS_T2_PC_CONT:
-                ent->beam_idx = last_call_bi;
+                ent->beam_idx = last_site_bi;
                 break;
             case ERTS_T2_PC_EFFECT:
                 ent->beam_idx =
@@ -568,6 +658,9 @@ static Eterm pctab_kind_atom(byte kind) {
                              ERTS_ATOM_ENC_LATIN1, 1);
     case ERTS_T2_PC_ERROR:
         return erts_atom_put((const byte *)"error", 5,
+                             ERTS_ATOM_ENC_LATIN1, 1);
+    case ERTS_T2_PC_BIF:
+        return erts_atom_put((const byte *)"bif", 3,
                              ERTS_ATOM_ENC_LATIN1, 1);
     default:
         return am_undefined;

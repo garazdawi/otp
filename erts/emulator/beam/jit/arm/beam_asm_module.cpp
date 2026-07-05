@@ -631,18 +631,37 @@ void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
         break;
 
     /* Non-tail calls: the call site, plus the continuation the callee
-     * returns to. */
+     * returns to. NB: op_i_call_ext_e includes call_ext to a *heavy*
+     * BIF (ops.tab is_heavy_bif) — from the caller's side that is a
+     * plain export call, and the decode side classifies it as CALL
+     * for the same reason (pctab_genop_call_kind). */
     case op_i_call_f:
     case op_i_call_ext_e:
         t2_pc_record(before, ERTS_T2_PC_CALL);
         t2_pc_record(after, ERTS_T2_PC_CONT);
         break;
 
+    /* Light-BIF call sites (P1): every call_ext-family genop to a
+     * non-heavy, non-loader-transformed BIF lowers to exactly one
+     * call_light_bif (the *_last/*_only variants keep it plus their
+     * own deallocate/return; the is_exit_bif tails drop those but
+     * keep the call). `before` is the yield resume PC — a yield fires
+     * before the BIF has run, so re-executing the whole site at T1 is
+     * correct. `after` is the post-call continuation: the CP a T2
+     * trap publishes, and where a traced/trapping invocation resumes
+     * in T1 (for the *_last shape that is T1's own deallocate+return
+     * sequence). */
+    case op_call_light_bif_be:
+        t2_pc_record(before, ERTS_T2_PC_BIF);
+        t2_pc_record(after, ERTS_T2_PC_CONT);
+        break;
+
     /* Tail calls (including the move-fused variants): call site only.
      * These specific ops are emitted only for local calls and call_ext to
-     * non-BIF targets; call_ext to a BIF lowers to a bif dispatch instead,
-     * which the decode side likewise excludes from its call count so the
-     * zip stays aligned (see pctab_genop_is_call in t2_pctab.c). */
+     * non-BIF targets; call_ext to a BIF lowers to a call_light_bif or
+     * i_call_ext (heavy) instead, which the decode side classifies the
+     * same way so each kind's zip stays aligned (see
+     * pctab_genop_call_kind in t2_pctab.c). */
     case op_i_call_last_ft:
     case op_i_call_only_f:
     case op_i_call_ext_last_et:

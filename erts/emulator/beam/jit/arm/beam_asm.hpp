@@ -1142,7 +1142,7 @@ public:
     void emit_t2_specializations();
 
     /* T2-Full P0 (PLAN/T2FULL/07 §4): T1 PC side-table collection. The
-     * emitter records, in emission order, the code offset of the four
+     * emitter records, in emission order, the code offset of the
      * re-entry kinds. beam_idx is not known here (see t2_pctab.h); it is
      * reconciled at retain-commit, which is also where entries are
      * filtered to the eligible functions — the eligibility bitmap does not
