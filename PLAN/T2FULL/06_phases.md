@@ -50,6 +50,26 @@ rescope:
 
 ## P0–P2 — The loop tier (16–20 weeks; ≡ 08's Track B, absorbed)
 
+> **P0 status: COMPLETE, G1 PASSED (2026-07-05).** All eight
+> work-order commits merged (`a89664c804..0ff215f5c5`): jit/t2/
+> HIR + lattice + validator, two-phase code-chunk/Type retention
+> (prepare-copies/finalize-attaches — the map's finalize-only
+> placement was a use-after-free, found and fixed), Braun SSA
+> builder (8,661 functions / 161 modules, zero failures,
+> deterministic), `t2_build_ssa` debug BIF, T1 PC side table,
+> `t2_ranges` blob class, and the G1 comparator as a standing CT
+> suite (`t2_g1_SUITE`). **G1 verdict**: criterion amended from
+> "identical CFG vs `dssaopt`" (unachievable and wrong across the
+> codegen boundary) to "zero genuine reconstruction loss +
+> content-faithful at the `dprecg` point modulo a documented
+> equivalence table". Measured: CFG 64.6 %, strict content 62.3 %,
+> equivalence-credited **92 %**, with the residual 14 functions
+> individually verified as comparison-spelling deltas → **100 %
+> content-faithful; zero loss found**. SSA-chunk fallback not
+> needed. Caveat: 120/295 corpus functions were `not_eligible` at
+> P0's op set (binaries/maps/complex guards) — the suite re-runs
+> as eligibility widens in P2. Next: P1.
+
 Identical scope, gates, and estimates to
 [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §8 Track B —
 P0 foundations (SSA reconstruction + **G1 fidelity gate**, PC side
