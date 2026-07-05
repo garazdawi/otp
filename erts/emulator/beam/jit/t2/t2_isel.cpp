@@ -1001,6 +1001,27 @@ namespace erts_t2 {
                     return fail("P1 isel requires builder sync metadata");
                 }
 
+                /* A function whose own MFA is a BIF is a *stub*: the
+                 * loader's is_mfa_bif transform replaces its body with
+                 * call_bif_mfa (the real BIF trampoline) and the chunk
+                 * body the builder decoded is emitted only as dead
+                 * code. Compiling — let alone installing — that body
+                 * would put the stub's erlang:error/nif_error fallback
+                 * over the real BIF (found the hard way: +JT2enable
+                 * boot replaced erts_internal:garbage_collect/1 with
+                 * `nif_error(undefined)`). Mirror is_mfa_bif exactly. */
+                {
+                    const Export *self_ep =
+                            erts_active_export_entry(hir.module,
+                                                     hir.function,
+                                                     hir.arity);
+
+                    if (self_ep != nullptr && self_ep->bif_number >= 0) {
+                        return fail("function is a BIF stub (T1 loads "
+                                    "call_bif_mfa, not the chunk body)");
+                    }
+                }
+
                 lir.module = hir.module;
                 lir.function = hir.function;
                 lir.arity = hir.arity;

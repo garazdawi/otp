@@ -36,6 +36,7 @@
 #include "erl_thr_progress.h"
 #include "code_ix.h"
 #include "module.h"
+#include "export.h"
 #include "beam_asm.h"
 
 #include "t2_install.h"
@@ -200,6 +201,23 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
                                 sizeof(Uint32));
 
     /* --- the six preconditions of T2/06 §2.6, all under the lock --- */
+
+    /* (0) The function's own MFA must not be a BIF: the loader's
+     * is_mfa_bif transform loaded a call_bif_mfa trampoline at L_f,
+     * not the chunk body a T2 blob was compiled from (the body is
+     * emitted only as dead code after the trampoline). Installing
+     * would replace the real BIF with its erlang:error/nif_error
+     * stub fallback. Belt-and-braces to the isel-side rejection. */
+    {
+        const Export *self_ep =
+                erts_active_export_entry(ci_exec->mfa.module,
+                                         ci_exec->mfa.function,
+                                         ci_exec->mfa.arity);
+
+        if (self_ep != NULL && self_ep->bif_number >= 0) {
+            return ERTS_T2_INSTALL_REJECTED_STATE;
+        }
+    }
 
     /* (2) No breakpoint/NIF flag; (4) not trace-patterned (a staged
      * GenericBp exists before the flag is set; both writers hold the
