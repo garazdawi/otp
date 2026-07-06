@@ -68,6 +68,8 @@
 #include "beam_code.h"
 #include "code_ix.h"
 
+#include "t2_ranges.h"
+
 struct erl_module_instance;
 
 /* One installed tier-2 blob. Linked into the owning module instance's
@@ -85,9 +87,16 @@ typedef struct ErtsT2Install {
     const void *blob_entry; /* the entry stub (branch target)         */
     const void *blob_base;  /* JitAllocator span                      */
     size_t blob_size;
+    void *blob_rw;          /* the span's writable alias (tombstones) */
 
     void *bridge_base;      /* near-side bridge veneer span, or NULL  */
     size_t bridge_size;
+
+    /* The blob's resume table (P2 commit 5), or NULL when the function
+     * has no recovered loops. Also registered on the t2_ranges blob
+     * descriptor, which owns/frees it at deregistration; this pointer
+     * is only for jettison's tombstone writes + retire scheduling. */
+    ErtsT2ResumeTab *resume_tab;
 } ErtsT2Install;
 
 typedef enum {
@@ -120,7 +129,10 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
                                     const ErtsCodeInfo *ci_exec,
                                     const void *blob_entry,
                                     const void *blob_base,
-                                    size_t blob_size);
+                                    size_t blob_size,
+                                    void *blob_rw,
+                                    const Uint32 *resume_offsets,
+                                    Uint32 resume_count);
 
 /* Jettison the tier-2 blob installed over `ci_exec`, if any. Returns 1
  * if a blob was jettisoned, 0 otherwise. Callers on the trace/NIF path
@@ -158,6 +170,16 @@ UWord erts_t2_installed_sz(void);
 Eterm erts_t2_debug_install(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_jettison(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_installed(Process *p, Eterm mod, Eterm func, Eterm arity);
+
+/* P2 commit 5 introspection (t2_install.c):
+ *   {t2_in_blob, Pid} -> true | false | undefined
+ *     whether Pid's saved instruction pointer (c_p->i) currently lies
+ *     inside a registered T2 blob — i.e. the process is yielded at a
+ *     recovered loop's back edge, to be resumed INTO T2;
+ *   t2_yield_stats -> {BackEdgeYields, BackEdgeResumes}
+ *     the racy monitoring counters bumped by the blob stubs. */
+Eterm erts_t2_debug_in_blob(Process *p, Eterm pid);
+Eterm erts_t2_debug_yield_stats(Process *p);
 
 /* t2_compile.cpp: the +JT2enable synchronous compile-at-load driver
  * (map §5). Called from beam_load_finalize_code right after the pctab

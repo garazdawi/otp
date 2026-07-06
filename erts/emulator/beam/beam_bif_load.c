@@ -1168,6 +1168,25 @@ check_process_code(Process* rp, Module* modp, int *redsp, int fcalls)
 	return am_true;
     }
 
+#ifdef BEAMASM
+    /*
+     * T2-Full (P2 commit 5): a process yielded at a tier-2 back edge
+     * holds a *blob* resume PC in rp->i — outside the module range,
+     * but referencing code owned by this instance all the same. Treat
+     * it exactly like an in-module instruction pointer, so the purger
+     * gets the same abort/kill semantics T1 would give for a process
+     * suspended in old code. The blob descriptor's code_hdr is the
+     * owning instance's identity (it survives the curr->old copy).
+     */
+    {
+	const ErtsT2Blob *blob = erts_t2_find_blob(rp->i);
+
+	if (blob != NULL && blob->code_hdr == (const void *)modp->old.code_hdr) {
+	    return am_true;
+	}
+    }
+#endif
+
     *redsp += 1;
 
     if (erts_check_nfunc_in_area(rp, mod_start, mod_size))

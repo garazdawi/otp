@@ -28,6 +28,9 @@
 #include "erl_vm.h"
 #include "global.h"
 #include "beam_code.h"
+#ifdef BEAMASM
+#include "jit/t2/t2_ranges.h"
+#endif
 #include "erl_unicode.h"
 
 typedef struct {
@@ -255,6 +258,18 @@ erts_lookup_function_info(FunctionInfo* fi, ErtsCodePtr pc, int full_info)
     fi->loc = LINE_INVALID_LOCATION;
     rp = find_range(pc);
     if (rp == 0) {
+#ifdef BEAMASM
+        /* T2-Full (P2 commit 5): a tier-2 blob PC (a back-edge resume
+         * address in a yielded process's c_p->i) is not in any module
+         * range; resolve its MFA through the blob registry so
+         * introspection (current_stacktrace and friends) names the
+         * function just as a T1 yield would. No line info. */
+        const ErtsT2Blob *blob = erts_t2_find_blob(pc);
+
+        if (blob != NULL) {
+            fi->mfa = &blob->mfa;
+        }
+#endif
 	return;
     }
     hdr = (BeamCodeHeader*) rp->start;

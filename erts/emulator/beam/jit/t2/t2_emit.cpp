@@ -57,6 +57,7 @@ extern "C"
 #include "t2_isel.hpp"
 #include "t2_loop.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <functional>
 #include <set>
@@ -124,6 +125,29 @@ namespace erts_t2 {
          * the value is the function's public T1 entry L_f. */
         const void *install_entry = nullptr;
 
+        /* Per recovered-loop back-edge resume stubs (P2 commit 5;
+         * PLAN/T2/08 §4.5): the body's b.le targets `yield`, the cold
+         * yield setup, which hands ARG3 = `anchor` to
+         * i_test_yield_shared so the stored resume PC becomes
+         * anchor + TEST_YIELD_RETURN_OFFSET = `resume`, back INTO the
+         * blob. The gap between anchor and resume hosts the blob's
+         * per-stub tombstone flag word (jettison sets it; a
+         * post-jettison resume then demotes itself to T1). */
+        struct ResumeStub {
+            Label yield;
+            Label anchor;
+            Label resume;
+            Label header;         /* the loop header's block label     */
+            const void *demote;   /* L_f + TEST_YIELD_RETURN_OFFSET    */
+            uint32_t beam_idx;
+        };
+        std::vector<ResumeStub> resume_stubs;
+
+        /* Lookahead context for emit_lir_reduction_check (the back-jump
+         * that follows it names the loop header). */
+        const T2LirBlock *cur_block = nullptr;
+        size_t cur_op_idx = 0;
+
         std::string emit_error;
 
     public:
@@ -189,6 +213,11 @@ namespace erts_t2 {
          * for t2_ranges registration and eventual release. */
         const void *blob_base = nullptr;
         size_t blob_size = 0;
+        void *blob_rw = nullptr;
+
+        /* Blob-relative back-edge resume PCs (valid after
+         * finalize_to_allocator; P2 commit 5). */
+        std::vector<uint32_t> resume_offsets;
 
         bool failed() const {
             return !emit_error.empty();
@@ -227,14 +256,17 @@ namespace erts_t2 {
                 check_pending_stubs();
 
                 bind_veneer_target(block_label(b.id));
-                for (const T2LirOp &op : b.ops) {
+                cur_block = &b;
+                for (size_t oi = 0; oi < b.ops.size(); oi++) {
                     if (failed()) {
                         return;
                     }
-                    emit_op(op);
+                    cur_op_idx = oi;
+                    emit_op(b.ops[oi]);
                 }
             }
 
+            emit_resume_stubs();
             emit_fail_trampolines();
 
             /* Reuse the loader's finalize: binds code_end, flushes the
@@ -266,6 +298,14 @@ namespace erts_t2 {
 
             blob_base = exec;
             blob_size = code.code_size();
+            blob_rw = rw;
+
+            for (const ResumeStub &st : resume_stubs) {
+                resume_offsets.push_back(
+                        (uint32_t)((const char *)getCode(st.resume) -
+                                   (const char *)exec));
+            }
+            std::sort(resume_offsets.begin(), resume_offsets.end());
 
             return (const void *)getCode(entry_label);
         }
@@ -983,15 +1023,19 @@ namespace erts_t2 {
          * per-iteration charge — T1 charges one reduction at the
          * callee entry's i_test_yield on every self tail call, the
          * recovered loop charges one at the back edge — so
-         * process_info(_, reductions) is byte-identical. The yield
-         * path *demotes* the invocation to T1 (T2 resume stubs are a
-         * later commit): ARG3 = L_f keeps i_test_yield_shared's
-         * MFA/arity/resume contract (resume PC = L_f +
-         * TEST_YIELD_RETURN_OFFSET = the T1 body; X0..arity-1 saved
-         * from c_p->arity), and the state at this boundary is the
-         * fresh-call argument vector by the back-edge sync map, so
-         * the demoted continuation is exactly a fresh T1 iteration —
-         * still no c_p->i ever points into a blob. */
+         * process_info(_, reductions) is byte-identical.
+         *
+         * P2 commit 5: the yield path resumes INTO T2 (PLAN/T2/08
+         * §4.5). The b.le targets a per-loop cold stub that routes
+         * through i_test_yield_shared with ARG3 = an in-blob anchor
+         * preceded by the function's real ErtsCodeMFA, so the shared
+         * fragment's contract holds unchanged: c_p->current = our
+         * MFA, X0..arity-1 saved (the back-edge sync map's fresh-call
+         * vector), and c_p->i = anchor + TEST_YIELD_RETURN_OFFSET —
+         * the blob's resume code, which re-enters the loop header.
+         * This is the first (and only) T2 address class the runtime
+         * ever holds; the resume_tab + jettison translation own its
+         * lifetime. */
         void emit_lir_reduction_check(const T2LirOp &op) {
             if (install_entry == nullptr) {
                 fail("recovered back-edge outside install-mode "
@@ -1003,25 +1047,123 @@ namespace erts_t2 {
                      "entry");
                 return;
             }
+
+            /* The back-jump that follows names the loop header. */
+            if (cur_block == nullptr ||
+                cur_op_idx + 1 >= cur_block->ops.size() ||
+                cur_block->ops[cur_op_idx + 1].kind != T2LirKind::Jump) {
+                fail("back-edge reduction check without a trailing "
+                     "back-jump");
+                return;
+            }
+            uint32_t header = cur_block->ops[cur_op_idx + 1].succ_then;
+
             fact(EmitFact::BackEdgeDemote, op.beam_idx, op.target);
 
             /* Cached slot values must not survive the boundary (the
-             * yield path re-enters T1 with only the canonical
-             * state). */
+             * yield path re-enters with only the canonical state). */
             reg_cache.invalidate();
-
-            mov_imm(ARG3, (Uint64)op.target);
 
             if (erts_alcu_enable_code_atags) {
                 /* Mirror emit_i_test_yield's point-of-origin tag
-                 * store. */
+                 * store (a T1 address; running processes' c_p->i is
+                 * advisory). */
+                mov_imm(ARG3, (Uint64)op.target);
                 a.str(ARG3, a64::Mem(c_p, offsetof(Process, i)));
             }
 
+            ResumeStub st;
+
+            st.yield = a.new_label();
+            st.anchor = a.new_label();
+            st.resume = a.new_label();
+            st.header = block_label(header);
+            st.demote = (const void *)((const char *)op.target +
+                                       erts_t2_test_yield_return_offset());
+            st.beam_idx = op.beam_idx;
+            resume_stubs.push_back(st);
+
             a.subs(FCALLS, FCALLS, imm(1));
-            a.b_le(resolve_fragment(ga->get_i_test_yield_shared(),
-                                    disp1MB));
+            a.b_le(resume_stubs.back().yield);
             /* Fall through to the back-jump. */
+        }
+
+        /* Emit the cold per-loop yield-setup + resume stubs collected
+         * above. Layout per stub:
+         *
+         *   yield:  bump erts_t2_backedge_yields (racy, stats only)
+         *           adr ARG3, anchor
+         *           b i_test_yield_shared
+         *           .align 8
+         *           .quad module, function, arity   ; ErtsCodeMFA
+         *   anchor: .quad 0                          ; tombstone flag
+         *           .zero TEST_YIELD_RETURN_OFFSET-8 ; pad to contract
+         *   resume: bump erts_t2_backedge_resumes
+         *           adr TMP1, anchor; ldr; cbnz -> demote
+         *           b header
+         *   demote: mov TMP1, L_f+TEST_YIELD_RETURN_OFFSET; br TMP1
+         *
+         * The MFA must directly precede the anchor
+         * (i_test_yield_shared reads [ARG3 - sizeof(ErtsCodeMFA)]);
+         * the anchor..resume gap is exactly TEST_YIELD_RETURN_OFFSET
+         * (the shared fragment computes the resume PC as ARG3 + that
+         * offset), and its first word is the tombstone flag: jettison
+         * sets it before the translation pass, so any process that
+         * resumes in the window between prologue revert and c_p->i
+         * translation demotes itself to the T1 body — the same
+         * fresh-call semantics, no re-entry into a dying blob. */
+        void emit_resume_stubs() {
+            for (const ResumeStub &st : resume_stubs) {
+                Label demote = a.new_label();
+                Uint yield_off = erts_t2_test_yield_return_offset();
+                static const byte zeros[64] = {0};
+                Uint64 word;
+
+                reg_cache.invalidate();
+
+                a.bind(st.yield);
+                mov_imm(TMP1, (Uint64)&erts_t2_backedge_yields);
+                a.ldr(TMP2, a64::Mem(TMP1));
+                a.add(TMP2, TMP2, imm(1));
+                a.str(TMP2, a64::Mem(TMP1));
+                a.adr(ARG3, st.anchor);
+                a.b(resolve_fragment(ga->get_i_test_yield_shared(),
+                                     disp1MB));
+
+                /* ErtsCodeMFA + anchor gap (data). */
+                a.align(AlignMode::kData, 8);
+                ERTS_CT_ASSERT(sizeof(ErtsCodeMFA) == 3 * sizeof(Uint64));
+                word = (Uint64)fn.module;
+                a.embed(&word, sizeof(word));
+                word = (Uint64)fn.function;
+                a.embed(&word, sizeof(word));
+                word = (Uint64)fn.arity;
+                a.embed(&word, sizeof(word));
+
+                a.bind(st.anchor);
+                word = 0; /* the tombstone flag */
+                a.embed(&word, sizeof(word));
+                ASSERT(yield_off > sizeof(Uint64) &&
+                       yield_off - sizeof(Uint64) <= sizeof(zeros));
+                a.embed(zeros, yield_off - sizeof(Uint64));
+
+                reg_cache.invalidate();
+                a.bind(st.resume);
+                mov_imm(TMP1, (Uint64)&erts_t2_backedge_resumes);
+                a.ldr(TMP2, a64::Mem(TMP1));
+                a.add(TMP2, TMP2, imm(1));
+                a.str(TMP2, a64::Mem(TMP1));
+
+                a.adr(TMP1, st.anchor);
+                a.ldr(TMP1, a64::Mem(TMP1));
+                a.cbnz(TMP1, demote);
+                a.b(st.header);
+
+                a.bind(demote);
+                mov_imm(TMP1, (Uint64)st.demote);
+                a.br(TMP1);
+                mark_unreachable();
+            }
         }
 
     public:
@@ -1203,6 +1345,8 @@ namespace erts_t2 {
         out->entry = entry;
         out->base = ma.blob_base;
         out->size = ma.blob_size;
+        out->rw_base = ma.blob_rw;
+        out->resume_offsets = ma.resume_offsets;
         return true;
     }
 

@@ -72,6 +72,8 @@ Eterm erts_t2_debug_installed(Process *p, Eterm mod, Eterm func, Eterm arity);
 Eterm erts_t2_debug_stats(Process *p);
 Eterm erts_t2_debug_exec(Process *p, Eterm mod, Eterm func, Eterm arity,
                          Eterm args);
+Eterm erts_t2_debug_in_blob(Process *p, Eterm pid);
+Eterm erts_t2_debug_yield_stats(Process *p);
 #endif
 
 #ifdef ERTS_ENABLE_LOCK_COUNT
@@ -4321,6 +4323,16 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	    BIF_RET(am_undefined);
 #endif
 	}
+	else if (ERTS_IS_ATOM_STR("t2_yield_stats", BIF_ARG_1)) {
+	    /* T2-Full P2 commit 5: {BackEdgeYields, BackEdgeResumes} —
+	       the racy monitoring counters bumped by the recovered
+	       loops' cold yield/resume stubs. */
+#ifdef BEAMASM
+	    BIF_RET(erts_t2_debug_yield_stats(BIF_P));
+#else
+	    BIF_RET(am_undefined);
+#endif
+	}
 	else if (ERTS_IS_ATOM_STR("node_and_dist_references", BIF_ARG_1)) {
 	    /* Used by node_container_SUITE (emulator) */
             BIF_TRAP1(get_internal_state_blocked, BIF_P, BIF_ARG_1);
@@ -4571,6 +4583,16 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 		if (is_internal_pid(tp[2])) {
 		    BIF_RET(erts_process_status(NULL, tp[2]));
 		}
+	    }
+	    else if (ERTS_IS_ATOM_STR("t2_in_blob", tp[1])) {
+		/* T2-Full P2 commit 5: is Pid's saved instruction
+		   pointer inside a registered tier-2 blob (yielded at
+		   a recovered loop's back edge, to resume INTO T2)? */
+#ifdef BEAMASM
+		BIF_RET(erts_t2_debug_in_blob(BIF_P, tp[2]));
+#else
+		BIF_RET(am_undefined);
+#endif
 	    }
             else if (ERTS_IS_ATOM_STR("connection_id", tp[1])) {
                 DistEntry *dep;

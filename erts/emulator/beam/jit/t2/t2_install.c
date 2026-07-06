@@ -32,6 +32,7 @@
 #include "sys.h"
 #include "global.h"
 #include "erl_alloc.h"
+#include "big.h"
 #include "erl_process.h"
 #include "erl_thr_progress.h"
 #include "code_ix.h"
@@ -41,6 +42,7 @@
 
 #include "t2_install.h"
 #include "t2_ranges.h"
+#include "t2_pctab.h"
 
 #if defined(BEAMASM) && defined(__aarch64__)
 
@@ -160,6 +162,88 @@ void erts_t2_free_spans_after_barrier(void *span1,
 }
 
 /* ------------------------------------------------------------------ *
+ * Two-phase blob retirement (P2 commit 5)                            *
+ * ------------------------------------------------------------------ *
+ * A blob with back-edge resume stubs may be named by yielded
+ * processes' c_p->i, so its release needs more than the plain
+ * barrier free:
+ *
+ *   jettison (sync, code-mod permission):
+ *       revert the prologue (no new invocations), write the in-blob
+ *       tombstone flags (a resume in flight from here on demotes
+ *       itself to the T1 body), keep the range registered, schedule
+ *       phase 1 behind a code barrier;
+ *   phase 1 (after thread progress + isb on all schedulers — no
+ *       scheduler still executes inside the blob, so no NEW back-edge
+ *       yield can store a blob PC):
+ *       translate every in-span c_p->i to the resume table's T1
+ *       demote target (the fresh-call semantics of 08 §4.5: the saved
+ *       vector is a valid fresh call, so the target is the T1 entry
+ *       body), then schedule phase 2 behind a second barrier;
+ *   phase 2 (second barrier: any process that had already fetched the
+ *       stale stub PC at phase-1 time has since executed the — still
+ *       mapped, tombstoned — stub and demoted itself):
+ *       assert no c_p->i remains in the span, deregister the range
+ *       (frees the resume table) and release the memory.
+ *
+ * Writing another process's c_p->i is an aligned word store; the only
+ * competing writer is the owner scheduler at schedule-out (post-
+ * barrier that value is never a PC into this blob), and the only
+ * reader is schedule-in, which either sees the translated T1 address
+ * or the stub address — the latter demotes via the tombstone. */
+
+typedef struct {
+    ErtsCodeBarrier barrier;
+    int phase;
+    void *blob_base;
+    size_t blob_size;
+    void *bridge_base;
+    size_t bridge_size;
+    ErtsCodePtr t1_demote;
+} ErtsT2RetireBlob;
+
+static void t2_retire_phase(void *vrb) {
+    ErtsT2RetireBlob *rb = (ErtsT2RetireBlob *)vrb;
+
+    if (rb->phase == 1) {
+        int i, max = erts_ptab_max(&erts_proc);
+        const char *lo = (const char *)rb->blob_base;
+        const char *hi = lo + rb->blob_size;
+
+        for (i = 0; i < max; i++) {
+            Process *p = erts_pix2proc(i);
+            const char *ip;
+
+            if (p == NULL) {
+                continue;
+            }
+            ip = (const char *)p->i;
+            if (ip >= lo && ip < hi) {
+                p->i = rb->t1_demote;
+            }
+        }
+
+        rb->phase = 2;
+        erts_schedule_code_barrier_cleanup(&rb->barrier,
+                                           t2_retire_phase,
+                                           rb,
+                                           0);
+        return;
+    }
+
+#    ifdef DEBUG
+    t2_assert_no_resume_pc_in(rb->blob_base, rb->blob_size);
+#    endif
+
+    erts_t2_deregister_blob(rb->blob_base); /* frees the resume tab */
+    beamasm_t2_jit_release(rb->blob_base);
+    if (rb->bridge_base != NULL) {
+        beamasm_t2_jit_release(rb->bridge_base);
+    }
+    erts_free(ERTS_ALC_T_T2_CODE, rb);
+}
+
+/* ------------------------------------------------------------------ *
  * Reach                                                              *
  * ------------------------------------------------------------------ */
 
@@ -184,11 +268,15 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
                                     const ErtsCodeInfo *ci_exec,
                                     const void *blob_entry,
                                     const void *blob_base,
-                                    size_t blob_size) {
+                                    size_t blob_size,
+                                    void *blob_rw,
+                                    const Uint32 *resume_offsets,
+                                    Uint32 resume_count) {
     const void *patch_exec;
     const void *reach_target;
     void *bridge_rx = NULL, *bridge_rw = NULL;
     ErtsT2Install *inst;
+    ErtsT2ResumeTab *rtab = NULL;
     Uint32 new_word;
     int was_sealed;
 
@@ -282,8 +370,30 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
     inst->blob_entry = blob_entry;
     inst->blob_base = blob_base;
     inst->blob_size = blob_size;
+    inst->blob_rw = blob_rw;
     inst->bridge_base = bridge_rx;
     inst->bridge_size = bridge_rx != NULL ? T2_BRIDGE_SIZE : 0;
+
+    /* The resume table (P2 commit 5): every recovered loop's back-edge
+     * resume PC, blob-relative, plus the single T1 translation target —
+     * the post-yield entry body, so a translated resume charges no
+     * extra reduction (fresh-call semantics, 08 §4.5). */
+    if (resume_count > 0) {
+        Uint32 i;
+
+        rtab = erts_alloc(ERTS_ALC_T_T2_CODE,
+                          sizeof(ErtsT2ResumeTab) +
+                                  (resume_count - 1) * sizeof(Uint32));
+        rtab->count = resume_count;
+        rtab->flag_back = (Uint32)erts_t2_test_yield_return_offset();
+        rtab->t1_demote =
+                (ErtsCodePtr)((const char *)erts_codeinfo_to_code(ci_exec) +
+                              erts_t2_test_yield_return_offset());
+        for (i = 0; i < resume_count; i++) {
+            rtab->offsets[i] = resume_offsets[i];
+        }
+    }
+    inst->resume_tab = rtab;
 
     /* Register the blob range first so a PC inside the blob resolves to
      * the MFA from the instant it becomes reachable. */
@@ -291,7 +401,11 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
                                (ErtsCodePtr)((const char *)blob_base +
                                              blob_size),
                                &inst->mfa,
-                               NULL)) {
+                               (const void *)mi->code_hdr,
+                               rtab)) {
+        if (rtab != NULL) {
+            erts_free(ERTS_ALC_T_T2_CODE, rtab);
+        }
         erts_free(ERTS_ALC_T_T2_CODE, inst);
         if (bridge_rx != NULL) {
             beamasm_t2_jit_release(bridge_rx);
@@ -373,7 +487,28 @@ static ErtsT2Install *t2_jettison_one(struct erl_module_instance *mi,
         *rw_p = T2_PROLOGUE_B_NEXT;
     }
 
-    erts_t2_deregister_blob(inst->blob_base);
+    if (inst->resume_tab != NULL) {
+        /* Tombstone every resume stub (P2 commit 5): a process that
+         * resumes into the blob from here on demotes itself to the T1
+         * body. Data words read by the stub's ldr; plain coherent
+         * stores through the writable alias suffice (the caller's
+         * unseal put this thread in JIT-write mode where required),
+         * and the retire barriers order them against any resume. The
+         * range stays registered until retire phase 2 — the c_p->i
+         * translation pass still needs it. */
+        Uint32 i;
+
+        for (i = 0; i < inst->resume_tab->count; i++) {
+            Uint64 volatile *flag =
+                    (Uint64 volatile *)((char *)inst->blob_rw +
+                                        inst->resume_tab->offsets[i] -
+                                        inst->resume_tab->flag_back);
+
+            *flag = 1;
+        }
+    } else {
+        erts_t2_deregister_blob(inst->blob_base);
+    }
 
     erts_atomic_add_nob(&t2_installed_bytes,
                         -(erts_aint_t)(inst->blob_size + inst->bridge_size));
@@ -386,8 +521,30 @@ static ErtsT2Install *t2_jettison_one(struct erl_module_instance *mi,
 /* Schedule the node's spans for release behind a code barrier and free
  * the node. The blob (and its bridge -- a racing caller may sit right
  * on the bridge's `br`) stays mapped until every scheduler has passed
- * the barrier. */
+ * the barrier. A blob with resume stubs goes through the two-phase
+ * retire (tombstones were set by t2_jettison_one; phase 1 translates
+ * yielded c_p->i, phase 2 asserts-empty, deregisters and frees). */
 static void t2_release_node(ErtsT2Install *inst) {
+    if (inst->resume_tab != NULL) {
+        ErtsT2RetireBlob *rb = erts_alloc(ERTS_ALC_T_T2_CODE,
+                                          sizeof(ErtsT2RetireBlob));
+
+        rb->phase = 1;
+        rb->blob_base = (void *)inst->blob_base;
+        rb->blob_size = inst->blob_size;
+        rb->bridge_base = inst->bridge_base;
+        rb->bridge_size = inst->bridge_size;
+        rb->t1_demote = inst->resume_tab->t1_demote;
+
+        erts_schedule_code_barrier_cleanup(&rb->barrier,
+                                           t2_retire_phase,
+                                           rb,
+                                           inst->blob_size +
+                                                   inst->bridge_size);
+        erts_free(ERTS_ALC_T_T2_CODE, inst);
+        return;
+    }
+
     erts_t2_free_spans_after_barrier((void *)inst->blob_base,
                                      inst->blob_size,
                                      inst->bridge_base,
@@ -435,7 +592,9 @@ int erts_t2_jettison_function(struct erl_module_instance *mi,
 void erts_t2_jettison_instance(struct erl_module_instance *mi,
                                int revert_prologue) {
     ErtsT2Install *chain = NULL;
+    ErtsT2Install *scan;
     int was_sealed;
+    int need_write;
 
     t2_assert_write_permission();
 
@@ -443,9 +602,22 @@ void erts_t2_jettison_instance(struct erl_module_instance *mi,
         return;
     }
 
+    /* The purge path (revert_prologue == 0) still needs JIT-write mode
+     * when any blob carries resume stubs: their tombstone flags are
+     * written through the blob's writable alias, which on single-map
+     * platforms (Apple Silicon) requires the thread write mode the
+     * module unseal provides. */
+    need_write = revert_prologue;
+    for (scan = mi->t2_installs; scan != NULL && !need_write;
+         scan = scan->next) {
+        if (scan->resume_tab != NULL) {
+            need_write = 1;
+        }
+    }
+
     was_sealed = !mi->unsealed;
 
-    if (revert_prologue) {
+    if (need_write) {
         if (was_sealed) {
             erts_unseal_module(mi);
         } else {
@@ -464,7 +636,7 @@ void erts_t2_jettison_instance(struct erl_module_instance *mi,
         chain = inst;
     }
 
-    if (revert_prologue && was_sealed) {
+    if (need_write && was_sealed) {
         erts_seal_module(mi);
     }
 
@@ -474,6 +646,36 @@ void erts_t2_jettison_instance(struct erl_module_instance *mi,
         chain = inst->next;
         t2_release_node(inst);
     }
+}
+
+/* ------------------------------------------------------------------ *
+ * P2 commit 5 introspection (erts_debug:get_internal_state)          *
+ * ------------------------------------------------------------------ */
+
+Eterm erts_t2_debug_in_blob(Process *p, Eterm pid) {
+    Process *rp;
+
+    (void)p;
+
+    if (!is_internal_pid(pid)) {
+        return am_undefined;
+    }
+    rp = erts_proc_lookup(pid);
+    if (rp == NULL) {
+        return am_undefined;
+    }
+    /* A racy read of another process's saved instruction pointer:
+     * meaningful for a yielded process (the debug harness suspends /
+     * polls), advisory otherwise. */
+    return erts_t2_find_blob(rp->i) != NULL ? am_true : am_false;
+}
+
+Eterm erts_t2_debug_yield_stats(Process *p) {
+    Eterm *hp = HAlloc(p, 3);
+
+    return TUPLE2(hp,
+                  erts_make_integer((Uint)erts_t2_backedge_yields, p),
+                  erts_make_integer((Uint)erts_t2_backedge_resumes, p));
 }
 
 #else /* !BEAMASM || !__aarch64__ */
@@ -490,13 +692,31 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
                                     const ErtsCodeInfo *ci_exec,
                                     const void *blob_entry,
                                     const void *blob_base,
-                                    size_t blob_size) {
+                                    size_t blob_size,
+                                    void *blob_rw,
+                                    const Uint32 *resume_offsets,
+                                    Uint32 resume_count) {
     (void)mi;
     (void)ci_exec;
     (void)blob_entry;
     (void)blob_base;
     (void)blob_size;
+    (void)blob_rw;
+    (void)resume_offsets;
+    (void)resume_count;
     return ERTS_T2_INSTALL_REJECTED_STATE;
+}
+
+Eterm erts_t2_debug_in_blob(Process *p, Eterm pid) {
+    (void)p;
+    (void)pid;
+    return am_undefined;
+}
+
+Eterm erts_t2_debug_yield_stats(Process *p) {
+    Eterm *hp = HAlloc(p, 3);
+
+    return TUPLE2(hp, make_small(0), make_small(0));
 }
 
 int erts_t2_jettison_function(struct erl_module_instance *mi,

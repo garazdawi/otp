@@ -52,24 +52,53 @@
 #include "sys.h"
 #include "beam_code.h" /* ErtsCodePtr, ErtsCodeMFA */
 
+/* The resume table (P2 commit 5; PLAN/T2FULL/09 §5, PLAN/T2/08 §4.5).
+ * One per blob with recovered loops: the sorted, blob-relative offsets
+ * of every back-edge resume PC (the addresses a back-edge yield stores
+ * into c_p->i), the fixed distance back from a resume PC to its
+ * in-blob tombstone flag word, and the single T1 translation target.
+ * The target is one address for the whole blob because the state saved
+ * at ANY back-edge yield is a fresh-call argument vector for the
+ * function (08 §4.5): "point it at the T1 entry" — concretely
+ * L_f + TEST_YIELD_RETURN_OFFSET, the post-yield T1 body, so the
+ * translated resume charges no extra reduction. Owned by the ranges
+ * class: freed on deregistration. */
+typedef struct {
+    Uint32 count;
+    Uint32 flag_back;     /* resume PC - flag word distance (bytes)     */
+    ErtsCodePtr t1_demote; /* translation target for any in-span c_p->i */
+    Uint32 offsets[1];    /* count entries, ascending                   */
+} ErtsT2ResumeTab;
+
 /* Descriptor for one installed tier-2 blob's executable range. */
 typedef struct {
     ErtsCodePtr start;   /* first byte of the blob                       */
     ErtsCodePtr end;     /* one byte past the blob                       */
     ErtsCodeMFA mfa;     /* originating function                         */
-    void *resume_tab;    /* opaque resume table; NULL until P1 populates */
+    const void *code_hdr; /* owning instance's BeamCodeHeader — the
+                           * stable instance identity (survives the
+                           * curr->old struct copy at delete_module);
+                           * check_process_code compares against it     */
+    ErtsT2ResumeTab *resume_tab; /* NULL when the blob has no loops     */
 } ErtsT2Blob;
+
+/* Back-edge yield/resume counters (racy, monitoring only): incremented
+ * by blob code at the cold yield setup / resume stub. */
+extern Uint64 erts_t2_backedge_yields;
+extern Uint64 erts_t2_backedge_resumes;
 
 /* One-time init (mutex + accounting). Called from beamasm_init(). */
 void erts_t2_ranges_init(void);
 
 /* Register a blob's range. \p start must be unique and \p start < \p end;
  * ranges must not overlap. Returns 1 on success, 0 on a bad/overlapping
- * range. \p mfa is copied. */
+ * range. \p mfa is copied; \p resume_tab ownership transfers on success
+ * (deregistration frees it). */
 int erts_t2_register_blob(ErtsCodePtr start,
                           ErtsCodePtr end,
                           const ErtsCodeMFA *mfa,
-                          void *resume_tab);
+                          const void *code_hdr,
+                          ErtsT2ResumeTab *resume_tab);
 
 /* Remove the blob registered at \p start. Returns 1 if removed, 0 if no
  * blob starts there. */

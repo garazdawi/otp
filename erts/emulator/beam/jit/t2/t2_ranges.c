@@ -42,6 +42,9 @@
 
 #include "t2_ranges.h"
 
+Uint64 erts_t2_backedge_yields;
+Uint64 erts_t2_backedge_resumes;
+
 static ErtsT2Blob *blobs;   /* sorted by start */
 static Sint blob_count;
 static Sint blob_allocated;
@@ -108,7 +111,8 @@ static void ensure_capacity(Sint need) {
 int erts_t2_register_blob(ErtsCodePtr start,
                           ErtsCodePtr end,
                           const ErtsCodeMFA *mfa,
-                          void *resume_tab) {
+                          const void *code_hdr,
+                          ErtsT2ResumeTab *resume_tab) {
     Sint idx;
     int ok = 1;
 
@@ -137,6 +141,7 @@ int erts_t2_register_blob(ErtsCodePtr start,
         blobs[idx].start = start;
         blobs[idx].end = end;
         blobs[idx].mfa = *mfa;
+        blobs[idx].code_hdr = code_hdr;
         blobs[idx].resume_tab = resume_tab;
         blob_count++;
     }
@@ -153,6 +158,9 @@ int erts_t2_deregister_blob(ErtsCodePtr start) {
 
     idx = lower_bound(start);
     if (idx < blob_count && blobs[idx].start == start) {
+        if (blobs[idx].resume_tab != NULL) {
+            erts_free(ERTS_ALC_T_T2_CODE, blobs[idx].resume_tab);
+        }
         sys_memmove(&blobs[idx],
                     &blobs[idx + 1],
                     (blob_count - idx - 1) * sizeof(ErtsT2Blob));
@@ -213,13 +221,22 @@ int erts_t2_ranges_selftest(void) {
     const ErtsT2Blob *f;
     UWord sz0 = erts_t2_blobs_sz();
 
-    T2R_CHECK(erts_t2_register_blob(b2, b2 + 0x1000, &m2, NULL));
-    T2R_CHECK(erts_t2_register_blob(b1, b1 + 0x1000, &m1, NULL));
-    T2R_CHECK(erts_t2_register_blob(b3, b3 + 0x1000, &m3, (void *)0xabc));
+    ErtsT2ResumeTab *tab = erts_alloc(ERTS_ALC_T_T2_CODE,
+                                      sizeof(ErtsT2ResumeTab));
+
+    tab->count = 1;
+    tab->flag_back = 24;
+    tab->t1_demote = (ErtsCodePtr)(b1 + 0x18);
+    tab->offsets[0] = 0x40;
+
+    T2R_CHECK(erts_t2_register_blob(b2, b2 + 0x1000, &m2, NULL, NULL));
+    T2R_CHECK(erts_t2_register_blob(b1, b1 + 0x1000, &m1, NULL, NULL));
+    T2R_CHECK(erts_t2_register_blob(b3, b3 + 0x1000, &m3, NULL, tab));
 
     /* Duplicate start and an overlapping range must be rejected. */
-    T2R_CHECK(!erts_t2_register_blob(b1, b1 + 0x10, &m1, NULL));
-    T2R_CHECK(!erts_t2_register_blob(b1 + 0x100, b1 + 0x2000, &m1, NULL));
+    T2R_CHECK(!erts_t2_register_blob(b1, b1 + 0x10, &m1, NULL, NULL));
+    T2R_CHECK(!erts_t2_register_blob(b1 + 0x100, b1 + 0x2000, &m1, NULL,
+                                     NULL));
 
     /* Interior, boundary, and gap lookups. */
     f = erts_t2_find_blob(b1);
@@ -229,7 +246,9 @@ int erts_t2_ranges_selftest(void) {
     f = erts_t2_find_blob(b1 + 0x1000); /* one past end: no blob */
     T2R_CHECK(f == NULL);
     f = erts_t2_find_blob(b3 + 0x10);
-    T2R_CHECK(f != NULL && f->mfa.arity == 0 && f->resume_tab == (void *)0xabc);
+    T2R_CHECK(f != NULL && f->mfa.arity == 0 && f->resume_tab == tab);
+    T2R_CHECK(f->resume_tab->count == 1 &&
+              f->resume_tab->offsets[0] == 0x40);
     f = erts_t2_find_blob((byte *)0x50000); /* below all */
     T2R_CHECK(f == NULL);
     f = erts_t2_find_blob((byte *)0x400000); /* above all */
@@ -244,7 +263,8 @@ int erts_t2_ranges_selftest(void) {
     T2R_CHECK(erts_t2_find_blob(b3 + 0x10) != NULL);
     T2R_CHECK(!erts_t2_deregister_blob(b2)); /* already gone */
 
-    /* Clean up so the self-test leaves no residue. */
+    /* Clean up so the self-test leaves no residue (deregistration
+     * frees b3's resume tab). */
     T2R_CHECK(erts_t2_deregister_blob(b1));
     T2R_CHECK(erts_t2_deregister_blob(b3));
 

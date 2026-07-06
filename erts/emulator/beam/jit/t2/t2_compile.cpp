@@ -234,7 +234,16 @@ namespace {
         }
 
         ErtsT2InstallResult res =
-                erts_t2_install(mi, ci, blob.entry, blob.base, blob.size);
+                erts_t2_install(mi,
+                                ci,
+                                blob.entry,
+                                blob.base,
+                                blob.size,
+                                blob.rw_base,
+                                blob.resume_offsets.empty()
+                                        ? NULL
+                                        : blob.resume_offsets.data(),
+                                (Uint32)blob.resume_offsets.size());
 
         if (res != ERTS_T2_INSTALL_OK) {
             /* The blob was never reachable by anyone, but its emission

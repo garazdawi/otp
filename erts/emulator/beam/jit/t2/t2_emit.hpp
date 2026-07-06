@@ -41,7 +41,9 @@
 #ifndef _JIT_T2_EMIT_HPP
 #define _JIT_T2_EMIT_HPP
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "t2_lir.hpp"
 
@@ -72,6 +74,19 @@ namespace erts_t2 {
         const void *entry = nullptr;
         const void *base = nullptr;
         size_t size = 0;
+
+        /* The JitAllocator span's writable alias (== base on dual-map
+         * platforms' rx view counterpart; on Apple the same VA). Needed
+         * post-install to write the resume stubs' tombstone flags at
+         * jettison (P2 commit 5). */
+        void *rw_base = nullptr;
+
+        /* Blob-relative offsets of each recovered loop's back-edge
+         * resume PC (the address a back-edge yield stores into c_p->i
+         * via i_test_yield_shared), ascending. Empty for loop-free
+         * functions. Each resume PC sits TEST_YIELD_RETURN_OFFSET
+         * bytes past its in-blob tombstone flag word. */
+        std::vector<uint32_t> resume_offsets;
     };
 
     /* Emit an *installable* blob for `fn`: instead of the exec-harness
