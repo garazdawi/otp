@@ -348,6 +348,17 @@ void erts_t2_profile_trip(ErtsT2Profile *p,
  * installed, failed} for the t2_tier_stats debug BIF. */
 Eterm erts_t2_tier_stats_term(Process *p);
 
+/* t2_tier.c: diagnostic census (debug-only, backs
+ * erts_debug:get_internal_state(t2_profile_census)) of every ARMED
+ * profiling record across the active instances of all loaded modules,
+ * bucketed by how close its scheduler-1 counter got to the trip
+ * threshold. Answers which armed-but-never-tripped functions pay the
+ * steady-state profiling tax and why (legitimately cold vs. just-under
+ * threshold). Returns a flat integer tuple; layout documented at the
+ * definition. Advisory: reads racy counters without stopping the
+ * world. */
+Eterm erts_t2_profile_census_term(Process *p);
+
 /* t2_tier.c: address of the throwaway record, for the scheduler
  * redirect initialization (a plain-prototype-friendly accessor). */
 UWord erts_t2_profile_throwaway_addr(void);

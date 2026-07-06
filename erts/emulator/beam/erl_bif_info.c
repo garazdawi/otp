@@ -75,6 +75,7 @@ Eterm erts_t2_debug_exec(Process *p, Eterm mod, Eterm func, Eterm arity,
 Eterm erts_t2_debug_in_blob(Process *p, Eterm pid);
 Eterm erts_t2_debug_yield_stats(Process *p);
 Eterm erts_t2_tier_stats_term(Process *p);
+Eterm erts_t2_profile_census_term(Process *p);
 #endif
 
 #ifdef ERTS_ENABLE_LOCK_COUNT
@@ -4340,6 +4341,16 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	       tier-up path (advisory counters). */
 #ifdef BEAMASM
 	    BIF_RET(erts_t2_tier_stats_term(BIF_P));
+#else
+	    BIF_RET(am_undefined);
+#endif
+	}
+	else if (ERTS_IS_ATOM_STR("t2_profile_census", BIF_ARG_1)) {
+	    /* T2-Full P2.5 (diagnostic, debug-only): census of armed
+	       profiling records bucketed by how close their sched-1 counter
+	       got to the trip threshold (see erts_t2_profile_census_term). */
+#ifdef BEAMASM
+	    BIF_RET(erts_t2_profile_census_term(BIF_P));
 #else
 	    BIF_RET(am_undefined);
 #endif

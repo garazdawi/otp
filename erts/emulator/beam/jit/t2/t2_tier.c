@@ -55,6 +55,7 @@
 #include "sys.h"
 #include "global.h"
 #include "erl_alloc.h"
+#include "big.h"
 #include "beam_file.h"
 #include "code_ix.h"
 #include "module.h"
@@ -277,4 +278,106 @@ Eterm erts_t2_tier_stats_term(Process *p) {
                   make_small((Uint)t2_tier_stats.compiled),
                   make_small((Uint)t2_tier_stats.installed),
                   make_small((Uint)t2_tier_stats.failed));
+}
+
+/* Diagnostic census (debug-only) of the armed profiling records — the
+ * population that pays the steady-state tax until it trips (P2.5). Walks
+ * the active instance of every loaded module and buckets each armed
+ * record by how far its scheduler-1 counter climbed toward its trip
+ * threshold. With the P2.5 sampling gate the counter advances in STRIDE
+ * steps, so a bucket's `count` still approximates the sched-1 entry
+ * count (quantized), which is what we want here.
+ *
+ * Buckets (by count c vs threshold t):
+ *   zero:     c == 0        (never sampled on sched 1 — legitimately cold)
+ *   vcold:    0 < c < t/10  (entered, nowhere near tripping)
+ *   approach: t/10 <= c < t (climbing; a lower/size-flat threshold or
+ *                            better counting might have tripped these)
+ *
+ * Returned flat tuple (all integers), for the t2_profile_census debug
+ * BIF:
+ *   { Armed, TrippedOrPending, Unarmed,
+ *     N_zero,     Dist_zero,     Thr_zero,
+ *     N_vcold,    Dist_vcold,    Thr_vcold,
+ *     N_approach, Dist_approach, Thr_approach }
+ * where per bucket: N = record count, Dist = sum(threshold - count)
+ * (distance still to trip), Thr = sum(threshold) (a size proxy, since
+ * threshold = base*sqrt(size+1)). */
+Eterm erts_t2_profile_census_term(Process *p) {
+    ErtsCodeIndex code_ix = erts_active_code_ix();
+    int i, num = module_code_size(code_ix);
+    Uint64 armed = 0, tripped = 0, unarmed = 0;
+    Uint64 n[3] = {0, 0, 0};
+    Uint64 dist[3] = {0, 0, 0};
+    Uint64 thr[3] = {0, 0, 0};
+    Uint64 vals[12];
+    Eterm *hp;
+    int k;
+
+    for (i = 0; i < num; i++) {
+        Module *modp = module_code(i, code_ix);
+        ErtsT2RetainedCode *ret;
+        Sint32 f;
+
+        if (modp == NULL) {
+            continue;
+        }
+        /* Active instance only: the tax is paid by the running code. */
+        ret = modp->curr.t2_retained;
+        if (ret == NULL || ret->profiles == NULL) {
+            continue;
+        }
+        for (f = 0; f < ret->function_count; f++) {
+            ErtsT2Profile *rec =
+                    (ErtsT2Profile *)((char *)ret->profiles +
+                                      (size_t)f * ERTS_T2_PROFILE_STRIDE);
+            Uint32 t = rec->threshold;
+            Uint32 c = rec->count;
+            int b;
+
+            if (t == 0) {
+                unarmed++;
+                continue;
+            }
+            if (t == ERTS_T2_TIER_PENDING) {
+                tripped++; /* tripped: cross-check against tier_stats */
+                continue;
+            }
+            armed++;
+            if (c == 0) {
+                b = 0;
+            } else if (c < t / 10) {
+                b = 1;
+            } else {
+                b = 2;
+            }
+            n[b]++;
+            dist[b] += (c < t) ? (Uint64)(t - c) : 0;
+            thr[b] += (Uint64)t;
+        }
+    }
+
+    vals[0] = armed;
+    vals[1] = tripped;
+    vals[2] = unarmed;
+    for (k = 0; k < 3; k++) {
+        vals[3 + k * 3] = n[k];
+        vals[4 + k * 3] = dist[k];
+        vals[5 + k * 3] = thr[k];
+    }
+
+    /* Materialize the (possibly bignum) integers first, then the tuple. */
+    {
+        Eterm terms[12];
+
+        for (k = 0; k < 12; k++) {
+            terms[k] = erts_make_integer((Uint)vals[k], p);
+        }
+        hp = HAlloc(p, 1 + 12);
+        hp[0] = make_arityval(12);
+        for (k = 0; k < 12; k++) {
+            hp[1 + k] = terms[k];
+        }
+        return make_tuple(hp);
+    }
 }
