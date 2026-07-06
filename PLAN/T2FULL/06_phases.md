@@ -110,6 +110,35 @@ rescope:
 > confirmation rides the M0.5 workflow. **Next: P2 — the loop
 > tier.**
 
+> **P2 behavioral gate CLOSED (2026-07-06); G2 tax gate OPEN.**
+> Full paired sweep on `lukas/erts/beamjit2` HEAD `294222cecd`:
+> **290 suite-legs — Phase A (24 state-model-critical suites ×3
+> legs: base / `+JT2enable` / `T2_RETAIN` prod) + Phase B (full
+> emulator ×2) + Phase C (stdlib/kernel slices) — with ZERO
+> base-vs-t2 mismatches.** Every non-green suite (process ei-node
+> 96/1/1; a_SUITE/bif/dump/z_SUITE environmental; gen_server/binary
+> harness parse) fails IDENTICALLY in the T1 base — no T2-only
+> delta. The one flagged cross-leg item (`signal_SUITE` prod
+> timetrap) was proven machine contention by a clean re-run (prod
+> 38/0 at 89–91 s = base). With the build gates (matrix + reductions
+> byte-identity), G1 fidelity (181/114 identical Apple/Neoverse), and
+> json cross-mode hash identity, the **P2 exit criterion — no
+> observable difference except speed — holds.**
+>
+> Performance: **G2 kernel wins MET** — mvp `total/2` 1.95×,
+> `mk_txns` 2.01×, scanbench 2.67×/3.05× (organic tier-up);
+> ARM-robust (Neoverse 2.83×/3.36×). **G2 ≤1 % tax gate OPEN** —
+> counter-mode regressions (estone −20 %, dialyzer −8 % as first
+> measured) exceed budget. Under investigation (**P2.5**): the −20 %
+> is SUSPECT — armed-never-trip (−31 %) worse than production (−20 %)
+> is internally inconsistent for a per-iteration tax; likely Apple M5
+> P/E-core placement noise (estone unpinned) ± trip/queue churn.
+> Being decomposed on Neoverse with `t2_tier_stats` + `perf`. Fix in
+> flight: scheduler-1 early-out (counting is already sched-1-only, so
+> skipping the sequence off sched-1 is free and behaviorally
+> identical) + FCALLS-sampled counting for the on-sched-1 residual.
+> **P2 does not fully close until the tax gate resolves.**
+
 Identical scope, gates, and estimates to
 [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §8 Track B —
 P0 foundations (SSA reconstruction + **G1 fidelity gate**, PC side
