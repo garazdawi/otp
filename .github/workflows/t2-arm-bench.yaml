@@ -237,6 +237,79 @@ jobs:
 
           echo "results dir:"; ls -la "$RES" || true
 
+      - name: T2 loop tier (P2) — +JT2enable install stats, g1 suite, tiered scanbench
+        ## The steps above exercise the M0.5 hand-written experiment kit (env
+        ## gates T2_G3/T2_GMAP/...). This step exercises the actual P2 LOOP TIER
+        ## on server ARM: forced-mode (+JT2enable) install stats over the stdlib
+        ## corpus, the g1 fidelity suite, and the byte-scan subset (commit 7)
+        ## measured stock-T1 vs +JT2enable on the *stock* scanbench module (no
+        ## +scan_loop; the tier fuses the naive loop itself). Best-effort.
+        continue-on-error: true
+        run: |
+          set -ux
+          ERL="$ERL_TOP/bin/erl"
+          RES="$ERL_TOP/t2-results"
+          C="$RUNNER_TEMP/corpus"
+          SBST="$RUNNER_TEMP/sb_stock"
+
+          ## (P2-1) +JT2enable forced boot: compile-everything loop tier over the
+          ## boot modules + stdlib corpus. t2_stats =
+          ## {modules,built,installed,build_fail,...}; build_fail must be 0.
+          T2_RETAIN=1 "$ERL" +JT2enable true -noshell -pa "$C" \
+            -eval '_ = erts_debug:set_internal_state(available_internal_state,true),
+                   [code:ensure_loaded(M) || M <- [lists,maps,binary,string,base64,json,unicode,erl_types,t2_mvp,scanbench]],
+                   io:format("t2_stats ~p~n",[erts_debug:get_internal_state(t2_stats)]), halt()' \
+            > "$RES/10_jt2_boot.txt" 2>&1 || true
+          echo "--- 10_jt2_boot.txt ---"; cat "$RES/10_jt2_boot.txt"
+
+          ## (P2-2) g1 fidelity suite under the P2 build (reconstructed/not_eligible).
+          T2_RETAIN=1 "$ERL" -noshell -pa "$C" \
+            -eval 'erts_debug:set_internal_state(available_internal_state,true), _=t2_g1_SUITE:run(), halt()' \
+            > "$RES/12_g1_suite.txt" 2>&1 || true
+
+          ## (P2-3) scanbench byte-scan subset: stock-T1 vs +JT2enable-fused.
+          ## Run each twice; keep the second (first VM eats macOS/placement warmup).
+          for i in 1 2; do
+            "$ERL"               -noshell -pa "$SBST" -eval 'scanbench:go()' > "$RES/11_scan_t1.txt"  2>&1 || true
+            "$ERL" +JT2enable true -noshell -pa "$SBST" -eval 'scanbench:go()' > "$RES/11_scan_jt2.txt" 2>&1 || true
+          done
+          echo "--- 11_scan_t1.txt ---"; cat "$RES/11_scan_t1.txt"
+          echo "--- 11_scan_jt2.txt ---"; cat "$RES/11_scan_jt2.txt"
+
+          ## (P2-4) organic tier-up smoke: MVP total/2 self-recursive loop trips
+          ## its counter in the first call on scheduler 1; confirm it installs.
+          T2_RETAIN=1 "$ERL" -noshell -pa "$C" \
+            -eval 'erts_debug:set_internal_state(available_internal_state,true),
+                   Txns=t2_mvp:mk_txns(1000000,[]),
+                   S=self(), {P,R}=spawn_opt(fun()-> [t2_mvp:total(Txns,0)||_<-lists:seq(1,20)], S!{self(),done} end,[monitor,{scheduler,1}]),
+                   receive {P,done}->receive {_,R,_,_,_}->ok end end,
+                   io:format("t2_tier_stats ~p~n",[erts_debug:get_internal_state(t2_tier_stats)]), halt()' \
+            > "$RES/13_tierup.txt" 2>&1 || true
+          echo "--- 13_tierup.txt ---"; cat "$RES/13_tierup.txt"
+
+          ## Compact P2 loop-tier section for the GitHub run summary. Best-effort
+          ## text extraction; a no-match is fine, so do not fail on it.
+          set +e
+          gbps() { grep -m1 "  $2:" "$1" 2>/dev/null | sed -E 's/.*\(([0-9.]+) GB.*/\1/'; }
+          SP_T1=$(gbps "$RES/11_scan_t1.txt" plain);  SP_J2=$(gbps "$RES/11_scan_jt2.txt" plain)
+          SD_T1=$(gbps "$RES/11_scan_t1.txt" digit);  SD_J2=$(gbps "$RES/11_scan_jt2.txt" digit)
+          rr() { awk -v s="$1" -v t="$2" 'BEGIN{if(s+0>0&&t+0>0)printf "%.2f",t/s;else printf "n/a"}'; }
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo ""
+              echo "## P2 loop tier on Neoverse (the real tier, not the M0.5 experiment kit)"
+              echo ""
+              echo "\`+JT2enable\` boot install stats: \`$(grep -m1 t2_stats "$RES/10_jt2_boot.txt")\`"
+              echo ""
+              echo "| bench | T1 GB/s | +JT2enable GB/s | ratio |"
+              echo "|---|---|---|---|"
+              echo "| scanbench plain (byte scan subset) | ${SP_T1:-?} | ${SP_J2:-?} | $(rr "$SP_T1" "$SP_J2") |"
+              echo "| scanbench digit (byte scan subset) | ${SD_T1:-?} | ${SD_J2:-?} | $(rr "$SD_T1" "$SD_J2") |"
+              echo ""
+              echo "organic tier-up smoke (MVP total/2): \`$(grep -m1 t2_tier_stats "$RES/13_tierup.txt")\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Build summary table
         if: always()
         run: |
