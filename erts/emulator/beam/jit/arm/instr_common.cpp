@@ -3195,6 +3195,18 @@ void BeamModuleAssembler::emit_i_test_yield() {
     }
 }
 
+/* Entry-sampling stride for the T1 tier-up profiler (P2.5): only
+ * 1-in-STRIDE function entries run the full counter block; the rest pay
+ * a two-instruction tst+branch with no memory traffic. Power of two so
+ * STRIDE-1 is a contiguous low-bit mask (a valid aarch64 logical
+ * immediate for `tst`) and STRIDE fits an `add` immediate. The sampled
+ * path bumps the counter by STRIDE, so trip timing (in iterations) is
+ * preserved: a hot loop still crosses its threshold in ~threshold
+ * iterations, only coarsened to a STRIDE-wide granularity. */
+#define T2_PROFILE_SAMPLE_STRIDE 64
+static_assert((T2_PROFILE_SAMPLE_STRIDE & (T2_PROFILE_SAMPLE_STRIDE - 1)) == 0,
+              "T2_PROFILE_SAMPLE_STRIDE must be a power of two");
+
 /* The T1 tier-up profiling sequence (see the caller above). Layout of
  * ErtsT2Profile (t2_retain.h): count @0, threshold @4, nonsmall @8. */
 void BeamModuleAssembler::emit_t2_profile_sequence() {
@@ -3222,23 +3234,44 @@ void BeamModuleAssembler::emit_t2_profile_sequence() {
     Label skip = a.new_label();
     uint32_t seq_start = (uint32_t)a.offset();
 
-    /* Record base: the baked address on scheduler 1, the shared
-     * throwaway record elsewhere. */
-    mov_imm(TMP1, (Uint64)rec);
+    /* Scheduler-1 early-out (P2.5 primary lever): the counter is
+     * scheduler-1-only — every other scheduler carries a non-NULL
+     * redirect pointer (to the shared throwaway record) and its
+     * increments were always discarded. Load the redirect first and
+     * branch over the WHOLE sequence when it is non-NULL, so schedulers
+     * 2..N pay just this load + branch instead of executing (and
+     * throwing away) the entire counter block. Behaviourally identical
+     * — those stores never accrued — but it removes the per-iteration
+     * tax from every scheduler but one. On scheduler 1 the redirect is
+     * NULL; we fall through, and the record base is then always the
+     * baked address (the old csel against the redirect is gone). */
     a.ldr(TMP2,
           getSchedulerRegRef(offsetof(ErtsSchedulerRegisters,
                                       aux_regs.d.t2_profile_redirect)));
-    a.cmp(TMP2, imm(0));
-    a.csel(TMP1, TMP1, TMP2, imm(arm::CondCode::kEQ));
+    a.cbnz(TMP2, skip);
 
-    /* count++ / threshold, one ldp. Argument-type observation happens
-     * on the (cold) trip path only — a T1 self-recursive loop runs
-     * this sequence per *iteration*, so every hot-path instruction is
-     * a measurable tax (the trip's sampled observations, held stable
-     * across the 05 §15.2 retries, are what the speculation facts
-     * consume instead). */
+    /* Entry sampling (P2.5 secondary lever), scheduler-1 path only: run
+     * the full counter block on 1-in-STRIDE calls and pay just this
+     * tst+branch (2 instrs, no memory traffic) on the rest. FCALLS was
+     * decremented just above (emit_i_test_yield) and is live > 0 here;
+     * its low bits are a cheap uniform sample. The sampled path bumps
+     * the counter by STRIDE (below), so a hot self-recursive loop still
+     * crosses its threshold in ~threshold iterations — the trip point is
+     * only coarsened to a STRIDE-wide granularity, never moved. Both
+     * early-outs sit inside [seq_start, seq_start+seq_size) (seq_start
+     * was captured above), so a later disarm `b`-over covers them too. */
+    a.tst(FCALLS, imm(T2_PROFILE_SAMPLE_STRIDE - 1));
+    a.b_ne(skip);
+
+    /* Record base: the baked address (scheduler 1 only — see above). */
+    mov_imm(TMP1, (Uint64)rec);
+
+    /* count += STRIDE / threshold, one ldp. Argument-type observation
+     * happens on the (cold) trip path only (the trip's sampled
+     * observations, held stable across the 05 §15.2 retries, are what
+     * the speculation facts consume instead). */
     a.ldp(TMP3.w(), TMP4.w(), a64::Mem(TMP1));
-    a.add(TMP3.w(), TMP3.w(), imm(1));
+    a.add(TMP3.w(), TMP3.w(), imm(T2_PROFILE_SAMPLE_STRIDE));
     a.str(TMP3.w(), a64::Mem(TMP1));
 
     /* Threshold trip: rare, cold. */
