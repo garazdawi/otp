@@ -94,23 +94,32 @@ namespace erts_t2 {
      * function (t2_validate) before lowering. */
     bool t2_loop_recover(T2Function &fn, bool *recovered, std::string *err);
 
+    /* True when executing `op` ends an iteration's clean prefix — the
+     * region in which a *window*-shaped deopt (re-execute the iteration
+     * from the fresh-call vector in X0..arity-1, PLAN/T2/08 §4.2) is
+     * still legal after it: effects (call-class ops), frame motion,
+     * writes to X0..arity-1, and a GC whose live count does not cover
+     * the whole vector all dirty the window. Allocation itself is NOT
+     * an effect (an abandoned partial iteration leaves garbage, not
+     * state — PLAN/T2/08 §3). Shared between the speculation pass and
+     * the window validator so the two can never drift. */
+    bool t2_op_dirties_window(const T2Op *op, uint32_t arity);
+
     /* Re-execution-window legality (PLAN/T2/08 §4.2, guards-before-
-     * effects; PLAN/T2FULL/09 §4). The loop deopt shape is "re-execute
-     * the iteration from the header-phi values as a fresh call", so a
-     * deopt-able (speculative-class) guard may only re-execute an
-     * iteration prefix that performed no effect: within each window —
-     * the region from an iteration's start (the header) to the first
-     * effect boundary — every deopt-able guard must precede the first
-     * effect on every path. A guard after an effect would need a fresh
-     * window whose re-call target is the post-effect CONT boundary;
-     * until that lands (the speculation phase), such IR is rejected.
-     * Effects are classified conservatively: any call-class op
-     * (Call/CallExt/Bif) is an effect boundary; allocation is NOT an
-     * effect (an abandoned partial iteration leaves garbage, not state
-     * — PLAN/T2/08 §3). The back edge starts a new iteration, i.e. a
-     * fresh window. Infrastructure for the speculation phase: today's
-     * IR carries no deopt-able guards, so this holds vacuously and
-     * guards the pipeline from day one. */
+     * effects; PLAN/T2FULL/09 §4). The loop deopt shape for a
+     * *window*-shaped speculative op (no T2_OP_SPEC_BOUNDARY flag) is
+     * "re-execute the iteration from the header-phi values as a fresh
+     * call", so such an op must sit in the iteration's clean prefix:
+     * on every path from the header to the op there is no effect, no
+     * frame op, and no write to X0..arity-1 (t2_op_dirties_window) —
+     * re-execution then never repeats an effect and the re-call vector
+     * is still intact in X0..arity-1. *Boundary*-shaped speculative ops
+     * (T2_OP_SPEC_BOUNDARY) deopt to their own T1 EFFECT PC and
+     * re-execute nothing before themselves, so they are exempt (their
+     * contract — an attached sync map — is checked by the HIR
+     * validator). Window-shaped ops in the entry block (loop-preheader
+     * entry guards) must be preceded only by Params and other guards.
+     * The back edge starts a new iteration, i.e. a fresh window. */
     bool t2_validate_windows(const T2Function &fn,
                              const T2LoopInfo &li,
                              std::string *err);

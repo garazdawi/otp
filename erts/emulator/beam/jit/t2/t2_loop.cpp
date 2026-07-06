@@ -314,10 +314,7 @@ namespace erts_t2 {
             }
         }
 
-        /* Deopt-able guards: every speculative-class op side-exits
-         * (tag-bit test or overflow flags) and re-executes from the
-         * window's re-call boundary. */
-        bool op_is_deopt_guard(const T2Op *op) {
+        bool op_is_speculative_kind(const T2Op *op) {
             switch (op->kind) {
             case T2OpKind::SpeculateType:
             case T2OpKind::SpeculateRange:
@@ -329,6 +326,16 @@ namespace erts_t2 {
             default:
                 return false;
             }
+        }
+
+        /* Window-shaped deopt guards: speculative ops whose side exit
+         * re-executes the iteration from the window's re-call boundary.
+         * Boundary-shaped ops (T2_OP_SPEC_BOUNDARY) deopt to their own
+         * T1 EFFECT PC — they re-execute nothing before themselves and
+         * are exempt from the window rule. */
+        bool op_is_window_guard(const T2Op *op) {
+            return op_is_speculative_kind(op) &&
+                   (op->flags & T2_OP_SPEC_BOUNDARY) == 0;
         }
 
         bool is_self_tail_call(const T2Function &fn, const T2Op *term) {
@@ -592,19 +599,64 @@ namespace erts_t2 {
      * Re-execution-window validator (see t2_loop.hpp)                     *
      * ------------------------------------------------------------------ */
 
+    bool t2_op_dirties_window(const T2Op *op, uint32_t arity) {
+        if (op_is_effect(op)) {
+            return true;
+        }
+        switch (op->kind) {
+        case T2OpKind::Allocate:
+        case T2OpKind::Deallocate:
+        case T2OpKind::Trim:
+            return true;
+        case T2OpKind::GcTest:
+            /* A GC that does not treat the whole fresh-call vector as
+             * live would garbage X_live..arity-1. */
+            return op->live < arity;
+        default:
+            break;
+        }
+        return op->dst_reg != T2_REG_NONE && t2_reg_is_x(op->dst_reg) &&
+               t2_reg_index(op->dst_reg) < arity;
+    }
+
     bool t2_validate_windows(const T2Function &fn,
                              const T2LoopInfo &li,
                              std::string *err) {
-        auto fail = [&](uint32_t block, const T2Op *op) {
+        auto fail = [&](uint32_t block, const T2Op *op, const char *what) {
             if (err != nullptr) {
                 *err = "window validator: block " + std::to_string(block) +
-                       ": deopt-able guard (" +
-                       std::string(t2_op_kind_name(op->kind)) +
-                       ") after an effect in its re-execution window "
-                       "(guards-before-effects, PLAN/T2/08 §4.2)";
+                       ": window-shaped deopt guard (" +
+                       std::string(t2_op_kind_name(op->kind)) + ") " + what;
             }
             return false;
         };
+
+        /* Entry-block guards (the loop-preheader entry speculation):
+         * everything before them must be a Param or another guard, so
+         * the deopt state — the argument vector in X0..arity-1, no
+         * frame — is exactly the untouched entry state. */
+        if (!fn.blocks.empty()) {
+            const T2BasicBlock *b0 = fn.blocks[0];
+            bool dirty = false;
+
+            for (const T2Op *op = b0->ops_head; op != nullptr;
+                 op = op->next) {
+                if (op_is_window_guard(op)) {
+                    if (dirty) {
+                        return fail(0,
+                                    op,
+                                    "preceded by a non-parameter op in "
+                                    "the entry block (the entry deopt "
+                                    "state must be untouched)");
+                    }
+                    continue;
+                }
+                if (op->kind != T2OpKind::Param &&
+                    !op_is_speculative_kind(op)) {
+                    dirty = true;
+                }
+            }
+        }
 
         for (const T2Loop &loop : li.loops) {
             std::vector<bool> in_loop(fn.blocks.size(), false);
@@ -613,22 +665,22 @@ namespace erts_t2 {
                 in_loop[b] = true;
             }
 
-            /* effect_in[b]: an effect may have executed on some path
+            /* dirty_in[b]: the clean prefix may have ended on some path
              * from the window start (the iteration's header entry) to
              * b's entry. Monotone OR to a fixpoint; edges into the
              * header start a fresh iteration and do not propagate. */
-            std::vector<uint8_t> effect_in(fn.blocks.size(), 0);
+            std::vector<uint8_t> dirty_in(fn.blocks.size(), 0);
             bool changed = true;
 
             while (changed) {
                 changed = false;
                 for (uint32_t bid : loop.body) {
                     const T2BasicBlock *b = fn.blocks[bid];
-                    uint8_t flag = effect_in[bid];
+                    uint8_t flag = dirty_in[bid];
 
                     for (const T2Op *op = b->ops_head; op != nullptr;
                          op = op->next) {
-                        if (op_is_effect(op)) {
+                        if (t2_op_dirties_window(op, fn.arity)) {
                             flag = 1;
                         }
                     }
@@ -638,25 +690,34 @@ namespace erts_t2 {
                             succ->id == loop.header) {
                             return;
                         }
-                        if (flag && !effect_in[succ->id]) {
-                            effect_in[succ->id] = 1;
+                        if (flag && !dirty_in[succ->id]) {
+                            dirty_in[succ->id] = 1;
                             changed = true;
                         }
                     });
                 }
             }
 
-            /* Check pass with the stable flags. */
+            /* Check pass with the stable flags. The op's own write —
+             * an AddSmall committing to X0..arity-1 — is fine: the
+             * flag-check fires before the commit; only *preceding*
+             * dirt is illegal. */
             for (uint32_t bid : loop.body) {
                 const T2BasicBlock *b = fn.blocks[bid];
-                uint8_t flag = effect_in[bid];
+                uint8_t flag = dirty_in[bid];
 
                 for (const T2Op *op = b->ops_head; op != nullptr;
                      op = op->next) {
-                    if (flag && op_is_deopt_guard(op)) {
-                        return fail(bid, op);
+                    if (flag && op_is_window_guard(op)) {
+                        return fail(bid,
+                                    op,
+                                    "after an effect / frame op / "
+                                    "X0..arity-1 write in its "
+                                    "re-execution window "
+                                    "(clean-prefix rule, PLAN/T2/08 "
+                                    "§4.2)");
                     }
-                    if (op_is_effect(op)) {
+                    if (t2_op_dirties_window(op, fn.arity)) {
                         flag = 1;
                     }
                 }

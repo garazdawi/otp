@@ -386,7 +386,26 @@ namespace erts_t2 {
          * must emit the header-load shape (T1's
          * emit_i_select_tuple_arity); a value-compare lowering silently
          * sends every input to the default edge. */
-        T2_OP_SWITCH_ARITY = 1 << 4
+        T2_OP_SWITCH_ARITY = 1 << 4,
+        /* Speculative op (SpeculateType / AddSmall / SubSmall) whose
+         * deopt is *boundary*-shaped (P2 commit 4): the side exit
+         * branches to the op's own T1 EFFECT PC and T1 re-executes just
+         * that op from its sync-map state — nothing before it is
+         * re-executed, so it is legal after effects. The op must keep
+         * its sync map (the boundary contract). Without this flag a
+         * speculative op is *window*-shaped: the side exit branches to
+         * the function's T1 entry body (L_f + TEST_YIELD_RETURN_OFFSET)
+         * and T1 re-executes the whole iteration/invocation from the
+         * fresh-call vector in X0..arity-1 — legal only on a clean
+         * prefix (no effect, no frame op, no write to X0..arity-1
+         * before it; enforced by t2_validate_windows). */
+        T2_OP_SPEC_BOUNDARY = 1 << 5,
+        /* Op spliced from an inlined callee (P2 commit 6). Such an op
+         * has no T1 PC of its own in the caller, so a fallible inlined
+         * op must be converted to a window-shaped speculative op — the
+         * enclosing iteration's re-execution covers the inlined body
+         * (PLAN/T2/08 §4.2) — or inlining is abandoned. */
+        T2_OP_INLINED = 1 << 6
     };
 
     /* One arm of a `switch` terminator. */
@@ -589,6 +608,12 @@ namespace erts_t2 {
      * returns false and, if `err` is non-null, fills it with a description of
      * the first problem found. Assumes finalize() has run. */
     bool t2_validate(const T2Function &fn, std::string *err);
+
+    /* True when a value's lattice element *proves* it is a small integer
+     * (integer-only union with a range inside the small range). Shared
+     * fact between the speculation pass (t2_spec.cpp) and the validator's
+     * speculative-type walk: a proof never needs a guard. */
+    bool t2_type_proves_small(const T2Type &t);
 
     /* A compact human-readable dump of the CFG and ops. */
     std::string t2_dump(const T2Function &fn);

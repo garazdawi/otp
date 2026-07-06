@@ -3108,6 +3108,13 @@ void BeamModuleAssembler::emit_raw_raise() {
     (BEAM_ASM_FUNC_PROLOGUE_SIZE + sizeof(Uint32[3]) +                         \
      (erts_alcu_enable_code_atags ? sizeof(Uint32) : 0))
 
+/* The T2 backend's window-shaped deopt target is L_f + this offset
+ * (see t2_pctab.h); exported as a function so the T2 mid-end stays
+ * free of the arm emitter's layout macros. */
+extern "C" Uint erts_t2_test_yield_return_offset(void) {
+    return TEST_YIELD_RETURN_OFFSET;
+}
+
 /* ARG3 = current_label */
 void BeamGlobalAssembler::emit_i_test_yield_shared() {
     a.sub(ARG2, ARG3, imm(sizeof(ErtsCodeMFA)));

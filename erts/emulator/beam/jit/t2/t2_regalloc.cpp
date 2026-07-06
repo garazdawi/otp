@@ -230,6 +230,15 @@ namespace erts_t2 {
                                 return fail("side exit without a T1 PC");
                             }
                             break;
+                        case T2LirKind::SpeculateSmall:
+                        case T2LirKind::AddSmall:
+                        case T2LirKind::SubSmall:
+                            /* Every speculative op deopts somewhere. */
+                            if (op.t1_pc_fail == nullptr) {
+                                return fail("speculative op without a "
+                                            "deopt PC");
+                            }
+                            break;
                         case T2LirKind::ReductionCheck:
                             /* Back-edge: the demote target (own L_f)
                              * and the fresh-call sync map must both

@@ -160,6 +160,16 @@ void beamasm_t2_pc_raw_get(void *ba,
                            Uint32 *fn_index,
                            byte *kind);
 
+/* The T1 function-entry layout offset from L_f to the post-yield body
+ * (TEST_YIELD_RETURN_OFFSET in arm/instr_common.cpp, where it is also
+ * the yield-resume PC computation). A T2 window-shaped deopt branches
+ * to L_f + this offset: the T1 body past the prologue patch and past
+ * i_test_yield's charge, re-executing the invocation/iteration from
+ * the argument vector in X0..arity-1 with reductions accounted exactly
+ * as T1 would (the entering charge already happened at the T2 entry
+ * stub or back edge). */
+Uint erts_t2_test_yield_return_offset(void);
+
 /* Enable/disable the assembler's PC-table offset collection. The
  * eligibility bitmap does not exist yet at codegen time (erts_t2_prepare
  * runs after load_code), so collection is enabled whenever T2 retention

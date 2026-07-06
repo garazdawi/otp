@@ -145,8 +145,11 @@ namespace erts_t2 {
                              * yield resume + raise address)              */
                 BifContPc,  /* value = the BIF site's T1 continuation
                              * (ARG5: trap/trace CP)                      */
-                BackEdgeDemote /* value = the back-edge demote target
-                                * (the function's own T1 entry L_f)       */
+                BackEdgeDemote, /* value = the back-edge demote target
+                                 * (the function's own T1 entry L_f)      */
+                SpecDeoptPc /* value = a speculative op's deopt PC (its
+                             * own EFFECT site for the boundary shape,
+                             * the T1 entry body for the window shape)   */
             } kind;
             uint32_t beam_idx;
             uint64_t value;
@@ -459,6 +462,13 @@ namespace erts_t2 {
             case T2LirKind::ReductionCheck:
                 emit_lir_reduction_check(op);
                 break;
+            case T2LirKind::SpeculateSmall:
+                emit_lir_speculate_small(op);
+                break;
+            case T2LirKind::AddSmall:
+            case T2LirKind::SubSmall:
+                emit_lir_addsub_small(op);
+                break;
             case T2LirKind::SideExit:
                 /* Unconditional transfer to a T1 PC: an error-exit op's
                  * own site or the function's func_info. T1 re-executes /
@@ -609,6 +619,129 @@ namespace erts_t2 {
             if (op.succ_then != T2_LIR_NO_BLOCK && !failed()) {
                 a.b(block_label(op.succ_then));
                 mark_unreachable();
+            }
+        }
+
+        /* The fused tag-bit speculation guard (P2 commit 4; the MVP's
+         * AND rule): AND the 1..4 values together, require every
+         * small-tag bit, branch to the deopt trampoline otherwise. The
+         * combined predicate holds only when *every* input has all
+         * _TAG_IMMED1_SMALL bits set (AND, never OR — MVP Finding 4). */
+        void emit_lir_speculate_small(const T2LirOp &op) {
+            if (op.num_srcs < 1 || op.num_srcs > T2_LIR_MAX_SRCS ||
+                op.t1_pc_fail == nullptr) {
+                fail("malformed speculation guard");
+                return;
+            }
+
+            const Label &fl = rawLabels.at(fail_label_num(op.t1_pc_fail));
+            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+            a64::Gp vals[T2_LIR_MAX_SRCS];
+            const a64::Gp hints[T2_LIR_MAX_SRCS] = {TMP2, TMP3, TMP4, TMP5};
+
+            for (uint8_t i = 0; i < op.num_srcs; i++) {
+                if (op.srcs[i].is_const) {
+                    fail("constant operand in a speculation guard");
+                    return;
+                }
+                if (op.srcs[i].loc.is_phys()) {
+                    vals[i] = phys_gp(op.srcs[i].loc);
+                } else {
+                    vals[i] = load_source(src_argval(op.srcs[i]), hints[i])
+                                      .reg;
+                }
+            }
+
+            comment("T2 speculate small (fused %u)", (unsigned)op.num_srcs);
+            ERTS_CT_ASSERT(_TAG_IMMED1_SMALL == _TAG_IMMED1_MASK);
+            if (op.num_srcs == 1) {
+                a.and_(TMP1, vals[0], imm(_TAG_IMMED1_MASK));
+            } else {
+                a.and_(TMP1, vals[0], vals[1]);
+                for (uint8_t i = 2; i < op.num_srcs; i++) {
+                    a.and_(TMP1, TMP1, vals[i]);
+                }
+                a.and_(TMP1, TMP1, imm(_TAG_IMMED1_MASK));
+            }
+            a.cmp(TMP1, imm(_TAG_IMMED1_SMALL));
+            a.b_ne(resolve_label(fl, disp1MB));
+        }
+
+        /* Flag-checked one-untag add/sub (P2 commit 4; PLAN/T2/03 §9.4,
+         * PLAN/T2/08 §4.4): clear one operand's tag bits, compute with a
+         * flag-setting add/sub into scratch — tagged + cleared preserves
+         * the tag — branch on overflow to the deopt trampoline, and only
+         * then commit the result. Mirrors T1's small-int fast path
+         * (arm/instr_arith.cpp emit_i_plus/minus) minus the per-op type
+         * checks, which the dominating guards/proofs hoisted away. */
+        void emit_lir_addsub_small(const T2LirOp &op) {
+            bool is_add = op.kind == T2LirKind::AddSmall;
+
+            if (op.num_srcs != 2 || op.dst.is_none() ||
+                op.t1_pc_fail == nullptr) {
+                fail("malformed flag-checked arithmetic op");
+                return;
+            }
+
+            const Label &fl = rawLabels.at(fail_label_num(op.t1_pc_fail));
+            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+            comment("T2 %s small (flag-checked)", is_add ? "add" : "sub");
+
+            a64::Gp lhs;
+            if (op.srcs[0].is_const) {
+                /* A proven-small constant operand (the pass never
+                 * guards constants). */
+                mov_imm(TMP2, op.srcs[0].term);
+                lhs = TMP2;
+            } else if (op.srcs[0].loc.is_phys()) {
+                lhs = phys_gp(op.srcs[0].loc);
+            } else {
+                lhs = load_source(src_argval(op.srcs[0]), TMP2).reg;
+            }
+
+            if (op.srcs[1].is_const) {
+                Uint64 cleared = (Uint64)op.srcs[1].term &
+                                 ~(Uint64)_TAG_IMMED1_MASK;
+
+                if (cleared <= 0xFFF) {
+                    if (is_add) {
+                        a.adds(ARG1, lhs, imm(cleared));
+                    } else {
+                        a.subs(ARG1, lhs, imm(cleared));
+                    }
+                } else {
+                    mov_imm(TMP1, cleared);
+                    if (is_add) {
+                        a.adds(ARG1, lhs, TMP1);
+                    } else {
+                        a.subs(ARG1, lhs, TMP1);
+                    }
+                }
+            } else {
+                a64::Gp rhs;
+
+                if (op.srcs[1].loc.is_phys()) {
+                    rhs = phys_gp(op.srcs[1].loc);
+                } else {
+                    rhs = load_source(src_argval(op.srcs[1]), TMP3).reg;
+                }
+                a.and_(TMP1, rhs, imm(~_TAG_IMMED1_MASK));
+                if (is_add) {
+                    a.adds(ARG1, lhs, TMP1);
+                } else {
+                    a.subs(ARG1, lhs, TMP1);
+                }
+            }
+
+            /* Deopt before the *commit* (PLAN/T2/08 §4.4). */
+            a.b_vs(resolve_label(fl, disp1MB));
+
+            if (op.dst.is_phys()) {
+                a.mov(phys_gp(op.dst), ARG1);
+            } else {
+                mov_arg(loc_argval(op.dst), ARG1);
             }
         }
 

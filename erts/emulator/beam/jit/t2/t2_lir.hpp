@@ -182,6 +182,22 @@ namespace erts_t2 {
          * (surprise #7). */
         SideExit,
 
+        /* Speculative ops (P2 commit 4; PLAN/T2/08 §4.4). All three
+         * carry t1_pc_fail = the deopt PC (boundary shape: the op's own
+         * T1 EFFECT site; window shape: the function's T1 entry body,
+         * re-executing the iteration from the fresh-call vector).
+         *
+         * SpeculateSmall is the fused tag-bit guard (the MVP's AND
+         * rule): AND all 1..4 source values, require every small-tag
+         * bit, b.ne -> deopt. AddSmall/SubSmall are the flag-checked
+         * one-untag arithmetic: clear one operand's tag bits, compute
+         * with a flag-setting add/sub into scratch, b.vs -> deopt,
+         * commit the (still-tagged) result to dst afterwards — deopt
+         * fires strictly before the commit. */
+        SpeculateSmall,
+        AddSmall,
+        SubSmall,
+
         /* A recovered loop's back-edge reduction charge + yield check
          * (t2_loop.cpp; PLAN/T2/08 §5.4): `subs FCALLS, #1` — exactly
          * T1's one-per-self-tail-call charge — and on exhaustion a

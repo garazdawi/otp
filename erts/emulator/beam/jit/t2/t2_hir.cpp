@@ -1710,11 +1710,24 @@ namespace erts_t2 {
                         sf_set(f.small, op->result->id);
                     }
                     break;
+                case T2OpKind::Copy:
+                    /* SSA-identity of its operand: facts pass through
+                     * (the speculation pass sees through the decoded
+                     * frame copies the same way). */
+                    if (sf_test(f.small, op->operands[0]->id) ||
+                        t2_type_proves_small(op->operands[0]->type)) {
+                        sf_set(f.small, op->result->id);
+                    }
+                    break;
                 case T2OpKind::SpeculateType:
-                    /* The tag-bit test: after it, the operand is a
-                     * proven small (side exit otherwise). */
-                    if (op->num_operands == 1) {
-                        sf_set(f.small, op->operands[0]->id);
+                    /* The tag-bit test: after it, every operand is a
+                     * proven small (side exit otherwise). A fused guard
+                     * (P2 commit 4, the AND-combining rule) carries
+                     * several operands; the combined mask requires every
+                     * input to satisfy every tag bit, so all of them are
+                     * proven on fall-through. */
+                    for (uint16_t i = 0; i < op->num_operands; i++) {
+                        sf_set(f.small, op->operands[i]->id);
                     }
                     break;
                 case T2OpKind::AddSmall:
@@ -1737,7 +1750,8 @@ namespace erts_t2 {
                 auto need = [&](uint16_t i, bool small_ok, bool raw_ok,
                                 const char *what) -> bool {
                     const T2Value *v = op->operands[i];
-                    bool is_small = sf_test(f.small, v->id);
+                    bool is_small = sf_test(f.small, v->id) ||
+                                    t2_type_proves_small(v->type);
                     bool is_raw = sf_test(f.raw, v->id);
 
                     if ((small_ok && is_small) || (raw_ok && is_raw)) {
@@ -1846,7 +1860,9 @@ namespace erts_t2 {
                             }
                             uint32_t vid = phi->operands[i]->id;
 
-                            all_small &= sf_test(out[pred->id].small, vid);
+                            all_small &= sf_test(out[pred->id].small, vid) ||
+                                         t2_type_proves_small(
+                                                 phi->operands[i]->type);
                             all_raw &= sf_test(out[pred->id].raw, vid);
                         }
                         if (all_small) {
@@ -1900,7 +1916,9 @@ namespace erts_t2 {
                             }
                             uint32_t vid = phi->operands[i]->id;
 
-                            all_small &= sf_test(out[pred->id].small, vid);
+                            all_small &= sf_test(out[pred->id].small, vid) ||
+                                         t2_type_proves_small(
+                                                 phi->operands[i]->type);
                             all_raw &= sf_test(out[pred->id].raw, vid);
                         }
                         if (all_small) {
@@ -2020,6 +2038,11 @@ namespace erts_t2 {
     bool t2_validate(const T2Function &fn, std::string *err) {
         Validator v(fn, err);
         return v.run();
+    }
+
+    bool t2_type_proves_small(const T2Type &t) {
+        return t.integer_only() && t.has_min && t.has_max &&
+               IS_SSMALL(t.min) && IS_SSMALL(t.max);
     }
 
     /* ------------------------------------------------------------------ *

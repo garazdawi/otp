@@ -64,6 +64,7 @@ extern "C"
 #include "t2_loop.hpp"
 #include "t2_lir.hpp"
 #include "t2_emit.hpp"
+#include "t2_spec.hpp"
 
 using namespace erts_t2;
 
@@ -139,13 +140,46 @@ namespace {
                 return T2CompileStatus::IselUnsupported;
             }
             if (recovered) {
-                /* Re-execution-window legality (PLAN/T2/08 §4.2):
-                 * vacuous until the speculation pass emits deopt-able
-                 * guards, but enforced from the first relaxed blob on
-                 * so the corruption class cannot land unnoticed. */
                 T2LoopInfo li;
 
                 t2_loop_info(hir, &li);
+
+                /* Speculation insertion (P2 commit 4): entry-type +
+                 * loop-carried "observed small" speculation with
+                 * flag-checked arithmetic and fused guards. Every
+                 * conversion is re-proven below by the full validator
+                 * (born-checked: run_speculation_checks) and the
+                 * window validator; any failure degrades to T1,
+                 * loudly. T2_NO_SPEC=1 forces the identity pipeline
+                 * (the A/B lever for the measurement legs). */
+                if (getenv("T2_NO_SPEC") == NULL) {
+                    T2DefaultFactSource facts(hir);
+                    bool spec_changed = false;
+
+                    if (!t2_speculate(hir,
+                                      li,
+                                      ret,
+                                      facts,
+                                      &spec_changed,
+                                      &err)) {
+                        if (diag) {
+                            *diag = "speculation: " + err;
+                        }
+                        return T2CompileStatus::IselUnsupported;
+                    }
+                    if (spec_changed && !t2_validate(hir, &err)) {
+                        if (diag) {
+                            *diag = "post-speculation validate: " + err;
+                        }
+                        return T2CompileStatus::IselUnsupported;
+                    }
+                }
+
+                /* Re-execution-window legality (PLAN/T2/08 §4.2): the
+                 * clean-prefix rule for window-shaped deopt guards;
+                 * vacuous when speculation inserted nothing, enforced
+                 * from the first relaxed blob on so the corruption
+                 * class cannot land unnoticed. */
                 if (!t2_validate_windows(hir, li, &err)) {
                     if (diag) {
                         *diag = err;

@@ -284,6 +284,28 @@ namespace erts_t2 {
                 return nullptr;
             }
 
+            /* A speculative op's deopt PC (PLAN/T2FULL/09 §2). Boundary
+             * shape: the op's own T1 EFFECT site (T1 re-executes just
+             * that op from its sync-map state). Window shape: the
+             * function's own T1 entry body past the prologue patch and
+             * the i_test_yield charge — T1 re-executes the whole
+             * iteration/invocation from the fresh-call vector in
+             * X0..arity-1 (charging happened at the T2 back edge /
+             * entry stub, so reductions stay identical to T1). */
+            const void *spec_deopt_pc(const T2Op *op) {
+                if (op->flags & T2_OP_SPEC_BOUNDARY) {
+                    return pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
+                }
+
+                const void *lf = local_target(hir.function, hir.arity);
+
+                if (lf == nullptr) {
+                    return nullptr;
+                }
+                return (const void *)((const char *)lf +
+                                      erts_t2_test_yield_return_offset());
+            }
+
             /* The function's own func_info: on aarch64 the ErtsCodeInfo's
              * first word is a valid `bl <i_func_info_shared>`, so branching
              * to it raises function_clause exactly as T1's guard fails do. */
@@ -800,6 +822,58 @@ namespace erts_t2 {
                     b.ops.push_back(lop);
                     return true;
                 }
+
+                case T2OpKind::SpeculateType:
+                    /* The fused tag-bit deopt guard (P2 commit 4): AND
+                     * the values, require every small-tag bit, deopt on
+                     * failure. */
+                    lop.kind = T2LirKind::SpeculateSmall;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    for (uint8_t i = 0; i < lop.num_srcs; i++) {
+                        if (lop.srcs[i].is_const) {
+                            return fail_op(op,
+                                           "constant operand in a "
+                                           "speculation guard (must be "
+                                           "proven, never guarded)");
+                        }
+                    }
+                    lop.t1_pc_fail = spec_deopt_pc(op);
+                    if (lop.t1_pc_fail == nullptr) {
+                        return fail_op(op,
+                                       "no deopt PC for the speculation "
+                                       "guard");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
+                case T2OpKind::AddSmall:
+                case T2OpKind::SubSmall:
+                    /* Flag-checked one-untag arithmetic; deopt (b.vs)
+                     * fires before the commit. */
+                    lop.kind = op->kind == T2OpKind::AddSmall
+                                       ? T2LirKind::AddSmall
+                                       : T2LirKind::SubSmall;
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "arith result without a home");
+                    }
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.mfa_m = op->mfa_m;
+                    lop.mfa_f = op->mfa_f;
+                    lop.live = op->live;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    lop.t1_pc_fail = spec_deopt_pc(op);
+                    if (lop.t1_pc_fail == nullptr) {
+                        return fail_op(op,
+                                       "no deopt PC for flag-checked "
+                                       "arithmetic");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
 
                 case T2OpKind::ReductionCheck:
                     /* Recovered-loop back edge (t2_loop.cpp): the
