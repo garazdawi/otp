@@ -219,6 +219,19 @@ namespace erts_t2 {
                                 return fail("side exit without a T1 PC");
                             }
                             break;
+                        case T2LirKind::ReductionCheck:
+                            /* Back-edge: the demote target (own L_f)
+                             * and the fresh-call sync map must both
+                             * be present. */
+                            if (op.target == nullptr) {
+                                return fail("back-edge without a demote "
+                                            "target");
+                            }
+                            if (op.sync == nullptr) {
+                                return fail("back-edge without a sync "
+                                            "map");
+                            }
+                            break;
                         case T2LirKind::CallBif:
                             /* Both T1 addresses and both callee handles
                              * must be resolved: the site (yield/error),

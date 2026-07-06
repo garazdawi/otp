@@ -801,6 +801,27 @@ namespace erts_t2 {
                     return true;
                 }
 
+                case T2OpKind::ReductionCheck:
+                    /* Recovered-loop back edge (t2_loop.cpp): the
+                     * demote target is the function's own T1 entry
+                     * L_f, resolved exactly like a local tail
+                     * call's transfer target; the sync map (already
+                     * attached above) is the fresh-call vector the
+                     * yield saves. */
+                    if (op->sync == nullptr) {
+                        return fail_op(op, "back-edge without a sync "
+                                           "map");
+                    }
+                    lop.kind = T2LirKind::ReductionCheck;
+                    lop.target = local_target(hir.function, hir.arity);
+                    if (lop.target == nullptr) {
+                        return fail_op(op,
+                                       "no T1 entry for the back-edge "
+                                       "demote");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
                 default:
                     return fail_op(op, "unsupported HIR op in P1 isel");
                 }

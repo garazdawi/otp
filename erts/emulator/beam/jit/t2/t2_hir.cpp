@@ -1020,6 +1020,10 @@ namespace erts_t2 {
                 case T2OpKind::Neg:
                 case T2OpKind::Bif:
                 case T2OpKind::GuardBif:
+                /* A recovered loop's back-edge yield check
+                 * (t2_loop.cpp): the map is the fresh-call argument
+                 * vector the demote path re-enters T1 with. */
+                case T2OpKind::ReductionCheck:
                     return true;
                 case T2OpKind::TailCall:
                 case T2OpKind::TailCallExt:
@@ -1143,6 +1147,23 @@ namespace erts_t2 {
                         m->frame_size != T2_NO_FRAME) {
                         return fail("block %u: tail-call sync map still has a "
                                     "frame",
+                                    op->block->id);
+                    }
+                    break;
+                case T2OpKind::ReductionCheck:
+                    /* Back-edge boundary: exactly a fresh-call
+                     * argument vector (PLAN/T2/08 §4.5) — the loop
+                     * state in X0..arity-1, no frame. */
+                    if (m->x_live != fn.arity) {
+                        return fail("block %u: back-edge sync map "
+                                    "x_live %u != arity %u",
+                                    op->block->id,
+                                    m->x_live,
+                                    fn.arity);
+                    }
+                    if (m->frame_size != T2_NO_FRAME) {
+                        return fail("block %u: back-edge sync map "
+                                    "still has a frame",
                                     op->block->id);
                     }
                     break;

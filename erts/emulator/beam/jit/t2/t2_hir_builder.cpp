@@ -1693,7 +1693,7 @@ namespace erts_t2 {
             const ErtsT2RetainedCode *ret,
             Eterm function,
             unsigned arity,
-            const std::function<void(const T2Function &)> &emit,
+            const std::function<void(T2Function &)> &emit,
             std::string *err) {
         ModuleDecode md;
         std::string local_err;
@@ -1754,7 +1754,7 @@ namespace erts_t2 {
     }
 
     bool t2_build_each(const ErtsT2RetainedCode *ret,
-                       const std::function<void(const T2Function &)> &emit,
+                       const std::function<void(T2Function &)> &emit,
                        int *failures,
                        std::string *err) {
         ModuleDecode md;

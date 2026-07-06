@@ -61,6 +61,7 @@ extern "C"
 
 #include "t2_hir.hpp"
 #include "t2_isel.hpp"
+#include "t2_loop.hpp"
 #include "t2_lir.hpp"
 #include "t2_emit.hpp"
 
@@ -102,7 +103,7 @@ namespace {
     /* Lower + emit + install one built HIR function against the loaded
      * module instance. Called from inside the builder's emit callback
      * (the module decode is still alive). */
-    T2CompileStatus t2_compile_install_one(const T2Function &hir,
+    T2CompileStatus t2_compile_install_one(T2Function &hir,
                                            const ErtsT2RetainedCode *ret,
                                            const BeamCodeHeader *code_hdr,
                                            struct erl_module_instance *mi,
@@ -114,6 +115,30 @@ namespace {
 
         ctx.ret = ret;
         ctx.code_hdr = (const void *)code_hdr;
+
+        /* Loop recovery (PLAN/T2FULL/09 §4, work-order item 2):
+         * rewrite local self-recursive tail calls into back edges.
+         * Install pipeline only — a standalone debug-exec blob has
+         * no patched prologue for the back-edge demote's L_f
+         * contract. A recovered function is re-validated in full,
+         * re-proving the sync/frame/home state model on the
+         * rewritten IR; any failure degrades to T1, loudly. */
+        {
+            bool recovered = false;
+
+            if (!t2_loop_recover(hir, &recovered, &err)) {
+                if (diag) {
+                    *diag = err;
+                }
+                return T2CompileStatus::IselUnsupported;
+            }
+            if (recovered && !t2_validate(hir, &err)) {
+                if (diag) {
+                    *diag = "post-recovery validate: " + err;
+                }
+                return T2CompileStatus::IselUnsupported;
+            }
+        }
 
         if (!t2_isel(hir, ctx, lir, &err)) {
             if (diag) {
@@ -252,7 +277,7 @@ extern "C" void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
 
     (void)t2_build_each(
             ret,
-            [&](const T2Function &hir) {
+            [&](T2Function &hir) {
                 Sint64 limit = t2_install_limit();
 
                 t2_stats.functions++;
@@ -402,7 +427,7 @@ extern "C" Eterm erts_t2_debug_install(Process *p,
             ret,
             func,
             (unsigned)unsigned_val(arity),
-            [&](const T2Function &hir) {
+            [&](T2Function &hir) {
                 ran = true;
                 st = t2_compile_install_one(hir, ret, hdr, mi, nullptr);
             },

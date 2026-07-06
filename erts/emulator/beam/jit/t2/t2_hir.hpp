@@ -614,7 +614,7 @@ namespace erts_t2 {
             const ErtsT2RetainedCode *ret,
             Eterm function,
             unsigned arity,
-            const std::function<void(const T2Function &)> &emit,
+            const std::function<void(T2Function &)> &emit,
             std::string *err);
 
     /* Decode the retained module once and build + validate every
@@ -626,7 +626,7 @@ namespace erts_t2 {
      * functions that failed to build/validate. Drives the +JT2enable
      * compile-at-load path (t2_compile.cpp). */
     bool t2_build_each(const ErtsT2RetainedCode *ret,
-                       const std::function<void(const T2Function &)> &emit,
+                       const std::function<void(T2Function &)> &emit,
                        int *failures,
                        std::string *err);
 

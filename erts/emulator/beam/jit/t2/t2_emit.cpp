@@ -55,6 +55,7 @@ extern "C"
 #include "t2_emit.hpp"
 #include "t2_hir.hpp"
 #include "t2_isel.hpp"
+#include "t2_loop.hpp"
 
 #include <cstdio>
 #include <functional>
@@ -142,8 +143,10 @@ namespace erts_t2 {
                 BifExport,  /* value = Export* of a light-BIF callee      */
                 BifSitePc,  /* value = the BIF site's own T1 PC (ARG3:
                              * yield resume + raise address)              */
-                BifContPc   /* value = the BIF site's T1 continuation
+                BifContPc,  /* value = the BIF site's T1 continuation
                              * (ARG5: trap/trace CP)                      */
+                BackEdgeDemote /* value = the back-edge demote target
+                                * (the function's own T1 entry L_f)       */
             } kind;
             uint32_t beam_idx;
             uint64_t value;
@@ -452,6 +455,9 @@ namespace erts_t2 {
                 break;
             case T2LirKind::CallBif:
                 emit_lir_call_bif(op);
+                break;
+            case T2LirKind::ReductionCheck:
+                emit_lir_reduction_check(op);
                 break;
             case T2LirKind::SideExit:
                 /* Unconditional transfer to a T1 PC: an error-exit op's
@@ -809,6 +815,52 @@ namespace erts_t2 {
             reg_cache.invalidate();
         }
 
+        /* The recovered loop's back-edge reduction charge + yield
+         * check (PLAN/T2/08 §5.4): `subs FCALLS, #1` is exactly T1's
+         * per-iteration charge — T1 charges one reduction at the
+         * callee entry's i_test_yield on every self tail call, the
+         * recovered loop charges one at the back edge — so
+         * process_info(_, reductions) is byte-identical. The yield
+         * path *demotes* the invocation to T1 (T2 resume stubs are a
+         * later commit): ARG3 = L_f keeps i_test_yield_shared's
+         * MFA/arity/resume contract (resume PC = L_f +
+         * TEST_YIELD_RETURN_OFFSET = the T1 body; X0..arity-1 saved
+         * from c_p->arity), and the state at this boundary is the
+         * fresh-call argument vector by the back-edge sync map, so
+         * the demoted continuation is exactly a fresh T1 iteration —
+         * still no c_p->i ever points into a blob. */
+        void emit_lir_reduction_check(const T2LirOp &op) {
+            if (install_entry == nullptr) {
+                fail("recovered back-edge outside install-mode "
+                     "emission");
+                return;
+            }
+            if (op.target != install_entry) {
+                fail("back-edge demote target is not the install "
+                     "entry");
+                return;
+            }
+            fact(EmitFact::BackEdgeDemote, op.beam_idx, op.target);
+
+            /* Cached slot values must not survive the boundary (the
+             * yield path re-enters T1 with only the canonical
+             * state). */
+            reg_cache.invalidate();
+
+            mov_imm(ARG3, (Uint64)op.target);
+
+            if (erts_alcu_enable_code_atags) {
+                /* Mirror emit_i_test_yield's point-of-origin tag
+                 * store. */
+                a.str(ARG3, a64::Mem(c_p, offsetof(Process, i)));
+            }
+
+            a.subs(FCALLS, FCALLS, imm(1));
+            a.b_le(resolve_fragment(ga->get_i_test_yield_shared(),
+                                    disp1MB));
+            /* Fall through to the back-jump. */
+        }
+
     public:
         /* Emit the standalone C-callable re-entry trampoline (see
          * t2_emit.hpp). Reuses emit_leave_runtime / emit_enter_runtime to
@@ -1075,7 +1127,12 @@ extern "C" Eterm erts_t2_debug_exec(Process *p,
             ret,
             func,
             (unsigned)ar,
-            [&](const T2Function &hir) {
+            [&](T2Function &hir) {
+                /* No loop recovery here: a standalone exec blob has
+                 * no patched prologue, so a back-edge demote's
+                 * ARG3 = L_f contract cannot hold. The identity
+                 * shape (self tail call through the T1 entry) is
+                 * kept instead. */
                 T2LirFunction lir;
                 if (!t2_isel(hir, ctx, lir, &pipe_err)) {
                     return;
@@ -1245,8 +1302,11 @@ extern "C" int erts_t2_emit_selftest(void) {
  *      the entry fallback);                                          *
  *   4. the shared function_clause side exit targets the function's   *
  *      func_info (its ErtsCodeInfo);                                 *
- *   5. the self-recursive tail call transfers to total/2's own T1    *
- *      entry (identity; no back-edge optimization).                  *
+ *   5. (P2) the self-recursive tail call is loop-recovered: the      *
+ *      entry block is the synthesized preheader, the header holds   *
+ *      one phi per parameter, and the latch carries a back-edge     *
+ *      ReductionCheck whose demote target is total/2's own T1       *
+ *      entry — no self TailCall survives.                           *
  * ------------------------------------------------------------------ */
 
 namespace {
@@ -1277,11 +1337,55 @@ namespace {
                 ret,
                 AM_total,
                 2,
-                [&](const T2Function &hir) {
+                [&](T2Function &hir) {
                     T2LirFunction lir;
                     std::string err;
 
                     ran = true;
+
+                    /* P2: recover the self-recursion loop exactly as
+                     * the install pipeline does, re-validate, and
+                     * assert the recovered structure. */
+                    {
+                        bool recovered = false;
+
+                        if (!t2_loop_recover(hir, &recovered, &err) ||
+                            !recovered || !t2_validate(hir, &err)) {
+                            erts_fprintf(stderr,
+                                         "T2 emit module self-test "
+                                         "FAILED: recovery: %s\n",
+                                         err.c_str());
+                            failures++;
+                            return;
+                        }
+                    }
+                    {
+                        T2LoopInfo li;
+
+                        t2_loop_info(hir, &li);
+                        T2_STRUCT_CHECK(li.loops.size() == 1,
+                                        "recovered total/2 must have "
+                                        "exactly one loop");
+                        if (li.loops.size() == 1) {
+                            const T2Loop &loop = li.loops[0];
+
+                            T2_STRUCT_CHECK(loop.preheader == 0,
+                                            "the entry block must be "
+                                            "the synthesized "
+                                            "preheader");
+                            T2_STRUCT_CHECK(
+                                    loop.header ==
+                                            (uint32_t)hir.blocks
+                                                            .size() -
+                                                    1,
+                                    "the synthesized header is the "
+                                    "last block");
+                            T2_STRUCT_CHECK(loop.latches.size() == 1,
+                                            "total/2 has one latch");
+                            T2_STRUCT_CHECK(!loop.exits.empty(),
+                                            "the loop has exits");
+                        }
+                    }
 
                     if (!t2_isel(hir, ctx, lir, &err) ||
                         !t2_regalloc(lir, &err)) {
@@ -1420,14 +1524,18 @@ namespace {
 
                     /* 4 + 5 at LIR level. */
                     const T2LirOp *side_exit = nullptr;
-                    const T2LirOp *tail_call = nullptr;
+                    const T2LirOp *back_edge = nullptr;
+                    bool any_tail_call = false;
                     for (const T2LirBlock &b : lir.blocks) {
                         for (const T2LirOp &op : b.ops) {
                             if (op.kind == T2LirKind::SideExit) {
                                 side_exit = &op;
                             }
+                            if (op.kind == T2LirKind::ReductionCheck) {
+                                back_edge = &op;
+                            }
                             if (op.kind == T2LirKind::TailCall) {
-                                tail_call = &op;
+                                any_tail_call = true;
                             }
                         }
                     }
@@ -1436,9 +1544,23 @@ namespace {
                                                     (const void *)ci,
                                     "shared error exit != func_info "
                                     "ErtsCodeInfo");
-                    T2_STRUCT_CHECK(tail_call != nullptr &&
-                                            tail_call->target == own_entry,
-                                    "self tail call != own T1 entry");
+                    T2_STRUCT_CHECK(back_edge != nullptr &&
+                                            back_edge->target ==
+                                                    own_entry &&
+                                            back_edge->sync != nullptr,
+                                    "recovered back edge missing or "
+                                    "mis-targeted");
+                    T2_STRUCT_CHECK(!any_tail_call,
+                                    "a self tail call survived "
+                                    "recovery");
+                    T2_STRUCT_CHECK(
+                            !lir.blocks.empty() &&
+                                    lir.blocks.back().phis.size() == 2 &&
+                                    lir.blocks.back().phis[0].home ==
+                                            PhysLoc::xreg(0) &&
+                                    lir.blocks.back().phis[1].home ==
+                                            PhysLoc::xreg(1),
+                            "header phis must be homed X0/X1");
 
                     /* Emit through a fresh assembler and check the same
                      * facts at the emitted-code level. */
@@ -1460,6 +1582,9 @@ namespace {
                     StringLogger slog;
 
                     ma.set_string_logger(&slog);
+                    /* A recovered blob is install-shaped: the
+                     * back-edge demote requires the L_f contract. */
+                    ma.set_install_entry(own_entry);
                     ma.emit_all();
 
                     if (ma.failed()) {
@@ -1475,8 +1600,8 @@ namespace {
 
                     T2_STRUCT_CHECK(blob != nullptr, "no blob produced");
 
-                    bool saw_cp = false, saw_side = false, saw_tail = false,
-                         saw_fail = false;
+                    bool saw_cp = false, saw_side = false,
+                         saw_backedge = false, saw_fail = false;
                     for (const auto &f : ma.facts) {
                         switch (f.kind) {
                         case BeamT2ModuleAssembler::EmitFact::CpCont:
@@ -1490,9 +1615,15 @@ namespace {
                                             "emitted side exit != func_info");
                             break;
                         case BeamT2ModuleAssembler::EmitFact::TailTarget:
-                            saw_tail = true;
+                            T2_STRUCT_CHECK(false,
+                                            "tail-target fact in a "
+                                            "recovered function");
+                            break;
+                        case BeamT2ModuleAssembler::EmitFact::
+                                BackEdgeDemote:
+                            saw_backedge = true;
                             T2_STRUCT_CHECK(f.value == (uint64_t)own_entry,
-                                            "emitted tail target != own T1 "
+                                            "back-edge demote != own T1 "
                                             "entry");
                             break;
                         case BeamT2ModuleAssembler::EmitFact::FailExitPc:
@@ -1507,7 +1638,8 @@ namespace {
                     }
                     T2_STRUCT_CHECK(saw_cp, "no CP fact emitted");
                     T2_STRUCT_CHECK(saw_side, "no side-exit fact emitted");
-                    T2_STRUCT_CHECK(saw_tail, "no tail-target fact emitted");
+                    T2_STRUCT_CHECK(saw_backedge,
+                                    "no back-edge demote fact emitted");
                     T2_STRUCT_CHECK(saw_fail, "no arith-fail fact emitted");
 
                     if (failures == 0) {

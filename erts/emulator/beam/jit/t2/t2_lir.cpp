@@ -94,6 +94,7 @@ namespace erts_t2 {
         case T2LirKind::TailCallExt: return "tail_call_ext";
         case T2LirKind::CallBif: return "call_bif";
         case T2LirKind::SideExit: return "side_exit";
+        case T2LirKind::ReductionCheck: return "reduction_check";
         case T2LirKind::Invalid: return "invalid";
         }
         return "?";

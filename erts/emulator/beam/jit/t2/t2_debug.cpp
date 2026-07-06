@@ -614,7 +614,7 @@ extern "C" Eterm erts_t2_debug_build_ssa(Process *p,
             ret,
             func,
             (unsigned)ar,
-            [&](const T2Function &fn) { result = serialize(p, fn); },
+            [&](T2Function &fn) { result = serialize(p, fn); },
             &err);
 
     switch (status) {

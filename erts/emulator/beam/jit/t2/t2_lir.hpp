@@ -182,6 +182,17 @@ namespace erts_t2 {
          * (surprise #7). */
         SideExit,
 
+        /* A recovered loop's back-edge reduction charge + yield check
+         * (t2_loop.cpp; PLAN/T2/08 §5.4): `subs FCALLS, #1` — exactly
+         * T1's one-per-self-tail-call charge — and on exhaustion a
+         * demote to T1 through i_test_yield_shared with ARG3 =
+         * `target` (the function's own T1 entry L_f, resolved like a
+         * local tail call), so the resume PC is the T1 body and the
+         * saved state is the back-edge sync map's fresh-call vector.
+         * Not a terminator: falls through to the back-jump. Only
+         * emittable in install mode (the L_f contract). */
+        ReductionCheck,
+
         Invalid
     };
 
