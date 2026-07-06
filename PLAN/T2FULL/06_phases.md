@@ -127,17 +127,40 @@ rescope:
 >
 > Performance: **G2 kernel wins MET** — mvp `total/2` 1.95×,
 > `mk_txns` 2.01×, scanbench 2.67×/3.05× (organic tier-up);
-> ARM-robust (Neoverse 2.83×/3.36×). **G2 ≤1 % tax gate OPEN** —
-> counter-mode regressions (estone −20 %, dialyzer −8 % as first
-> measured) exceed budget. Under investigation (**P2.5**): the −20 %
-> is SUSPECT — armed-never-trip (−31 %) worse than production (−20 %)
-> is internally inconsistent for a per-iteration tax; likely Apple M5
-> P/E-core placement noise (estone unpinned) ± trip/queue churn.
-> Being decomposed on Neoverse with `t2_tier_stats` + `perf`. Fix in
-> flight: scheduler-1 early-out (counting is already sched-1-only, so
-> skipping the sequence off sched-1 is free and behaviorally
-> identical) + FCALLS-sampled counting for the on-sched-1 residual.
-> **P2 does not fully close until the tax gate resolves.**
+> ARM-robust (Neoverse 2.83×/3.36×). **G2 ≤1 % tax gate: entry tax
+> FIXED (P2.5), two NEW blockers OPEN.** The P2.5 decomposition
+> (2026-07-06) vindicated the −20 % suspicion and split it:
+> - **Steady entry-sequence tax was real** — −17 % spread / −22 %
+>   pinned (estone), +35 % (dialyzer PLT), isolated cleanly by the
+>   zero-churn armed-never-trip leg (`tier_stats {0,…}`), so NOT core
+>   noise — and is now **FIXED** (`cb8b084082`): scheduler-1 early-out
+>   (`cbnz`; counting was already sched-1-only, so skipping off sched-1
+>   is free + behaviorally identical) + FCALLS-sampled counting
+>   (STRIDE 64, +STRIDE bump keeps trip timing). Recovers to **~0 %
+>   spread / −9 % pinned** (estone), dialyzer never-trip **+35 %→
+>   +1.2 %**. Kernel wins preserved (mvp 1.82×, scan 2.68× on the P2.5
+>   harness), prod behavioral smoke clean. Census: never-trippers
+>   95 %(estone)/81 %(dialyzer) legitimately cold — fix correctly
+>   scoped.
+> - **BUT the production headline is NOT the entry tax.** With the fix
+>   in, prod estone still ≈−30 % / dialyzer +11 %, dominated by two
+>   SEPARATE problems P2.5 cannot touch:
+>   - **(A) Synchronous inline compilation on the hot path** — the
+>     tier worker compiles in the code-mod aux callback synchronously;
+>     estone's single-shot micros pay a ~4× first-run hit (1671 µs vs
+>     433 µs T1). `t2_tier.c` already flags the dirty-scheduler move as
+>     a follow-up — this data shows it is **load-bearing, not
+>     optional**.
+>   - **(B) Net-negative T2 blobs** — installed T2 code for `pattern`
+>     (−60 %) and `lists` (−52 %) shapes is genuinely **slower than T1
+>     warm**, contradicting the T1-floor "never slower" promise
+>     (§Risks). Needs an install-selection gate (refuse a blob that
+>     loses to T1) or codegen fixes for those shapes. dialyzer's +11 %
+>     is 191 installed blobs + churn; 14 tripped-then-failed = P3
+>     expressiveness backlog.
+> **P2 close is now gated on (A) async compile + (B) an install-quality
+> gate — NOT the entry tax. Behavioral + G1 gates hold; kernel wins
+> hold.**
 
 Identical scope, gates, and estimates to
 [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §8 Track B —
