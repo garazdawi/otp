@@ -88,6 +88,17 @@ typedef struct ErtsT2RetainedCode {
      * tier-2 supported set. */
     Uint32 *eligible_bitmap;
 
+    /* Lambda (FunT chunk) retention (P2 commit 8): make_fun3's first
+     * argument indexes this table. The meta half is copied at prepare;
+     * the ErlFunEntry pointers are captured at finalize from the
+     * loader's fun-patch loop (asm_load.c), so the tier never has to
+     * re-derive the staged fun-table key. An entry pointer is valid
+     * for the lifetime of the module instance (the instance's FunRef
+     * literals hold the entries alive; blobs die at jettison, before
+     * purge). NULL/0 when the module has no lambdas. */
+    struct ErtsT2Lambda *lambdas;
+    Sint32 lambda_count;
+
     /* One bit per function, set iff the function contains a local
      * self-recursive tail call (call_only/call_last back to its own
      * entry label) — the loop shape tier-up profiles. Computed by the
@@ -112,6 +123,21 @@ typedef struct ErtsT2RetainedCode {
      * allocated; freed and un-accounted in erts_t2_release. */
     struct ErtsT2PcTable *pc_table;
 } ErtsT2RetainedCode;
+
+/* One retained lambda-table entry (see ErtsT2RetainedCode.lambdas). */
+typedef struct ErtsT2Lambda {
+    Sint32 label;    /* the implementation function's entry label     */
+    Sint32 arity;    /* TOTAL arity (fun arity + num_free), as in FunT */
+    Sint32 num_free;
+    const void *fun_entry; /* the loaded instance's ErlFunEntry*, set
+                            * at finalize; NULL until then             */
+} ErtsT2Lambda;
+
+/* Capture lambda i's ErlFunEntry at finalize (asm_load.c fun-patch
+ * loop). No-op when \p ret is NULL or i is out of range. */
+void erts_t2_retain_lambda_entry(ErtsT2RetainedCode *ret,
+                                 int i,
+                                 const void *fun_entry);
 
 /* True iff tier-2 retention is enabled (T2_RETAIN=1; read once). */
 int erts_t2_enabled(void);

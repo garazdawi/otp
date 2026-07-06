@@ -66,6 +66,7 @@ extern "C"
 #include "t2_emit.hpp"
 #include "t2_spec.hpp"
 #include "t2_inline.hpp"
+#include "t2_intrinsics.hpp"
 
 using namespace erts_t2;
 
@@ -153,6 +154,7 @@ namespace {
          * rewritten IR; any failure degrades to T1, loudly. */
         {
             bool recovered = false;
+            bool intrinsified = false;
 
             if (!t2_loop_recover(hir, &recovered, &err)) {
                 if (diag) {
@@ -166,7 +168,40 @@ namespace {
                 }
                 return T2CompileStatus::IselUnsupported;
             }
-            if (recovered) {
+
+            /* lists intrinsics (P2 commit 8): expand recognized
+             * foldl-class call sites into in-blob loops. Install
+             * pipeline only (the demote contracts bake T1 addresses,
+             * exactly like loop recovery). Independent of self-
+             * recursion; re-validated in full below. */
+            if (!t2_intrinsics(hir,
+                               ret,
+                               (const void *)code_hdr,
+                               &intrinsified,
+                               &err)) {
+                if (diag) {
+                    *diag = "intrinsics: " + err;
+                }
+                return T2CompileStatus::IselUnsupported;
+            }
+            if (intrinsified && getenv("T2_INTRIN_DUMP") != NULL) {
+                std::string d = t2_dump(hir);
+
+                erts_fprintf(stderr,
+                             "t2_intrinsics dump %T:%T/%u\n",
+                             hir.module,
+                             hir.function,
+                             (unsigned)hir.arity);
+                fwrite(d.data(), 1, d.size(), stderr);
+            }
+            if (intrinsified && !t2_validate(hir, &err)) {
+                if (diag) {
+                    *diag = "post-intrinsics validate: " + err;
+                }
+                return T2CompileStatus::IselUnsupported;
+            }
+
+            if (recovered || intrinsified) {
                 T2LoopInfo li;
                 bool rewritten = false;
 
@@ -184,11 +219,30 @@ namespace {
                  * valid. */
                 if (getenv("T2_NO_SPEC") == NULL &&
                     getenv("T2_NO_INLINE") == NULL) {
-                    if (!t2_inline_leaf(hir, li, ret, &rewritten, &err)) {
+                    bool inlined = false;
+
+                    if (!t2_inline_leaf(hir, li, ret, &inlined, &err)) {
                         if (diag) {
                             *diag = "inliner: " + err;
                         }
                         return T2CompileStatus::IselUnsupported;
+                    }
+                    if (inlined) {
+                        /* The spliced callee's code now lives in this
+                         * blob: a breakpoint anywhere in the own
+                         * instance (the callee included) must kill it
+                         * (P2 commit 8 closes this wave-6 hole via the
+                         * dependency registry). */
+                        bool have = false;
+
+                        for (const void *d : hir.dep_hdrs) {
+                            have |= d == (const void *)code_hdr;
+                        }
+                        if (!have) {
+                            hir.dep_hdrs.push_back(
+                                    (const void *)code_hdr);
+                        }
+                        rewritten = true;
                     }
                 }
 
@@ -216,6 +270,25 @@ namespace {
                         return T2CompileStatus::IselUnsupported;
                     }
                     rewritten |= spec_changed;
+                }
+
+                /* LICM-lite (P2 commit 8): hoist loop-invariant
+                 * window-shaped guards from loop headers to
+                 * preheaders. Runs after the speculation inserter (its
+                 * guards are the candidates); the CFG is unchanged, so
+                 * `li` stays valid, and a hoisted guard lands under
+                 * the entry-window rule the window validator below
+                 * enforces. */
+                if (getenv("T2_NO_SPEC") == NULL) {
+                    bool hoisted = false;
+
+                    if (!t2_licm_lite(hir, li, &hoisted, &err)) {
+                        if (diag) {
+                            *diag = "licm: " + err;
+                        }
+                        return T2CompileStatus::IselUnsupported;
+                    }
+                    rewritten |= hoisted;
                 }
 
                 if (rewritten && !t2_validate(hir, &err)) {
@@ -283,6 +356,17 @@ namespace {
             fwrite(disasm.data(), 1, disasm.size(), stderr);
         }
 
+        std::vector<ErtsT2ResumeEntry> rpoints;
+
+        rpoints.reserve(blob.resume_points.size());
+        for (const T2EmitResult::ResumePoint &pt : blob.resume_points) {
+            ErtsT2ResumeEntry e;
+
+            e.offset = pt.offset;
+            e.t1_demote = (ErtsCodePtr)pt.t1_demote;
+            rpoints.push_back(e);
+        }
+
         ErtsT2InstallResult res =
                 erts_t2_install(mi,
                                 ci,
@@ -290,10 +374,11 @@ namespace {
                                 blob.base,
                                 blob.size,
                                 blob.rw_base,
-                                blob.resume_offsets.empty()
-                                        ? NULL
-                                        : blob.resume_offsets.data(),
-                                (Uint32)blob.resume_offsets.size());
+                                rpoints.empty() ? NULL : rpoints.data(),
+                                (Uint32)rpoints.size(),
+                                hir.dep_hdrs.empty() ? NULL
+                                                     : hir.dep_hdrs.data(),
+                                (Uint32)hir.dep_hdrs.size());
 
         if (res != ERTS_T2_INSTALL_OK) {
             /* The blob was never reachable by anyone, but its emission

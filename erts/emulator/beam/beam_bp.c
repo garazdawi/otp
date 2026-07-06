@@ -634,10 +634,21 @@ erts_install_breakpoints(BpFunctions* f)
              * tier-2 blob owns the same prologue word the breakpoint
              * flag rewrites, so jettison it before the flag commits;
              * erts_asm_bp_enable then finds the pristine `b next` its
-             * assertion demands. */
+             * assertion demands. Blobs that inlined code FROM this
+             * instance (an intrinsic's fun body / the lists helpers,
+             * P2 commit 8) would silently skip the breakpoint, so
+             * they go too (cheap no-op when no such blob exists). */
             if (mi->t2_installs != NULL) {
                 erts_t2_jettison_function(mi, ci_exec);
             }
+            erts_t2_jettison_deps((const void *)mi->code_hdr);
+            /* Jettisoning a dependent blob seals ITS module, flipping
+             * this thread out of JIT-write mode (Apple single-map
+             * W^X); the caller still writes through mi's unsealed
+             * writable view, so flip back. */
+            beamasm_unseal_module(mi->executable_region,
+                                  mi->writable_region,
+                                  mi->code_length);
 
             erts_asm_bp_set_flag(ci_rw, ci_exec, ERTS_ASM_BP_FLAG_BP);
             mi->num_breakpoints++;
@@ -1773,10 +1784,12 @@ void erts_install_line_breakpoint(struct erl_module_instance *mi, ErtsCodePtr cp
     /* T2-Full: a tier-2-installed function never executes its T1 body,
      * so a line breakpoint inside it would silently never fire. Trace
      * always wins (PLAN/T2/06 §1.1): jettison the instance's blobs
-     * before enabling the trampoline. */
+     * before enabling the trampoline, plus any blob elsewhere that
+     * inlined code from this instance (P2 commit 8). */
     if (mi->t2_installs != NULL) {
         erts_t2_jettison_instance(mi, 1);
     }
+    erts_t2_jettison_deps((const void *)mi->code_hdr);
 #endif
 
     erts_unseal_module(mi);

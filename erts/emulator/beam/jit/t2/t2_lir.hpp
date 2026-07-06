@@ -213,6 +213,19 @@ namespace erts_t2 {
         BsGetTail,
         BsTestTail,
 
+        /* Value-producing total comparison (P2 commit 8; the bif2
+         * {f,0} erlang:CMP/2 subset): imm = the originating T2OpKind;
+         * lowers via T1's bif_is_ge/bif_is_lt/bif_is_eq_exact/
+         * bif_is_ne_exact boolean emitters (never fail, no sync). */
+        CmpBool,
+
+        /* Fun creation (P2 commit 8; make_fun3). Mirrors T1's
+         * emit_i_make_fun3 with the ErlFunEntry resolved from the
+         * retained lambda table (`target`); imm = the fun's arity,
+         * imm2 = num_free. Heap covered by the preceding GcTest
+         * (the compiler's alloc list), so not a sync point. */
+        MakeFun,
+
         /* Fused boxed+tuple+arity test (emit_i_is_tuple_of_arity),
          * from the shape-up's is_tuple/test_arity fusion (both tests
          * shared one fail edge — T1's own loader transform emits the
@@ -230,6 +243,33 @@ namespace erts_t2 {
          * Not a terminator: falls through to the back-jump. Only
          * emittable in install mode (the L_f contract). */
         ReductionCheck,
+
+        /* An intrinsic loop's back-edge charge + yield check (P2
+         * commit 8). Like ReductionCheck, but the demote class is the
+         * CALLEE the loop stands in for: the resume stub embeds the
+         * callee MFA (mfa_m/mfa_f/arity), its tombstone demote pushes
+         * `t1_pc_cont` (the intrinsic call site's T1 continuation) as
+         * the CP the skipped callee prologue would have pushed and
+         * enters the callee body (`target` = callee L_f;
+         * + TEST_YIELD_RETURN_OFFSET — the back-edge subs already
+         * charged the callee's entry check, so reductions stay exact),
+         * and the resume-tab translation target is `t1_pc_fail` — the
+         * call site's own T1 PC, which re-executes call_ext over the
+         * saved fresh-call vector. imm = the charge. */
+        ReductionCheckCallee,
+
+        /* `sub FCALLS, FCALLS, #imm` — no check, no yield (P2 commit
+         * 8): the charge T1 pays on an intrinsic loop's early-exit
+         * edge (the erased fun call). */
+        ChargeReds,
+
+        /* Terminator: transfer the invocation to a T1 CALLEE body (P2
+         * commit 8): push `t1_pc_cont` as CP, branch to `target` (the
+         * callee's L_f + TEST_YIELD_RETURN_OFFSET). The sync map pinned
+         * the callee's fresh-call vector in X0..arity-1. Used for the
+         * intrinsic loops' improper-list/bad-fun-result edges — T1
+         * re-executes and raises the byte-identical error. */
+        DemoteCallee,
 
         Invalid
     };

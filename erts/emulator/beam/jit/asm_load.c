@@ -1264,6 +1264,10 @@ void beam_load_finalize_code(LoaderState *stp,
                               beamasm_get_lambda(stp->ba, i));
 
             beamasm_patch_lambda(stp->ba, stp->writable_region, i, fun_entry);
+
+            /* T2-Full (P2 commit 8): capture the entry for the retained
+             * lambda table, so make_fun3 can be lowered after load. */
+            erts_t2_retain_lambda_entry(stp->t2_retained, i, fun_entry);
         }
     }
 

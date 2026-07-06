@@ -5082,10 +5082,18 @@ static void patch_call_nif_early(ErlNifEntry* entry,
         /* T2-Full: a tier-2 blob owns the same prologue word the
          * call_nif_early flag rewrites; strict mutual exclusion
          * (PLAN/T2/06 §2.4) means the blob is jettisoned before the
-         * flag claims the prologue. */
+         * flag claims the prologue. A NIF replacing a function other
+         * blobs inlined from (P2 commit 8) kills those too. */
         if (this_mi->t2_installs != NULL) {
             erts_t2_jettison_function(this_mi, ci_exec);
         }
+        erts_t2_jettison_deps((const void *)this_mi->code_hdr);
+        /* Re-assert JIT-write mode: jettisoning a dependent blob seals
+         * its module, flipping this thread to execute mode, while the
+         * loop below keeps writing through this_mi's writable view. */
+        beamasm_unseal_module(this_mi->executable_region,
+                              this_mi->writable_region,
+                              this_mi->code_length);
 
         /* See beam_asm.h for details on how the nif load trampoline works */
         erts_asm_bp_set_flag(ci_rw, ci_exec, ERTS_ASM_BP_FLAG_CALL_NIF_EARLY);

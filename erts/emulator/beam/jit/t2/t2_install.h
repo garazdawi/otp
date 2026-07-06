@@ -97,6 +97,15 @@ typedef struct ErtsT2Install {
      * descriptor, which owns/frees it at deregistration; this pointer
      * is only for jettison's tombstone writes + retire scheduling. */
     ErtsT2ResumeTab *resume_tab;
+
+    /* Cross-module dependencies (P2 commit 8): the BeamCodeHeaders of
+     * OTHER module instances whose T1 addresses are baked into the
+     * blob (the lists helper an intrinsic demotes to) plus the blob's
+     * own instance header when it inlined a fun body (trace on the fun
+     * implementation must kill the blob). erts_t2_jettison_deps scans
+     * these. */
+    const void *dep_hdrs[2];
+    Uint32 dep_count;
 } ErtsT2Install;
 
 typedef enum {
@@ -131,8 +140,17 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
                                     const void *blob_base,
                                     size_t blob_size,
                                     void *blob_rw,
-                                    const Uint32 *resume_offsets,
-                                    Uint32 resume_count);
+                                    const ErtsT2ResumeEntry *resume_points,
+                                    Uint32 resume_count,
+                                    const void *const *dep_hdrs,
+                                    Uint32 dep_count);
+
+/* Jettison every installed blob (across all modules, both instances)
+ * that recorded \p code_hdr as a dependency (P2 commit 8): called when
+ * the instance owning \p code_hdr is deleted/overwritten, traced or
+ * NIF-patched — its T1 addresses baked into dependent blobs must stop
+ * being reachable. Runs under code modification permission. */
+void erts_t2_jettison_deps(const void *code_hdr);
 
 /* Jettison the tier-2 blob installed over `ci_exec`, if any. Returns 1
  * if a blob was jettisoned, 0 otherwise. Callers on the trace/NIF path

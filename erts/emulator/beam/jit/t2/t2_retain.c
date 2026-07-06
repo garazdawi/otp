@@ -123,6 +123,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     int on_load = 0;
 
     size_t atoms_size, imports_size, types_size, literals_size, bitmap_size;
+    size_t lambdas_size;
     size_t code_size, total;
     size_t offset;
     byte *base;
@@ -160,13 +161,15 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     types_size = beam->types.count * sizeof(BeamType);
     literals_size = beam->static_literals.count * sizeof(Eterm);
     bitmap_size = ((beam->code.function_count + 31) / 32) * sizeof(Uint32);
+    lambdas_size = beam->lambdas.count * sizeof(ErtsT2Lambda);
     code_size = beam->code.size;
 
     /* One allocation: header, then the word-aligned tables, then the
      * unaligned code bytes last. */
     total = align_up(sizeof(ErtsT2RetainedCode)) + align_up(atoms_size) +
             align_up(imports_size) + align_up(types_size) +
-            align_up(literals_size) + 2 * align_up(bitmap_size) + code_size;
+            align_up(literals_size) + 2 * align_up(bitmap_size) +
+            align_up(lambdas_size) + code_size;
 
     base = erts_alloc(ERTS_ALC_T_T2_CODE, total);
     ret = (ErtsT2RetainedCode *)base;
@@ -204,6 +207,26 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     ret->loop_bitmap = (Uint32 *)(base + offset);
     sys_memcpy(ret->loop_bitmap, loops, bitmap_size);
     offset += align_up(bitmap_size);
+
+    /* Lambda meta (P2 commit 8): make_fun3 decode + the intrinsics'
+     * fun-body resolution. Entry pointers are captured at finalize
+     * (erts_t2_retain_lambda_entry). */
+    ret->lambdas = NULL;
+    ret->lambda_count = beam->lambdas.count;
+    if (beam->lambdas.count > 0) {
+        Sint32 li;
+
+        ret->lambdas = (ErtsT2Lambda *)(base + offset);
+        for (li = 0; li < beam->lambdas.count; li++) {
+            const BeamFile_LambdaEntry *le = &beam->lambdas.entries[li];
+
+            ret->lambdas[li].label = le->label;
+            ret->lambdas[li].arity = le->arity;
+            ret->lambdas[li].num_free = le->num_free;
+            ret->lambdas[li].fun_entry = NULL;
+        }
+    }
+    offset += align_up(lambdas_size);
 
     /* The input binary that code.data points into is only guaranteed
      * to be alive here, during prepare; this copy is the reason this
@@ -267,6 +290,16 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     erts_free(ERTS_ALC_T_T2_CODE, arities);
 
     return ret;
+}
+
+void erts_t2_retain_lambda_entry(ErtsT2RetainedCode *ret,
+                                 int i,
+                                 const void *fun_entry) {
+    if (ret == NULL || ret->lambdas == NULL || i < 0 ||
+        i >= ret->lambda_count) {
+        return;
+    }
+    ret->lambdas[i].fun_entry = fun_entry;
 }
 
 void erts_t2_retain_commit(ErtsT2RetainedCode *ret,

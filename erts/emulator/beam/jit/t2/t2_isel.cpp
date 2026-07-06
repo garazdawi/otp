@@ -297,6 +297,19 @@ namespace erts_t2 {
                     return pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
                 }
 
+                if (op->flags & T2_OP_WINDOW_CALLEE) {
+                    /* Intrinsic-loop window deopt (P2 commit 8): the
+                     * iteration re-executes as a fresh CALLEE call —
+                     * the callee body past its entry check (imm_int =
+                     * callee L_f). The trampoline additionally pushes
+                     * the call site's CONT as CP (fill_spec_cont). */
+                    if (op->imm_int == 0) {
+                        return nullptr;
+                    }
+                    return (const void *)((const char *)(UWord)op->imm_int +
+                                          erts_t2_test_yield_return_offset());
+                }
+
                 const void *lf = local_target(hir.function, hir.arity);
 
                 if (lf == nullptr) {
@@ -304,6 +317,19 @@ namespace erts_t2 {
                 }
                 return (const void *)((const char *)lf +
                                       erts_t2_test_yield_return_offset());
+            }
+
+            /* For a window-callee spec op, resolve the CP its deopt
+             * trampoline pushes (the intrinsic call site's T1
+             * continuation); no-op otherwise. Returns false when the
+             * lookup fails. */
+            bool fill_spec_cont(const T2Op *op, T2LirOp *lop) {
+                if ((op->flags & T2_OP_WINDOW_CALLEE) == 0) {
+                    return true;
+                }
+                lop->t1_pc_cont = pc_lookup(op->beam_idx,
+                                            ERTS_T2_PC_CONT);
+                return lop->t1_pc_cont != nullptr;
             }
 
             /* The function's own func_info: on aarch64 the ErtsCodeInfo's
@@ -544,6 +570,61 @@ namespace erts_t2 {
                      * to T1's own fused emitter. */
                     gk = T2LirKind::IsTupleOfArity;
                 }
+                if (gk != T2LirKind::Invalid && op->dst_reg != T2_REG_NONE &&
+                    op->result != nullptr) {
+                    /* Value-producing total comparison (P2 commit 8;
+                     * bif2 {f,0} erlang:CMP/2): lower via T1's
+                     * bif_is_* boolean emitters. Only the subset the
+                     * eligibility scan admits reaches here. eq/ne
+                     * additionally reject boxed-literal operands
+                     * (their T1 emitters shallow-compare immediates,
+                     * which a baked literal pointer is not). */
+                    switch (op->kind) {
+                    case T2OpKind::CmpGe:
+                    case T2OpKind::CmpLt:
+                    case T2OpKind::CmpLe:
+                    case T2OpKind::CmpGt:
+                        break;
+                    case T2OpKind::CmpEqExact:
+                    case T2OpKind::CmpNeExact:
+                        if (guard_has_boxed_literal(op)) {
+                            return fail_op(op,
+                                           "boxed literal in value "
+                                           "eq/ne unsupported");
+                        }
+                        break;
+                    default:
+                        return fail_op(op,
+                                       "unsupported value-producing "
+                                       "guard");
+                    }
+                    lop.kind = T2LirKind::CmpBool;
+                    lop.imm = (Sint64)op->kind;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (op->kind == T2OpKind::CmpEqExact ||
+                        op->kind == T2OpKind::CmpNeExact) {
+                        /* T1's bif_is_eq/ne_exact emitters take a
+                         * register first operand; both comparisons are
+                         * symmetric, so swap a constant to the right. */
+                        if (lop.srcs[0].is_const && lop.srcs[1].is_const) {
+                            return fail_op(op,
+                                           "constant-constant eq/ne "
+                                           "unsupported");
+                        }
+                        if (lop.srcs[0].is_const) {
+                            T2LirSrc tmp = lop.srcs[0];
+
+                            lop.srcs[0] = lop.srcs[1];
+                            lop.srcs[1] = tmp;
+                        }
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
                 if (gk != T2LirKind::Invalid) {
                     if (!feeds_branch(op) || op->next != nullptr) {
                         return fail_op(op,
@@ -725,6 +806,47 @@ namespace erts_t2 {
                     }
                     b.ops.push_back(lop);
                     return true;
+
+                case T2OpKind::MakeFun: {
+                    /* make_fun3 (P2 commit 8): the ErlFunEntry comes
+                     * from the retained lambda table, captured at
+                     * finalize — always present for a loaded
+                     * instance. */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "make_fun3 without a home");
+                    }
+                    if (ctx.ret->lambdas == NULL ||
+                        op->index >= (uint32_t)ctx.ret->lambda_count ||
+                        ctx.ret->lambdas[op->index].fun_entry == NULL) {
+                        return fail_op(op, "make_fun3 without a resolved "
+                                           "fun entry");
+                    }
+                    lop.kind = T2LirKind::MakeFun;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.imm = (Sint64)(ctx.ret->lambdas[op->index].arity -
+                                       ctx.ret->lambdas[op->index].num_free);
+                    lop.imm2 = (Sint64)op->live;
+                    lop.target = ctx.ret->lambdas[op->index].fun_entry;
+                    if (op->num_operands <= T2_LIR_MAX_SRCS) {
+                        if (!fill_srcs(op, &lop)) {
+                            return false;
+                        }
+                    } else {
+                        lop.pool_first = (uint32_t)lir.src_pool.size();
+                        lop.num_srcs_ext = op->num_operands;
+                        for (uint16_t i = 0; i < op->num_operands; i++) {
+                            T2LirSrc s;
+
+                            if (!src_of(op, i, &s)) {
+                                return false;
+                            }
+                            lir.src_pool.push_back(s);
+                        }
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
 
                 case T2OpKind::MakeTuple: {
                     if (op->dst_reg == T2_REG_NONE) {
@@ -999,6 +1121,11 @@ namespace erts_t2 {
                                        "no deopt PC for the speculation "
                                        "guard");
                     }
+                    if (!fill_spec_cont(op, &lop)) {
+                        return fail_op(op,
+                                       "no CONT for the callee-window "
+                                       "guard");
+                    }
                     b.ops.push_back(lop);
                     return true;
 
@@ -1026,6 +1153,11 @@ namespace erts_t2 {
                                        "no deopt PC for flag-checked "
                                        "arithmetic");
                     }
+                    if (!fill_spec_cont(op, &lop)) {
+                        return fail_op(op,
+                                       "no CONT for the callee-window "
+                                       "arithmetic");
+                    }
                     b.ops.push_back(lop);
                     return true;
 
@@ -1040,6 +1172,29 @@ namespace erts_t2 {
                         return fail_op(op, "back-edge without a sync "
                                            "map");
                     }
+                    if (op->flags & T2_OP_RC_CALLEE) {
+                        /* Intrinsic back edge (P2 commit 8): callee
+                         * demote class — see T2LirKind's comment. */
+                        lop.kind = T2LirKind::ReductionCheckCallee;
+                        lop.imm = 1 + (Sint64)op->index;
+                        lop.mfa_m = op->mfa_m;
+                        lop.mfa_f = op->mfa_f;
+                        lop.arity = op->live;
+                        lop.target = (const void *)(UWord)op->imm_int;
+                        lop.t1_pc_fail = pc_lookup(op->beam_idx,
+                                                   ERTS_T2_PC_CALL);
+                        lop.t1_pc_cont = pc_lookup(op->beam_idx,
+                                                   ERTS_T2_PC_CONT);
+                        if (lop.target == nullptr ||
+                            lop.t1_pc_fail == nullptr ||
+                            lop.t1_pc_cont == nullptr) {
+                            return fail_op(op,
+                                           "unresolved callee back-edge "
+                                           "addresses");
+                        }
+                        b.ops.push_back(lop);
+                        return true;
+                    }
                     lop.kind = T2LirKind::ReductionCheck;
                     /* 1 + the charges of any calls the inliner erased
                      * on this back edge (t2_inline.cpp). */
@@ -1049,6 +1204,15 @@ namespace erts_t2 {
                         return fail_op(op,
                                        "no T1 entry for the back-edge "
                                        "demote");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
+                case T2OpKind::ChargeReds:
+                    lop.kind = T2LirKind::ChargeReds;
+                    lop.imm = op->imm_int;
+                    if (lop.imm <= 0 || lop.imm >= 4096) {
+                        return fail_op(op, "charge_reds out of range");
                     }
                     b.ops.push_back(lop);
                     return true;
@@ -1163,6 +1327,31 @@ namespace erts_t2 {
                 case T2OpKind::Jump:
                     lop.kind = T2LirKind::Jump;
                     lop.succ_then = t->succ_then->id;
+                    b.ops.push_back(lop);
+                    return true;
+
+                case T2OpKind::DemoteCallee:
+                    /* Intrinsic-loop demote (P2 commit 8): push the
+                     * call site's T1 continuation as CP and enter the
+                     * callee body — the callee L_f (imm_int) past its
+                     * entry check (the loop's charges already paid
+                     * it). */
+                    if (t->sync == nullptr) {
+                        return fail("demote-callee without a sync map");
+                    }
+                    lop.kind = T2LirKind::DemoteCallee;
+                    lop.mfa_m = t->mfa_m;
+                    lop.mfa_f = t->mfa_f;
+                    lop.arity = t->live;
+                    lop.target = (const void
+                                          *)((const char *)(UWord)t->imm_int +
+                                             erts_t2_test_yield_return_offset());
+                    lop.t1_pc_cont = pc_lookup(t->beam_idx,
+                                               ERTS_T2_PC_CONT);
+                    if (t->imm_int == 0 || lop.t1_pc_cont == nullptr) {
+                        return fail("demote-callee without a resolved "
+                                    "callee/continuation");
+                    }
                     b.ops.push_back(lop);
                     return true;
 

@@ -83,6 +83,8 @@ namespace erts_t2 {
         case T2LirKind::GetTl: return "get_tl";
         case T2LirKind::MakeList: return "make_list";
         case T2LirKind::MakeTuple: return "make_tuple";
+        case T2LirKind::MakeFun: return "make_fun";
+        case T2LirKind::CmpBool: return "cmp_bool";
         case T2LirKind::GcTest: return "gc_test";
         case T2LirKind::Jump: return "jump";
         case T2LirKind::Branch: return "branch";
@@ -95,6 +97,9 @@ namespace erts_t2 {
         case T2LirKind::CallBif: return "call_bif";
         case T2LirKind::SideExit: return "side_exit";
         case T2LirKind::ReductionCheck: return "reduction_check";
+        case T2LirKind::ReductionCheckCallee: return "reduction_check_callee";
+        case T2LirKind::ChargeReds: return "charge_reds";
+        case T2LirKind::DemoteCallee: return "demote_callee";
         case T2LirKind::IsTupleOfArity: return "is_tuple_of_arity";
         case T2LirKind::SpeculateSmall: return "speculate_small";
         case T2LirKind::AddSmall: return "add_small";
@@ -117,6 +122,7 @@ namespace erts_t2 {
         case T2LirKind::TailCall:
         case T2LirKind::TailCallExt:
         case T2LirKind::SideExit:
+        case T2LirKind::DemoteCallee:
             return true;
         default:
             return false;

@@ -207,6 +207,10 @@ namespace erts_t2 {
             return "gc_test";
         case T2OpKind::ReductionCheck:
             return "reduction_check";
+        case T2OpKind::DemoteCallee:
+            return "demote_callee";
+        case T2OpKind::ChargeReds:
+            return "charge_reds";
         case T2OpKind::ScheduleOut:
             return "schedule_out";
         case T2OpKind::FrameState:
@@ -232,6 +236,7 @@ namespace erts_t2 {
         case T2OpKind::TailCall:
         case T2OpKind::TailCallExt:
         case T2OpKind::TailCallFun:
+        case T2OpKind::DemoteCallee:
             return true;
         default:
             return false;
@@ -1037,6 +1042,10 @@ namespace erts_t2 {
                  * (t2_loop.cpp): the map is the fresh-call argument
                  * vector the demote path re-enters T1 with. */
                 case T2OpKind::ReductionCheck:
+                /* An intrinsic loop's demote-to-callee transfer: the
+                 * map is the callee's fresh-call vector over the
+                 * caller's live frame. */
+                case T2OpKind::DemoteCallee:
                 /* bs_start_match3 may allocate a fresh context (GC);
                  * bs_get_tail allocates the tail sub-bitstring. */
                 case T2OpKind::StartMatch:
@@ -1206,6 +1215,28 @@ namespace erts_t2 {
                     }
                     break;
                 case T2OpKind::ReductionCheck:
+                    if (op->flags & T2_OP_RC_CALLEE) {
+                        /* Intrinsic back edge (P2 commit 8): the map
+                         * is the CALLEE's fresh-call vector — x_live
+                         * must equal the callee arity recorded on the
+                         * op — over the caller's still-live frame
+                         * (walk-checked below); the callee MFA and
+                         * its T1 entry must be resolved. */
+                        if (op->live == 0 || m->x_live != op->live) {
+                            return fail("block %u: callee back-edge sync "
+                                        "map x_live %u != callee arity %u",
+                                        op->block->id,
+                                        m->x_live,
+                                        op->live);
+                        }
+                        if (op->mfa_m == 0 || op->mfa_f == 0 ||
+                            op->imm_int == 0) {
+                            return fail("block %u: callee back-edge "
+                                        "without a resolved callee",
+                                        op->block->id);
+                        }
+                        break;
+                    }
                     /* Back-edge boundary: exactly a fresh-call
                      * argument vector (PLAN/T2/08 §4.5) — the loop
                      * state in X0..arity-1, no frame. */
@@ -1219,6 +1250,23 @@ namespace erts_t2 {
                     if (m->frame_size != T2_NO_FRAME) {
                         return fail("block %u: back-edge sync map "
                                     "still has a frame",
+                                    op->block->id);
+                    }
+                    break;
+                case T2OpKind::DemoteCallee:
+                    /* The callee's fresh-call vector, pinned at the
+                     * transfer (P2 commit 8). */
+                    if (op->live == 0 || m->x_live != op->live) {
+                        return fail("block %u: demote-callee sync map "
+                                    "x_live %u != callee arity %u",
+                                    op->block->id,
+                                    m->x_live,
+                                    op->live);
+                    }
+                    if (op->mfa_m == 0 || op->mfa_f == 0 ||
+                        op->imm_int == 0) {
+                        return fail("block %u: demote-callee without a "
+                                    "resolved callee",
                                     op->block->id);
                     }
                     break;

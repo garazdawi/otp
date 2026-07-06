@@ -83,10 +83,20 @@ namespace erts_t2 {
 
         /* Blob-relative offsets of each recovered loop's back-edge
          * resume PC (the address a back-edge yield stores into c_p->i
-         * via i_test_yield_shared), ascending. Empty for loop-free
+         * via i_test_yield_shared), ascending, each with its own
+         * jettison-translation target: the T1 PC a parked c_p->i at
+         * this resume point is rewritten to. For a self-recursion back
+         * edge that is the function's own post-yield entry body; for an
+         * intrinsic (callee-demote) back edge it is the intrinsic call
+         * site's T1 PC, which re-executes call_ext over the saved
+         * fresh-call vector (P2 commit 8). Empty for loop-free
          * functions. Each resume PC sits TEST_YIELD_RETURN_OFFSET
          * bytes past its in-blob tombstone flag word. */
-        std::vector<uint32_t> resume_offsets;
+        struct ResumePoint {
+            uint32_t offset;
+            const void *t1_demote;
+        };
+        std::vector<ResumePoint> resume_points;
     };
 
     /* Emit an *installable* blob for `fn`: instead of the exec-harness

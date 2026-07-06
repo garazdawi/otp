@@ -62,6 +62,7 @@ extern "C"
 #include <algorithm>
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <set>
 #include <unordered_map>
 #include <vector>
@@ -117,9 +118,12 @@ namespace erts_t2 {
         /* Entry label bound at the very first byte of the blob. */
         Label entry_label;
 
-        /* Distinct T1 fail PCs -> the BEAM label number of the in-blob
-         * trampoline that branches to them. */
-        std::unordered_map<const void *, unsigned> fail_labels;
+        /* Distinct T1 fail PCs (keyed with the CP a callee-window
+         * trampoline pushes; null for the plain shape) -> the BEAM
+         * label number of the in-blob trampoline that branches to
+         * them. */
+        std::map<std::pair<const void *, const void *>, unsigned>
+                fail_labels;
         unsigned next_label;
 
         /* When non-null, emit_all lays down the install entry stub
@@ -140,13 +144,29 @@ namespace erts_t2 {
             Label anchor;
             Label resume;
             Label header;         /* the loop header's block label     */
-            const void *demote;   /* L_f + TEST_YIELD_RETURN_OFFSET    */
+            const void *demote;   /* tombstone demote: the T1 body the
+                                   * stub branches to (own L_f + yield
+                                   * offset, or the callee body for an
+                                   * intrinsic back edge)              */
             uint32_t beam_idx;
             /* Fused-scan region index, or -1: the yield setup first
              * writes the deferred position back into the context
              * (emit_scan_writeback), completing the fresh-call
              * vector the stub saves. */
             int scan = -1;
+            /* Intrinsic (callee-demote) back edges (P2 commit 8): the
+             * MFA embedded before the anchor (introspection = the T1
+             * helper's), the CP the tombstone demote pushes (the
+             * skipped callee prologue's push), and the per-entry
+             * c_p->i translation target (the call site's T1 PC).
+             * Self-recursion stubs keep mfa_m == NIL (use the
+             * function's own MFA), cont == NULL (no push) and
+             * translate == demote. */
+            Eterm mfa_m = NIL;
+            Eterm mfa_f = NIL;
+            uint32_t mfa_ar = 0;
+            const void *cont = nullptr;
+            const void *translate = nullptr;
         };
         std::vector<ResumeStub> resume_stubs;
 
@@ -321,7 +341,7 @@ namespace erts_t2 {
 
         /* Blob-relative back-edge resume PCs (valid after
          * finalize_to_allocator; P2 commit 5). */
-        std::vector<uint32_t> resume_offsets;
+        std::vector<T2EmitResult::ResumePoint> resume_points;
 
         bool failed() const {
             return !emit_error.empty();
@@ -429,11 +449,20 @@ namespace erts_t2 {
             blob_rw = rw;
 
             for (const ResumeStub &st : resume_stubs) {
-                resume_offsets.push_back(
-                        (uint32_t)((const char *)getCode(st.resume) -
-                                   (const char *)exec));
+                T2EmitResult::ResumePoint pt;
+
+                pt.offset = (uint32_t)((const char *)getCode(st.resume) -
+                                       (const char *)exec);
+                pt.t1_demote = st.translate != nullptr ? st.translate
+                                                       : st.demote;
+                resume_points.push_back(pt);
             }
-            std::sort(resume_offsets.begin(), resume_offsets.end());
+            std::sort(resume_points.begin(),
+                      resume_points.end(),
+                      [](const T2EmitResult::ResumePoint &a,
+                         const T2EmitResult::ResumePoint &b) {
+                          return a.offset < b.offset;
+                      });
 
             return (const void *)getCode(entry_label);
         }
@@ -469,14 +498,16 @@ namespace erts_t2 {
 
         /* Get (or create) the ArgLabel number of the trampoline for a T1
          * fail PC. rawLabels must map it so resolve_beam_label() resolves. */
-        unsigned fail_label_num(const void *t1_pc) {
-            auto it = fail_labels.find(t1_pc);
+        unsigned fail_label_num(const void *t1_pc,
+                                const void *cont = nullptr) {
+            auto key = std::make_pair(t1_pc, cont);
+            auto it = fail_labels.find(key);
             if (it != fail_labels.end()) {
                 return it->second;
             }
             unsigned n = next_label++;
             rawLabels.emplace(n, a.new_label());
-            fail_labels.emplace(t1_pc, n);
+            fail_labels.emplace(key, n);
             return n;
         }
 
@@ -486,8 +517,16 @@ namespace erts_t2 {
                 bind_veneer_target(rawLabels.at(pair.second));
                 /* Absolute branch to the T1 PC. mov_imm materializes the
                  * 64-bit address; br transfers control. T1 re-executes and
-                 * (for error paths) raises a byte-identical exception. */
-                mov_imm(TMP1, (Uint64)pair.first);
+                 * (for error paths) raises a byte-identical exception.
+                 * A callee-window trampoline (P2 commit 8) first pushes
+                 * the intrinsic call site's continuation — the CP the
+                 * skipped callee prologue would have pushed — so the T1
+                 * helper returns to the caller's own T1 continuation. */
+                if (pair.first.second != nullptr) {
+                    mov_imm(TMP1, (Uint64)pair.first.second);
+                    a.str(TMP1, a64::Mem(E, -8).pre());
+                }
+                mov_imm(TMP1, (Uint64)pair.first.first);
                 a.br(TMP1);
                 mark_unreachable();
             }
@@ -605,6 +644,12 @@ namespace erts_t2 {
             case T2LirKind::MakeTuple:
                 emit_lir_make_tuple(op);
                 break;
+            case T2LirKind::MakeFun:
+                emit_lir_make_fun(op);
+                break;
+            case T2LirKind::CmpBool:
+                emit_lir_cmp_bool(op);
+                break;
             case T2LirKind::GcTest:
                 emit_test_heap(ArgWord((UWord)op.imm), ArgWord(op.live));
                 break;
@@ -640,7 +685,14 @@ namespace erts_t2 {
                 emit_lir_call_bif(op);
                 break;
             case T2LirKind::ReductionCheck:
+            case T2LirKind::ReductionCheckCallee:
                 emit_lir_reduction_check(op);
+                break;
+            case T2LirKind::ChargeReds:
+                emit_lir_charge_reds(op);
+                break;
+            case T2LirKind::DemoteCallee:
+                emit_lir_demote_callee(op);
                 break;
             case T2LirKind::SpeculateSmall:
                 emit_lir_speculate_small(op);
@@ -839,7 +891,8 @@ namespace erts_t2 {
                 return;
             }
 
-            const Label &fl = rawLabels.at(fail_label_num(op.t1_pc_fail));
+            const Label &fl = rawLabels.at(
+                    fail_label_num(op.t1_pc_fail, op.t1_pc_cont));
             fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
 
             a64::Gp vals[T2_LIR_MAX_SRCS];
@@ -890,10 +943,11 @@ namespace erts_t2 {
                 return;
             }
 
-            const Label &fl = fail_override != nullptr
-                                      ? *fail_override
-                                      : rawLabels.at(
-                                                fail_label_num(op.t1_pc_fail));
+            const Label &fl =
+                    fail_override != nullptr
+                            ? *fail_override
+                            : rawLabels.at(fail_label_num(op.t1_pc_fail,
+                                                          op.t1_pc_cont));
             if (fail_override == nullptr) {
                 fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
             }
@@ -1148,6 +1202,90 @@ namespace erts_t2 {
                             Span<const ArgVal>(elems.data(), elems.size()));
         }
 
+        /* Value-producing total comparison (P2 commit 8): reuse T1's
+         * boolean comparison emitters. =</> lower via the argument
+         * swap T1's own generator applies. */
+        void emit_lir_cmp_bool(const T2LirOp &op) {
+            ArgSource a1 = ArgSource(src_argval(op.srcs[0]));
+            ArgSource a2 = ArgSource(src_argval(op.srcs[1]));
+            ArgRegister dst = ArgRegister(loc_argval(op.dst));
+
+            switch ((T2OpKind)op.imm) {
+            case T2OpKind::CmpGe:
+                emit_bif_is_ge(a1, a2, dst);
+                break;
+            case T2OpKind::CmpLt:
+                emit_bif_is_lt(a1, a2, dst);
+                break;
+            case T2OpKind::CmpLe:
+                emit_bif_is_ge(a2, a1, dst);
+                break;
+            case T2OpKind::CmpGt:
+                emit_bif_is_lt(a2, a1, dst);
+                break;
+            case T2OpKind::CmpEqExact:
+                emit_bif_is_eq_exact(ArgRegister(src_argval(op.srcs[0])),
+                                     a2,
+                                     dst);
+                break;
+            case T2OpKind::CmpNeExact:
+                emit_bif_is_ne_exact(ArgRegister(src_argval(op.srcs[0])),
+                                     a2,
+                                     dst);
+                break;
+            default:
+                fail("unsupported cmp_bool kind");
+                break;
+            }
+        }
+
+        /* make_fun3 (P2 commit 8): T1's emit_i_make_fun3 with the
+         * ErlFunEntry materialized as an immediate (op.target — the
+         * retained lambda table's entry, resolved at isel; T1 gets the
+         * same pointer through its load-time lambda patch). Heap need
+         * was reserved by the preceding GcTest, exactly as in T1.
+         *
+         * T1's loader turns a num_free==0 make_fun3 into a load-time
+         * literal instead; T2 creates the fun thing for real. The terms
+         * are =:=-indistinguishable (same entry, no environment) — the
+         * only delta is ERL_FUN_SIZE heap words per creation, noted in
+         * the commit message. */
+        void emit_lir_make_fun(const T2LirOp &op) {
+            size_t num_free = op.num_srcs_ext > 0 ? op.num_srcs_ext
+                                                  : op.num_srcs;
+            Uint arity = (Uint)op.imm;
+
+            ASSERT((Sint64)num_free == op.imm2);
+
+            comment("T2 make_fun3 (arity %u, %u free)",
+                    (unsigned)arity,
+                    (unsigned)num_free);
+
+            mov_imm(TMP2, (Uint64)op.target);
+            mov_imm(TMP1, MAKE_FUN_HEADER(arity, num_free, 0));
+            ERTS_CT_ASSERT_FIELD_PAIR(ErlFunThing, thing_word, entry.fun);
+            a.stp(TMP1, TMP2, a64::Mem(HTOP, offsetof(ErlFunThing,
+                                                      thing_word)));
+
+            for (size_t i = 0; i < num_free; i++) {
+                const T2LirSrc &s = op.num_srcs_ext > 0
+                                            ? fn.src_pool[op.pool_first + i]
+                                            : op.srcs[i];
+                int offset = offsetof(ErlFunThing, env) + i * sizeof(Eterm);
+
+                mov_arg(a64::Mem(HTOP, offset), ArgSource(src_argval(s)));
+            }
+
+            {
+                ArgVal dst = loc_argval(op.dst);
+                auto d = init_destination(ArgRegister(dst), TMP1);
+
+                a.orr(d.reg, HTOP, imm(TAG_PRIMARY_BOXED));
+                add(HTOP, HTOP, (ERL_FUN_SIZE + num_free) * sizeof(Eterm));
+                flush_var(d);
+            }
+        }
+
         void emit_lir_switch(const T2LirOp &op) {
             mov_arg(TMP1, ArgSource(src_argval(op.srcs[0])));
 
@@ -1300,14 +1438,22 @@ namespace erts_t2 {
          * ever holds; the resume_tab + jettison translation own its
          * lifetime. */
         void emit_lir_reduction_check(const T2LirOp &op) {
+            bool callee = op.kind == T2LirKind::ReductionCheckCallee;
+
             if (install_entry == nullptr) {
                 fail("recovered back-edge outside install-mode "
                      "emission");
                 return;
             }
-            if (op.target != install_entry) {
+            if (!callee && op.target != install_entry) {
                 fail("back-edge demote target is not the install "
                      "entry");
+                return;
+            }
+            if (callee && (op.target == nullptr ||
+                           op.t1_pc_fail == nullptr ||
+                           op.t1_pc_cont == nullptr || op.arity == 0)) {
+                fail("callee back-edge with unresolved addresses");
                 return;
             }
 
@@ -1341,15 +1487,72 @@ namespace erts_t2 {
             st.anchor = a.new_label();
             st.resume = a.new_label();
             st.header = block_label(header);
-            st.demote = (const void *)((const char *)op.target +
-                                       erts_t2_test_yield_return_offset());
             st.beam_idx = op.beam_idx;
+            if (callee) {
+                /* Intrinsic back edge (P2 commit 8): the stub embeds
+                 * the CALLEE MFA (a suspended process introspects as
+                 * yielded inside the T1 helper, saving callee-arity X
+                 * registers — the fresh-call vector); the tombstone
+                 * demote pushes the call site's CONT as the CP the
+                 * skipped callee prologue would have pushed and enters
+                 * the callee body (the back-edge subs already paid its
+                 * entry charge); a parked c_p->i translates to the
+                 * call site's own T1 PC, which re-executes call_ext
+                 * over the saved vector. */
+                st.mfa_m = op.mfa_m;
+                st.mfa_f = op.mfa_f;
+                st.mfa_ar = op.arity;
+                st.cont = op.t1_pc_cont;
+                st.demote =
+                        (const void *)((const char *)op.target +
+                                       erts_t2_test_yield_return_offset());
+                st.translate = op.t1_pc_fail;
+            } else {
+                st.demote =
+                        (const void *)((const char *)op.target +
+                                       erts_t2_test_yield_return_offset());
+            }
             resume_stubs.push_back(st);
 
             ASSERT(op.imm >= 1 && op.imm < 4096);
             a.subs(FCALLS, FCALLS, imm(op.imm));
             a.b_le(resume_stubs.back().yield);
             /* Fall through to the back-jump. */
+        }
+
+        /* `FCALLS -= imm`, no check (P2 commit 8): the reduction charge
+         * T1 pays on an intrinsic loop's early-exit edge. The next
+         * check (the caller's own back edge / call / entry sequence)
+         * observes the debt, exactly as T1's lazy yield discipline
+         * does. */
+        void emit_lir_charge_reds(const T2LirOp &op) {
+            ASSERT(op.imm >= 1 && op.imm < 4096);
+            a.sub(FCALLS, FCALLS, imm(op.imm));
+        }
+
+        /* Terminator: demote the invocation to a T1 CALLEE body (P2
+         * commit 8). The sync map pinned the callee's fresh-call
+         * vector in X0..arity-1; push the intrinsic call site's T1
+         * continuation as the CP the skipped callee prologue would
+         * have pushed, then enter the callee body past its entry
+         * check (the loop's charges already paid it). T1 re-executes
+         * the iteration — raising the byte-identical error on the
+         * error edges — and returns to the caller's own T1
+         * continuation. */
+        void emit_lir_demote_callee(const T2LirOp &op) {
+            if (op.target == nullptr || op.t1_pc_cont == nullptr) {
+                fail("demote-callee with unresolved addresses");
+                return;
+            }
+
+            fact(EmitFact::SideExitPc, op.beam_idx, op.target);
+
+            reg_cache.invalidate();
+            mov_imm(TMP1, (Uint64)op.t1_pc_cont);
+            a.str(TMP1, a64::Mem(E, -8).pre());
+            mov_imm(TMP1, (Uint64)op.target);
+            a.br(TMP1);
+            mark_unreachable();
         }
 
         /* Emit the cold per-loop yield-setup + resume stubs collected
@@ -1402,14 +1605,18 @@ namespace erts_t2 {
                 a.b(resolve_fragment(ga->get_i_test_yield_shared(),
                                      disp1MB));
 
-                /* ErtsCodeMFA + anchor gap (data). */
+                /* ErtsCodeMFA + anchor gap (data). An intrinsic stub
+                 * embeds the CALLEE MFA (P2 commit 8) — introspection
+                 * and the saved X count then match a T1 yield inside
+                 * the helper exactly. */
                 a.align(AlignMode::kData, 8);
                 ERTS_CT_ASSERT(sizeof(ErtsCodeMFA) == 3 * sizeof(Uint64));
-                word = (Uint64)fn.module;
+                word = (Uint64)(st.mfa_m != NIL ? st.mfa_m : fn.module);
                 a.embed(&word, sizeof(word));
-                word = (Uint64)fn.function;
+                word = (Uint64)(st.mfa_m != NIL ? st.mfa_f : fn.function);
                 a.embed(&word, sizeof(word));
-                word = (Uint64)fn.arity;
+                word = (Uint64)(st.mfa_m != NIL ? (Uint64)st.mfa_ar
+                                                : (Uint64)fn.arity);
                 a.embed(&word, sizeof(word));
 
                 a.bind(st.anchor);
@@ -1432,6 +1639,12 @@ namespace erts_t2 {
                 a.b(st.header);
 
                 a.bind(demote);
+                if (st.cont != nullptr) {
+                    /* The CP push the skipped callee prologue would
+                     * have done (P2 commit 8). */
+                    mov_imm(TMP1, (Uint64)st.cont);
+                    a.str(TMP1, a64::Mem(E, -8).pre());
+                }
                 mov_imm(TMP1, (Uint64)st.demote);
                 a.br(TMP1);
                 mark_unreachable();
@@ -2666,7 +2879,7 @@ namespace erts_t2 {
         out->base = ma.blob_base;
         out->size = ma.blob_size;
         out->rw_base = ma.blob_rw;
-        out->resume_offsets = ma.resume_offsets;
+        out->resume_points = ma.resume_points;
         return true;
     }
 

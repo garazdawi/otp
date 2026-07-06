@@ -56,18 +56,24 @@
  * One per blob with recovered loops: the sorted, blob-relative offsets
  * of every back-edge resume PC (the addresses a back-edge yield stores
  * into c_p->i), the fixed distance back from a resume PC to its
- * in-blob tombstone flag word, and the single T1 translation target.
- * The target is one address for the whole blob because the state saved
- * at ANY back-edge yield is a fresh-call argument vector for the
- * function (08 §4.5): "point it at the T1 entry" — concretely
- * L_f + TEST_YIELD_RETURN_OFFSET, the post-yield T1 body, so the
- * translated resume charges no extra reduction. Owned by the ranges
- * class: freed on deregistration. */
+ * in-blob tombstone flag word, and a PER-ENTRY T1 translation target
+ * (P2 commit 8): the state saved at ANY back-edge yield is a valid
+ * fresh-call argument vector, but its target differs by demote class —
+ * a self-recursion back edge translates to the function's own
+ * L_f + TEST_YIELD_RETURN_OFFSET (the post-yield T1 body, so the
+ * translated resume charges no extra reduction), an intrinsic
+ * (callee-demote) back edge to the intrinsic call site's T1 PC, which
+ * re-executes call_ext over the saved callee vector. Owned by the
+ * ranges class: freed on deregistration. */
+typedef struct {
+    Uint32 offset;         /* blob-relative resume PC                   */
+    ErtsCodePtr t1_demote; /* c_p->i translation target for this entry  */
+} ErtsT2ResumeEntry;
+
 typedef struct {
     Uint32 count;
-    Uint32 flag_back;     /* resume PC - flag word distance (bytes)     */
-    ErtsCodePtr t1_demote; /* translation target for any in-span c_p->i */
-    Uint32 offsets[1];    /* count entries, ascending                   */
+    Uint32 flag_back;      /* resume PC - flag word distance (bytes)    */
+    ErtsT2ResumeEntry entries[1]; /* count entries, offset-ascending    */
 } ErtsT2ResumeTab;
 
 /* Descriptor for one installed tier-2 blob's executable range. */

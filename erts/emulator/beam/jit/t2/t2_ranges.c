@@ -226,8 +226,8 @@ int erts_t2_ranges_selftest(void) {
 
     tab->count = 1;
     tab->flag_back = 24;
-    tab->t1_demote = (ErtsCodePtr)(b1 + 0x18);
-    tab->offsets[0] = 0x40;
+    tab->entries[0].offset = 0x40;
+    tab->entries[0].t1_demote = (ErtsCodePtr)(b1 + 0x18);
 
     T2R_CHECK(erts_t2_register_blob(b2, b2 + 0x1000, &m2, NULL, NULL));
     T2R_CHECK(erts_t2_register_blob(b1, b1 + 0x1000, &m1, NULL, NULL));
@@ -248,7 +248,7 @@ int erts_t2_ranges_selftest(void) {
     f = erts_t2_find_blob(b3 + 0x10);
     T2R_CHECK(f != NULL && f->mfa.arity == 0 && f->resume_tab == tab);
     T2R_CHECK(f->resume_tab->count == 1 &&
-              f->resume_tab->offsets[0] == 0x40);
+              f->resume_tab->entries[0].offset == 0x40);
     f = erts_t2_find_blob((byte *)0x50000); /* below all */
     T2R_CHECK(f == NULL);
     f = erts_t2_find_blob((byte *)0x400000); /* above all */

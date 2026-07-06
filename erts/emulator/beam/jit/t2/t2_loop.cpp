@@ -623,6 +623,9 @@ namespace erts_t2 {
              * clean prefix — speculation after them takes the
              * boundary shape. */
             return true;
+        case T2OpKind::ChargeReds:
+            /* A re-executed iteration must not charge twice. */
+            return true;
         default:
             break;
         }
@@ -676,6 +679,24 @@ namespace erts_t2 {
                 in_loop[b] = true;
             }
 
+            /* Effective window arity (P2 commit 8): an intrinsic loop's
+             * re-call vector is the CALLEE's (its latch ReductionCheck
+             * carries T2_OP_RC_CALLEE with the callee arity in `live`),
+             * so the clean-prefix write rule protects X0..callee_ar-1
+             * rather than the enclosing function's arity prefix. */
+            uint32_t arity_eff = fn.arity;
+
+            for (uint32_t bid : loop.body) {
+                for (const T2Op *op = fn.blocks[bid]->ops_head;
+                     op != nullptr;
+                     op = op->next) {
+                    if (op->kind == T2OpKind::ReductionCheck &&
+                        (op->flags & T2_OP_RC_CALLEE) != 0) {
+                        arity_eff = op->live;
+                    }
+                }
+            }
+
             /* dirty_in[b]: the clean prefix may have ended on some path
              * from the window start (the iteration's header entry) to
              * b's entry. Monotone OR to a fixpoint; edges into the
@@ -691,7 +712,7 @@ namespace erts_t2 {
 
                     for (const T2Op *op = b->ops_head; op != nullptr;
                          op = op->next) {
-                        if (t2_op_dirties_window(op, fn.arity)) {
+                        if (t2_op_dirties_window(op, arity_eff)) {
                             flag = 1;
                         }
                     }
@@ -728,7 +749,7 @@ namespace erts_t2 {
                                     "(clean-prefix rule, PLAN/T2/08 "
                                     "§4.2)");
                     }
-                    if (t2_op_dirties_window(op, fn.arity)) {
+                    if (t2_op_dirties_window(op, arity_eff)) {
                         flag = 1;
                     }
                 }

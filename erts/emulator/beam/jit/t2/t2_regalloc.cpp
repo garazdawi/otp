@@ -232,6 +232,12 @@ namespace erts_t2 {
                                 return fail("side exit without a T1 PC");
                             }
                             break;
+                        case T2LirKind::MakeFun:
+                            if (op.target == nullptr) {
+                                return fail("make_fun without a resolved "
+                                            "fun entry");
+                            }
+                            break;
                         case T2LirKind::SpeculateSmall:
                         case T2LirKind::AddSmall:
                         case T2LirKind::SubSmall:
@@ -252,6 +258,32 @@ namespace erts_t2 {
                             if (op.sync == nullptr) {
                                 return fail("back-edge without a sync "
                                             "map");
+                            }
+                            break;
+                        case T2LirKind::ReductionCheckCallee:
+                            /* Intrinsic back edge (P2 commit 8): callee
+                             * entry, translation PC, CP continuation
+                             * and the callee fresh-call map. */
+                            if (op.target == nullptr ||
+                                op.t1_pc_fail == nullptr ||
+                                op.t1_pc_cont == nullptr) {
+                                return fail("callee back-edge with "
+                                            "unresolved addresses");
+                            }
+                            if (op.sync == nullptr || op.arity == 0) {
+                                return fail("callee back-edge without a "
+                                            "sync map / arity");
+                            }
+                            break;
+                        case T2LirKind::DemoteCallee:
+                            if (op.target == nullptr ||
+                                op.t1_pc_cont == nullptr) {
+                                return fail("demote-callee with "
+                                            "unresolved addresses");
+                            }
+                            if (op.sync == nullptr) {
+                                return fail("demote-callee without a "
+                                            "sync map");
                             }
                             break;
                         case T2LirKind::CallBif:
@@ -1132,6 +1164,8 @@ namespace erts_t2 {
                 case T2LirKind::Return:
                 case T2LirKind::SideExit:
                 case T2LirKind::ReductionCheck:
+                case T2LirKind::ReductionCheckCallee:
+                case T2LirKind::DemoteCallee:
                 case T2LirKind::GcTest:
                 case T2LirKind::Allocate:
                     return true;

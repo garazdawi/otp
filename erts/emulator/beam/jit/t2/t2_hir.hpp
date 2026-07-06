@@ -222,6 +222,29 @@ namespace erts_t2 {
         ScheduleOut,
         FrameState, /* reserved marker, never generated in P0 */
 
+        /* Lists-intrinsic support (P2 commit 8; PLAN/T2FULL/09 §8).
+         *
+         * DemoteCallee: a terminator that transfers the invocation to
+         * a T1 function *other than* the enclosing one — the lists
+         * helper the intrinsic loop stands in for — entering its body
+         * past the entry reduction check with the fresh-call vector
+         * pinned in X0..arity-1 by the attached sync map, after
+         * pushing the intrinsic call site's T1 continuation as the CP
+         * the skipped prologue would have pushed. T1 then re-executes
+         * the iteration (raising the byte-identical error on the
+         * error edges) and returns to the caller's own T1
+         * continuation. imm_int = the callee's T1 entry L_f; live =
+         * the callee arity; mfa_m/mfa_f name it; beam_idx = the
+         * intrinsic call site (CONT lookup).
+         *
+         * ChargeReds: `FCALLS -= imm_int`, no check, no sync — the
+         * reduction charges T1 pays on a path where the intrinsic
+         * loop cannot yield (an early-exit edge charging the erased
+         * fun call). Dirties re-execution windows (a re-executed
+         * iteration must not double-charge). */
+        DemoteCallee,
+        ChargeReds,
+
         /* Stack-frame ops (P1; first-class so frame layout is derivable
          * at any point — PLAN/T2FULL/08 §"sync maps"). Allocate carries
          * the slot count (index), a fused heap need (imm_int; nonzero
@@ -376,7 +399,7 @@ namespace erts_t2 {
     };
 
     /* T2Op::flags bits. */
-    enum : uint8_t {
+    enum : uint16_t {
         /* A decoded error-exit op (badmatch/case_end/if_end): lowers to
          * a side exit to the op's own T1 PC. Carries a sync map. */
         T2_OP_ERR_EXIT_OP = 1 << 0,
@@ -435,7 +458,22 @@ namespace erts_t2 {
          * shared fail edge, exactly like T1's own
          * is_tuple+test_arity => i_is_tuple_of_arity loader transform;
          * lowers to emit_i_is_tuple_of_arity). */
-        T2_OP_TUPLE_ARITY_FUSED = 1 << 7
+        T2_OP_TUPLE_ARITY_FUSED = 1 << 7,
+        /* A ReductionCheck whose demote target is a CALLEE — the lists
+         * helper an intrinsic loop (P2 commit 8) stands in for — not
+         * the enclosing function. Its sync map is the callee's
+         * fresh-call vector (x_live = the callee arity, in `live`;
+         * mfa_m/mfa_f name the callee; imm_int = the callee's T1
+         * entry) over the caller's still-live frame. The yield stub
+         * embeds the callee MFA, so a suspended process introspects
+         * exactly as if it had yielded inside the T1 helper. */
+        T2_OP_RC_CALLEE = 1 << 8,
+        /* A window-shaped speculative op inside an intrinsic loop: its
+         * deopt trampoline pushes the intrinsic call site's T1
+         * continuation as CP and enters the CALLEE body (imm_int =
+         * callee L_f) — T1 re-executes the iteration as a fresh helper
+         * call from X0..callee_arity-1. */
+        T2_OP_WINDOW_CALLEE = 1 << 9
     };
 
     /* One arm of a `switch` terminator. */
@@ -482,7 +520,7 @@ namespace erts_t2 {
         int32_t dst_reg = T2_REG_NONE; /* NSDMI: arena zero-init would be x0 */
         int32_t *operand_regs; /* arena array [num_operands] or null */
 
-        uint8_t flags; /* T2_OP_* bits */
+        uint16_t flags; /* T2_OP_* bits */
 
         /* Sync-point register map (P1); null on non-sync ops. */
         T2SyncMap *sync;
@@ -558,6 +596,13 @@ namespace erts_t2 {
         /* Sync map at function entry: X0..arity-1 = the Param values, no
          * frame. Null for hand-built functions. */
         T2SyncMap *entry_sync = nullptr;
+
+        /* Cross-module dependencies (P2 commit 8): the BeamCodeHeader of
+         * every OTHER module instance whose T1 addresses are baked into
+         * this function's blob (the lists helper an intrinsic demotes
+         * to). The installer records them so the blob is jettisoned
+         * when a dependency is deleted, traced or NIF-patched. */
+        std::vector<const void *> dep_hdrs;
 
         /* True when the builder attached sync maps + canonical homes;
          * gates the validator's sync/frame/home checks so hand-built

@@ -65,6 +65,12 @@ int erts_t2_genop_supported(int genop) {
     case genop_trim_2:
     case genop_test_heap_2:
 
+    /* Fun creation (P2 commit 8). The decode resolves the lambda index
+     * against the retained lambda table; call_fun stays unsupported
+     * (the intrinsics consume constant funs, everything else keeps the
+     * fun as a plain value). */
+    case genop_make_fun3_3:
+
     /* Calls and returns. */
     case genop_call_2:
     case genop_call_last_3:
@@ -287,6 +293,29 @@ static int bs_match_op_supported(BeamFile *beam, const BeamOp *op) {
                                   NULL) >= 0;
 }
 
+/* Value-producing comparison bif2 (P2 commit 8): `bif2 {f,0}
+ * erlang:CMP/2 A B D` where CMP is a total (never-failing) term
+ * comparison the backend lowers via T1's bif_is_* emitters. '=='/'/='
+ * (arith equality) are excluded — T1 routes them through the generic
+ * i_bif2 C call, which needs a T1 PC a blob does not have. */
+static int t2_bif2_op_supported(BeamFile *beam, const BeamOp *op) {
+    const BeamFile_ImportEntry *e;
+
+    /* The decoder normalizes a zero fail label to TAG_p. */
+    if (op->arity < 5 || op->a[0].type != TAG_p ||
+        op->a[1].type != TAG_u ||
+        op->a[1].val >= (UWord)beam->imports.count) {
+        return 0;
+    }
+    e = &beam->imports.entries[op->a[1].val];
+    if (e->module != am_erlang || e->arity != 2) {
+        return 0;
+    }
+    return e->function == am_Ge || e->function == am_Lt ||
+           e->function == am_Le || e->function == am_Gt ||
+           e->function == am_Eq || e->function == am_Neq;
+}
+
 Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                                  int *any_eligible,
                                  Uint32 **loop_bitmap_out,
@@ -381,7 +410,12 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
             }
             break;
         default:
-            if (fn_ok && !erts_t2_genop_supported(op->op)) {
+            if (fn_ok && op->op == genop_bif2_5) {
+                /* Comparison subset only (see t2_bif2_op_supported). */
+                if (!t2_bif2_op_supported(beam, op)) {
+                    fn_ok = 0;
+                }
+            } else if (fn_ok && !erts_t2_genop_supported(op->op)) {
                 fn_ok = 0;
             } else if (fn_ok && op->op == genop_bs_match_3 &&
                        !bs_match_op_supported(beam, op)) {

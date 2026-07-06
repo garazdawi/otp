@@ -1568,6 +1568,61 @@ namespace erts_t2 {
                                              T2Type::of(BEAM_TYPE_CONS)));
                 break;
 
+            case genop_make_fun3_3: {
+                /* (LambdaIndex, Dst, NumFree, Env...) after list
+                 * expansion. Heap need is covered by the preceding
+                 * test_heap (the compiler's alloc list includes fun
+                 * words) — not a sync point. index = the lambda
+                 * ordinal (isel resolves the ErlFunEntry through the
+                 * retained table), live = num_free, imm_int = the
+                 * implementation function's index (the intrinsics'
+                 * fun-body resolution; -1 when the label is not a
+                 * function entry). */
+                UWord lambda_idx = dop.args[0].val;
+                UWord num_free = dop.args[2].val;
+
+                if (ret->lambdas == NULL ||
+                    lambda_idx >= (UWord)ret->lambda_count) {
+                    fail_op(dop, "make_fun3 lambda index out of range");
+                    return;
+                }
+
+                const ErtsT2Lambda *lam = &ret->lambdas[lambda_idx];
+
+                if ((UWord)lam->num_free != num_free ||
+                    dop.args.size() != 3 + num_free) {
+                    fail_op(dop, "make_fun3 env/lambda mismatch");
+                    return;
+                }
+
+                std::vector<SrcVal> env;
+                for (UWord i = 0; i < num_free; i++) {
+                    env.push_back(read_arg_r(dop.args[3 + i]));
+                }
+
+                T2Value *v = emit_result_op(T2OpKind::MakeFun,
+                                            env,
+                                            T2Type::of(BEAM_TYPE_FUN));
+                if (v == nullptr) {
+                    return;
+                }
+                v->def->index = (uint32_t)lambda_idx;
+                v->def->live = (uint32_t)num_free;
+                {
+                    auto it = md.label_fn.find((UWord)lam->label);
+
+                    v->def->imm_int =
+                            it != md.label_fn.end() &&
+                                            md.functions[it->second]
+                                                            .entry_label ==
+                                                    (UWord)lam->label
+                                    ? (Sint64)it->second
+                                    : (Sint64)-1;
+                }
+                write_dst_new(dop.args[1], v);
+                break;
+            }
+
             case genop_put_tuple2_2: {
                 UWord count = dop.args[1].val;
                 std::vector<SrcVal> elems;
@@ -1579,6 +1634,55 @@ namespace erts_t2 {
                               emit_result_op(T2OpKind::MakeTuple,
                                              elems,
                                              T2Type::of(BEAM_TYPE_TUPLE)));
+                break;
+            }
+
+            case genop_bif2_5: {
+                /* Value-producing total comparison (P2 commit 8):
+                 * `bif2 {f,0} erlang:CMP/2 A B D`. The eligibility
+                 * scan admitted only the never-failing comparison
+                 * subset; anything else is a decode error. Pure, no
+                 * sync point (T1's bif_is_* lowerings are fragment
+                 * compares, no GC, no trap). */
+                UWord import_index = dop.args[1].val;
+
+                /* A zero fail label decodes as TAG_p. */
+                if (dop.args[0].type != TAG_p ||
+                    import_index >= (UWord)ret->import_count) {
+                    fail_op(dop, "unsupported bif2 shape");
+                    return;
+                }
+
+                const BeamFile_ImportEntry &mfa =
+                        ret->imports[import_index];
+                T2OpKind kind;
+
+                if (mfa.module != am_erlang || mfa.arity != 2) {
+                    fail_op(dop, "unsupported bif2 target");
+                    return;
+                }
+                if (mfa.function == am_Ge) {
+                    kind = T2OpKind::CmpGe;
+                } else if (mfa.function == am_Lt) {
+                    kind = T2OpKind::CmpLt;
+                } else if (mfa.function == am_Le) {
+                    kind = T2OpKind::CmpLe;
+                } else if (mfa.function == am_Gt) {
+                    kind = T2OpKind::CmpGt;
+                } else if (mfa.function == am_Eq) {
+                    kind = T2OpKind::CmpEqExact;
+                } else if (mfa.function == am_Neq) {
+                    kind = T2OpKind::CmpNeExact;
+                } else {
+                    fail_op(dop, "unsupported bif2 comparison");
+                    return;
+                }
+
+                write_dst_new(dop.args[4],
+                              emit_result_op(kind,
+                                             {read_arg_r(dop.args[2]),
+                                              read_arg_r(dop.args[3])},
+                                             bool_type()));
                 break;
             }
 

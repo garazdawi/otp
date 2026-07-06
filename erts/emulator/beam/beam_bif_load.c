@@ -2425,6 +2425,17 @@ delete_code(Module* modp)
 
     erts_record_module_delete(module);
 
+#ifdef BEAMASM
+    /* T2-Full (P2 commit 8): blobs of OTHER modules may have this
+     * instance's T1 addresses baked in (the lists helpers their
+     * intrinsic loops demote to). The instance is being made old —
+     * new calls will not reach it — so those blobs must go now,
+     * well before any purge can free the code they point into. */
+    if (modp->curr.code_hdr != NULL) {
+        erts_t2_jettison_deps((const void *)modp->curr.code_hdr);
+    }
+#endif
+
     modp->old = modp->curr;
     erts_module_instance_init(&modp->curr);
 }

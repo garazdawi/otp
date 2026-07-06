@@ -64,11 +64,16 @@
 #    define T2_BRIDGE_SIZE 16
 
 static erts_atomic_t t2_installed_bytes;
+/* Number of installed blobs carrying cross-module deps (P2 commit 8):
+ * lets the hot trace/delete hooks skip the module-table walk when no
+ * intrinsic blob exists. Mutated under code-mod permission only. */
+static erts_atomic_t t2_deps_installed;
 static int t2_install_initialized = 0;
 
 static void t2_install_init(void) {
     if (!t2_install_initialized) {
         erts_atomic_init_nob(&t2_installed_bytes, 0);
+        erts_atomic_init_nob(&t2_deps_installed, 0);
         t2_install_initialized = 1;
     }
 }
@@ -199,7 +204,8 @@ typedef struct {
     size_t blob_size;
     void *bridge_base;
     size_t bridge_size;
-    ErtsCodePtr t1_demote;
+    /* Owned by the still-registered range until phase 2 deregisters. */
+    const ErtsT2ResumeTab *rtab;
 } ErtsT2RetireBlob;
 
 static void t2_retire_phase(void *vrb) {
@@ -219,7 +225,26 @@ static void t2_retire_phase(void *vrb) {
             }
             ip = (const char *)p->i;
             if (ip >= lo && ip < hi) {
-                p->i = rb->t1_demote;
+                /* Exactly the blob's resume PCs can be parked in
+                 * c_p->i (P2 commit 5); translate per entry (P2
+                 * commit 8: targets differ by demote class). */
+                Uint32 k;
+                ErtsCodePtr target = NULL;
+
+                for (k = 0; k < rb->rtab->count; k++) {
+                    if ((Uint32)(ip - lo) == rb->rtab->entries[k].offset) {
+                        target = rb->rtab->entries[k].t1_demote;
+                        break;
+                    }
+                }
+                if (target == NULL) {
+                    erts_exit(ERTS_ABORT_EXIT,
+                              "t2 retire: c_p->i %p in blob %p is not a "
+                              "registered resume PC\n",
+                              ip,
+                              lo);
+                }
+                p->i = target;
             }
         }
 
@@ -270,8 +295,10 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
                                     const void *blob_base,
                                     size_t blob_size,
                                     void *blob_rw,
-                                    const Uint32 *resume_offsets,
-                                    Uint32 resume_count) {
+                                    const ErtsT2ResumeEntry *resume_points,
+                                    Uint32 resume_count,
+                                    const void *const *dep_hdrs,
+                                    Uint32 dep_count) {
     const void *patch_exec;
     const void *reach_target;
     void *bridge_rx = NULL, *bridge_rw = NULL;
@@ -374,23 +401,36 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
     inst->bridge_base = bridge_rx;
     inst->bridge_size = bridge_rx != NULL ? T2_BRIDGE_SIZE : 0;
 
+    /* Cross-module dependencies (P2 commit 8). */
+    inst->dep_count = 0;
+    {
+        Uint32 d;
+
+        ASSERT(dep_count <= 2);
+        for (d = 0; d < dep_count && d < 2; d++) {
+            inst->dep_hdrs[d] = dep_hdrs[d];
+            inst->dep_count++;
+        }
+    }
+
     /* The resume table (P2 commit 5): every recovered loop's back-edge
-     * resume PC, blob-relative, plus the single T1 translation target —
-     * the post-yield entry body, so a translated resume charges no
-     * extra reduction (fresh-call semantics, 08 §4.5). */
+     * resume PC, blob-relative, each with its own T1 translation
+     * target (P2 commit 8) — the emitter resolved it per demote class:
+     * the post-yield entry body for self-recursion back edges (a
+     * translated resume then charges no extra reduction — fresh-call
+     * semantics, 08 §4.5), the intrinsic call site's T1 PC for callee
+     * back edges. */
     if (resume_count > 0) {
         Uint32 i;
 
         rtab = erts_alloc(ERTS_ALC_T_T2_CODE,
                           sizeof(ErtsT2ResumeTab) +
-                                  (resume_count - 1) * sizeof(Uint32));
+                                  (resume_count - 1) *
+                                          sizeof(ErtsT2ResumeEntry));
         rtab->count = resume_count;
         rtab->flag_back = (Uint32)erts_t2_test_yield_return_offset();
-        rtab->t1_demote =
-                (ErtsCodePtr)((const char *)erts_codeinfo_to_code(ci_exec) +
-                              erts_t2_test_yield_return_offset());
         for (i = 0; i < resume_count; i++) {
-            rtab->offsets[i] = resume_offsets[i];
+            rtab->entries[i] = resume_points[i];
         }
     }
     inst->resume_tab = rtab;
@@ -453,6 +493,9 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
 
     erts_atomic_add_nob(&t2_installed_bytes,
                         (erts_aint_t)(blob_size + inst->bridge_size));
+    if (inst->dep_count > 0) {
+        erts_atomic_add_nob(&t2_deps_installed, 1);
+    }
 
     if (was_sealed) {
         /* Flush + reseal, then make sure every scheduler issues an
@@ -501,7 +544,7 @@ static ErtsT2Install *t2_jettison_one(struct erl_module_instance *mi,
         for (i = 0; i < inst->resume_tab->count; i++) {
             Uint64 volatile *flag =
                     (Uint64 volatile *)((char *)inst->blob_rw +
-                                        inst->resume_tab->offsets[i] -
+                                        inst->resume_tab->entries[i].offset -
                                         inst->resume_tab->flag_back);
 
             *flag = 1;
@@ -512,6 +555,9 @@ static ErtsT2Install *t2_jettison_one(struct erl_module_instance *mi,
 
     erts_atomic_add_nob(&t2_installed_bytes,
                         -(erts_aint_t)(inst->blob_size + inst->bridge_size));
+    if (inst->dep_count > 0) {
+        erts_atomic_add_nob(&t2_deps_installed, -1);
+    }
 
     *prevp = inst->next;
     inst->next = NULL;
@@ -534,7 +580,7 @@ static void t2_release_node(ErtsT2Install *inst) {
         rb->blob_size = inst->blob_size;
         rb->bridge_base = inst->bridge_base;
         rb->bridge_size = inst->bridge_size;
-        rb->t1_demote = inst->resume_tab->t1_demote;
+        rb->rtab = inst->resume_tab;
 
         erts_schedule_code_barrier_cleanup(&rb->barrier,
                                            t2_retire_phase,
@@ -648,6 +694,66 @@ void erts_t2_jettison_instance(struct erl_module_instance *mi,
     }
 }
 
+/* Jettison every blob (across all modules, both instances) that
+ * recorded `code_hdr` as a dependency (P2 commit 8). The caller holds
+ * code modification permission, which serializes this against
+ * install/jettison/trace/load. Rare path (module delete/trace/NIF
+ * load), so the full module-table walk is fine. */
+void erts_t2_jettison_deps(const void *code_hdr) {
+    ErtsCodeIndex code_ix;
+    int i, num;
+
+    t2_assert_write_permission();
+
+    if (code_hdr == NULL || !t2_install_initialized ||
+        erts_atomic_read_nob(&t2_deps_installed) == 0) {
+        return;
+    }
+
+    code_ix = erts_active_code_ix();
+    num = module_code_size(code_ix);
+
+    for (i = 0; i < num; i++) {
+        Module *modp = module_code(i, code_ix);
+        int inst_i;
+
+        if (modp == NULL) {
+            continue;
+        }
+
+        for (inst_i = 0; inst_i < 2; inst_i++) {
+            struct erl_module_instance *mi = inst_i == 0 ? &modp->curr
+                                                         : &modp->old;
+            int again = 1;
+
+            /* erts_t2_jettison_function unlinks from the list; restart
+             * the scan after each hit. */
+            while (again) {
+                ErtsT2Install *inst;
+
+                again = 0;
+                for (inst = mi->t2_installs; inst != NULL;
+                     inst = inst->next) {
+                    Uint32 d;
+                    int dep = 0;
+
+                    for (d = 0; d < inst->dep_count; d++) {
+                        if (inst->dep_hdrs[d] == code_hdr) {
+                            dep = 1;
+                            break;
+                        }
+                    }
+                    if (dep) {
+                        erts_t2_jettison_function(mi, inst->ci);
+                        again = 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ *
  * P2 commit 5 introspection (erts_debug:get_internal_state)          *
  * ------------------------------------------------------------------ */
@@ -694,17 +800,25 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
                                     const void *blob_base,
                                     size_t blob_size,
                                     void *blob_rw,
-                                    const Uint32 *resume_offsets,
-                                    Uint32 resume_count) {
+                                    const ErtsT2ResumeEntry *resume_points,
+                                    Uint32 resume_count,
+                                    const void *const *dep_hdrs,
+                                    Uint32 dep_count) {
     (void)mi;
     (void)ci_exec;
     (void)blob_entry;
     (void)blob_base;
     (void)blob_size;
     (void)blob_rw;
-    (void)resume_offsets;
+    (void)resume_points;
     (void)resume_count;
+    (void)dep_hdrs;
+    (void)dep_count;
     return ERTS_T2_INSTALL_REJECTED_STATE;
+}
+
+void erts_t2_jettison_deps(const void *code_hdr) {
+    (void)code_hdr;
 }
 
 Eterm erts_t2_debug_in_blob(Process *p, Eterm pid) {
