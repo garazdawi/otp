@@ -594,6 +594,25 @@ extern "C" unsigned erts_t2_tier_compile_batch(Eterm module,
             },
             nullptr);
 
+    /* Functions the builder skipped (decode/build/validate failures)
+     * never reach the emit callback above, but their outcome is just
+     * as terminal — their records sit pending and would pay the armed
+     * sequence forever. Disarm every requested record that still has
+     * one. */
+    {
+        unsigned i;
+
+        for (i = 0; i < n; i++) {
+            if (fn_indices[i] < (Uint32)ret->function_count) {
+                erts_t2_profile_disarm(
+                        mi,
+                        (ErtsT2Profile *)((char *)ret->profiles +
+                                          (size_t)fn_indices[i] *
+                                                  ERTS_T2_PROFILE_STRIDE));
+            }
+        }
+    }
+
     return installed;
 }
 
