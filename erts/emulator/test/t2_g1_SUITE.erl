@@ -725,6 +725,16 @@ canon_t2(Kind, Operands, Attrs) ->
         make_list  -> {data, make_list};
         get_map_element -> {data, get_map_element};
 
+        %% The byte-aligned binary scan subset (P2 commit 7). The AOT
+        %% side spells these bs_start_match/bs_match+bs_extract (dssaopt)
+        %% or bs_get/bs_ensured_match (dprecg); both fold to {bs,_}
+        %% tokens, so bs functions now count on the T2 side too instead
+        %% of tallying as not_eligible.
+        start_match  -> {bs, bs_start_match};
+        bs_match     -> {bs, bs_match};
+        bs_get_tail  -> {bs, bs_get_tail};
+        bs_test_tail -> {bs, bs_test_tail};
+
         %% Materialisation / scaffolding: no AOT op counterpart.
         _ -> ignore
     end.

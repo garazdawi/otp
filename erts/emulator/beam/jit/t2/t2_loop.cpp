@@ -612,6 +612,17 @@ namespace erts_t2 {
             /* A GC that does not treat the whole fresh-call vector as
              * live would garbage X_live..arity-1. */
             return op->live < arity;
+        case T2OpKind::StartMatch:
+        case T2OpKind::BsMatch:
+        case T2OpKind::BsGetTail:
+            /* StartMatch may replace a binary with a fresh context;
+             * BsMatch advances the context's position (a heap-object
+             * mutation a window re-execution would repeat, reading
+             * past the already-consumed bytes); BsGetTail GCs with
+             * the decoded live count. All conservatively end the
+             * clean prefix — speculation after them takes the
+             * boundary shape. */
+            return true;
         default:
             break;
         }

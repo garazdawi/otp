@@ -45,6 +45,8 @@ extern "C"
 #include "code_ix.h"
 #include "export.h"
 #include "module.h"
+#include "erl_binary.h"
+#include "erl_bits.h"
 
 #include "t2_retain.h"
 #include "t2_pctab.h"
@@ -140,6 +142,11 @@ namespace erts_t2 {
             Label header;         /* the loop header's block label     */
             const void *demote;   /* L_f + TEST_YIELD_RETURN_OFFSET    */
             uint32_t beam_idx;
+            /* Fused-scan region index, or -1: the yield setup first
+             * writes the deferred position back into the context
+             * (emit_scan_writeback), completing the fresh-call
+             * vector the stub saves. */
+            int scan = -1;
         };
         std::vector<ResumeStub> resume_stubs;
 
@@ -147,6 +154,99 @@ namespace erts_t2 {
          * that follows it names the loop header). */
         const T2LirBlock *cur_block = nullptr;
         size_t cur_op_idx = 0;
+
+        /* ---- fused byte-scan loops (P2 commit 7; the G-bin shape) ----
+         *
+         * A recovered loop whose body is exactly the byte-scan subset
+         * — StartMatch fast-check, one BsMatch [ensure, read-int8 |
+         * skip], byte guards, flag-checked accumulator arithmetic,
+         * back edge — is emitted as one fused loop: the context is
+         * validated and its position/end/base hoisted into scratch
+         * registers once per entry (and per resume), and the hot
+         * back edge jumps past that reload, so the per-iteration body
+         * touches the context object not at all. The context term
+         * stays whole in its canonical X slot throughout (GC-visible
+         * at the sync points, which are all outside the hot path);
+         * only its *position* is deferred: every path that leaves the
+         * fused region — loop exits, deopt trampolines, the yield
+         * stub — first writes the T1-true bit position back into
+         * ErlSubBits.start (advanced or not, per where the edge
+         * leaves), so outside the region the whole-context-in-slot
+         * contract holds exactly (PLAN/T2FULL/09 §7 surprise 4).
+         *
+         * Register discipline inside a region: SCAN_PTR/SCAN_LIM/
+         * SCAN_BASE (TMP4/TMP5/TMP6) carry the byte pointer, byte
+         * limit and byte base across the whole loop, including across
+         * the back edge; SCAN_BYTE (ARG2) carries the read byte from
+         * the BsMatch to its guards. Admission therefore only allows
+         * ops whose emission provably avoids those registers: the
+         * scan ops themselves, Move, flag-checked AddSmall/SubSmall
+         * (TMP1..TMP3/ARG1 only), byte guards/switch (emitted here),
+         * ReductionCheck and the back-jump. Anything else rejects the
+         * region and the loop is emitted 1:1 (still correct, just not
+         * fused). T2_NO_SCAN=1 disables fusion (the A/B lever). */
+        struct ScanExitKey {
+            uint32_t target;
+            bool advanced;
+            bool operator==(const ScanExitKey &o) const {
+                return target == o.target && advanced == o.advanced;
+            }
+        };
+        struct ScanLoop {
+            uint32_t header = T2_LIR_NO_BLOCK;
+            uint32_t latch = T2_LIR_NO_BLOCK;
+            std::vector<uint32_t> blocks; /* chain order, starts at header */
+            std::vector<bool> in_region;  /* indexed by block id           */
+            std::vector<bool> adv_in;     /* block-entry "read happened"   */
+            uint32_t bs_block = T2_LIR_NO_BLOCK;
+            PhysLoc ctx_slot;             /* the match context's X slot    */
+            PhysLoc byte_slot;            /* READ_INT8 dst, or None        */
+            uint32_t adv_bytes = 0;       /* bytes consumed per iteration  */
+            uint32_t ensure_bytes = 0;    /* the ensure_at_least check     */
+            bool read_byte = false;       /* READ_INT8 present             */
+            /* The byte's canonical slot is dead outside the region's
+             * own guards (no reads anywhere else, no sync-map pin, no
+             * phi home): skip the tagged materialization. */
+            bool byte_dead = false;
+            /* Emission labels. */
+            Label reload;                 /* ctx -> ptr/lim/base           */
+            Label scan_resume;            /* hot back-jump target          */
+            Label scan_body;              /* post-ensure body (rotation)   */
+            Label unaligned;              /* bit-offset context: demote    */
+            /* Rotated loop: nothing executes between the header and the
+             * ensure check, so the back edge carries its own bounds
+             * check and branches straight to the post-ensure body —
+             * one conditional taken branch per iteration, no trailing
+             * unconditional jump. */
+            bool rotated = false;
+            /* Cold continuations, emitted after the body. */
+            std::vector<std::pair<ScanExitKey, Label>> exit_thunks;
+            struct WbTramp {
+                const void *t1_pc;
+                bool advanced;
+                Label label;
+                /* Direct-committed flag-checked arithmetic (adds/subs
+                 * straight into the register-backed destination — the
+                 * loop-carried dependency is then one cycle, not the
+                 * scratch-then-commit two): on overflow the register
+                 * holds the wrapped sum, and two's-complement makes
+                 * the un-commit exact — the trampoline restores the
+                 * original before T1 re-executes. none = no uncommit. */
+                PhysLoc uncommit_slot = PhysLoc::none();
+                uint64_t uncommit_imm = 0;
+                bool uncommit_add = false; /* the op was an add */
+            };
+            std::vector<WbTramp> wb_tramps;
+            bool emitted = false;         /* region laid down already   */
+            /* The StartMatch op (generic slow path in a cold stub). */
+            const T2LirOp *start_match = nullptr;
+            Label cold_start;
+        };
+        std::vector<ScanLoop> scan_loops;
+        /* Region containing block b, or -1. */
+        std::vector<int> scan_of_block;
+        int cur_scan = -1;
+        bool cur_scan_adv = false;
 
         /* The block emitted right after the current one (layout order),
          * for fall-through elision of trailing unconditional branches. */
@@ -251,6 +351,8 @@ namespace erts_t2 {
                 emit_enter_erlang_frame();
             }
 
+            detect_scan_loops();
+
             for (const T2LirBlock &b : fn.blocks) {
                 /* Mirror emit_label: a block entry invalidates the
                  * register cache the reused T1 emitters maintain, and
@@ -264,6 +366,23 @@ namespace erts_t2 {
                 next_block_id = b.id + 1 < fn.blocks.size()
                                         ? b.id + 1
                                         : T2_LIR_NO_BLOCK;
+
+                cur_scan = b.id < scan_of_block.size()
+                                   ? scan_of_block[b.id]
+                                   : -1;
+                if (cur_scan >= 0) {
+                    /* Emit the whole region contiguously in chain
+                     * order at the first region block encountered, so
+                     * the hot loop is one straight fall-through run
+                     * with a single taken back-branch per iteration;
+                     * later layout positions of region blocks emit
+                     * nothing (their labels are bound in the chain). */
+                    if (!scan_loops[cur_scan].emitted) {
+                        emit_scan_region(scan_loops[cur_scan]);
+                    }
+                    continue;
+                }
+
                 for (size_t oi = 0; oi < b.ops.size(); oi++) {
                     if (failed()) {
                         return;
@@ -272,7 +391,9 @@ namespace erts_t2 {
                     emit_op(b.ops[oi]);
                 }
             }
+            cur_scan = -1;
 
+            emit_scan_cold();
             emit_resume_stubs();
             emit_fail_trampolines();
 
@@ -537,6 +658,32 @@ namespace erts_t2 {
                 a.br(TMP1);
                 mark_unreachable();
                 break;
+            case T2LirKind::StartMatch:
+                emit_lir_start_match(op);
+                break;
+            case T2LirKind::BsMatch:
+                emit_lir_bs_match(op);
+                break;
+            case T2LirKind::BsGetTail:
+                emit_bs_get_tail(ArgRegister(src_argval(op.srcs[0])),
+                                 ArgRegister(loc_argval(op.dst)),
+                                 ArgWord(op.live));
+                break;
+            case T2LirKind::BsTestTail:
+                if (op.succ_then == T2_LIR_NO_BLOCK ||
+                    op.succ_else == T2_LIR_NO_BLOCK) {
+                    fail("bs_test_tail without both branch edges");
+                    break;
+                }
+                emit_bs_test_tail2(
+                        ArgLabel(ArgVal(ArgVal::Type::Label,
+                                        1 + op.succ_else)),
+                        ArgRegister(src_argval(op.srcs[0])),
+                        ArgWord((UWord)op.imm));
+                if (!failed()) {
+                    emit_goto(op.succ_then);
+                }
+                break;
             default:
                 fail("unsupported LIR op kind in P1 identity emit");
                 break;
@@ -733,7 +880,8 @@ namespace erts_t2 {
          * then commit the result. Mirrors T1's small-int fast path
          * (arm/instr_arith.cpp emit_i_plus/minus) minus the per-op type
          * checks, which the dominating guards/proofs hoisted away. */
-        void emit_lir_addsub_small(const T2LirOp &op) {
+        void emit_lir_addsub_small(const T2LirOp &op,
+                                   const Label *fail_override = nullptr) {
             bool is_add = op.kind == T2LirKind::AddSmall;
 
             if (op.num_srcs != 2 || op.dst.is_none() ||
@@ -742,8 +890,13 @@ namespace erts_t2 {
                 return;
             }
 
-            const Label &fl = rawLabels.at(fail_label_num(op.t1_pc_fail));
-            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+            const Label &fl = fail_override != nullptr
+                                      ? *fail_override
+                                      : rawLabels.at(
+                                                fail_label_num(op.t1_pc_fail));
+            if (fail_override == nullptr) {
+                fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+            }
 
             comment("T2 %s small (flag-checked)", is_add ? "add" : "sub");
 
@@ -808,6 +961,85 @@ namespace erts_t2 {
                 a.mov(phys_gp(op.dst), ARG1);
             } else {
                 mov_arg(loc_argval(op.dst), ARG1);
+            }
+        }
+
+        /* Identity bs_start_match3 (P2 commit 7): the reused T1 emitter
+         * with the fail edge redirected in-blob (or absent for a
+         * decoded {f,0}). The destination write is conditional on the
+         * success edge, exactly as in T1. */
+        void emit_lir_start_match(const T2LirOp &op) {
+            unsigned fail_num = op.succ_else != T2_LIR_NO_BLOCK
+                                        ? 1 + op.succ_else
+                                        : 0;
+
+            emit_i_bs_start_match3(ArgRegister(src_argval(op.srcs[0])),
+                                   ArgWord(op.live),
+                                   ArgLabel(ArgVal(ArgVal::Type::Label,
+                                                   fail_num)),
+                                   ArgRegister(loc_argval(op.dst)));
+            if (op.succ_then != T2_LIR_NO_BLOCK && !failed()) {
+                emit_goto(op.succ_then);
+            }
+        }
+
+        /* Identity bs_match (byte-aligned subset): synthesize the
+         * ArgVal command list the unified T1 emitter walks
+         * (beam_jit_bsm_init) and reuse it 1:1. Flags ride as a Word
+         * (the parser's bs_get_integer2 path), and the heap need for a
+         * get_tail is recomputed internally by opt_bsm_segments —
+         * Need/Live stay 0 exactly as for a non-fused i_bs_match. */
+        void emit_lir_bs_match(const T2LirOp &op) {
+            if (op.succ_else == T2_LIR_NO_BLOCK ||
+                op.succ_then == T2_LIR_NO_BLOCK) {
+                fail("bs_match without both branch edges");
+                return;
+            }
+
+            std::vector<ArgVal> list;
+
+            for (uint32_t i = 0; i < op.num_bs_cmds; i++) {
+                const T2LirBsCmd &c = fn.bs_cmds[op.first_bs_cmd + i];
+
+                switch (c.kind) {
+                case ERTS_T2_BS_ENSURE:
+                    list.push_back(ArgImmed(am_ensure_at_least));
+                    list.push_back(ArgWord(c.size));
+                    list.push_back(ArgWord(c.unit));
+                    break;
+                case ERTS_T2_BS_READ_INT8:
+                    list.push_back(ArgImmed(am_integer));
+                    list.push_back(ArgWord(c.live));
+                    list.push_back(ArgWord(0)); /* flags: unsigned big */
+                    list.push_back(ArgWord(8));
+                    list.push_back(ArgWord(1));
+                    list.push_back(loc_argval(op.dst));
+                    break;
+                case ERTS_T2_BS_SKIP:
+                    list.push_back(ArgImmed(am_skip));
+                    list.push_back(ArgWord(c.size));
+                    break;
+                case ERTS_T2_BS_GET_TAIL:
+                    list.push_back(ArgImmed(am_get_tail));
+                    list.push_back(ArgWord(c.live));
+                    list.push_back(ArgWord(1));
+                    list.push_back(loc_argval(op.dst));
+                    break;
+                default:
+                    fail("unknown bs_match command kind");
+                    return;
+                }
+            }
+
+            emit_i_bs_match_test_heap(
+                    ArgLabel(ArgVal(ArgVal::Type::Label, 1 + op.succ_else)),
+                    ArgRegister(src_argval(op.srcs[0])),
+                    ArgWord(0),
+                    ArgWord(0),
+                    Span<const ArgVal>(list.data(), list.size()));
+
+            if (!failed()) {
+                emit_goto(op.succ_then);
             }
         }
 
@@ -1154,6 +1386,14 @@ namespace erts_t2 {
                 reg_cache.invalidate();
 
                 a.bind(st.yield);
+                if (st.scan >= 0) {
+                    /* Fused scan loop: restore ErlSubBits.start (the
+                     * pointer was advanced at the back edge, so the
+                     * raw position is the next iteration's start —
+                     * exactly the fresh-call contract the saved X
+                     * vector needs). */
+                    emit_scan_writeback(scan_loops[st.scan], false);
+                }
                 mov_imm(TMP1, (Uint64)&erts_t2_backedge_yields);
                 a.ldr(TMP2, a64::Mem(TMP1));
                 a.add(TMP2, TMP2, imm(1));
@@ -1195,6 +1435,1054 @@ namespace erts_t2 {
                 mov_imm(TMP1, (Uint64)st.demote);
                 a.br(TMP1);
                 mark_unreachable();
+            }
+        }
+
+        /* ---- fused byte-scan loops (see the struct comment) ---------- */
+
+        /* The reserved region registers. TMP4..TMP6 are safe because
+         * every op admitted into a region is emitted either right here
+         * or by an emitter audited to touch only TMP1..TMP3/ARG1 and
+         * the register-backed X file (emit_lir_move's mov_arg path,
+         * emit_lir_addsub_small); no fragment call, runtime call or
+         * unaudited T1 emitter is admitted. */
+        const a64::Gp SCAN_PTR = TMP4;
+        const a64::Gp SCAN_LIM = TMP5;
+        const a64::Gp SCAN_BASE = TMP6;
+        const a64::Gp SCAN_BYTE = ARG2;
+
+        static bool scan_disabled() {
+            static const bool off = getenv("T2_NO_SCAN") != nullptr;
+            return off;
+        }
+
+        /* A small-integer constant in [0,255], untagged into *out. */
+        static bool byte_const(const T2LirSrc &s, uint32_t *out) {
+            if (!s.is_const || !is_small(s.term)) {
+                return false;
+            }
+            Sint v = signed_val(s.term);
+            if (v < 0 || v > 255) {
+                return false;
+            }
+            *out = (uint32_t)v;
+            return true;
+        }
+
+        void detect_scan_loops() {
+            scan_of_block.assign(fn.blocks.size(), -1);
+            if (install_entry == nullptr || scan_disabled()) {
+                return;
+            }
+
+            /* Successor / predecessor sets over the LIR CFG. */
+            size_t n = fn.blocks.size();
+            std::vector<std::vector<uint32_t>> succs(n), preds(n);
+            auto add_edge = [&](uint32_t from, uint32_t to) {
+                if (to == T2_LIR_NO_BLOCK) {
+                    return;
+                }
+                auto &v = succs[from];
+                if (std::find(v.begin(), v.end(), to) == v.end()) {
+                    v.push_back(to);
+                    preds[to].push_back(from);
+                }
+            };
+            for (const T2LirBlock &b : fn.blocks) {
+                for (const T2LirOp &op : b.ops) {
+                    add_edge(b.id, op.succ_then);
+                    add_edge(b.id, op.succ_else);
+                    if (op.kind == T2LirKind::Switch) {
+                        for (uint32_t c = 0; c < op.num_cases; c++) {
+                            add_edge(b.id,
+                                     fn.switch_cases[op.first_case + c]
+                                             .target);
+                        }
+                        add_edge(b.id, op.default_target);
+                    }
+                }
+            }
+
+            for (const T2LirBlock &lb : fn.blocks) {
+                if (lb.ops.size() < 2) {
+                    continue;
+                }
+                const T2LirOp &rc = lb.ops[lb.ops.size() - 2];
+                const T2LirOp &bj = lb.ops[lb.ops.size() - 1];
+
+                if (rc.kind != T2LirKind::ReductionCheck ||
+                    bj.kind != T2LirKind::Jump) {
+                    continue;
+                }
+                uint32_t h = bj.succ_then;
+
+                ScanLoop sl;
+                sl.header = h;
+                sl.latch = lb.id;
+                sl.in_region.assign(n, false);
+
+                /* Natural-loop body: backward flood from the latch,
+                 * stopping at the header. */
+                {
+                    std::vector<uint32_t> work{lb.id};
+                    sl.in_region[h] = true;
+                    while (!work.empty()) {
+                        uint32_t b = work.back();
+                        work.pop_back();
+                        if (sl.in_region[b]) {
+                            continue;
+                        }
+                        sl.in_region[b] = true;
+                        for (uint32_t p : preds[b]) {
+                            if (!sl.in_region[p]) {
+                                work.push_back(p);
+                            }
+                        }
+                    }
+                }
+
+                if (!admit_scan_loop(sl, succs, preds)) {
+                    continue;
+                }
+
+                /* Accepted: create the labels + claim the blocks. */
+                sl.reload = a.new_label();
+                sl.scan_resume = a.new_label();
+                sl.scan_body = a.new_label();
+                sl.unaligned = a.new_label();
+                sl.cold_start = a.new_label();
+                /* Rotation legality: the ensure check must be the very
+                 * first thing an iteration executes. */
+                sl.rotated = fn.blocks[sl.header].ops.size() == 1 &&
+                             sl.blocks.size() >= 2 &&
+                             sl.blocks[1] == sl.bs_block &&
+                             fn.blocks[sl.bs_block].ops.size() >= 1 &&
+                             fn.blocks[sl.bs_block].ops[0].kind ==
+                                     T2LirKind::BsMatch;
+                int idx = (int)scan_loops.size();
+                for (uint32_t b : sl.blocks) {
+                    scan_of_block[b] = idx;
+                }
+                scan_loops.push_back(std::move(sl));
+            }
+        }
+
+        /* Region admission (must reject anything the fused emitters
+         * cannot preserve exactly; a rejected loop is emitted 1:1). */
+        bool admit_scan_loop(ScanLoop &sl,
+                             const std::vector<std::vector<uint32_t>> &succs,
+                             const std::vector<std::vector<uint32_t>> &preds) {
+            size_t n = fn.blocks.size();
+
+            /* Region blocks may only be entered through the header. */
+            for (uint32_t b = 0; b < n; b++) {
+                if (!sl.in_region[b] || b == sl.header) {
+                    continue;
+                }
+                if (b < scan_of_block.size() && scan_of_block[b] >= 0) {
+                    return false; /* already claimed */
+                }
+                for (uint32_t p : preds[b]) {
+                    if (!sl.in_region[p]) {
+                        return false;
+                    }
+                }
+            }
+            if (scan_of_block[sl.header] >= 0) {
+                return false;
+            }
+
+            /* Single-path chain from the header back to itself. */
+            {
+                uint32_t cur = sl.header;
+                size_t region_size = 0;
+                for (uint32_t b = 0; b < n; b++) {
+                    region_size += sl.in_region[b] ? 1 : 0;
+                }
+                std::vector<bool> seen(n, false);
+                for (;;) {
+                    if (seen[cur]) {
+                        return false;
+                    }
+                    seen[cur] = true;
+                    sl.blocks.push_back(cur);
+
+                    uint32_t next = T2_LIR_NO_BLOCK;
+                    for (uint32_t s : succs[cur]) {
+                        if (!sl.in_region[s]) {
+                            continue;
+                        }
+                        if (next != T2_LIR_NO_BLOCK && next != s) {
+                            return false; /* two in-region successors */
+                        }
+                        next = s;
+                    }
+                    if (next == T2_LIR_NO_BLOCK) {
+                        return false;
+                    }
+                    if (next == sl.header) {
+                        break; /* the back edge closes the chain */
+                    }
+                    cur = next;
+                }
+                if (sl.blocks.size() != region_size) {
+                    return false;
+                }
+                if (sl.blocks.back() != sl.latch) {
+                    return false;
+                }
+            }
+
+            /* Per-op admission, walking the chain. */
+            bool adv = false;
+            bool have_bs = false;
+            sl.adv_in.assign(n, false);
+
+            for (size_t ci = 0; ci < sl.blocks.size(); ci++) {
+                uint32_t bid = sl.blocks[ci];
+                const T2LirBlock &b = fn.blocks[bid];
+
+                sl.adv_in[bid] = adv;
+
+                for (size_t oi = 0; oi < b.ops.size(); oi++) {
+                    const T2LirOp &op = b.ops[oi];
+
+                    switch (op.kind) {
+                    case T2LirKind::StartMatch: {
+                        /* Only as the header's first op, src == dst
+                         * (the context-reuse shape), an X slot. */
+                        if (bid != sl.header || oi != 0 ||
+                            sl.start_match != nullptr) {
+                            return false;
+                        }
+                        if (op.srcs[0].is_const ||
+                            !op.srcs[0].loc.is_xreg() ||
+                            op.dst != op.srcs[0].loc) {
+                            return false;
+                        }
+                        sl.start_match = &op;
+                        sl.ctx_slot = op.dst;
+                        break;
+                    }
+                    case T2LirKind::BsMatch: {
+                        if (have_bs || sl.start_match == nullptr ||
+                            op.imm != 0 /* heap need (get_tail) */) {
+                            return false;
+                        }
+                        if (op.srcs[0].is_const ||
+                            op.srcs[0].loc != sl.ctx_slot) {
+                            return false;
+                        }
+                        if (op.succ_else == T2_LIR_NO_BLOCK ||
+                            sl.in_region[op.succ_else]) {
+                            return false; /* fail edge must exit */
+                        }
+                        /* Command shape: ensure_at_least first, then
+                         * consuming commands with at most one
+                         * READ_INT8, which must be the first
+                         * consumer (the byte is read at the current
+                         * position). */
+                        if (op.num_bs_cmds < 2 ||
+                            fn.bs_cmds[op.first_bs_cmd].kind !=
+                                    ERTS_T2_BS_ENSURE ||
+                            fn.bs_cmds[op.first_bs_cmd].unit != 1) {
+                            return false;
+                        }
+                        uint32_t consumed = 0;
+                        for (uint32_t i = 1; i < op.num_bs_cmds; i++) {
+                            const T2LirBsCmd &c =
+                                    fn.bs_cmds[op.first_bs_cmd + i];
+
+                            if (c.kind == ERTS_T2_BS_READ_INT8) {
+                                if (consumed != 0 || sl.read_byte) {
+                                    return false;
+                                }
+                                sl.read_byte = true;
+                                if (op.dst.is_none() ||
+                                    op.dst == sl.ctx_slot ||
+                                    op.dst.is_phys()) {
+                                    return false;
+                                }
+                                sl.byte_slot = op.dst;
+                                consumed += 8;
+                            } else if (c.kind == ERTS_T2_BS_SKIP) {
+                                consumed += c.size;
+                            } else {
+                                return false;
+                            }
+                        }
+                        uint32_t ensure =
+                                fn.bs_cmds[op.first_bs_cmd].size;
+                        if (consumed == 0 || (consumed % 8) != 0 ||
+                            ensure < consumed || (ensure % 8) != 0 ||
+                            ensure / 8 > 4095) {
+                            return false;
+                        }
+                        if (!sl.read_byte && !op.dst.is_none()) {
+                            return false; /* dst without a read?? */
+                        }
+                        sl.adv_bytes = consumed / 8;
+                        sl.ensure_bytes = ensure / 8;
+                        if (sl.adv_bytes > 255) {
+                            return false;
+                        }
+                        sl.bs_block = bid;
+                        have_bs = true;
+                        break;
+                    }
+                    case T2LirKind::CmpLt:
+                    case T2LirKind::CmpGe:
+                    case T2LirKind::CmpEqExact:
+                    case T2LirKind::CmpNeExact:
+                    case T2LirKind::CmpEq:
+                    case T2LirKind::CmpNe: {
+                        /* Byte guards only: one side the byte's slot,
+                         * the other a constant in [0,255]; both edges
+                         * present; the byte must have been read. */
+                        uint32_t k;
+                        if (!sl.read_byte || op.num_srcs != 2 ||
+                            op.succ_then == T2_LIR_NO_BLOCK ||
+                            op.succ_else == T2_LIR_NO_BLOCK) {
+                            return false;
+                        }
+                        bool lhs_byte = !op.srcs[0].is_const &&
+                                        op.srcs[0].loc == sl.byte_slot &&
+                                        byte_const(op.srcs[1], &k);
+                        bool rhs_byte = !op.srcs[1].is_const &&
+                                        op.srcs[1].loc == sl.byte_slot &&
+                                        byte_const(op.srcs[0], &k);
+                        if (!lhs_byte && !rhs_byte) {
+                            return false;
+                        }
+                        if (!adv) {
+                            return false; /* guard before the read */
+                        }
+                        break;
+                    }
+                    case T2LirKind::Switch: {
+                        if (!sl.read_byte || op.imm != 0 ||
+                            op.srcs[0].is_const ||
+                            op.srcs[0].loc != sl.byte_slot || !adv) {
+                            return false;
+                        }
+                        for (uint32_t c = 0; c < op.num_cases; c++) {
+                            const T2LirSwitchCase &sc =
+                                    fn.switch_cases[op.first_case + c];
+                            if (!is_small(sc.value) ||
+                                signed_val(sc.value) < 0 ||
+                                signed_val(sc.value) > 255) {
+                                return false;
+                            }
+                        }
+                        break;
+                    }
+                    case T2LirKind::AddSmall:
+                    case T2LirKind::SubSmall: {
+                        /* The audited flag-checked emitter. Must not
+                         * write the context or byte slots. */
+                        if (op.dst == sl.ctx_slot ||
+                            (sl.read_byte && op.dst == sl.byte_slot) ||
+                            op.dst.is_phys() ||
+                            op.t1_pc_fail == nullptr) {
+                            return false;
+                        }
+                        for (uint8_t s = 0; s < op.num_srcs; s++) {
+                            if (!op.srcs[s].is_const &&
+                                op.srcs[s].loc.is_phys()) {
+                                return false;
+                            }
+                        }
+                        break;
+                    }
+                    case T2LirKind::Move:
+                        if (op.dst == sl.ctx_slot ||
+                            (sl.read_byte && op.dst == sl.byte_slot) ||
+                            op.dst.is_phys() ||
+                            (!op.srcs[0].is_const &&
+                             op.srcs[0].loc.is_phys())) {
+                            return false;
+                        }
+                        break;
+                    case T2LirKind::SpeculateSmall:
+                        /* load_source hints reach TMP4/TMP5: not
+                         * audited for the region registers. */
+                        return false;
+                    case T2LirKind::ReductionCheck:
+                        if (bid != sl.latch ||
+                            oi + 2 != b.ops.size() ||
+                            op.sync == nullptr) {
+                            return false;
+                        }
+                        break;
+                    case T2LirKind::Jump:
+                        if (op.succ_then != T2_LIR_NO_BLOCK &&
+                            !sl.in_region[op.succ_then] &&
+                            op.succ_then != sl.header) {
+                            return false;
+                        }
+                        break;
+                    default:
+                        return false;
+                    }
+
+                    if (op.kind == T2LirKind::BsMatch) {
+                        adv = true;
+                    }
+                }
+            }
+
+            if (!have_bs || sl.start_match == nullptr) {
+                return false;
+            }
+
+            /* Is the byte's canonical slot dead outside the region's
+             * byte guards? Then the tagged materialization can be
+             * skipped entirely. Conservative: any read of the slot by
+             * a non-guard op, any sync-map pin covering it, and any
+             * phi home on it keep it alive. */
+            if (sl.read_byte) {
+                bool dead = true;
+                auto sync_covers = [&](const T2SyncMap *m) {
+                    if (m == nullptr) {
+                        return false;
+                    }
+                    if (sl.byte_slot.is_xreg()) {
+                        return (uint32_t)sl.byte_slot.num < m->x_live;
+                    }
+                    return m->frame_size != T2_NO_FRAME &&
+                           (int32_t)sl.byte_slot.num < m->frame_size;
+                };
+
+                if (sync_covers(fn.entry_sync)) {
+                    dead = false;
+                }
+                for (const T2LirBlock &b : fn.blocks) {
+                    for (const T2LirPhi &phi : b.phis) {
+                        if (phi.home == sl.byte_slot) {
+                            dead = false;
+                        }
+                    }
+                    for (const T2LirOp &op : b.ops) {
+                        if (sync_covers(op.sync)) {
+                            dead = false;
+                        }
+                        bool is_region_guard =
+                                sl.in_region[b.id] &&
+                                (op.kind == T2LirKind::CmpLt ||
+                                 op.kind == T2LirKind::CmpGe ||
+                                 op.kind == T2LirKind::CmpEqExact ||
+                                 op.kind == T2LirKind::CmpNeExact ||
+                                 op.kind == T2LirKind::CmpEq ||
+                                 op.kind == T2LirKind::CmpNe ||
+                                 op.kind == T2LirKind::Switch);
+                        if (is_region_guard) {
+                            continue; /* reads via the byte register */
+                        }
+                        for (uint8_t s = 0; s < op.num_srcs; s++) {
+                            if (!op.srcs[s].is_const &&
+                                op.srcs[s].loc == sl.byte_slot) {
+                                dead = false;
+                            }
+                        }
+                        for (uint32_t s = 0; s < op.num_srcs_ext; s++) {
+                            const T2LirSrc &ps =
+                                    fn.src_pool[op.pool_first + s];
+                            if (!ps.is_const && ps.loc == sl.byte_slot) {
+                                dead = false;
+                            }
+                        }
+                    }
+                }
+                sl.byte_dead = dead;
+            }
+
+            return true;
+        }
+
+        /* The false-edge branch for a byte guard: cmp SCAN_BYTE, #k has
+         * run; branch to `to` when the guard is false. */
+        void emit_scan_guard_false(T2LirKind kind,
+                                   bool byte_is_lhs,
+                                   const Label &to) {
+            switch (kind) {
+            case T2LirKind::CmpLt:
+                if (byte_is_lhs) {
+                    a.b_hs(to); /* !(B < k)  <=> B >= k */
+                } else {
+                    a.b_ls(to); /* !(k < B)  <=> B <= k */
+                }
+                break;
+            case T2LirKind::CmpGe:
+                if (byte_is_lhs) {
+                    a.b_lo(to); /* !(B >= k) <=> B < k  */
+                } else {
+                    a.b_hi(to); /* !(k >= B) <=> B > k  */
+                }
+                break;
+            case T2LirKind::CmpEqExact:
+            case T2LirKind::CmpEq:
+                a.b_ne(to);
+                break;
+            case T2LirKind::CmpNeExact:
+            case T2LirKind::CmpNe:
+                a.b_eq(to);
+                break;
+            default:
+                fail("unexpected byte-guard kind");
+                break;
+            }
+        }
+
+        /* Exit thunk: restore ErlSubBits.start (the deferred position)
+         * and continue at the out-of-region block. */
+        Label scan_exit_label(ScanLoop &sl, uint32_t target, bool advanced) {
+            for (auto &e : sl.exit_thunks) {
+                if (e.first == ScanExitKey{target, advanced}) {
+                    return e.second;
+                }
+            }
+            sl.exit_thunks.push_back(
+                    {ScanExitKey{target, advanced}, a.new_label()});
+            return sl.exit_thunks.back().second;
+        }
+
+        /* Write-back deopt trampoline (in-region speculative ops).
+         * Only un-commit-free trampolines are shared. */
+        Label scan_wb_label(ScanLoop &sl, const void *t1_pc, bool advanced) {
+            for (auto &t : sl.wb_tramps) {
+                if (t.t1_pc == t1_pc && t.advanced == advanced &&
+                    t.uncommit_slot.is_none()) {
+                    return t.label;
+                }
+            }
+            sl.wb_tramps.push_back(
+                    ScanLoop::WbTramp{t1_pc, advanced, a.new_label()});
+            return sl.wb_tramps.back().label;
+        }
+
+        /* ErlSubBits.start := ((SCAN_PTR - SCAN_BASE) + adv?) << 3.
+         * Uses TMP1..TMP3; the context term is read from its slot. */
+        void emit_scan_writeback(const ScanLoop &sl, bool advanced) {
+            a.sub(TMP1, SCAN_PTR, SCAN_BASE);
+            if (advanced) {
+                a.add(TMP1, TMP1, imm(sl.adv_bytes));
+            }
+            a.lsl(TMP1, TMP1, imm(3));
+            mov_arg(TMP2, ArgVal(ArgVal::Type::XReg, sl.ctx_slot.num));
+            emit_untag_ptr(TMP3, TMP2);
+            a.str(TMP1, a64::Mem(TMP3, offsetof(ErlSubBits, start)));
+        }
+
+        /* Single-op byte-guard block: the op, or null. */
+        const T2LirOp *scan_lone_guard(uint32_t bid) {
+            const T2LirBlock &b = fn.blocks[bid];
+
+            if (b.ops.size() != 1) {
+                return nullptr;
+            }
+            switch (b.ops[0].kind) {
+            case T2LirKind::CmpLt:
+            case T2LirKind::CmpGe:
+            case T2LirKind::CmpEqExact:
+            case T2LirKind::CmpNeExact:
+            case T2LirKind::CmpEq:
+            case T2LirKind::CmpNe:
+                return &b.ops[0];
+            default:
+                return nullptr;
+            }
+        }
+
+        void emit_scan_region(ScanLoop &sl) {
+            sl.emitted = true;
+
+            for (size_t ci = 0; ci < sl.blocks.size(); ci++) {
+                const T2LirBlock &b = fn.blocks[sl.blocks[ci]];
+
+                reg_cache.invalidate();
+                check_pending_stubs();
+                bind_veneer_target(block_label(b.id));
+                cur_block = &b;
+                /* Fall-through elision follows the *chain*, not the
+                 * layout: the next emitted block is the next chain
+                 * block (the back edge to the header always branches). */
+                next_block_id = ci + 1 < sl.blocks.size()
+                                        ? sl.blocks[ci + 1]
+                                        : T2_LIR_NO_BLOCK;
+                cur_scan_adv = sl.adv_in[b.id];
+
+                /* Range fusion: two adjacent lone byte guards forming
+                 * `lo =< B` then `B =< hi` with one shared exit fold
+                 * into `(B - lo) <=u (hi - lo)` — one branch. */
+                if (ci + 1 < sl.blocks.size()) {
+                    const T2LirOp *g1 = scan_lone_guard(sl.blocks[ci]);
+                    const T2LirOp *g2 = scan_lone_guard(sl.blocks[ci + 1]);
+                    uint32_t lo, hi;
+
+                    if (g1 != nullptr && g2 != nullptr &&
+                        g1->kind == T2LirKind::CmpGe &&
+                        g2->kind == T2LirKind::CmpGe &&
+                        !g1->srcs[0].is_const &&
+                        g1->srcs[0].loc == sl.byte_slot &&
+                        byte_const(g1->srcs[1], &lo) &&
+                        !g2->srcs[1].is_const &&
+                        g2->srcs[1].loc == sl.byte_slot &&
+                        byte_const(g2->srcs[0], &hi) && lo <= hi &&
+                        g1->succ_else == g2->succ_else &&
+                        !sl.in_region[g1->succ_else] &&
+                        g1->succ_then == sl.blocks[ci + 1]) {
+                        comment("T2 fused scan: range guard %u..%u",
+                                lo,
+                                hi);
+                        bind_veneer_target(
+                                block_label(sl.blocks[ci + 1]));
+                        if (lo != 0) {
+                            a.sub(TMP1, SCAN_BYTE, imm(lo));
+                            a.cmp(TMP1, imm(hi - lo));
+                        } else {
+                            a.cmp(SCAN_BYTE, imm(hi));
+                        }
+                        a.b_hi(scan_exit_label(sl,
+                                               g1->succ_else,
+                                               cur_scan_adv));
+                        ci++; /* consumed both blocks */
+                        next_block_id = ci + 1 < sl.blocks.size()
+                                                ? sl.blocks[ci + 1]
+                                                : T2_LIR_NO_BLOCK;
+                        emit_goto(g2->succ_then);
+                        continue;
+                    }
+                }
+
+                for (size_t oi = 0; oi < b.ops.size(); oi++) {
+                    if (failed()) {
+                        return;
+                    }
+                    cur_op_idx = oi;
+                    emit_scan_op(sl, b, b.ops[oi]);
+                }
+            }
+        }
+
+        void emit_scan_op(ScanLoop &sl,
+                          const T2LirBlock &b,
+                          const T2LirOp &op) {
+            switch (op.kind) {
+            case T2LirKind::StartMatch: {
+                /* Hot path: the fast is-a-match-context check only;
+                 * src == dst, so nothing moves. The slow path (fresh
+                 * binary: allocate a context, may GC) runs the full
+                 * reused T1 emitter in a cold stub and rejoins at the
+                 * reload. Entered only through the block label —
+                 * entry and yield-resume — where the context's start
+                 * field is coherent by the write-back contract. */
+                comment("T2 fused scan: start_match fast check");
+                mov_arg(TMP1, ArgVal(ArgVal::Type::XReg, sl.ctx_slot.num));
+                /* Non-boxed terms must not be dereferenced: the cold
+                 * slow path re-runs the full T1 emitter, whose own
+                 * boxed test routes them to the decoded fail edge. */
+                emit_is_boxed(sl.cold_start, TMP1);
+                emit_untag_ptr(TMP1, TMP1);
+                ERTS_CT_ASSERT_FIELD_PAIR(ErlSubBits, thing_word, base_flags);
+                a.ldp(TMP2, TMP3, a64::Mem(TMP1));
+                ERTS_CT_ASSERT((HEADER_SUB_BITS & _TAG_PRIMARY_MASK) == 0 &&
+                               (ERL_SUB_BITS_FLAG_MASK == _TAG_PRIMARY_MASK));
+                a.bfi(TMP2, TMP3, imm(0), imm(2));
+                a.cmp(TMP2,
+                      imm(HEADER_SUB_BITS |
+                          ERL_SUB_BITS_FLAGS_MATCH_CONTEXT));
+                a.b_ne(sl.cold_start);
+
+                /* Reload: hoist position/end/base as byte pointers.
+                 * A bit-offset (unaligned) context demotes the whole
+                 * invocation to the T1 body — the fresh-call window
+                 * contract at the header. */
+                a.bind(sl.reload);
+                comment("T2 fused scan: reload ptr/lim/base");
+                reg_cache.invalidate();
+                mov_arg(TMP1, ArgVal(ArgVal::Type::XReg, sl.ctx_slot.num));
+                emit_untag_ptr(TMP1, TMP1);
+                ERTS_CT_ASSERT_FIELD_PAIR(ErlSubBits, start, end);
+                a.ldp(TMP2, TMP3, a64::Mem(TMP1, offsetof(ErlSubBits, start)));
+                a.tst(TMP2, imm(7));
+                a.b_ne(sl.unaligned);
+                a.ldr(SCAN_BASE,
+                      a64::Mem(TMP1, offsetof(ErlSubBits, base_flags)));
+                a.and_(SCAN_BASE,
+                       SCAN_BASE,
+                       imm(~(Uint64)ERL_SUB_BITS_FLAG_MASK));
+                a.add(SCAN_PTR, SCAN_BASE, TMP2, a64::lsr(3));
+                a.add(SCAN_LIM, SCAN_BASE, TMP3, a64::lsr(3));
+
+                a.bind(sl.scan_resume);
+                if (op.succ_then != T2_LIR_NO_BLOCK) {
+                    /* Folded StartMatch: continue on the success edge
+                     * (the fail edge is fully covered by the cold slow
+                     * path's own emitter). */
+                    emit_goto(op.succ_then);
+                }
+                break;
+            }
+
+            case T2LirKind::BsMatch: {
+                comment("T2 fused scan: ensure %u + read", sl.ensure_bytes);
+                Label fail_thunk = scan_exit_label(sl, op.succ_else, false);
+
+                if (sl.ensure_bytes == 1) {
+                    a.cmp(SCAN_PTR, SCAN_LIM);
+                    a.b_hs(fail_thunk);
+                } else {
+                    a.add(TMP1, SCAN_PTR, imm(sl.ensure_bytes));
+                    a.cmp(TMP1, SCAN_LIM);
+                    a.b_hi(fail_thunk);
+                }
+                if (sl.rotated) {
+                    /* The rotated back edge re-checks the bound itself
+                     * and lands here, past the check above. */
+                    a.bind(sl.scan_body);
+                }
+                if (sl.read_byte) {
+                    a.ldrb(SCAN_BYTE.w(), a64::Mem(SCAN_PTR));
+                    if (!sl.byte_dead) {
+                        /* Materialize the tagged byte in its canonical
+                         * slot: everything outside the fused emitters
+                         * (sync maps, exit blocks, arithmetic) reads
+                         * the slot, exactly as in the 1:1 emission.
+                         * Skipped when the slot is provably dead
+                         * outside the region's own byte guards. */
+                        ERTS_CT_ASSERT(_TAG_IMMED1_SMALL ==
+                                       _TAG_IMMED1_MASK);
+                        a.lsl(TMP1, SCAN_BYTE, imm(_TAG_IMMED1_SIZE));
+                        a.orr(TMP1, TMP1, imm(_TAG_IMMED1_SMALL));
+                        mov_arg(loc_argval(op.dst), TMP1);
+                    }
+                }
+                cur_scan_adv = true;
+                if (op.succ_then != T2_LIR_NO_BLOCK) {
+                    emit_goto(op.succ_then);
+                }
+                break;
+            }
+
+            case T2LirKind::CmpLt:
+            case T2LirKind::CmpGe:
+            case T2LirKind::CmpEqExact:
+            case T2LirKind::CmpNeExact:
+            case T2LirKind::CmpEq:
+            case T2LirKind::CmpNe: {
+                bool byte_lhs = !op.srcs[0].is_const &&
+                                op.srcs[0].loc == sl.byte_slot;
+                uint32_t k = 0;
+
+                byte_const(op.srcs[byte_lhs ? 1 : 0], &k);
+                a.cmp(SCAN_BYTE, imm(k));
+
+                Label to = sl.in_region[op.succ_else]
+                                   ? block_label(op.succ_else)
+                                   : scan_exit_label(sl,
+                                                     op.succ_else,
+                                                     cur_scan_adv);
+                emit_scan_guard_false(op.kind, byte_lhs, to);
+                if (failed()) {
+                    return;
+                }
+                if (sl.in_region[op.succ_then]) {
+                    emit_goto(op.succ_then);
+                } else {
+                    a.b(scan_exit_label(sl, op.succ_then, cur_scan_adv));
+                    mark_unreachable();
+                }
+                break;
+            }
+
+            case T2LirKind::Switch: {
+                if (op.num_cases == 2 &&
+                    fn.switch_cases[op.first_case].target ==
+                            fn.switch_cases[op.first_case + 1].target &&
+                    !sl.in_region[fn.switch_cases[op.first_case].target]) {
+                    /* Two not-equal cases to one exit: cmp + ccmp +
+                     * one branch. When the first compare misses, ccmp
+                     * compares against the second value; when it
+                     * hits, ccmp forces Z so the b.eq is taken. */
+                    const T2LirSwitchCase &c0 =
+                            fn.switch_cases[op.first_case];
+                    const T2LirSwitchCase &c1 =
+                            fn.switch_cases[op.first_case + 1];
+
+                    uint32_t k0 = (uint32_t)signed_val(c0.value);
+                    uint32_t k1 = (uint32_t)signed_val(c1.value);
+
+                    a.cmp(SCAN_BYTE, imm(k0));
+                    if (k1 <= 31) {
+                        /* ccmp's immediate form is 5 bits only. */
+                        a.ccmp(SCAN_BYTE,
+                               imm(k1),
+                               imm(NZCV::kEqual),
+                               imm(arm::CondCode::kNE));
+                    } else {
+                        mov_imm(TMP1, k1);
+                        a.ccmp(SCAN_BYTE,
+                               TMP1,
+                               imm(NZCV::kEqual),
+                               imm(arm::CondCode::kNE));
+                    }
+                    a.b_eq(scan_exit_label(sl, c0.target, cur_scan_adv));
+                    if (sl.in_region[op.default_target]) {
+                        emit_goto(op.default_target);
+                    } else {
+                        a.b(scan_exit_label(sl,
+                                            op.default_target,
+                                            cur_scan_adv));
+                        mark_unreachable();
+                    }
+                    break;
+                }
+                for (uint32_t c = 0; c < op.num_cases; c++) {
+                    const T2LirSwitchCase &sc =
+                            fn.switch_cases[op.first_case + c];
+
+                    a.cmp(SCAN_BYTE, imm((uint32_t)signed_val(sc.value)));
+                    if (sl.in_region[sc.target]) {
+                        a.b_eq(block_label(sc.target));
+                    } else {
+                        a.b_eq(scan_exit_label(sl,
+                                               sc.target,
+                                               cur_scan_adv));
+                    }
+                }
+                if (sl.in_region[op.default_target]) {
+                    emit_goto(op.default_target);
+                } else {
+                    a.b(scan_exit_label(sl,
+                                        op.default_target,
+                                        cur_scan_adv));
+                    mark_unreachable();
+                }
+                break;
+            }
+
+            case T2LirKind::AddSmall:
+            case T2LirKind::SubSmall: {
+                /* Window shape (no sync): re-executes the iteration —
+                 * the position write-back must be the iteration-start
+                 * value. Boundary shape (sync map kept): re-executes
+                 * just this op — the T1-true position at this point. */
+                bool is_add = op.kind == T2LirKind::AddSmall;
+                bool adv = op.sync != nullptr && cur_scan_adv;
+
+                /* Direct-commit form for the loop accumulator: dst ==
+                 * lhs slot, small-constant rhs, register-backed X —
+                 * `adds xN, xN, #k` makes the loop-carried dependency
+                 * one cycle instead of scratch-then-commit's two. On
+                 * overflow the register holds the wrapped sum; the
+                 * trampoline un-commits it exactly (two's complement)
+                 * before the write-back + T1 re-execution. */
+                if (!op.srcs[0].is_const && op.srcs[0].loc == op.dst &&
+                    op.srcs[1].is_const && op.dst.is_xreg() &&
+                    op.dst.num < num_register_backed_xregs) {
+                    Uint64 cleared = (Uint64)op.srcs[1].term &
+                                     ~(Uint64)_TAG_IMMED1_MASK;
+
+                    if (cleared <= 0xFFF) {
+                        a64::Gp dstreg = register_backed_xregs[op.dst.num];
+                        ScanLoop::WbTramp t;
+
+                        t.t1_pc = op.t1_pc_fail;
+                        t.advanced = adv;
+                        t.label = a.new_label();
+                        t.uncommit_slot = op.dst;
+                        t.uncommit_imm = cleared;
+                        t.uncommit_add = is_add;
+                        sl.wb_tramps.push_back(t);
+
+                        comment("T2 fused scan: direct %s small",
+                                is_add ? "add" : "sub");
+                        if (is_add) {
+                            a.adds(dstreg, dstreg, imm(cleared));
+                        } else {
+                            a.subs(dstreg, dstreg, imm(cleared));
+                        }
+                        a.b_vs(sl.wb_tramps.back().label);
+                        break;
+                    }
+                }
+
+                Label deopt = scan_wb_label(sl, op.t1_pc_fail, adv);
+
+                emit_lir_addsub_small(op, &deopt);
+                break;
+            }
+
+            case T2LirKind::Move:
+                emit_lir_move(op);
+                break;
+
+            case T2LirKind::ReductionCheck:
+                emit_scan_reduction_check(sl, op);
+                break;
+
+            case T2LirKind::Jump:
+                if (op.succ_then == sl.header) {
+                    if (!sl.rotated) {
+                        /* The hot back edge: skip the per-entry check
+                         * + reload. */
+                        a.b(sl.scan_resume);
+                    }
+                    /* Rotated loops branched from the reduction check
+                     * already. */
+                    mark_unreachable();
+                } else {
+                    emit_goto(op.succ_then);
+                }
+                break;
+
+            default:
+                fail("unadmitted op reached the fused scan emitter");
+                break;
+            }
+        }
+
+        /* The fused loop's back edge: advance the byte pointer, charge
+         * reductions, yield through a write-back resume stub. */
+        void emit_scan_reduction_check(ScanLoop &sl, const T2LirOp &op) {
+            if (install_entry == nullptr || op.target != install_entry) {
+                fail("fused scan back-edge outside install mode");
+                return;
+            }
+
+            fact(EmitFact::BackEdgeDemote, op.beam_idx, op.target);
+            reg_cache.invalidate();
+
+            if (erts_alcu_enable_code_atags) {
+                mov_imm(ARG3, (Uint64)op.target);
+                a.str(ARG3, a64::Mem(c_p, offsetof(Process, i)));
+            }
+
+            a.add(SCAN_PTR, SCAN_PTR, imm(sl.adv_bytes));
+
+            ResumeStub st;
+
+            st.yield = a.new_label();
+            st.anchor = a.new_label();
+            st.resume = a.new_label();
+            st.header = block_label(sl.header);
+            st.demote = (const void *)((const char *)op.target +
+                                       erts_t2_test_yield_return_offset());
+            st.beam_idx = op.beam_idx;
+            st.scan = cur_scan;
+            resume_stubs.push_back(st);
+
+            ASSERT(op.imm >= 1 && op.imm < 4096);
+            a.subs(FCALLS, FCALLS, imm(op.imm));
+            a.b_le(resume_stubs.back().yield);
+
+            if (sl.rotated) {
+                /* Rotated back edge: re-check the bound here and jump
+                 * straight to the post-ensure body — one conditional
+                 * taken branch per iteration. The fall-through is the
+                 * end-of-input exit (position raw = the next
+                 * iteration's start, i.e. the unadvanced thunk). */
+                const T2LirOp &bs = fn.blocks[sl.bs_block].ops[0];
+                Label fail_thunk =
+                        scan_exit_label(sl, bs.succ_else, false);
+
+                if (sl.ensure_bytes == 1) {
+                    a.cmp(SCAN_PTR, SCAN_LIM);
+                    a.b_lo(sl.scan_body);
+                } else {
+                    a.add(TMP1, SCAN_PTR, imm(sl.ensure_bytes));
+                    a.cmp(TMP1, SCAN_LIM);
+                    a.b_ls(sl.scan_body);
+                }
+                a.b(fail_thunk);
+                mark_unreachable();
+            }
+            /* Otherwise fall through to the back-jump (b scan_resume). */
+        }
+
+        /* Cold region continuations: exit thunks, write-back deopt
+         * trampolines, the unaligned demote and the StartMatch slow
+         * path. */
+        void emit_scan_cold() {
+            for (ScanLoop &sl : scan_loops) {
+                if (failed()) {
+                    return;
+                }
+
+                for (auto &e : sl.exit_thunks) {
+                    reg_cache.invalidate();
+                    a.bind(e.second);
+                    comment("T2 fused scan: exit thunk (adv=%d)",
+                            (int)e.first.advanced);
+                    emit_scan_writeback(sl, e.first.advanced);
+                    a.b(block_label(e.first.target));
+                    mark_unreachable();
+                }
+
+                for (auto &t : sl.wb_tramps) {
+                    reg_cache.invalidate();
+                    a.bind(t.label);
+                    comment("T2 fused scan: write-back deopt (adv=%d)",
+                            (int)t.advanced);
+                    if (!t.uncommit_slot.is_none()) {
+                        /* Un-commit the direct flag-checked write:
+                         * the wrapped sum minus/plus the addend is
+                         * the exact original (two's complement). */
+                        a64::Gp r = register_backed_xregs
+                                [t.uncommit_slot.num];
+
+                        if (t.uncommit_add) {
+                            a.sub(r, r, imm(t.uncommit_imm));
+                        } else {
+                            a.add(r, r, imm(t.uncommit_imm));
+                        }
+                    }
+                    emit_scan_writeback(sl, t.advanced);
+                    fact(EmitFact::SpecDeoptPc, 0, t.t1_pc);
+                    mov_imm(TMP1, (Uint64)t.t1_pc);
+                    a.br(TMP1);
+                    mark_unreachable();
+                }
+
+                {
+                    /* Unaligned (bit-offset) context: demote the whole
+                     * invocation to the T1 body — the header state is
+                     * exactly the fresh-call vector, and the position
+                     * field is coherent on every header entry path. */
+                    reg_cache.invalidate();
+                    a.bind(sl.unaligned);
+                    comment("T2 fused scan: unaligned context demote");
+                    mov_imm(TMP1,
+                            (Uint64)install_entry +
+                                    erts_t2_test_yield_return_offset());
+                    a.br(TMP1);
+                    mark_unreachable();
+                }
+
+                {
+                    /* StartMatch slow path: the full reused T1
+                     * emitter (allocates the context; may GC — the
+                     * op's sync contract, canonical state holds
+                     * here), then rejoin at the reload. */
+                    const T2LirOp &sm = *sl.start_match;
+
+                    reg_cache.invalidate();
+                    a.bind(sl.cold_start);
+                    comment("T2 fused scan: start_match slow path");
+
+                    unsigned fail_num =
+                            sm.succ_else != T2_LIR_NO_BLOCK
+                                    ? 1 + sm.succ_else
+                                    : 0;
+                    emit_i_bs_start_match3(
+                            ArgRegister(src_argval(sm.srcs[0])),
+                            ArgWord(sm.live),
+                            ArgLabel(ArgVal(ArgVal::Type::Label,
+                                            fail_num)),
+                            ArgRegister(loc_argval(sm.dst)));
+                    a.b(sl.reload);
+                    mark_unreachable();
+                }
             }
         }
 

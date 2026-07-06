@@ -81,6 +81,8 @@
 
 /* The C retention struct (jit/t2/t2_retain.h); only used by pointer here. */
 struct ErtsT2RetainedCode;
+/* The decoded bs_match command struct (jit/t2/t2_retain.h). */
+struct ErtsT2BsCmd;
 
 namespace erts_t2 {
 
@@ -174,6 +176,28 @@ namespace erts_t2 {
 
         /* Maps (reserved for Phase B) */
         GetMapElement,
+
+        /* The byte-aligned binary scan subset (P2 commit 7;
+         * PLAN/T2FULL/09 §7). StartMatch creates/validates a match
+         * context (bs_start_match3: may GC — sync point; result
+         * written on the success edge only). BsMatch carries the
+         * decoded byte-aligned command subset (bs_cmds/num_bs_cmds;
+         * see ErtsT2BsCmd in t2_retain.h) over a context operand; at
+         * most one command produces a value (the op result). It
+         * advances the context's position — a heap-object mutation,
+         * so it dirties re-execution windows — and is a sync point
+         * only when its commands need heap (imm_int = heap words;
+         * get_tail). BsGetTail builds the tail sub-bitstring (GC —
+         * sync point). BsTestTail is a pure size guard. The match
+         * context itself stays whole in its canonical slot at every
+         * sync point (GC-visible); only the fused scan-loop emitter
+         * (t2_emit.cpp) registerizes position/end between sync
+         * points, restoring the context's start field on every path
+         * out of the fused region. */
+        StartMatch,
+        BsMatch,
+        BsGetTail,
+        BsTestTail,
 
         /* Funs and calls */
         Call,
@@ -472,6 +496,13 @@ namespace erts_t2 {
 
         /* Phi incoming edges, parallel to `operands` (Phi only). */
         T2BasicBlock **phi_blocks;
+
+        /* Decoded bs_match command subset (BsMatch only; arena array).
+         * The struct is the C parser's output (ErtsT2BsCmd,
+         * t2_retain.h) with dst_arg resolved away — the single
+         * destination command's home is the op's dst_reg. */
+        const struct ::ErtsT2BsCmd *bs_cmds;
+        uint16_t num_bs_cmds;
 
         /* Reserved for rung-2 deopt (P3). Always null in P0. */
         T2FrameState *fs;

@@ -71,6 +71,7 @@ extern "C"
 #include "erl_alloc.h"
 #include "erl_vm.h"
 #include "erl_message.h"
+#include "erl_bits.h"
 #include "beam_file.h"
 #include "beam_opcodes.h"
 
@@ -174,6 +175,19 @@ namespace erts_t2 {
                 }
             }
         };
+
+        /* Literal resolver for erts_t2_bs_match_check at build time:
+         * static literals resolve through the retained literal_map
+         * (alive as long as the module); dynamic literals cannot be a
+         * flags list, so a negative index rejects. */
+        Eterm builder_bs_lit(void *env, SWord idx) {
+            const ErtsT2RetainedCode *ret = (const ErtsT2RetainedCode *)env;
+
+            if (idx >= 0 && idx < ret->literal_count) {
+                return ret->literal_map[idx];
+            }
+            return THE_NON_VALUE;
+        }
 
         bool decode_module(const ErtsT2RetainedCode *ret,
                            ModuleDecode &md,
@@ -1585,6 +1599,181 @@ namespace erts_t2 {
             case genop_if_end_0:
                 translate_error_exit(dop, false);
                 break;
+
+            /* --- the byte-aligned binary scan subset (P2 commit 7) --- */
+
+            case genop_bs_start_match3_4: {
+                /* Fail Bin Live Dst. May GC (fresh context): sync
+                 * point with the decoded Live. The destination is
+                 * written on the success edge only (T1 branches to
+                 * Fail before the write), which the Succeeded/Branch
+                 * shape below models exactly like a gc_bif. */
+                const DecodedArg &fail = dop.args[0];
+                SrcVal src = read_arg_r(dop.args[1]);
+                UWord live = dop.args[2].val;
+
+                if (src.v == nullptr) {
+                    return;
+                }
+                if (fail.type != TAG_f && fail.type != TAG_p) {
+                    fail_op(dop, "unexpected bs_start_match3 fail tag");
+                    return;
+                }
+
+                T2Value *v = emit_result_op(T2OpKind::StartMatch,
+                                            {src},
+                                            T2Type::of(BEAM_TYPE_BITSTRING));
+                if (v == nullptr) {
+                    return;
+                }
+                v->def->live = (uint32_t)live;
+                v->def->sync = snapshot_sync((uint32_t)live);
+
+                if (fail.type == TAG_f) {
+                    T2Value *ok = emit_result_op(T2OpKind::Succeeded,
+                                                 {SrcVal{v, T2_REG_NONE}},
+                                                 bool_type());
+                    guard_branch(ok, fail);
+                }
+                write_dst_new(dop.args[3], v);
+                break;
+            }
+
+            case genop_bs_match_3: {
+                /* Fail Ctx N Cmds... — the eligibility scan admitted
+                 * only the byte-aligned subset; re-parse through the
+                 * same shared checker (single source of truth), so a
+                 * mismatch here is scan/builder drift. */
+                const DecodedArg &fail = dop.args[0];
+                UWord types[64], vals[64];
+                ErtsT2BsCmd cmds[ERTS_T2_BS_MAX_CMDS];
+                int dsts = 0;
+
+                if (dop.args.size() > 64) {
+                    fail_op(dop, "oversized bs_match");
+                    return;
+                }
+                for (size_t i = 0; i < dop.args.size(); i++) {
+                    types[i] = dop.args[i].type;
+                    vals[i] = dop.args[i].val;
+                }
+
+                int ncmds = erts_t2_bs_match_check(types,
+                                                   vals,
+                                                   3,
+                                                   (int)dop.args.size(),
+                                                   builder_bs_lit,
+                                                   (void *)ret,
+                                                   cmds,
+                                                   &dsts);
+                if (ncmds < 0) {
+                    fail_op(dop,
+                            "bs_match outside the byte-aligned subset "
+                            "(eligibility/builder drift)");
+                    return;
+                }
+                if (fail.type != TAG_f) {
+                    fail_op(dop, "unexpected bs_match fail tag");
+                    return;
+                }
+
+                SrcVal ctx = read_arg_r(dop.args[1]);
+
+                if (ctx.v == nullptr) {
+                    return;
+                }
+
+                Sint64 heap = 0;
+                uint32_t live = 0;
+                int dst_arg = -1;
+                T2Type ty = T2Type::any();
+
+                for (int i = 0; i < ncmds; i++) {
+                    switch (cmds[i].kind) {
+                    case ERTS_T2_BS_READ_INT8:
+                        live = std::max(live, (uint32_t)cmds[i].live);
+                        dst_arg = cmds[i].dst_arg;
+                        ty = T2Type::integer(0, 255);
+                        break;
+                    case ERTS_T2_BS_GET_TAIL:
+                        heap += BUILD_SUB_BITSTRING_HEAP_NEED;
+                        live = std::max(live, (uint32_t)cmds[i].live);
+                        dst_arg = cmds[i].dst_arg;
+                        ty = T2Type::of(BEAM_TYPE_BITSTRING);
+                        break;
+                    default:
+                        break;
+                    }
+                }
+
+                T2Value *v = emit_result_op(T2OpKind::BsMatch, {ctx}, ty);
+
+                if (v == nullptr) {
+                    return;
+                }
+
+                T2Op *op = v->def;
+                ErtsT2BsCmd *ac =
+                        fn->arena.alloc_array<ErtsT2BsCmd>((size_t)ncmds);
+
+                sys_memcpy(ac, cmds, sizeof(ErtsT2BsCmd) * (size_t)ncmds);
+                op->bs_cmds = ac;
+                op->num_bs_cmds = (uint16_t)ncmds;
+                op->live = live;
+                op->imm_int = heap;
+                if (heap != 0) {
+                    /* The reused T1 emitter inserts an internal
+                     * TEST_HEAP with this live count; X/Y state at
+                     * that point equals the op boundary (nothing is
+                     * written before it). */
+                    op->sync = snapshot_sync(live);
+                }
+
+                T2Value *ok = emit_result_op(T2OpKind::Succeeded,
+                                             {SrcVal{v, T2_REG_NONE}},
+                                             bool_type());
+                guard_branch(ok, fail);
+
+                if (dst_arg >= 0) {
+                    write_dst_new(dop.args[dst_arg], v);
+                }
+                break;
+            }
+
+            case genop_bs_get_tail_3: {
+                /* Ctx Dst Live. Allocates the tail sub-bitstring:
+                 * GC with the decoded Live; no fail edge. */
+                SrcVal ctx = read_arg_r(dop.args[0]);
+                UWord live = dop.args[2].val;
+
+                if (ctx.v == nullptr) {
+                    return;
+                }
+
+                T2Value *v = emit_result_op(T2OpKind::BsGetTail,
+                                            {ctx},
+                                            T2Type::of(BEAM_TYPE_BITSTRING));
+                if (v == nullptr) {
+                    return;
+                }
+                v->def->live = (uint32_t)live;
+                v->def->sync = snapshot_sync((uint32_t)live);
+                write_dst_new(dop.args[1], v);
+                break;
+            }
+
+            case genop_bs_test_tail2_3: {
+                /* Fail Ctx Bits — a pure size guard. */
+                T2Value *v = emit_result_op(T2OpKind::BsTestTail,
+                                            {read_arg_r(dop.args[1])},
+                                            bool_type());
+
+                if (v != nullptr) {
+                    v->def->index = (uint32_t)dop.args[2].val;
+                }
+                guard_branch(v, dop.args[0]);
+                break;
+            }
 
             default:
                 /* Drift between the eligibility table and this builder. */

@@ -103,22 +103,11 @@ namespace erts_t2 {
         }
 
         /* Does executing `op` end the clean prefix of an iteration —
-         * i.e. make a window-shaped deopt AFTER it illegal? Anything
-         * that performs an effect, moves the frame, disturbs the
-         * fresh-call vector in X0..arity-1, or lets a GC run that does
-         * not preserve that whole vector. */
+         * i.e. make a window-shaped deopt AFTER it illegal? The shared
+         * classifier (t2_loop.cpp) is the single source of truth so
+         * this pass and the window validator can never drift. */
         bool op_dirties_window(const T2Op *op, uint32_t arity) {
-            if (op_is_effect_boundary(op) || op_is_frame_op(op)) {
-                return true;
-            }
-            if (op->kind == T2OpKind::GcTest && op->live < arity) {
-                return true;
-            }
-            if (op->dst_reg != T2_REG_NONE && t2_reg_is_x(op->dst_reg) &&
-                t2_reg_index(op->dst_reg) < arity) {
-                return true;
-            }
-            return false;
+            return t2_op_dirties_window(op, arity);
         }
 
         /* Resolve an SSA value through identity chains: Copy ops and

@@ -169,6 +169,14 @@ namespace erts_t2 {
             return "get_tl";
         case T2OpKind::GetMapElement:
             return "get_map_element";
+        case T2OpKind::StartMatch:
+            return "start_match";
+        case T2OpKind::BsMatch:
+            return "bs_match";
+        case T2OpKind::BsGetTail:
+            return "bs_get_tail";
+        case T2OpKind::BsTestTail:
+            return "bs_test_tail";
         case T2OpKind::Call:
             return "call";
         case T2OpKind::CallExt:
@@ -290,6 +298,10 @@ namespace erts_t2 {
         case T2OpKind::GetHd:
         case T2OpKind::GetTl:
         case T2OpKind::GetMapElement:
+        case T2OpKind::StartMatch:
+        case T2OpKind::BsMatch:
+        case T2OpKind::BsGetTail:
+        case T2OpKind::BsTestTail:
         case T2OpKind::Call:
         case T2OpKind::CallExt:
         case T2OpKind::CallFun:
@@ -1025,7 +1037,16 @@ namespace erts_t2 {
                  * (t2_loop.cpp): the map is the fresh-call argument
                  * vector the demote path re-enters T1 with. */
                 case T2OpKind::ReductionCheck:
+                /* bs_start_match3 may allocate a fresh context (GC);
+                 * bs_get_tail allocates the tail sub-bitstring. */
+                case T2OpKind::StartMatch:
+                case T2OpKind::BsGetTail:
                     return true;
+                case T2OpKind::BsMatch:
+                    /* A sync point only when its command list needs
+                     * heap (imm_int = heap words; the internal
+                     * TEST_HEAP the reused T1 emitter inserts). */
+                    return op->imm_int != 0;
                 case T2OpKind::TailCall:
                 case T2OpKind::TailCallExt:
                     /* Error exits (frame-polymorphic raise blocks) and

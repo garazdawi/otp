@@ -99,6 +99,10 @@ namespace erts_t2 {
         case T2LirKind::SpeculateSmall: return "speculate_small";
         case T2LirKind::AddSmall: return "add_small";
         case T2LirKind::SubSmall: return "sub_small";
+        case T2LirKind::StartMatch: return "start_match";
+        case T2LirKind::BsMatch: return "bs_match";
+        case T2LirKind::BsGetTail: return "bs_get_tail";
+        case T2LirKind::BsTestTail: return "bs_test_tail";
         case T2LirKind::Invalid: return "invalid";
         }
         return "?";

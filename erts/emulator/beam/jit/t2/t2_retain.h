@@ -142,6 +142,50 @@ void erts_t2_account_bytes(Sint delta);
 /* t2_eligible.c: true iff the tier supports this generic opcode. */
 int erts_t2_genop_supported(int genop);
 
+/* --- the byte-aligned bs_match subset (P2 commit 7) ------------------
+ *
+ * bs_match/3 carries a variadic command list; only the byte-aligned
+ * subset below is tier-2 supported (PLAN/T2FULL/09 §7: bit-unaligned
+ * commands are rejected at the *scan*, never discovered at isel). The
+ * parser is the single source of truth shared by the eligibility scan
+ * and the SSA builder, exactly like erts_t2_genop_supported. */
+
+typedef enum {
+    ERTS_T2_BS_ENSURE = 0,  /* ensure_at_least Size Unit (Size%8==0)    */
+    ERTS_T2_BS_READ_INT8,   /* integer, Size*Unit==8, no flags          */
+    ERTS_T2_BS_SKIP,        /* skip Size (Size%8==0)                    */
+    ERTS_T2_BS_GET_TAIL     /* get_tail                                 */
+} ErtsT2BsCmdKind;
+
+typedef struct ErtsT2BsCmd {
+    int kind;     /* ErtsT2BsCmdKind                                    */
+    UWord size;   /* bits (ENSURE/SKIP/READ_INT8)                       */
+    UWord unit;   /* ENSURE trailing unit                               */
+    UWord live;   /* READ_INT8 / GET_TAIL GC live count                 */
+    int dst_arg;  /* generic-op arg index of the Dst operand, or -1     */
+} ErtsT2BsCmd;
+
+/* At most this many decoded commands per bs_match op (the scan subset
+ * needs 2-3; a longer list is rejected as outside the subset). */
+#define ERTS_T2_BS_MAX_CMDS 8
+
+/* Parse + validate bs_match/3's command args (the generic op's args
+ * 3..nargs-1, given as parallel type/val arrays indexed by *generic op
+ * arg position*). `lit` resolves a TAG_q literal index (both callers
+ * resolve against a different literal table). On success returns the
+ * command count (>= 0), fills `out` (when non-null; sized
+ * ERTS_T2_BS_MAX_CMDS) and `*dst_count`. Returns -1 when any command
+ * falls outside the byte-aligned subset, more than one command
+ * produces a destination, or the list is malformed. */
+int erts_t2_bs_match_check(const UWord *types,
+                           const UWord *vals,
+                           int first,
+                           int nargs,
+                           Eterm (*lit)(void *env, SWord idx),
+                           void *env,
+                           ErtsT2BsCmd *out,
+                           int *dst_count);
+
 /* t2_emit.cpp: P1 commit-3 structural selftest (T2_EMIT_SELFTEST=1).
  * Called from beam_load_finalize_code right after the pctab is built;
  * for the t2_mvp corpus module it runs total/2 through the full

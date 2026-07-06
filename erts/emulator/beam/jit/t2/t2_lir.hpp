@@ -198,6 +198,21 @@ namespace erts_t2 {
         AddSmall,
         SubSmall,
 
+        /* The byte-aligned binary scan subset (P2 commit 7). All four
+         * reuse T1's emitters 1:1 in identity mode; the fused
+         * scan-loop emitter (t2_emit.cpp) may take over a recovered
+         * loop built from them. StartMatch: emit_i_bs_start_match3
+         * (conditional dst write; fail edge in succ_else, or none for
+         * a {f,0} decoded fail). BsMatch: emit_i_bs_match_test_heap
+         * over the command list in the function-level bs_cmds pool
+         * (first_bs_cmd/num_bs_cmds; conditional dst write, fail edge
+         * in succ_else). BsGetTail: emit_bs_get_tail (GC, no fail).
+         * BsTestTail: emit_bs_test_tail2 (pure guard; imm = bits). */
+        StartMatch,
+        BsMatch,
+        BsGetTail,
+        BsTestTail,
+
         /* Fused boxed+tuple+arity test (emit_i_is_tuple_of_arity),
          * from the shape-up's is_tuple/test_arity fusion (both tests
          * shared one fail edge — T1's own loader transform emits the
@@ -380,6 +395,11 @@ namespace erts_t2 {
         uint32_t pool_first;
         uint32_t num_srcs_ext;
 
+        /* BsMatch command list: [first_bs_cmd, first_bs_cmd+
+         * num_bs_cmds) indexes T2LirFunction::bs_cmds. */
+        uint32_t first_bs_cmd;
+        uint32_t num_bs_cmds;
+
         /* --- P2 allocator annotations (t2_regalloc.cpp) ---------------
          * The SSA values this op defines (dst/dst2), or T2_NO_VALUE, and
          * the sync-point register map attached to the originating HIR op
@@ -400,7 +420,8 @@ namespace erts_t2 {
                   succ_then(T2_LIR_NO_BLOCK), succ_else(T2_LIR_NO_BLOCK),
                   first_case(0), num_cases(0),
                   default_target(T2_LIR_NO_BLOCK), pool_first(0),
-                  num_srcs_ext(0), dst_value(T2_NO_VALUE),
+                  num_srcs_ext(0), first_bs_cmd(0), num_bs_cmds(0),
+                  dst_value(T2_NO_VALUE),
                   dst2_value(T2_NO_VALUE), sync(nullptr) {}
     };
 
@@ -408,6 +429,16 @@ namespace erts_t2 {
     struct T2LirSwitchCase {
         Eterm value;         /* matched term (small / atom / literal)   */
         uint32_t target;     /* block id                                */
+    };
+
+    /* One decoded bs_match command (a mirror of ErtsT2BsCmd's kinds:
+     * 0 = ensure_at_least, 1 = read-int8, 2 = skip, 3 = get_tail —
+     * pinned by static_asserts in t2_isel.cpp). */
+    struct T2LirBsCmd {
+        uint8_t kind;
+        uint32_t size; /* bits                    */
+        uint32_t unit; /* ensure trailing unit    */
+        uint32_t live; /* read-int8/get_tail live */
     };
 
     /* An SSA phi carried onto the LIR for the allocator. Under identity
@@ -447,6 +478,11 @@ namespace erts_t2 {
 
         /* Overflow operand pool (MakeTuple with many elements). */
         std::vector<T2LirSrc> src_pool;
+
+        /* BsMatch command pool (indexed by T2LirOp::first_bs_cmd/
+         * num_bs_cmds; a mirror of ErtsT2BsCmd so the LIR stays free
+         * of the retention header). */
+        std::vector<T2LirBsCmd> bs_cmds;
 
         /* P1 identity isel emits concrete canonical slots directly (the
          * HIR carries decoded homes); these fields remain from the

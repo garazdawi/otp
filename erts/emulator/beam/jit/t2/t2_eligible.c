@@ -112,11 +112,179 @@ int erts_t2_genop_supported(int genop) {
     case genop_badmatch_1:
     case genop_if_end_0:
     case genop_case_end_1:
+
+    /* The byte-aligned binary scan subset (P2 commit 7; PLAN/T2FULL/09
+     * §7, PLAN/T2/08 §3). bs_match/3 is additionally argument-checked
+     * (erts_t2_bs_match_check) — only its byte-aligned command subset
+     * is supported, and the scan rejects anything else up front. */
+    case genop_bs_start_match3_4:
+    case genop_bs_match_3:
+    case genop_bs_test_tail2_3:
+    case genop_bs_get_tail_3:
         return 1;
 
     default:
         return 0;
     }
+}
+
+/* ------------------------------------------------------------------ *
+ * The byte-aligned bs_match command subset (see t2_retain.h)          *
+ * ------------------------------------------------------------------ */
+
+int erts_t2_bs_match_check(const UWord *types,
+                           const UWord *vals,
+                           int first,
+                           int nargs,
+                           Eterm (*lit)(void *env, SWord idx),
+                           void *env,
+                           ErtsT2BsCmd *out,
+                           int *dst_count) {
+    int i = first;
+    int ncmds = 0;
+    int dsts = 0;
+
+    while (i < nargs) {
+        ErtsT2BsCmd cmd;
+
+        if (ncmds == ERTS_T2_BS_MAX_CMDS) {
+            return -1;
+        }
+        if (types[i] != TAG_a) {
+            return -1;
+        }
+
+        sys_memset(&cmd, 0, sizeof(cmd));
+        cmd.dst_arg = -1;
+
+        if (vals[i] == am_ensure_at_least) {
+            /* ensure_at_least Size Unit */
+            if (i + 2 >= nargs || types[i + 1] != TAG_u ||
+                types[i + 2] != TAG_u) {
+                return -1;
+            }
+            cmd.kind = ERTS_T2_BS_ENSURE;
+            cmd.size = vals[i + 1];
+            cmd.unit = vals[i + 2];
+            if (cmd.size == 0 || (cmd.size % 8) != 0 ||
+                (cmd.unit != 1 && cmd.unit != 8)) {
+                return -1;
+            }
+            i += 3;
+        } else if (vals[i] == am_integer) {
+            /* integer Live Flags Size Unit Dst */
+            UWord size, unit;
+            Eterm flags;
+
+            if (i + 5 >= nargs || types[i + 1] != TAG_u ||
+                types[i + 3] != TAG_u || types[i + 4] != TAG_u ||
+                (types[i + 5] != TAG_x && types[i + 5] != TAG_y)) {
+                return -1;
+            }
+            size = vals[i + 3];
+            unit = vals[i + 4];
+            if (size * unit != 8) {
+                return -1; /* bit-unaligned / multi-byte: outside v1 */
+            }
+            /* Flags must be empty (unsigned, big): NIL or a literal
+             * resolving to NIL. */
+            if (types[i + 2] == TAG_n) {
+                flags = NIL;
+            } else if (types[i + 2] == TAG_q) {
+                flags = lit(env, (SWord)vals[i + 2]);
+            } else {
+                return -1;
+            }
+            if (flags != NIL) {
+                return -1;
+            }
+            cmd.kind = ERTS_T2_BS_READ_INT8;
+            cmd.size = 8;
+            cmd.unit = 1;
+            cmd.live = vals[i + 1];
+            cmd.dst_arg = i + 5;
+            dsts++;
+            i += 6;
+        } else if (vals[i] == am_skip) {
+            /* skip Size */
+            if (i + 1 >= nargs || types[i + 1] != TAG_u) {
+                return -1;
+            }
+            cmd.kind = ERTS_T2_BS_SKIP;
+            cmd.size = vals[i + 1];
+            if (cmd.size == 0 || (cmd.size % 8) != 0) {
+                return -1;
+            }
+            i += 2;
+        } else if (vals[i] == am_get_tail) {
+            /* get_tail Live Unit Dst */
+            if (i + 3 >= nargs || types[i + 1] != TAG_u ||
+                (types[i + 3] != TAG_x && types[i + 3] != TAG_y)) {
+                return -1;
+            }
+            cmd.kind = ERTS_T2_BS_GET_TAIL;
+            cmd.live = vals[i + 1];
+            cmd.dst_arg = i + 3;
+            dsts++;
+            i += 4;
+        } else {
+            /* ensure_exactly, '=:=', binary, non-byte shapes, ...:
+             * outside the subset. */
+            return -1;
+        }
+
+        if (out != NULL) {
+            out[ncmds] = cmd;
+        }
+        ncmds++;
+    }
+
+    if (ncmds == 0 || dsts > 1) {
+        /* No commands is malformed; two destinations would need a
+         * second result home (the HIR op has one) — stays T1. */
+        return -1;
+    }
+    if (dst_count != NULL) {
+        *dst_count = dsts;
+    }
+    return ncmds;
+}
+
+/* Literal resolver over the load-time BeamFile (the eligibility scan
+ * runs at retain-commit, when the static literal table is live). */
+static Eterm scan_lit(void *env, SWord idx) {
+    BeamFile *beam = (BeamFile *)env;
+
+    if (idx < 0 || idx >= beam->static_literals.count) {
+        return THE_NON_VALUE;
+    }
+    return beamfile_get_literal(beam, idx);
+}
+
+/* bs_match/3: Fail Ctx N Cmds... — args 3.. are the command list. */
+static int bs_match_op_supported(BeamFile *beam, const BeamOp *op) {
+    UWord types[64], vals[64];
+    int n = op->arity;
+    int i;
+
+    if (n < 3 || n > 64) {
+        return 0;
+    }
+    if (op->a[0].type != TAG_f) {
+        return 0;
+    }
+    for (i = 0; i < n; i++) {
+        types[i] = op->a[i].type;
+        vals[i] = op->a[i].val;
+    }
+    return erts_t2_bs_match_check(types,
+                                  vals,
+                                  3,
+                                  n,
+                                  scan_lit,
+                                  beam,
+                                  NULL,
+                                  NULL) >= 0;
 }
 
 Uint32 *erts_t2_eligibility_scan(BeamFile *beam, int *any_eligible) {
@@ -160,6 +328,12 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam, int *any_eligible) {
             break;
         default:
             if (fn_ok && !erts_t2_genop_supported(op->op)) {
+                fn_ok = 0;
+            } else if (fn_ok && op->op == genop_bs_match_3 &&
+                       !bs_match_op_supported(beam, op)) {
+                /* Byte-aligned subset only: a bit-unaligned or
+                 * multi-destination command list stays T1, decided
+                 * here at the scan (PLAN/T2FULL/09 §7 surprise 4). */
                 fn_ok = 0;
             }
             break;

@@ -829,6 +829,154 @@ namespace erts_t2 {
                     return true;
                 }
 
+                case T2OpKind::StartMatch: {
+                    /* bs_start_match3 (P2 commit 7): conditional dst
+                     * write; the builder's Succeeded/Branch folds into
+                     * the op's edges. A decoded {f,0} fail emits with
+                     * no fail edge (T1 skips the checks the compiler
+                     * proved away). */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "start_match without a home");
+                    }
+                    lop.kind = T2LirKind::StartMatch;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.live = op->live;
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "start_match of a constant");
+                    }
+
+                    const T2Op *succ = op->next;
+                    if (succ != nullptr &&
+                        succ->kind == T2OpKind::Succeeded &&
+                        succ->num_operands == 1 &&
+                        succ->operands[0] == op->result &&
+                        feeds_branch(succ)) {
+                        const T2Op *term = op->block->terminator;
+
+                        lop.succ_then = term->succ_then->id;
+                        lop.succ_else = term->succ_else->id;
+                        *skip_until = succ;
+                        *consumed_terminator = true;
+                    } else if (succ != nullptr &&
+                               succ->kind == T2OpKind::Succeeded) {
+                        return fail_op(op,
+                                       "succeeded not consumed by the "
+                                       "block branch");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
+                case T2OpKind::BsMatch: {
+                    /* The byte-aligned bs_match subset: commands ride
+                     * the function-level pool; the (single) dst is
+                     * written on the success edge only. */
+                    static_assert(ERTS_T2_BS_ENSURE == 0 &&
+                                          ERTS_T2_BS_READ_INT8 == 1 &&
+                                          ERTS_T2_BS_SKIP == 2 &&
+                                          ERTS_T2_BS_GET_TAIL == 3,
+                                  "T2LirBsCmd mirrors ErtsT2BsCmdKind");
+                    lop.kind = T2LirKind::BsMatch;
+                    if (op->dst_reg != T2_REG_NONE) {
+                        lop.dst = reg_loc(op->dst_reg);
+                        lop.dst_value = op->result->id;
+                    }
+                    lop.live = op->live;
+                    lop.imm = op->imm_int; /* heap words */
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "bs_match of a constant");
+                    }
+                    if (op->bs_cmds == nullptr || op->num_bs_cmds == 0) {
+                        return fail_op(op, "bs_match without commands");
+                    }
+                    lop.first_bs_cmd = (uint32_t)lir.bs_cmds.size();
+                    lop.num_bs_cmds = op->num_bs_cmds;
+                    for (uint16_t i = 0; i < op->num_bs_cmds; i++) {
+                        const ErtsT2BsCmd &c = op->bs_cmds[i];
+
+                        lir.bs_cmds.push_back(
+                                T2LirBsCmd{(uint8_t)c.kind,
+                                           (uint32_t)c.size,
+                                           (uint32_t)c.unit,
+                                           (uint32_t)c.live});
+                    }
+
+                    const T2Op *succ = op->next;
+                    if (succ != nullptr &&
+                        succ->kind == T2OpKind::Succeeded &&
+                        succ->num_operands == 1 &&
+                        succ->operands[0] == op->result &&
+                        feeds_branch(succ)) {
+                        const T2Op *term = op->block->terminator;
+
+                        lop.succ_then = term->succ_then->id;
+                        lop.succ_else = term->succ_else->id;
+                        *skip_until = succ;
+                        *consumed_terminator = true;
+                    } else {
+                        /* The builder always guards bs_match with a
+                         * real fail label; anything else is drift. */
+                        return fail_op(op,
+                                       "bs_match without a folded fail "
+                                       "edge");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
+                case T2OpKind::BsGetTail:
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "bs_get_tail without a home");
+                    }
+                    lop.kind = T2LirKind::BsGetTail;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.live = op->live;
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "bs_get_tail of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
+                case T2OpKind::BsTestTail: {
+                    /* A pure size guard: must fold into the branch,
+                     * exactly like the type tests. */
+                    if (!feeds_branch(op) || op->next != nullptr) {
+                        return fail_op(op,
+                                       "bs_test_tail result not consumed "
+                                       "by this block's branch");
+                    }
+                    const T2Op *term = op->block->terminator;
+
+                    lop.kind = T2LirKind::BsTestTail;
+                    lop.imm = (Sint64)op->index; /* size in bits */
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "bs_test_tail of a constant");
+                    }
+                    lop.succ_then = term->succ_then->id;
+                    lop.succ_else = term->succ_else->id;
+                    *consumed_terminator = true;
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
                 case T2OpKind::SpeculateType:
                     /* The fused tag-bit deopt guard (P2 commit 4): AND
                      * the values, require every small-tag bit, deopt on
