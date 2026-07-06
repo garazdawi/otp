@@ -405,7 +405,13 @@ namespace erts_t2 {
          * op must be converted to a window-shaped speculative op — the
          * enclosing iteration's re-execution covers the inlined body
          * (PLAN/T2/08 §4.2) — or inlining is abandoned. */
-        T2_OP_INLINED = 1 << 6
+        T2_OP_INLINED = 1 << 6,
+        /* A TestArity that also performs the boxed/tuple check (the
+         * loop shape-up fused an is_tuple + test_arity chain with one
+         * shared fail edge, exactly like T1's own
+         * is_tuple+test_arity => i_is_tuple_of_arity loader transform;
+         * lowers to emit_i_is_tuple_of_arity). */
+        T2_OP_TUPLE_ARITY_FUSED = 1 << 7
     };
 
     /* One arm of a `switch` terminator. */

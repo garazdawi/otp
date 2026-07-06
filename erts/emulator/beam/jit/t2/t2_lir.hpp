@@ -198,6 +198,13 @@ namespace erts_t2 {
         AddSmall,
         SubSmall,
 
+        /* Fused boxed+tuple+arity test (emit_i_is_tuple_of_arity),
+         * from the shape-up's is_tuple/test_arity fusion (both tests
+         * shared one fail edge — T1's own loader transform emits the
+         * same fused shape, so this is instruction-count parity, not
+         * an optimization beyond T1). */
+        IsTupleOfArity,
+
         /* A recovered loop's back-edge reduction charge + yield check
          * (t2_loop.cpp; PLAN/T2/08 §5.4): `subs FCALLS, #1` — exactly
          * T1's one-per-self-tail-call charge — and on exhaustion a

@@ -1135,6 +1135,7 @@ JIT_OBJS += \
 	$(OBJDIR)/t2/t2_emit.o \
 	$(OBJDIR)/t2/t2_hir.o \
 	$(OBJDIR)/t2/t2_hir_builder.o \
+	$(OBJDIR)/t2/t2_inline.o \
 	$(OBJDIR)/t2/t2_install.o \
 	$(OBJDIR)/t2/t2_isel.o \
 	$(OBJDIR)/t2/t2_lir.o \

@@ -145,7 +145,9 @@ namespace erts_t2 {
                                        op.succ_else != T2_LIR_NO_BLOCK;
 
                         if (op.kind == T2LirKind::Invalid) {
-                            return fail("invalid LIR op");
+                            return fail("invalid LIR op (block " +
+                                        std::to_string(b.id) + " op " +
+                                        std::to_string(i) + ")");
                         }
 
                         bool phys_ok = allow_phys &&

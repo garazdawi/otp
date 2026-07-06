@@ -148,6 +148,10 @@ namespace erts_t2 {
         const T2LirBlock *cur_block = nullptr;
         size_t cur_op_idx = 0;
 
+        /* The block emitted right after the current one (layout order),
+         * for fall-through elision of trailing unconditional branches. */
+        uint32_t next_block_id = T2_LIR_NO_BLOCK;
+
         std::string emit_error;
 
     public:
@@ -257,6 +261,9 @@ namespace erts_t2 {
 
                 bind_veneer_target(block_label(b.id));
                 cur_block = &b;
+                next_block_id = b.id + 1 < fn.blocks.size()
+                                        ? b.id + 1
+                                        : T2_LIR_NO_BLOCK;
                 for (size_t oi = 0; oi < b.ops.size(); oi++) {
                     if (failed()) {
                         return;
@@ -392,6 +399,18 @@ namespace erts_t2 {
             }
         }
 
+        /* Unconditional transfer to a block, eliding the branch when
+         * the target is the next block in layout order (T1's emitters
+         * fall through between ops the same way; check_pending_stubs
+         * jumps around any veneer pool it flushes, so linear flow is
+         * preserved). */
+        void emit_goto(uint32_t succ) {
+            if (succ != next_block_id) {
+                a.b(block_label(succ));
+                mark_unreachable();
+            }
+        }
+
         /* ---- op dispatch --------------------------------------------- */
 
         void emit_op(const T2LirOp &op) {
@@ -424,6 +443,7 @@ namespace erts_t2 {
             case T2LirKind::IsNonemptyList:
             case T2LirKind::IsTuple:
             case T2LirKind::TestArity:
+            case T2LirKind::IsTupleOfArity:
             case T2LirKind::IsTaggedTuple:
             case T2LirKind::CmpEqExact:
             case T2LirKind::CmpNeExact:
@@ -479,8 +499,7 @@ namespace erts_t2 {
                 emit_trim(ArgWord((UWord)op.imm), ArgWord((UWord)op.imm2));
                 break;
             case T2LirKind::Jump:
-                a.b(block_label(op.succ_then));
-                mark_unreachable();
+                emit_goto(op.succ_then);
                 break;
             case T2LirKind::Switch:
                 emit_lir_switch(op);
@@ -657,8 +676,7 @@ namespace erts_t2 {
             /* A folded fail edge means the op absorbed the block branch:
              * fall through was rewritten to an explicit jump. */
             if (op.succ_then != T2_LIR_NO_BLOCK && !failed()) {
-                a.b(block_label(op.succ_then));
-                mark_unreachable();
+                emit_goto(op.succ_then);
             }
         }
 
@@ -741,22 +759,30 @@ namespace erts_t2 {
                 lhs = load_source(src_argval(op.srcs[0]), TMP2).reg;
             }
 
+            /* Uniform scratch-then-commit ("deopt before the *commit*",
+             * PLAN/T2/08 §4.4). A direct-to-destination variant for
+             * window-shaped ops with non-prefix register-backed
+             * destinations is legal (the deopt reads only
+             * X0..arity-1) but measured ~5% slower on Apple Silicon —
+             * likely loop-alignment/port effects — so it is not used. */
+            a64::Gp out = ARG1;
+
             if (op.srcs[1].is_const) {
                 Uint64 cleared = (Uint64)op.srcs[1].term &
                                  ~(Uint64)_TAG_IMMED1_MASK;
 
                 if (cleared <= 0xFFF) {
                     if (is_add) {
-                        a.adds(ARG1, lhs, imm(cleared));
+                        a.adds(out, lhs, imm(cleared));
                     } else {
-                        a.subs(ARG1, lhs, imm(cleared));
+                        a.subs(out, lhs, imm(cleared));
                     }
                 } else {
                     mov_imm(TMP1, cleared);
                     if (is_add) {
-                        a.adds(ARG1, lhs, TMP1);
+                        a.adds(out, lhs, TMP1);
                     } else {
-                        a.subs(ARG1, lhs, TMP1);
+                        a.subs(out, lhs, TMP1);
                     }
                 }
             } else {
@@ -769,9 +795,9 @@ namespace erts_t2 {
                 }
                 a.and_(TMP1, rhs, imm(~_TAG_IMMED1_MASK));
                 if (is_add) {
-                    a.adds(ARG1, lhs, TMP1);
+                    a.adds(out, lhs, TMP1);
                 } else {
-                    a.subs(ARG1, lhs, TMP1);
+                    a.subs(out, lhs, TMP1);
                 }
             }
 
@@ -819,6 +845,12 @@ namespace erts_t2 {
                                   ArgSource(src_argval(op.srcs[0])),
                                   ArgWord(make_arityval((UWord)op.imm)));
                 break;
+            case T2LirKind::IsTupleOfArity:
+                emit_i_is_tuple_of_arity(
+                        failL,
+                        ArgSource(src_argval(op.srcs[0])),
+                        ArgWord(make_arityval((UWord)op.imm)));
+                break;
             case T2LirKind::IsTaggedTuple:
                 emit_i_is_tagged_tuple(failL,
                                        ArgSource(src_argval(op.srcs[0])),
@@ -862,8 +894,7 @@ namespace erts_t2 {
             }
 
             if (!failed()) {
-                a.b(block_label(op.succ_then));
-                mark_unreachable();
+                emit_goto(op.succ_then);
             }
         }
 
@@ -1083,7 +1114,8 @@ namespace erts_t2 {
             st.beam_idx = op.beam_idx;
             resume_stubs.push_back(st);
 
-            a.subs(FCALLS, FCALLS, imm(1));
+            ASSERT(op.imm >= 1 && op.imm < 4096);
+            a.subs(FCALLS, FCALLS, imm(op.imm));
             a.b_le(resume_stubs.back().yield);
             /* Fall through to the back-jump. */
         }

@@ -538,6 +538,12 @@ namespace erts_t2 {
 
                 /* Type tests / comparisons: must fold into the Branch. */
                 T2LirKind gk = guard_kind(op->kind);
+                if (gk == T2LirKind::TestArity &&
+                    (op->flags & T2_OP_TUPLE_ARITY_FUSED) != 0) {
+                    /* The shape-up's is_tuple+test_arity fusion: lower
+                     * to T1's own fused emitter. */
+                    gk = T2LirKind::IsTupleOfArity;
+                }
                 if (gk != T2LirKind::Invalid) {
                     if (!feeds_branch(op) || op->next != nullptr) {
                         return fail_op(op,
@@ -887,6 +893,9 @@ namespace erts_t2 {
                                            "map");
                     }
                     lop.kind = T2LirKind::ReductionCheck;
+                    /* 1 + the charges of any calls the inliner erased
+                     * on this back edge (t2_inline.cpp). */
+                    lop.imm = 1 + (Sint64)op->index;
                     lop.target = local_target(hir.function, hir.arity);
                     if (lop.target == nullptr) {
                         return fail_op(op,

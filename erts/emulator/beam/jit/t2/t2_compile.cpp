@@ -65,6 +65,7 @@ extern "C"
 #include "t2_lir.hpp"
 #include "t2_emit.hpp"
 #include "t2_spec.hpp"
+#include "t2_inline.hpp"
 
 using namespace erts_t2;
 
@@ -141,8 +142,29 @@ namespace {
             }
             if (recovered) {
                 T2LoopInfo li;
+                bool rewritten = false;
 
                 t2_loop_info(hir, &li);
+
+                /* Local leaf inlining + loop shape-up (P2 commit 6):
+                 * splice the loop's single leaf callee, drop the frame
+                 * the call forced, and preserve the re-call vector.
+                 * The spliced arithmetic is window-only (rung-1
+                 * re-call deopt: the enclosing iteration covers the
+                 * inlined body), so it depends on the speculation pass
+                 * below — both ride the same T2_NO_SPEC lever, plus
+                 * T2_NO_INLINE for isolating the inliner. The CFG is
+                 * unchanged (single-block callees), so `li` stays
+                 * valid. */
+                if (getenv("T2_NO_SPEC") == NULL &&
+                    getenv("T2_NO_INLINE") == NULL) {
+                    if (!t2_inline_leaf(hir, li, ret, &rewritten, &err)) {
+                        if (diag) {
+                            *diag = "inliner: " + err;
+                        }
+                        return T2CompileStatus::IselUnsupported;
+                    }
+                }
 
                 /* Speculation insertion (P2 commit 4): entry-type +
                  * loop-carried "observed small" speculation with
@@ -167,12 +189,14 @@ namespace {
                         }
                         return T2CompileStatus::IselUnsupported;
                     }
-                    if (spec_changed && !t2_validate(hir, &err)) {
-                        if (diag) {
-                            *diag = "post-speculation validate: " + err;
-                        }
-                        return T2CompileStatus::IselUnsupported;
+                    rewritten |= spec_changed;
+                }
+
+                if (rewritten && !t2_validate(hir, &err)) {
+                    if (diag) {
+                        *diag = "post-rewrite validate: " + err;
                     }
+                    return T2CompileStatus::IselUnsupported;
                 }
 
                 /* Re-execution-window legality (PLAN/T2/08 §4.2): the
@@ -487,7 +511,18 @@ extern "C" Eterm erts_t2_debug_install(Process *p,
             (unsigned)unsigned_val(arity),
             [&](T2Function &hir) {
                 ran = true;
-                st = t2_compile_install_one(hir, ret, hdr, mi, nullptr);
+                std::string diag;
+
+                st = t2_compile_install_one(hir, ret, hdr, mi, &diag);
+                if (st != T2CompileStatus::Installed &&
+                    getenv("T2_DEBUG") != NULL) {
+                    erts_fprintf(stderr,
+                                 "t2_install %T:%T/%u failed: %s\n",
+                                 hir.module,
+                                 hir.function,
+                                 (unsigned)hir.arity,
+                                 diag.c_str());
+                }
             },
             &build_err);
 
