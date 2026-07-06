@@ -58,6 +58,14 @@
 
 namespace erts_t2 {
 
+    /* Sync-point register map (t2_hir.hpp); the LIR references the HIR's
+     * maps by pointer (the HIR function outlives the LIR in every
+     * pipeline — emission happens inside the builder's emit callback). */
+    struct T2SyncMap;
+
+    /* "No SSA value" marker for the allocator annotations below. */
+    constexpr uint32_t T2_NO_VALUE = 0xFFFFFFFFu;
+
     /* ------------------------------------------------------------------ *
      * LIR op kinds                                                       *
      * ------------------------------------------------------------------ */
@@ -256,12 +264,19 @@ namespace erts_t2 {
         PhysLoc loc;   /* when !is_const */
         Eterm term;    /* when is_const: a tagged immediate (small/atom/nil) */
 
-        constexpr T2LirSrc() : is_const(false), loc(), term(0) {}
+        /* The SSA value read (P2 allocator annotation), or T2_NO_VALUE for
+         * constants and runtime-defined slots (e.g. a BIF result in X0
+         * consumed by a synthesized epilogue op — no SSA value exists). */
+        uint32_t value;
 
-        static T2LirSrc slot(PhysLoc l) {
+        constexpr T2LirSrc()
+                : is_const(false), loc(), term(0), value(T2_NO_VALUE) {}
+
+        static T2LirSrc slot(PhysLoc l, uint32_t v = T2_NO_VALUE) {
             T2LirSrc s;
             s.is_const = false;
             s.loc = l;
+            s.value = v;
             return s;
         }
         static T2LirSrc immediate(Eterm t) {
@@ -331,6 +346,18 @@ namespace erts_t2 {
         uint32_t pool_first;
         uint32_t num_srcs_ext;
 
+        /* --- P2 allocator annotations (t2_regalloc.cpp) ---------------
+         * The SSA values this op defines (dst/dst2), or T2_NO_VALUE, and
+         * the sync-point register map attached to the originating HIR op
+         * (null on non-sync ops). The sync map is the allocator's
+         * pin-constraint set: at this op's boundary every value it names
+         * must occupy its canonical slot. For the reordered tail-BIF
+         * shape the attached map is the *transfer* map (X part exact,
+         * frame part positionally early — see emit_tail_bif). */
+        uint32_t dst_value;
+        uint32_t dst2_value;
+        const T2SyncMap *sync;
+
         T2LirOp()
                 : kind(T2LirKind::Invalid), dst(), dst2(), num_srcs(0),
                   imm(0), imm2(0), imm_term(0), mfa_m(0), mfa_f(0), arity(0),
@@ -339,7 +366,8 @@ namespace erts_t2 {
                   succ_then(T2_LIR_NO_BLOCK), succ_else(T2_LIR_NO_BLOCK),
                   first_case(0), num_cases(0),
                   default_target(T2_LIR_NO_BLOCK), pool_first(0),
-                  num_srcs_ext(0) {}
+                  num_srcs_ext(0), dst_value(T2_NO_VALUE),
+                  dst2_value(T2_NO_VALUE), sync(nullptr) {}
     };
 
     /* One arm of a Switch terminator. */
@@ -348,9 +376,27 @@ namespace erts_t2 {
         uint32_t target;     /* block id                                */
     };
 
+    /* An SSA phi carried onto the LIR for the allocator. Under identity
+     * placement a phi emits no code (every predecessor materialized the
+     * merged value in the phi's home slot), but the allocator needs the
+     * def (block entry) and the per-edge inputs (uses at each pred's
+     * exit) to build correct liveness across merges and loop back-edges.
+     * An input value of T2_NO_VALUE marks an input the allocator does
+     * not track (never occurs today; defensive). */
+    struct T2LirPhi {
+        uint32_t value;   /* the phi's SSA value                        */
+        PhysLoc home;     /* canonical home slot (Xn/Yn)                */
+        struct In {
+            uint32_t pred_block; /* LIR block id of the incoming edge   */
+            uint32_t value;      /* SSA value on that edge              */
+        };
+        std::vector<In> ins;
+    };
+
     struct T2LirBlock {
         uint32_t id;
         std::vector<T2LirOp> ops; /* flat vector, terminator last */
+        std::vector<T2LirPhi> phis; /* allocator-only; emit no code */
     };
 
     struct T2LirFunction {
@@ -374,9 +420,16 @@ namespace erts_t2 {
         uint32_t num_values;
         std::vector<int32_t> param_x;
 
+        /* P2 allocator inputs. entry_sync is the HIR function-entry map
+         * (params in X0..arity-1, no frame); value_flags[i] carries the
+         * per-value facts the allocator needs without reaching back into
+         * the HIR (T2_LIR_VF_* bits below). */
+        const T2SyncMap *entry_sync;
+        std::vector<uint8_t> value_flags;
+
         T2LirFunction()
                 : module(0), function(0), arity(0), t1_entry(nullptr),
-                  num_values(0) {}
+                  num_values(0), entry_sync(nullptr) {}
 
         T2LirBlock &new_block() {
             T2LirBlock b;
@@ -384,6 +437,19 @@ namespace erts_t2 {
             blocks.push_back(std::move(b));
             return blocks.back();
         }
+    };
+
+    /* T2LirFunction::value_flags bits. */
+    enum : uint8_t {
+        /* The value's HIR def is a constant materialization; it is not
+         * tracked by liveness (its uses are inline immediates or the
+         * materializing Move's own def). */
+        T2_LIR_VF_CONST = 1 << 0,
+        /* The value is an untagged machine word (UntagInt/MulRaw class).
+         * It must never be homed in an X/Y slot nor appear in any sync
+         * map (PLAN/T2/04 §11.2); the allocator and validators enforce
+         * both. Never set before the speculation phase emits the ops. */
+        T2_LIR_VF_UNTAGGED = 1 << 1
     };
 
     /* A compact human-readable dump, mirroring t2_dump for the HIR. */

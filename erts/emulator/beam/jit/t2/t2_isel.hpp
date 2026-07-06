@@ -96,10 +96,14 @@ namespace erts_t2 {
                  T2LirFunction &lir,
                  std::string *err);
 
-    /* LIR verifier (the P1 stand-in for register allocation; the pin
-     * API becomes a real allocator in P2): checks that every operand is
-     * a concrete slot or immediate, terminators are last, CFG edges are
-     * in range, and cross-tier addresses are present where required. */
+    /* Register allocation (t2_regalloc.cpp): a Wimmer-style linear scan
+     * on SSA over the value-annotated LIR. Builds liveness + live
+     * intervals, consumes each op's T2SyncMap as its fixed-slot
+     * pin-constraint set, and verifies the placement (slot-space walk,
+     * clobber liveness, untagged discipline) on top of the P1
+     * structural checks. The P2 commit-1 policy reproduces identity
+     * placement (no PhysLoc::Phys is assigned); the relaxation lands in
+     * commit 3. */
     bool t2_regalloc(T2LirFunction &lir, std::string *err);
 
 } /* namespace erts_t2 */

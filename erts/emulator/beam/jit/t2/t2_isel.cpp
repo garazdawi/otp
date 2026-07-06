@@ -183,7 +183,8 @@ namespace erts_t2 {
                                       : T2_REG_NONE;
 
                 if (reg != T2_REG_NONE) {
-                    *out = T2LirSrc::slot(reg_loc(reg));
+                    *out = T2LirSrc::slot(reg_loc(reg),
+                                          op->operands[i]->id);
                     return true;
                 }
 
@@ -462,6 +463,9 @@ namespace erts_t2 {
                 T2LirOp lop;
 
                 lop.beam_idx = op->beam_idx;
+                /* The originating op's sync map rides along (null on
+                 * non-sync ops): it is the P2 allocator's pin set. */
+                lop.sync = op->sync;
 
                 /* Generic arithmetic (gc_bif): fail edge in-blob when the
                  * builder's Succeeded/Branch follows; else side exit to the
@@ -473,6 +477,7 @@ namespace erts_t2 {
                         return fail_op(op, "arith result without a home");
                     }
                     lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
                     lop.mfa_m = op->mfa_m;
                     lop.mfa_f = op->mfa_f;
                     lop.live = op->live;
@@ -573,6 +578,7 @@ namespace erts_t2 {
                         }
                         lop.kind = T2LirKind::Move;
                         lop.dst = reg_loc(op->dst_reg);
+                        lop.dst_value = op->result->id;
                         lop.num_srcs = 1;
                         lop.srcs[0] = T2LirSrc::immediate(term);
                         b.ops.push_back(lop);
@@ -596,6 +602,15 @@ namespace erts_t2 {
                         lop.kind = T2LirKind::Swap;
                         lop.dst = reg_loc(op->dst_reg);
                         lop.dst2 = reg_loc(tail->dst_reg);
+                        lop.dst_value = op->result->id;
+                        lop.dst2_value = tail->result->id;
+                        /* Allocator annotations: both reads precede both
+                         * writes (emit ignores srcs for Swap). */
+                        lop.num_srcs = 2;
+                        if (!src_of(op, 0, &lop.srcs[0]) ||
+                            !src_of(tail, 0, &lop.srcs[1])) {
+                            return false;
+                        }
                         b.ops.push_back(lop);
                         *skip_until = tail;
                         return true;
@@ -603,6 +618,7 @@ namespace erts_t2 {
 
                     lop.kind = T2LirKind::Move;
                     lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
                     lop.num_srcs = 1;
                     if (!src_of(op, 0, &lop.srcs[0])) {
                         return false;
@@ -631,6 +647,8 @@ namespace erts_t2 {
                         lop.kind = T2LirKind::GetList;
                         lop.dst = reg_loc(op->dst_reg);
                         lop.dst2 = reg_loc(tail->dst_reg);
+                        lop.dst_value = op->result->id;
+                        lop.dst2_value = tail->result->id;
                         lop.num_srcs = 1;
                         if (!src_of(op, 0, &lop.srcs[0])) {
                             return false;
@@ -643,6 +661,7 @@ namespace erts_t2 {
                     lop.kind = op->kind == T2OpKind::GetHd ? T2LirKind::GetHd
                                                            : T2LirKind::GetTl;
                     lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
                     lop.num_srcs = 1;
                     if (!src_of(op, 0, &lop.srcs[0])) {
                         return false;
@@ -657,6 +676,7 @@ namespace erts_t2 {
                     }
                     lop.kind = T2LirKind::GetTupleElement;
                     lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
                     lop.imm = (Sint64)op->index;
                     lop.num_srcs = 1;
                     if (!src_of(op, 0, &lop.srcs[0])) {
@@ -671,6 +691,7 @@ namespace erts_t2 {
                     }
                     lop.kind = T2LirKind::MakeList;
                     lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
                     if (!fill_srcs(op, &lop)) {
                         return false;
                     }
@@ -683,6 +704,7 @@ namespace erts_t2 {
                     }
                     lop.kind = T2LirKind::MakeTuple;
                     lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
                     if (op->num_operands <= T2_LIR_MAX_SRCS) {
                         if (!fill_srcs(op, &lop)) {
                             return false;
@@ -741,6 +763,7 @@ namespace erts_t2 {
                     lop.arity = op->index;
                     lop.live = op->live;
                     lop.dst = PhysLoc::xreg(0);
+                    lop.dst_value = op->result->id;
 
                     /* The CP: the T1 post-call continuation of this call's
                      * decode ordinal — never a T2 address (08 §4.3). The
@@ -863,6 +886,10 @@ namespace erts_t2 {
                     return fail("block without terminator");
                 }
                 lop.beam_idx = t->beam_idx;
+                /* Return/tail-transfer boundary map (null on error exits
+                 * by design; see T2_OP_ERR_EXIT_*). For the reordered
+                 * tail-BIF shape this map rides on the CallBif op. */
+                lop.sync = t->sync;
 
                 switch (t->kind) {
                 case T2OpKind::Return:
@@ -1027,6 +1054,25 @@ namespace erts_t2 {
                 lir.arity = hir.arity;
                 lir.num_values = (uint32_t)hir.values.size();
                 lir.param_x.assign(lir.num_values, -1);
+                lir.entry_sync = hir.entry_sync;
+
+                /* Per-value facts for the allocator (const defs are not
+                 * liveness-tracked; untagged values are barred from X/Y
+                 * homes and sync maps — defensive until the speculation
+                 * phase emits them). */
+                lir.value_flags.assign(lir.num_values, 0);
+                for (const T2Value *v : hir.values) {
+                    uint8_t f = 0;
+
+                    if (is_const_kind(v->def->kind)) {
+                        f |= T2_LIR_VF_CONST;
+                    }
+                    if (v->def->kind == T2OpKind::UntagInt ||
+                        v->def->kind == T2OpKind::MulRaw) {
+                        f |= T2_LIR_VF_UNTAGGED;
+                    }
+                    lir.value_flags[v->id] = f;
+                }
 
                 if (ctx.ret == nullptr || ctx.code_hdr == nullptr) {
                     return fail("isel context incomplete");
@@ -1060,7 +1106,27 @@ namespace erts_t2 {
                     /* Phis are no-ops under identity placement: every
                      * predecessor materialized the value in the phi's
                      * home register (proven by the HIR validator's
-                     * merge-slot walk). */
+                     * merge-slot walk). They are carried onto the LIR
+                     * block as allocator annotations only: the def at
+                     * block entry and the per-edge inputs are what make
+                     * liveness correct across merges and loop
+                     * back-edges (HIR and LIR block ids agree 1:1). */
+                    for (const T2Op *phi = hb->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        T2LirPhi lp;
+
+                        if (phi->dst_reg == T2_REG_NONE) {
+                            return fail_op(phi, "phi without a home");
+                        }
+                        lp.value = phi->result->id;
+                        lp.home = reg_loc(phi->dst_reg);
+                        for (uint16_t i = 0; i < phi->num_operands; i++) {
+                            lp.ins.push_back(T2LirPhi::In{
+                                    phi->phi_blocks[i]->id,
+                                    phi->operands[i]->id});
+                        }
+                        lb.phis.push_back(std::move(lp));
+                    }
 
                     for (const T2Op *op = hb->ops_head; op != nullptr;
                          op = op->next) {
