@@ -474,11 +474,41 @@ namespace erts_t2 {
             }
         }
 
+        /* Phys id -> machine register: Phys k is the callee-save
+         * register backing BEAM Xk (x25..x27; the regalloc pool stops
+         * before XREG3, whose backing is caller-save in DEBUG builds,
+         * T2_PHYS_POOL in t2_regalloc.cpp). */
+        a64::Gp phys_gp(const PhysLoc &l) {
+            ASSERT(l.is_phys() && l.num < 3);
+            return register_backed_xregs[l.num];
+        }
+
         void emit_lir_move(const T2LirOp &op) {
             if (op.num_srcs != 1 || op.dst.is_none()) {
                 fail("malformed move");
                 return;
             }
+
+            /* Relaxed placements: Move is the one Phys-capable op; the
+             * mov_arg Gp overloads are the documented register seam and
+             * keep the T1 register cache coherent. */
+            bool src_phys = !op.srcs[0].is_const &&
+                            op.srcs[0].loc.is_phys();
+            bool dst_phys = op.dst.is_phys();
+
+            if (src_phys && dst_phys) {
+                a.mov(phys_gp(op.dst), phys_gp(op.srcs[0].loc));
+                return;
+            }
+            if (dst_phys) {
+                mov_arg(phys_gp(op.dst), src_argval(op.srcs[0]));
+                return;
+            }
+            if (src_phys) {
+                mov_arg(loc_argval(op.dst), phys_gp(op.srcs[0].loc));
+                return;
+            }
+
             emit_i_move(ArgSource(src_argval(op.srcs[0])),
                         ArgRegister(loc_argval(op.dst)));
         }

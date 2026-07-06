@@ -138,6 +138,21 @@ namespace {
                 }
                 return T2CompileStatus::IselUnsupported;
             }
+            if (recovered) {
+                /* Re-execution-window legality (PLAN/T2/08 §4.2):
+                 * vacuous until the speculation pass emits deopt-able
+                 * guards, but enforced from the first relaxed blob on
+                 * so the corruption class cannot land unnoticed. */
+                T2LoopInfo li;
+
+                t2_loop_info(hir, &li);
+                if (!t2_validate_windows(hir, li, &err)) {
+                    if (diag) {
+                        *diag = err;
+                    }
+                    return T2CompileStatus::IselUnsupported;
+                }
+            }
         }
 
         if (!t2_isel(hir, ctx, lir, &err)) {

@@ -1909,6 +1909,14 @@ extern "C" int erts_t2_build_all(const ErtsT2RetainedCode *ret,
             } else {
                 isel_no++;
                 isel_reasons[ierr]++;
+                if (t2_debug_output_enabled()) {
+                    erts_fprintf(stderr,
+                                 "t2_isel: %T:%T/%u: %s\n",
+                                 fc.module,
+                                 fc.function,
+                                 fc.arity,
+                                 ierr.c_str());
+                }
             }
         }
     }

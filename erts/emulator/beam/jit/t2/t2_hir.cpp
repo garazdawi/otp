@@ -31,6 +31,7 @@ extern "C"
 #include "sys.h"
 #include "global.h"
 #include "erl_alloc.h"
+#include "big.h" /* IS_SSMALL */
 }
 
 #include <algorithm>
@@ -1083,6 +1084,16 @@ namespace erts_t2 {
                 return true;
             }
 
+            /* An untagged machine word (PLAN/T2/04 §11.2): never a
+             * valid term, so it must never occupy an X/Y slot at a sync
+             * boundary — GC would misread it. Corruption-class
+             * invariant (i) of PLAN/T2FULL/09 §4. */
+            static bool value_is_untagged(const T2Value *v) {
+                return v->def != nullptr &&
+                       (v->def->kind == T2OpKind::UntagInt ||
+                        v->def->kind == T2OpKind::MulRaw);
+            }
+
             bool check_sync_map(const T2Op *op) {
                 const T2SyncMap *m = op->sync;
 
@@ -1094,6 +1105,29 @@ namespace erts_t2 {
                                     t2_op_kind_name(op->kind));
                     }
                     return true;
+                }
+
+                for (uint32_t i = 0; i < m->x_live; i++) {
+                    if (value_is_untagged(m->x[i])) {
+                        return fail("block %u: untagged v%u in the %s sync "
+                                    "map (x%u)",
+                                    op->block->id,
+                                    m->x[i]->id,
+                                    t2_op_kind_name(op->kind),
+                                    i);
+                    }
+                }
+                for (int32_t i = 0;
+                     m->frame_size != T2_NO_FRAME && i < m->frame_size;
+                     i++) {
+                    if (value_is_untagged(m->y[i])) {
+                        return fail("block %u: untagged v%u in the %s sync "
+                                    "map (y%d)",
+                                    op->block->id,
+                                    m->y[i]->id,
+                                    t2_op_kind_name(op->kind),
+                                    i);
+                    }
                 }
 
                 for (uint32_t i = 0; i < m->x_live; i++) {
@@ -1615,6 +1649,279 @@ namespace erts_t2 {
                 return true;
             }
 
+            /* -------------------------------------------------------- *
+             * P2 commit 3: speculative-type discipline (corruption-     *
+             * class invariant (ii), PLAN/T2FULL/09 §4; PLAN/T2/08 §4.4) *
+             *                                                          *
+             * Every value consumed by a speculative-class op must have  *
+             * its type established by a dominating guard or proof on    *
+             * EVERY path, including all phi edges (the AND, never OR,   *
+             * fusion rule). The lattice has two facts:                  *
+             *                                                          *
+             *   SMALL — proven small integer: established by            *
+             *     SpeculateType (the tag-bit deopt guard), by a small   *
+             *     ConstInt, and by the committed result of a            *
+             *     flag-checked AddSmall/SubSmall/TagInt (deopt fires    *
+             *     before the commit); a phi is SMALL iff every input    *
+             *     is SMALL at its edge — loop-header phis are exactly   *
+             *     where the latch value's re-proof (the flag-checked    *
+             *     op that produced it) is required.                     *
+             *   RAW — an untagged machine word (UntagInt/MulRaw).       *
+             *                                                          *
+             * Consumers: UntagInt needs SMALL; TagInt needs RAW;        *
+             * MulRaw needs RAW operands; AddSmall/SubSmall need each    *
+             * operand SMALL or RAW (the one-untag mix). Facts flow      *
+             * forward to a fixpoint (optimistic init, monotone          *
+             * intersection at joins), then one exact checking pass.     *
+             * Functions without speculative ops skip the dataflow.      *
+             * -------------------------------------------------------- */
+
+            static bool op_is_speculative(T2OpKind k) {
+                switch (k) {
+                case T2OpKind::UntagInt:
+                case T2OpKind::TagInt:
+                case T2OpKind::AddSmall:
+                case T2OpKind::SubSmall:
+                case T2OpKind::MulRaw:
+                case T2OpKind::SpeculateType:
+                case T2OpKind::SpeculateRange:
+                    return true;
+                default:
+                    return false;
+                }
+            }
+
+            struct SpecFacts {
+                std::vector<uint64_t> small, raw;
+            };
+
+            static void sf_set(std::vector<uint64_t> &s, uint32_t v) {
+                s[v / 64] |= uint64_t(1) << (v % 64);
+            }
+            static bool sf_test(const std::vector<uint64_t> &s, uint32_t v) {
+                return (s[v / 64] >> (v % 64)) & 1;
+            }
+
+            /* Apply one op's fact effects to `f`. */
+            static void spec_transfer_op(const T2Op *op, SpecFacts &f) {
+                switch (op->kind) {
+                case T2OpKind::ConstInt:
+                    if (IS_SSMALL(op->imm_int)) {
+                        sf_set(f.small, op->result->id);
+                    }
+                    break;
+                case T2OpKind::SpeculateType:
+                    /* The tag-bit test: after it, the operand is a
+                     * proven small (side exit otherwise). */
+                    if (op->num_operands == 1) {
+                        sf_set(f.small, op->operands[0]->id);
+                    }
+                    break;
+                case T2OpKind::AddSmall:
+                case T2OpKind::SubSmall:
+                case T2OpKind::TagInt:
+                    /* Flag-checked commit: the result is small on the
+                     * fall-through path (deopt before the commit). */
+                    sf_set(f.small, op->result->id);
+                    break;
+                case T2OpKind::UntagInt:
+                case T2OpKind::MulRaw:
+                    sf_set(f.raw, op->result->id);
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            bool spec_check_op(const T2Op *op, const SpecFacts &f) {
+                auto need = [&](uint16_t i, bool small_ok, bool raw_ok,
+                                const char *what) -> bool {
+                    const T2Value *v = op->operands[i];
+                    bool is_small = sf_test(f.small, v->id);
+                    bool is_raw = sf_test(f.raw, v->id);
+
+                    if ((small_ok && is_small) || (raw_ok && is_raw)) {
+                        return true;
+                    }
+                    return fail("block %u: %s operand %u (v%u) is not %s "
+                                "on every path (a dominating guard/proof "
+                                "must hold on all edges, phi inputs "
+                                "included — the AND-fusion rule)",
+                                op->block->id,
+                                t2_op_kind_name(op->kind),
+                                i,
+                                v->id,
+                                what);
+                };
+
+                switch (op->kind) {
+                case T2OpKind::UntagInt:
+                    return need(0, true, false, "a proven small");
+                case T2OpKind::TagInt:
+                    return need(0, false, true, "an untagged word");
+                case T2OpKind::MulRaw:
+                    return need(0, false, true, "an untagged word") &&
+                           need(1, false, true, "an untagged word");
+                case T2OpKind::AddSmall:
+                case T2OpKind::SubSmall:
+                    return need(0, true, true, "a proven small/raw") &&
+                           need(1, true, true, "a proven small/raw");
+                default:
+                    return true;
+                }
+            }
+
+            bool run_speculation_checks() {
+                bool any = false;
+
+                for (const T2BasicBlock *b : fn.blocks) {
+                    for (const T2Op *op = b->ops_head;
+                         op != nullptr && !any;
+                         op = op->next) {
+                        any = op_is_speculative(op->kind);
+                    }
+                    if (any) {
+                        break;
+                    }
+                }
+                if (!any) {
+                    return true; /* the common case costs one scan */
+                }
+
+                size_t n = fn.blocks.size();
+                size_t vwords = (fn.values.size() + 63) / 64;
+                std::vector<SpecFacts> out(n);
+
+                /* Optimistic init: everything proven, then intersect
+                 * down to the fixpoint (entry gets no incoming facts). */
+                for (size_t i = 0; i < n; i++) {
+                    bool top = reachable[i] && i != 0;
+
+                    out[i].small.assign(vwords, top ? ~uint64_t(0) : 0);
+                    out[i].raw.assign(vwords, top ? ~uint64_t(0) : 0);
+                }
+
+                auto block_in = [&](const T2BasicBlock *b) {
+                    SpecFacts in;
+
+                    in.small.assign(vwords,
+                                    b->id == 0 ? 0 : ~uint64_t(0));
+                    in.raw.assign(vwords, b->id == 0 ? 0 : ~uint64_t(0));
+                    if (b->id == 0) {
+                        return in;
+                    }
+
+                    bool any_pred = false;
+                    for (uint32_t p = 0; p < b->num_preds; p++) {
+                        const T2BasicBlock *pred = b->preds[p];
+
+                        if (!reachable[pred->id]) {
+                            continue;
+                        }
+                        any_pred = true;
+                        for (size_t w = 0; w < vwords; w++) {
+                            in.small[w] &= out[pred->id].small[w];
+                            in.raw[w] &= out[pred->id].raw[w];
+                        }
+                    }
+                    if (!any_pred) {
+                        in.small.assign(vwords, 0);
+                        in.raw.assign(vwords, 0);
+                    }
+                    return in;
+                };
+
+                auto transfer = [&](const T2BasicBlock *b, SpecFacts f) {
+                    /* Phi facts: AND over the incoming edges. */
+                    for (const T2Op *phi = b->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        bool all_small = phi->num_operands > 0;
+                        bool all_raw = phi->num_operands > 0;
+
+                        for (uint16_t i = 0; i < phi->num_operands; i++) {
+                            const T2BasicBlock *pred = phi->phi_blocks[i];
+
+                            if (!reachable[pred->id]) {
+                                continue;
+                            }
+                            uint32_t vid = phi->operands[i]->id;
+
+                            all_small &= sf_test(out[pred->id].small, vid);
+                            all_raw &= sf_test(out[pred->id].raw, vid);
+                        }
+                        if (all_small) {
+                            sf_set(f.small, phi->result->id);
+                        }
+                        if (all_raw) {
+                            sf_set(f.raw, phi->result->id);
+                        }
+                    }
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        spec_transfer_op(op, f);
+                    }
+                    return f;
+                };
+
+                bool changed = true;
+                while (changed) {
+                    changed = false;
+                    for (const T2BasicBlock *b : fn.blocks) {
+                        if (!reachable[b->id]) {
+                            continue;
+                        }
+                        SpecFacts nf = transfer(b, block_in(b));
+
+                        if (nf.small != out[b->id].small ||
+                            nf.raw != out[b->id].raw) {
+                            out[b->id] = std::move(nf);
+                            changed = true;
+                        }
+                    }
+                }
+
+                /* Exact checking pass at the fixpoint. */
+                for (const T2BasicBlock *b : fn.blocks) {
+                    if (!reachable[b->id]) {
+                        continue;
+                    }
+                    SpecFacts f = block_in(b);
+
+                    for (const T2Op *phi = b->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        bool all_small = phi->num_operands > 0;
+                        bool all_raw = phi->num_operands > 0;
+
+                        for (uint16_t i = 0; i < phi->num_operands; i++) {
+                            const T2BasicBlock *pred = phi->phi_blocks[i];
+
+                            if (!reachable[pred->id]) {
+                                continue;
+                            }
+                            uint32_t vid = phi->operands[i]->id;
+
+                            all_small &= sf_test(out[pred->id].small, vid);
+                            all_raw &= sf_test(out[pred->id].raw, vid);
+                        }
+                        if (all_small) {
+                            sf_set(f.small, phi->result->id);
+                        }
+                        if (all_raw) {
+                            sf_set(f.raw, phi->result->id);
+                        }
+                    }
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if (!spec_check_op(op, f)) {
+                            return false;
+                        }
+                        spec_transfer_op(op, f);
+                    }
+                }
+
+                return true;
+            }
+
             bool run() {
                 if (fn.blocks.empty()) {
                     return fail("function has no blocks");
@@ -1694,6 +2001,13 @@ namespace erts_t2 {
 
                 /* P1: sync-map / frame / canonical-home coherence. */
                 if (fn.sync_complete && !run_sync_checks()) {
+                    return false;
+                }
+
+                /* P2: speculative-type discipline (invariant ii). Runs
+                 * for hand-built functions too — the speculation pass
+                 * must be provable before any relaxed blob installs. */
+                if (!run_speculation_checks()) {
                     return false;
                 }
 
@@ -2096,6 +2410,140 @@ namespace erts_t2 {
         return 0;
     }
 
+    /* P2 commit 3: the speculative-type discipline (validator
+     * invariant ii). */
+    static int selftest_speculation(void) {
+        std::string err;
+
+        /* Guarded straight line: SpeculateType proves the param small,
+         * so untag/retag validate. */
+        {
+            T2Function fn;
+
+            fn.module = am_erlang;
+            fn.function = am_ok;
+            fn.arity = 1;
+
+            T2BasicBlock *b0 = fn.new_block();
+            T2Value *p0 = fn.emit_param(b0, 0, T2Type::any());
+            T2Op *spec = fn.new_op(b0,
+                                   T2OpKind::SpeculateType,
+                                   T2Type::none());
+
+            fn.set_operands(spec, {p0});
+
+            T2Value *u = fn.emit_unary(b0,
+                                       T2OpKind::UntagInt,
+                                       p0,
+                                       T2Type::any());
+            T2Value *t = fn.emit_unary(b0,
+                                       T2OpKind::TagInt,
+                                       u,
+                                       T2Type::any());
+
+            fn.emit_return(b0, t);
+            fn.finalize();
+            if (!t2_validate(fn, &err)) {
+                erts_fprintf(stderr,
+                             "t2 selftest: speculation guarded: %s\n",
+                             err.c_str());
+                return __LINE__;
+            }
+        }
+
+        /* The same without the guard must be rejected. */
+        {
+            T2Function fn;
+
+            fn.module = am_erlang;
+            fn.function = am_ok;
+            fn.arity = 1;
+
+            T2BasicBlock *b0 = fn.new_block();
+            T2Value *p0 = fn.emit_param(b0, 0, T2Type::any());
+            T2Value *u = fn.emit_unary(b0,
+                                       T2OpKind::UntagInt,
+                                       p0,
+                                       T2Type::any());
+            T2Value *t = fn.emit_unary(b0,
+                                       T2OpKind::TagInt,
+                                       u,
+                                       T2Type::any());
+
+            fn.emit_return(b0, t);
+            fn.finalize();
+            T2_CHECK(!t2_validate(fn, &err));
+        }
+
+        /* The phi AND rule: a guard on one incoming edge only must be
+         * rejected; guards on both edges pass. */
+        for (int guarded_both = 0; guarded_both <= 1; guarded_both++) {
+            T2Function fn;
+
+            fn.module = am_erlang;
+            fn.function = am_ok;
+            fn.arity = 1;
+
+            T2BasicBlock *b0 = fn.new_block();
+            T2BasicBlock *b1 = fn.new_block();
+            T2BasicBlock *b2 = fn.new_block();
+            T2BasicBlock *b3 = fn.new_block();
+
+            T2Value *p0 = fn.emit_param(b0, 0, T2Type::any());
+            T2Value *cond = fn.emit_unary(b0,
+                                          T2OpKind::IsInteger,
+                                          p0,
+                                          T2Type::of(BEAM_TYPE_ATOM));
+            fn.emit_branch(b0, cond, b1, b2);
+
+            {
+                T2Op *spec = fn.new_op(b1,
+                                       T2OpKind::SpeculateType,
+                                       T2Type::none());
+                fn.set_operands(spec, {p0});
+            }
+            fn.emit_jump(b1, b3);
+
+            if (guarded_both) {
+                T2Op *spec = fn.new_op(b2,
+                                       T2OpKind::SpeculateType,
+                                       T2Type::none());
+                fn.set_operands(spec, {p0});
+            }
+            fn.emit_jump(b2, b3);
+
+            /* Both phi inputs are p0; what differs per edge is whether
+             * the fact was established on that path. */
+            T2Op *phi = fn.new_phi(b3, T2Type::any());
+            fn.set_phi_inputs(phi, {p0, p0}, {b1, b2});
+
+            T2Value *u = fn.emit_unary(b3,
+                                       T2OpKind::UntagInt,
+                                       phi->result,
+                                       T2Type::any());
+            T2Value *t = fn.emit_unary(b3,
+                                       T2OpKind::TagInt,
+                                       u,
+                                       T2Type::any());
+            fn.emit_return(b3, t);
+            fn.finalize();
+
+            if (guarded_both) {
+                if (!t2_validate(fn, &err)) {
+                    erts_fprintf(stderr,
+                                 "t2 selftest: speculation both-edges: "
+                                 "%s\n",
+                                 err.c_str());
+                    return __LINE__;
+                }
+            } else {
+                T2_CHECK(!t2_validate(fn, &err));
+            }
+        }
+
+        return 0;
+    }
+
     static int selftest_negative(void) {
         std::string err;
 
@@ -2171,6 +2619,9 @@ extern "C" int erts_t2_hir_selftest(void) {
         return res;
     }
     if ((res = selftest_negative()) != 0) {
+        return res;
+    }
+    if ((res = selftest_speculation()) != 0) {
         return res;
     }
 

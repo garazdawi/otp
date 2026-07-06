@@ -299,6 +299,38 @@ namespace erts_t2 {
 
     namespace {
 
+        /* Effect classification for the window rule: conservative —
+         * every call-class op is treated as an effect boundary (a
+         * shared effect table refines this with the speculation
+         * phase). Allocation is not an effect (PLAN/T2/08 §3). */
+        bool op_is_effect(const T2Op *op) {
+            switch (op->kind) {
+            case T2OpKind::Call:
+            case T2OpKind::CallExt:
+            case T2OpKind::Bif:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        /* Deopt-able guards: every speculative-class op side-exits
+         * (tag-bit test or overflow flags) and re-executes from the
+         * window's re-call boundary. */
+        bool op_is_deopt_guard(const T2Op *op) {
+            switch (op->kind) {
+            case T2OpKind::SpeculateType:
+            case T2OpKind::SpeculateRange:
+            case T2OpKind::UntagInt:
+            case T2OpKind::AddSmall:
+            case T2OpKind::SubSmall:
+            case T2OpKind::MulRaw:
+                return true;
+            default:
+                return false;
+            }
+        }
+
         bool is_self_tail_call(const T2Function &fn, const T2Op *term) {
             return term != nullptr && term->kind == T2OpKind::TailCall &&
                    term->mfa_m == fn.module && term->mfa_f == fn.function &&
@@ -556,4 +588,193 @@ namespace erts_t2 {
         return true;
     }
 
+    /* ------------------------------------------------------------------ *
+     * Re-execution-window validator (see t2_loop.hpp)                     *
+     * ------------------------------------------------------------------ */
+
+    bool t2_validate_windows(const T2Function &fn,
+                             const T2LoopInfo &li,
+                             std::string *err) {
+        auto fail = [&](uint32_t block, const T2Op *op) {
+            if (err != nullptr) {
+                *err = "window validator: block " + std::to_string(block) +
+                       ": deopt-able guard (" +
+                       std::string(t2_op_kind_name(op->kind)) +
+                       ") after an effect in its re-execution window "
+                       "(guards-before-effects, PLAN/T2/08 §4.2)";
+            }
+            return false;
+        };
+
+        for (const T2Loop &loop : li.loops) {
+            std::vector<bool> in_loop(fn.blocks.size(), false);
+
+            for (uint32_t b : loop.body) {
+                in_loop[b] = true;
+            }
+
+            /* effect_in[b]: an effect may have executed on some path
+             * from the window start (the iteration's header entry) to
+             * b's entry. Monotone OR to a fixpoint; edges into the
+             * header start a fresh iteration and do not propagate. */
+            std::vector<uint8_t> effect_in(fn.blocks.size(), 0);
+            bool changed = true;
+
+            while (changed) {
+                changed = false;
+                for (uint32_t bid : loop.body) {
+                    const T2BasicBlock *b = fn.blocks[bid];
+                    uint8_t flag = effect_in[bid];
+
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if (op_is_effect(op)) {
+                            flag = 1;
+                        }
+                    }
+
+                    for_each_succ(b->terminator, [&](T2BasicBlock *succ) {
+                        if (succ == nullptr || !in_loop[succ->id] ||
+                            succ->id == loop.header) {
+                            return;
+                        }
+                        if (flag && !effect_in[succ->id]) {
+                            effect_in[succ->id] = 1;
+                            changed = true;
+                        }
+                    });
+                }
+            }
+
+            /* Check pass with the stable flags. */
+            for (uint32_t bid : loop.body) {
+                const T2BasicBlock *b = fn.blocks[bid];
+                uint8_t flag = effect_in[bid];
+
+                for (const T2Op *op = b->ops_head; op != nullptr;
+                     op = op->next) {
+                    if (flag && op_is_deopt_guard(op)) {
+                        return fail(bid, op);
+                    }
+                    if (op_is_effect(op)) {
+                        flag = 1;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
 } /* namespace erts_t2 */
+
+/* ------------------------------------------------------------------ *
+ * Self-test (T2_SELFTEST)                                            *
+ * ------------------------------------------------------------------ */
+
+using namespace erts_t2;
+
+#define T2_LOOP_CHECK(Cond)                                                    \
+    do {                                                                       \
+        if (!(Cond)) {                                                         \
+            erts_fprintf(stderr,                                               \
+                         "t2 loop selftest failure at %s:%d: %s\n",           \
+                         __FILE__,                                             \
+                         __LINE__,                                             \
+                         #Cond);                                               \
+            return __LINE__;                                                   \
+        }                                                                      \
+    } while (0)
+
+/* Hand-build a natural loop:
+ *   b0: p = param0; jump b1
+ *   b1: v = phi(p from b0, r from b2); c = is_integer v; branch b2, b3
+ *   b2: [guard?] r0 = call m:f(v); [guard?]; jump b1     (the latch)
+ *   b3: return v
+ * with a SpeculateType guard placed either before (legal) or after
+ * (illegal) the call, exercising t2_loop_info + the window rule. */
+static int t2_loop_selftest_window(bool guard_after) {
+    T2Function fn;
+    std::string err;
+
+    fn.module = am_erlang;
+    fn.function = am_ok;
+    fn.arity = 1;
+
+    T2BasicBlock *b0 = fn.new_block();
+    T2BasicBlock *b1 = fn.new_block();
+    T2BasicBlock *b2 = fn.new_block();
+    T2BasicBlock *b3 = fn.new_block();
+
+    T2Value *p0 = fn.emit_param(b0, 0, T2Type::any());
+    fn.emit_jump(b0, b1);
+
+    T2Op *phi = fn.new_phi(b1, T2Type::any());
+    T2Value *cond = fn.emit_unary(b1,
+                                  T2OpKind::IsInteger,
+                                  phi->result,
+                                  T2Type::of(BEAM_TYPE_ATOM));
+    fn.emit_branch(b1, cond, b2, b3);
+
+    if (!guard_after) {
+        T2Op *spec = fn.new_op(b2, T2OpKind::SpeculateType, T2Type::none());
+        fn.set_operands(spec, {phi->result});
+    }
+    T2Value *r = fn.emit_call(b2,
+                              T2OpKind::Call,
+                              am_erlang,
+                              am_ok,
+                              1,
+                              {phi->result},
+                              T2Type::any());
+    if (guard_after) {
+        T2Op *spec = fn.new_op(b2, T2OpKind::SpeculateType, T2Type::none());
+        fn.set_operands(spec, {phi->result});
+    }
+    fn.emit_jump(b2, b1);
+
+    fn.emit_return(b3, phi->result);
+
+    fn.set_phi_inputs(phi, {p0, r}, {b0, b2});
+    fn.finalize();
+
+    if (!t2_validate(fn, &err)) {
+        erts_fprintf(stderr, "t2 loop selftest: validate: %s\n", err.c_str());
+        return __LINE__;
+    }
+
+    T2LoopInfo li;
+
+    t2_loop_info(fn, &li);
+    T2_LOOP_CHECK(li.loops.size() == 1);
+    T2_LOOP_CHECK(li.loops[0].header == 1);
+    T2_LOOP_CHECK(li.loops[0].preheader == 0);
+    T2_LOOP_CHECK(li.loops[0].latches.size() == 1 &&
+                  li.loops[0].latches[0] == 2);
+    T2_LOOP_CHECK(li.loops[0].body.size() == 2);
+    T2_LOOP_CHECK(li.loops[0].exits.size() == 1 &&
+                  li.loops[0].exits[0] == 1);
+
+    bool ok = t2_validate_windows(fn, li, &err);
+
+    if (guard_after) {
+        T2_LOOP_CHECK(!ok);
+    } else if (!ok) {
+        erts_fprintf(stderr, "t2 loop selftest: windows: %s\n", err.c_str());
+        return __LINE__;
+    }
+
+    return 0;
+}
+
+extern "C" int erts_t2_loop_selftest(void) {
+    int res;
+
+    if ((res = t2_loop_selftest_window(false)) != 0) {
+        return res;
+    }
+    if ((res = t2_loop_selftest_window(true)) != 0) {
+        return res;
+    }
+    return 0;
+}

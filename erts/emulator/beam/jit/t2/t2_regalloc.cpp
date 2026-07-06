@@ -99,6 +99,10 @@ namespace erts_t2 {
         struct VerifyStructure {
             T2LirFunction &lir;
             std::string *err;
+            /* After relaxation, Move ops may carry PhysLoc::Phys
+             * operands/destinations (the only Phys-capable emitter);
+             * everything else must still be a canonical slot. */
+            bool allow_phys = false;
 
             bool fail(const std::string &msg) {
                 if (err) {
@@ -107,16 +111,18 @@ namespace erts_t2 {
                 return false;
             }
 
-            bool check_src(const T2LirSrc &s, const char *what) {
+            bool check_src(const T2LirSrc &s,
+                           const char *what,
+                           bool phys_ok) {
                 if (s.is_const) {
                     return true;
                 }
-                if (!s.loc.is_slot()) {
-                    return fail(std::string(what) +
-                                ": operand is not a canonical slot or "
-                                "immediate");
+                if (s.loc.is_slot() || (phys_ok && s.loc.is_phys())) {
+                    return true;
                 }
-                return true;
+                return fail(std::string(what) +
+                            ": operand is not a canonical slot or "
+                            "immediate");
             }
 
             bool check_block_ref(uint32_t id, const char *what) {
@@ -142,8 +148,11 @@ namespace erts_t2 {
                             return fail("invalid LIR op");
                         }
 
+                        bool phys_ok = allow_phys &&
+                                       op.kind == T2LirKind::Move;
+
                         for (uint8_t s = 0; s < op.num_srcs; s++) {
-                            if (!check_src(op.srcs[s], name)) {
+                            if (!check_src(op.srcs[s], name, phys_ok)) {
                                 return false;
                             }
                         }
@@ -152,11 +161,13 @@ namespace erts_t2 {
                                 return fail("operand pool out of range");
                             }
                             if (!check_src(lir.src_pool[op.pool_first + s],
-                                           name)) {
+                                           name,
+                                           false)) {
                                 return false;
                             }
                         }
-                        if (!op.dst.is_none() && !op.dst.is_slot()) {
+                        if (!op.dst.is_none() && !op.dst.is_slot() &&
+                            !(phys_ok && op.dst.is_phys())) {
                             return fail(std::string(name) +
                                         ": destination is not a canonical "
                                         "slot");
@@ -322,6 +333,15 @@ namespace erts_t2 {
         constexpr uint32_t loc_key(PhysLoc l) {
             return ((uint32_t)l.kind << 16) | l.num;
         }
+
+        /* The Phys register pool (PLAN/T2FULL/09 §4): Phys id k is the
+         * callee-save machine register backing BEAM Xk (x25..x27).
+         * XREG3's backing is caller-save in DEBUG builds
+         * (beam_asm.hpp), so the portable pool stops at 3 registers.
+         * Because Phys k aliases the BEAM Xk register file, an
+         * interval may only get Phys k when nothing in its span (nor
+         * any overlapping interval) touches slot Xk. */
+        constexpr uint16_t T2_PHYS_POOL = 3;
 
         struct RegAlloc {
             T2LirFunction &lir;
@@ -725,6 +745,16 @@ namespace erts_t2 {
                     /* slot -> value, adopt-on-first-mention. */
                     std::unordered_map<uint32_t, uint32_t> state;
 
+                    /* A gc_bif arith with an in-blob fail edge writes
+                     * its destination on the success (then) edge only —
+                     * T1 writes on the success path (the HIR walk's
+                     * then_write, mirrored here at LIR level). */
+                    bool have_cond_write = false;
+                    PhysLoc cond_loc = PhysLoc::none();
+                    uint32_t cond_value = T2_NO_VALUE;
+                    uint32_t cond_then = T2_LIR_NO_BLOCK;
+                    uint32_t cond_else = T2_LIR_NO_BLOCK;
+
                     for (const T2LirPhi &phi : b.phis) {
                         state[loc_key(phi.home)] = phi.value;
                     }
@@ -740,12 +770,26 @@ namespace erts_t2 {
                     auto read = [&](PhysLoc loc,
                                     uint32_t v,
                                     const char *what) -> bool {
-                        if (v == T2_NO_VALUE || !loc.is_slot()) {
+                        if (v == T2_NO_VALUE ||
+                            (!loc.is_slot() && !loc.is_phys())) {
                             return true;
                         }
                         auto it = state.find(loc_key(loc));
 
                         if (it == state.end()) {
+                            if (loc.is_phys()) {
+                                /* Phys state is exact within a block —
+                                 * every Phys write is visible to this
+                                 * walk, so a miss is a real bug (e.g. a
+                                 * value read across a barrier that
+                                 * cleared it), never adopted. */
+                                return fail(std::string(what) +
+                                            " in block " +
+                                            std::to_string(b.id) +
+                                            " reads v" +
+                                            std::to_string(v) +
+                                            " from a dead Phys register");
+                            }
                             state[loc_key(loc)] = v;
                             return true;
                         }
@@ -774,6 +818,16 @@ namespace erts_t2 {
                         for (auto it = state.begin(); it != state.end();) {
                             if ((it->first >> 16) ==
                                 (uint32_t)PhysLoc::Kind::YReg) {
+                                it = state.erase(it);
+                            } else {
+                                ++it;
+                            }
+                        }
+                    };
+                    auto clobber_phys = [&]() {
+                        for (auto it = state.begin(); it != state.end();) {
+                            if ((it->first >> 16) ==
+                                (uint32_t)PhysLoc::Kind::Phys) {
                                 it = state.erase(it);
                             } else {
                                 ++it;
@@ -885,9 +939,18 @@ namespace erts_t2 {
                             break;
                         }
 
+                        /* Sync points and call-class ops end every
+                         * Phys lifetime: a yield/GC/call path restores
+                         * only canonical state. Relaxed intervals never
+                         * span them (allocator policy); the walk
+                         * enforces it. */
+                        if (op_is_barrier(op)) {
+                            clobber_phys();
+                        }
+
                         /* Writes. */
                         auto write = [&](PhysLoc loc, uint32_t v) {
-                            if (!loc.is_slot()) {
+                            if (!loc.is_slot() && !loc.is_phys()) {
                                 return;
                             }
                             if (v == T2_NO_VALUE) {
@@ -899,11 +962,84 @@ namespace erts_t2 {
                                 state[loc_key(loc)] = v;
                             }
                         };
-                        if (!op.dst.is_none()) {
-                            write(op.dst, op.dst_value);
+                        if (!op.dst.is_none() &&
+                            op.succ_then != T2_LIR_NO_BLOCK &&
+                            op.succ_else != T2_LIR_NO_BLOCK &&
+                            !t2_lir_kind_is_terminator(op.kind)) {
+                            /* Folded-fail arith: conditional write. */
+                            have_cond_write = true;
+                            cond_loc = op.dst;
+                            cond_value = op.dst_value;
+                            cond_then = op.succ_then;
+                            cond_else = op.succ_else;
+                        } else {
+                            if (!op.dst.is_none()) {
+                                write(op.dst, op.dst_value);
+                            }
+                            if (!op.dst2.is_none()) {
+                                write(op.dst2, op.dst2_value);
+                            }
                         }
-                        if (!op.dst2.is_none()) {
-                            write(op.dst2, op.dst2_value);
+                    }
+                    /* Phi merge edges: every successor phi input coming
+                     * from this block must sit in the phi's home slot
+                     * at this block's exit (where the walk knows the
+                     * slot's content) — the LIR-level mirror of the HIR
+                     * validator's merge-slot check, and the check that
+                     * catches a relaxed def whose home write was
+                     * dropped while a merge still consumes it. */
+                    for (uint32_t sid : succs[b.id]) {
+                        for (const T2LirPhi &phi : lir.blocks[sid].phis) {
+                            for (const T2LirPhi::In &pin : phi.ins) {
+                                if (pin.pred_block != b.id ||
+                                    pin.value == T2_NO_VALUE) {
+                                    continue;
+                                }
+                                if (have_cond_write &&
+                                    phi.home == cond_loc) {
+                                    /* The conditional write applies on
+                                     * the then edge only; an ambiguous
+                                     * edge (then == else) is skipped,
+                                     * as in the HIR walk. */
+                                    if (cond_then == cond_else) {
+                                        continue;
+                                    }
+                                    if (sid == cond_then) {
+                                        if (cond_value != T2_NO_VALUE &&
+                                            cond_value != pin.value) {
+                                            return fail(
+                                                    "block " +
+                                                    std::to_string(b.id) +
+                                                    " then-edge: phi home "
+                                                    "gets the conditional "
+                                                    "write v" +
+                                                    std::to_string(
+                                                            cond_value) +
+                                                    ", the merge expects "
+                                                    "v" +
+                                                    std::to_string(
+                                                            pin.value));
+                                        }
+                                        continue;
+                                    }
+                                    /* else edge: fall through to the
+                                     * pre-write state below. */
+                                }
+                                auto it = state.find(loc_key(phi.home));
+
+                                if (it != state.end() &&
+                                    it->second != pin.value) {
+                                    return fail(
+                                            "block " +
+                                            std::to_string(b.id) +
+                                            " exit: phi home of block " +
+                                            std::to_string(sid) +
+                                            " holds v" +
+                                            std::to_string(it->second) +
+                                            ", the merge expects v" +
+                                            std::to_string(pin.value));
+                                }
+                            }
                         }
                     }
                 }
@@ -941,14 +1077,259 @@ namespace erts_t2 {
 
             /* ---- 6. assignment (the policy) ------------------------------ */
 
-            /* P2 commit-1 policy: identity — every interval keeps its
-             * canonical per-use placement; no PhysLoc::Phys is assigned,
-             * so the LIR is emitted exactly as isel produced it and the
-             * blob is byte-identical to P1. The relaxation (commit 3)
-             * assigns Phys to intervals that cross no sync point. */
+            /* P2 commit-3 policy — the relaxation (PLAN/T2/04 §11.2's
+             * v1 model): T1's X/Y placement is required *only* at sync
+             * points; between sync points the allocator is free. An
+             * interval is released from its canonical pins and assigned
+             * a PhysLoc::Phys when:
+             *
+             *   - it crosses no sync point: no position in its span
+             *     carries a sync map (the pins), no call-class op, and
+             *     no block boundary (cross-edge Phys resolution arrives
+             *     with its consumers);
+             *   - it is never named by a sync map (no fixed uses);
+             *   - its def and every use are Move ops — the one
+             *     Phys-capable emitter in the reused-T1-emitter
+             *     backend. The speculation phase adds native emitters
+             *     (flag-checked arithmetic on untagged scratch), which
+             *     widen this set and are the pool's real customers:
+             *     untagged values may NEVER live in an X/Y slot, so
+             *     Phys is their only legal home;
+             *   - a pool register exists whose aliased BEAM X slot is
+             *     untouched across the span and by every overlapping
+             *     interval.
+             *
+             * Everything else keeps its canonical placement, which for
+             * X0..X5 is already register-backed on aarch64 — the
+             * loop-carried values the MVP registerizes live in
+             * x25..x28 via their canonical homes. The relaxed LIR is
+             * re-verified from scratch (structure + placement walk)
+             * before anything is emitted. */
+
+            uint32_t phys_assigned = 0;
+
+            bool op_is_barrier(const T2LirOp &op) const {
+                if (op.sync != nullptr) {
+                    return true; /* a sync point IS the pin boundary */
+                }
+                switch (op.kind) {
+                case T2LirKind::Call:
+                case T2LirKind::CallExt:
+                case T2LirKind::CallBif:
+                case T2LirKind::TailCall:
+                case T2LirKind::TailCallExt:
+                case T2LirKind::Return:
+                case T2LirKind::SideExit:
+                case T2LirKind::ReductionCheck:
+                case T2LirKind::GcTest:
+                case T2LirKind::Allocate:
+                    return true;
+                default:
+                    return false;
+                }
+            }
+
+            /* Block containing [from,to], or T2_LIR_NO_BLOCK when the
+             * span crosses a block boundary. */
+            uint32_t span_block(uint32_t from, uint32_t to) const {
+                for (const T2LirBlock &b : lir.blocks) {
+                    if (from >= entry_pos[b.id] && to <= exit_pos[b.id]) {
+                        return b.id;
+                    }
+                }
+                return T2_LIR_NO_BLOCK;
+            }
+
+            /* X slots below the pool size an op references (reads,
+             * writes, or sync pins), OR'd into `mask`. */
+            void op_low_x_mask(const T2LirOp &op, uint32_t *mask) const {
+                auto add = [&](PhysLoc l) {
+                    if (l.is_xreg() && l.num < T2_PHYS_POOL) {
+                        *mask |= (uint32_t)1 << l.num;
+                    }
+                };
+                for_each_src(op, [&](const T2LirSrc &s) {
+                    if (!s.is_const) {
+                        add(s.loc);
+                    }
+                });
+                add(op.dst);
+                add(op.dst2);
+                for_each_sync_pin(op.sync, [&](uint32_t, PhysLoc l) {
+                    add(l);
+                });
+            }
+
             void assign() {
-                for (T2Interval &iv : intervals) {
+                for (uint32_t v = 0; v < nvals; v++) {
+                    T2Interval &iv = intervals[v];
+
                     iv.assigned_phys = PhysLoc::none();
+                    if (iv.empty() || iv.ranges.empty() ||
+                        iv.def_pos == UINT32_MAX) {
+                        continue;
+                    }
+
+                    uint32_t from = iv.ranges.front().from;
+                    uint32_t to = iv.ranges.back().to;
+
+                    /* Single block, no barrier/sync crossing, Move-only
+                     * def and uses, no sync-map mentions. */
+                    if (iv.ranges.size() != 1) {
+                        continue;
+                    }
+                    uint32_t bid = span_block(from, to);
+                    if (bid == T2_LIR_NO_BLOCK) {
+                        continue;
+                    }
+                    bool ok = true;
+                    /* The def must be a Move *op*: a phi- or
+                     * param-defined value has no defining code — it
+                     * arrives via the merge/entry contract in its home
+                     * slot, which must therefore stay its placement. */
+                    bool def_is_move = false;
+                    /* Every recorded use must be found at a Move op in
+                     * the span. A use that no op accounts for is a
+                     * contract use — a phi-edge input consumed at the
+                     * block exit via the merge-slot contract — and pins
+                     * the value to its canonical home. */
+                    uint32_t use_mentions = 0;
+                    uint32_t banned = 0;
+                    const T2LirBlock &b = lir.blocks[bid];
+
+                    for (size_t oi = 0; oi < b.ops.size() && ok; oi++) {
+                        const T2LirOp &op = b.ops[oi];
+                        uint32_t pos = op_pos[bid][oi];
+
+                        if (pos < from || pos > to) {
+                            continue;
+                        }
+                        bool defs = op.dst_value == v;
+                        bool uses = false;
+
+                        if (defs && op.kind == T2LirKind::Move) {
+                            def_is_move = true;
+                        }
+
+                        if (op.dst2_value == v) {
+                            ok = false; /* pair second dst: not Move   */
+                            break;
+                        }
+                        for_each_src(op, [&](const T2LirSrc &s) {
+                            if (!s.is_const && s.value == v) {
+                                uses = true;
+                                use_mentions++;
+                            }
+                        });
+                        if ((defs || uses) &&
+                            op.kind != T2LirKind::Move) {
+                            ok = false;
+                            break;
+                        }
+                        if (op_is_barrier(op) && !(defs || uses)) {
+                            ok = false;
+                            break;
+                        }
+                        if (op_is_barrier(op)) {
+                            ok = false; /* def/use at a barrier: pinned */
+                            break;
+                        }
+                        op_low_x_mask(op, &banned);
+                    }
+                    if (!ok || !def_is_move ||
+                        use_mentions != (uint32_t)iv.uses.size()) {
+                        continue;
+                    }
+                    for (const T2Use &u : iv.uses) {
+                        if (u.from_sync) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (!ok) {
+                        continue;
+                    }
+
+                    /* Interference: overlapping intervals must not
+                     * touch the candidate's aliased X slot (their
+                     * canonical placements) nor hold the same Phys. */
+                    for (uint32_t o = 0; o < nvals && banned !=
+                                 (((uint32_t)1 << T2_PHYS_POOL) - 1);
+                         o++) {
+                        const T2Interval &ov = intervals[o];
+
+                        if (o == v || ov.empty() || ov.ranges.empty()) {
+                            continue;
+                        }
+                        if (ov.ranges.back().to < from ||
+                            ov.ranges.front().from > to) {
+                            continue; /* cheap reject: no overlap */
+                        }
+                        bool overlap = false;
+                        for (const T2Range &r : ov.ranges) {
+                            if (r.from <= to && from <= r.to) {
+                                overlap = true;
+                                break;
+                            }
+                        }
+                        if (!overlap) {
+                            continue;
+                        }
+                        if (ov.assigned_phys.is_phys() &&
+                            ov.assigned_phys.num < T2_PHYS_POOL) {
+                            banned |= (uint32_t)1 << ov.assigned_phys.num;
+                        }
+                        auto ban_loc = [&](PhysLoc l) {
+                            if (l.is_xreg() && l.num < T2_PHYS_POOL) {
+                                banned |= (uint32_t)1 << l.num;
+                            }
+                        };
+                        ban_loc(ov.def_loc);
+                        for (const T2Use &u : ov.uses) {
+                            ban_loc(u.loc);
+                        }
+                    }
+
+                    uint16_t k = 0;
+                    for (; k < T2_PHYS_POOL; k++) {
+                        if (!(banned & ((uint32_t)1 << k))) {
+                            break;
+                        }
+                    }
+                    if (k == T2_PHYS_POOL) {
+                        continue;
+                    }
+
+                    /* Assign + rewrite: def dst and every use loc. */
+                    iv.assigned_phys = PhysLoc::phys(k);
+                    phys_assigned++;
+
+                    T2LirBlock &wb = lir.blocks[bid];
+                    for (size_t oi = 0; oi < wb.ops.size(); oi++) {
+                        T2LirOp &op = wb.ops[oi];
+                        uint32_t pos = op_pos[bid][oi];
+
+                        if (pos < from || pos > to) {
+                            continue;
+                        }
+                        if (op.dst_value == v) {
+                            op.dst = PhysLoc::phys(k);
+                        }
+                        for (uint8_t s = 0; s < op.num_srcs; s++) {
+                            if (!op.srcs[s].is_const &&
+                                op.srcs[s].value == v) {
+                                op.srcs[s].loc = PhysLoc::phys(k);
+                            }
+                        }
+                        for (uint32_t s = 0; s < op.num_srcs_ext; s++) {
+                            T2LirSrc &ps =
+                                    lir.src_pool[op.pool_first + s];
+
+                            if (!ps.is_const && ps.value == v) {
+                                ps.loc = PhysLoc::phys(k);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -982,6 +1363,10 @@ namespace erts_t2 {
                             line += "*";
                         }
                     }
+                    if (iv.assigned_phys.is_phys()) {
+                        line += " -> p" +
+                                std::to_string(iv.assigned_phys.num);
+                    }
                     erts_fprintf(stderr, "%s\n", line.c_str());
                 }
             }
@@ -1013,6 +1398,12 @@ namespace erts_t2 {
                     return false;
                 }
                 assign();
+                if (phys_assigned != 0 && !placement_walk()) {
+                    /* The rewritten placement must re-verify from
+                     * scratch; a failure here is an allocator bug and
+                     * must never reach emission. */
+                    return false;
+                }
                 dump();
                 return true;
             }
@@ -1028,7 +1419,19 @@ namespace erts_t2 {
         }
 
         RegAlloc ra{lir, err};
-        return ra.run();
+
+        if (!ra.run()) {
+            return false;
+        }
+        if (ra.phys_assigned != 0) {
+            VerifyStructure vs2{lir, err};
+
+            vs2.allow_phys = true;
+            if (!vs2.run()) {
+                return false;
+            }
+        }
+        return true;
     }
 
 } /* namespace erts_t2 */

@@ -94,6 +94,31 @@ namespace erts_t2 {
      * function (t2_validate) before lowering. */
     bool t2_loop_recover(T2Function &fn, bool *recovered, std::string *err);
 
+    /* Re-execution-window legality (PLAN/T2/08 §4.2, guards-before-
+     * effects; PLAN/T2FULL/09 §4). The loop deopt shape is "re-execute
+     * the iteration from the header-phi values as a fresh call", so a
+     * deopt-able (speculative-class) guard may only re-execute an
+     * iteration prefix that performed no effect: within each window —
+     * the region from an iteration's start (the header) to the first
+     * effect boundary — every deopt-able guard must precede the first
+     * effect on every path. A guard after an effect would need a fresh
+     * window whose re-call target is the post-effect CONT boundary;
+     * until that lands (the speculation phase), such IR is rejected.
+     * Effects are classified conservatively: any call-class op
+     * (Call/CallExt/Bif) is an effect boundary; allocation is NOT an
+     * effect (an abandoned partial iteration leaves garbage, not state
+     * — PLAN/T2/08 §3). The back edge starts a new iteration, i.e. a
+     * fresh window. Infrastructure for the speculation phase: today's
+     * IR carries no deopt-able guards, so this holds vacuously and
+     * guards the pipeline from day one. */
+    bool t2_validate_windows(const T2Function &fn,
+                             const T2LoopInfo &li,
+                             std::string *err);
+
 } /* namespace erts_t2 */
+
+/* T2_SELFTEST hook (beamasm_init): loop info + recovery structure +
+ * window-validator round trips on hand-built IR. 0 on success. */
+extern "C" int erts_t2_loop_selftest(void);
 
 #endif /* _JIT_T2_LOOP_HPP */

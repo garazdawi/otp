@@ -22,6 +22,7 @@
 
 #include "beam_asm.hpp"
 #include "t2_hir.hpp"
+#include "t2_loop.hpp"
 #include "t2_emit.hpp"
 
 extern "C"
@@ -457,6 +458,11 @@ void beamasm_init() {
         res = erts_t2_ranges_selftest();
         if (res != 0) {
             erts_exit(ERTS_ABORT_EXIT, "T2 ranges self-test failed (%d)\n", res);
+        }
+
+        res = erts_t2_loop_selftest();
+        if (res != 0) {
+            erts_exit(ERTS_ABORT_EXIT, "T2 loop self-test failed (%d)\n", res);
         }
 
         erts_fprintf(stderr, "T2 HIR + ranges self-tests passed\n");
