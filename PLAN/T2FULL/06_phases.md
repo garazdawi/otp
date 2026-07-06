@@ -86,11 +86,29 @@ rescope:
 > Real bugs the gate caught: `select_tuple_arity` header-vs-value
 > compare, loader-transformed pseudo-BIF reduction inflation,
 > BIF-stub dead-chunk install, debug-emulator lock-order (incl. a
-> pre-existing branch-wide `alloc_profile` one). Remaining for P1
-> close: the full multi-hour emulator sweep at final coverage +
-> the server-ARM leg (M0.5 workflow). Rejected-in-P1 (documented):
-> heavy-BIF sites (~23), non-arith gc_bifs (~91), exact-compare
-> literal operands (~97), on_load modules.
+> pre-existing branch-wide `alloc_profile` one). Rejected-in-P1
+> (documented): heavy-BIF sites (~23), non-arith gc_bifs (~91),
+> exact-compare literal operands (~97), on_load modules.
+>
+> **P1 CLOSED (2026-07-06): the full-sweep gate is green.** All
+> 105 emulator suites + stdlib/kernel slices, run PAIRED (baseline
+> vs `+JT2enable`, 115 suite-runs each side, ~2 450 cases): **zero
+> T2-only failures after triage**. Every apparent delta
+> dispositioned with evidence: the one T2-only sweep failure
+> (`signal_SUITE:parallel_signal_enqueue_race_2`) soaked 20×/config
+> — T2 0 failures, baseline 3, i.e. config-independent flaky (the
+> PR-7822-class wedge firing on baseline is worth an upstream
+> note); `z_SUITE` was a shared-peer-node naming artifact,
+> byte-identical when re-paired; `nif_SUITE` a harness-ordering
+> artifact. The one genuine bug found was config-independent, in
+> the branch's old A1-0 scan pass (float compare literal →
+> `lists:seq/2` crash) — fixed, `9a388c9359`. State-model-critical
+> suites (exception, process, trace×11, code load/purge, gc,
+> signal, receive, bs, nif, fun, hibernate, distribution,
+> scheduler) byte-identical between configs. Boot: 5 569 built /
+> 4 808 installed / 0 failures / 73 ms compile. Server-ARM
+> confirmation rides the M0.5 workflow. **Next: P2 — the loop
+> tier.**
 
 Identical scope, gates, and estimates to
 [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §8 Track B —
