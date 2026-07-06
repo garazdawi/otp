@@ -241,6 +241,10 @@ jobs:
         if: always()
         run: |
           # shellcheck disable=SC2016  # awk field refs like $(i+1) are single-quoted on purpose
+          ## GHA runs this under `bash -e {0}`; this step is best-effort text
+          ## extraction where a no-match grep (exit 1) is a *good* outcome
+          ## (e.g. zero build-failure lines), so turn errexit off.
+          set +e
           set -u
           RES="$ERL_TOP/t2-results"
           SUM="$RES/SUMMARY.md"
