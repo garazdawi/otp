@@ -739,6 +739,15 @@ extern "C"
         ba->t2_pc_collect = (on != 0);
     }
 
+    /* T2 tier-up profiling (P2 commit 9): see t2_retain.h. */
+    void beamasm_set_t2_profiles(void *instance,
+                                 struct ErtsT2Profile *profiles,
+                                 int function_count) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        ba->t2_profiles = (void *)profiles;
+        ba->t2_profile_count = function_count;
+    }
+
     size_t beamasm_t2_pc_raw_count(void *instance) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
         return ba->t2_pc_raw.size();

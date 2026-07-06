@@ -287,18 +287,32 @@ static int bs_match_op_supported(BeamFile *beam, const BeamOp *op) {
                                   NULL) >= 0;
 }
 
-Uint32 *erts_t2_eligibility_scan(BeamFile *beam, int *any_eligible) {
+Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
+                                 int *any_eligible,
+                                 Uint32 **loop_bitmap_out,
+                                 int *on_load_out,
+                                 Uint32 *arities_out) {
     BeamOpAllocator op_alloc;
     BeamCodeReader *reader;
     BeamOp *op;
 
     Uint32 *bitmap;
+    Uint32 *loops = NULL;
     size_t bitmap_words;
     int fn_idx = -1;
     int fn_ok = 0;
+    int fn_loop = 0;
+    int expect_entry = 0;
+    UWord entry_label = 0;
     int done = 0;
 
     *any_eligible = 0;
+    if (loop_bitmap_out != NULL) {
+        *loop_bitmap_out = NULL;
+    }
+    if (on_load_out != NULL) {
+        *on_load_out = 0;
+    }
 
     if (beam->code.function_count == 0) {
         return NULL;
@@ -307,6 +321,12 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam, int *any_eligible) {
     bitmap_words = (beam->code.function_count + 31) / 32;
     bitmap = erts_alloc(ERTS_ALC_T_T2_CODE, bitmap_words * sizeof(Uint32));
     sys_memset(bitmap, 0, bitmap_words * sizeof(Uint32));
+    if (loop_bitmap_out != NULL) {
+        loops = erts_alloc(ERTS_ALC_T_T2_CODE,
+                           bitmap_words * sizeof(Uint32));
+        sys_memset(loops, 0, bitmap_words * sizeof(Uint32));
+        *loop_bitmap_out = loops;
+    }
 
     beamopallocator_init(&op_alloc);
     reader = beamfile_get_code(beam, &op_alloc);
@@ -316,15 +336,49 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam, int *any_eligible) {
         case genop_int_func_start_5:
             fn_idx++;
             fn_ok = 1;
+            fn_loop = 0;
+            expect_entry = 1;
+            entry_label = 0;
+            if (arities_out != NULL && fn_idx >= 0 &&
+                fn_idx < beam->code.function_count) {
+                arities_out[fn_idx] = (Uint32)op->a[4].val;
+            }
             break;
         case genop_int_func_end_2:
-            if (fn_ok && fn_idx >= 0 && fn_idx < beam->code.function_count) {
-                bitmap[fn_idx / 32] |= ((Uint32)1) << (fn_idx % 32);
-                *any_eligible = 1;
+            if (fn_idx >= 0 && fn_idx < beam->code.function_count) {
+                if (fn_ok) {
+                    bitmap[fn_idx / 32] |= ((Uint32)1) << (fn_idx % 32);
+                    *any_eligible = 1;
+                }
+                if (loops != NULL && fn_loop) {
+                    loops[fn_idx / 32] |= ((Uint32)1) << (fn_idx % 32);
+                }
             }
             break;
         case genop_int_code_end_0:
             done = 1;
+            break;
+        case genop_on_load_0:
+            if (on_load_out != NULL) {
+                *on_load_out = 1;
+            }
+            break;
+        case genop_label_1:
+            if (expect_entry) {
+                /* The first label after int_func_start is the entry
+                 * label callers (and self tail calls) target. */
+                entry_label = op->a[0].val;
+                expect_entry = 0;
+            }
+            break;
+        case genop_call_only_2:
+        case genop_call_last_3:
+            /* A local self-recursive tail call: the loop shape the
+             * tier-up counter profiles (PLAN/T2/08 §3 class 1). */
+            if (op->a[1].type == TAG_f && op->a[1].val == entry_label &&
+                entry_label != 0) {
+                fn_loop = 1;
+            }
             break;
         default:
             if (fn_ok && !erts_t2_genop_supported(op->op)) {

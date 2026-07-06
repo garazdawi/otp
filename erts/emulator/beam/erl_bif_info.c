@@ -74,6 +74,7 @@ Eterm erts_t2_debug_exec(Process *p, Eterm mod, Eterm func, Eterm arity,
                          Eterm args);
 Eterm erts_t2_debug_in_blob(Process *p, Eterm pid);
 Eterm erts_t2_debug_yield_stats(Process *p);
+Eterm erts_t2_tier_stats_term(Process *p);
 #endif
 
 #ifdef ERTS_ENABLE_LOCK_COUNT
@@ -4329,6 +4330,16 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	       loops' cold yield/resume stubs. */
 #ifdef BEAMASM
 	    BIF_RET(erts_t2_debug_yield_stats(BIF_P));
+#else
+	    BIF_RET(am_undefined);
+#endif
+	}
+	else if (ERTS_IS_ATOM_STR("t2_tier_stats", BIF_ARG_1)) {
+	    /* T2-Full P2 commit 9: {Trips, StabilityResets, Enqueued,
+	       Dropped, Compiled, Installed, Failed} — the counter-triggered
+	       tier-up path (advisory counters). */
+#ifdef BEAMASM
+	    BIF_RET(erts_t2_tier_stats_term(BIF_P));
 #else
 	    BIF_RET(am_undefined);
 #endif

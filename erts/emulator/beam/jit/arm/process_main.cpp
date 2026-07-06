@@ -28,6 +28,9 @@ extern "C"
 #include "beam_common.h"
 #include "code_ix.h"
 #include "export.h"
+
+/* jit/t2/t2_tier.c */
+UWord erts_t2_profile_throwaway_addr(void);
 }
 
 #undef x
@@ -83,6 +86,23 @@ void BeamGlobalAssembler::emit_process_main() {
 
     a.str(a64::xzr, start_time_i);
     a.str(a64::xzr, start_time);
+
+    {
+        /* T2 tier-up profiling redirect (PLAN/T2/02 §7.3): NULL on
+         * scheduler 1 so it writes the real per-function records,
+         * the shared throwaway record everywhere else. The register
+         * structure just carved from the C stack is uninitialized,
+         * so this must be stored before any Erlang code runs. */
+        const a64::Mem redirect_ref = getSchedulerRegRef(
+                offsetof(ErtsSchedulerRegisters,
+                         aux_regs.d.t2_profile_redirect));
+
+        a.ldr(TMP1, a64::Mem(ARG1, offsetof(ErtsSchedulerData, no)));
+        mov_imm(TMP2, erts_t2_profile_throwaway_addr());
+        a.cmp(TMP1, imm(1));
+        a.csel(TMP1, a64::xzr, TMP2, imm(arm::CondCode::kEQ));
+        a.str(TMP1, redirect_ref);
+    }
 
     mov_imm(c_p, 0);
     mov_imm(FCALLS, 0);

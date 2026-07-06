@@ -102,14 +102,40 @@ namespace {
         }
     }
 
+    /* Facts observed by the tier-up profile (P2 commit 9): the default
+     * source's type-chunk reasoning, narrowed by the recorded
+     * non-small observations — an argument seen non-small would deopt
+     * every entry, so its speculation is withheld. */
+    class T2ProfileFactSource : public T2FactSource {
+    public:
+        T2ProfileFactSource(const T2Function &fn, const ErtsT2Profile *rec)
+                : dflt(fn), nonsmall(rec != nullptr ? rec->nonsmall : 0) {
+        }
+
+        bool speculate_param_small(uint32_t idx) const override {
+            if (idx < 4 && (nonsmall & (1u << idx)) != 0) {
+                return false;
+            }
+            return dflt.speculate_param_small(idx);
+        }
+
+    private:
+        T2DefaultFactSource dflt;
+        Uint32 nonsmall;
+    };
+
     /* Lower + emit + install one built HIR function against the loaded
      * module instance. Called from inside the builder's emit callback
-     * (the module decode is still alive). */
+     * (the module decode is still alive). `profile` (may be null) is
+     * the function's tier-up record, plugged into the speculation
+     * inserter as its fact source. */
     T2CompileStatus t2_compile_install_one(T2Function &hir,
                                            const ErtsT2RetainedCode *ret,
                                            const BeamCodeHeader *code_hdr,
                                            struct erl_module_instance *mi,
-                                           std::string *diag) {
+                                           std::string *diag,
+                                           const ErtsT2Profile *profile =
+                                                   nullptr) {
         T2IselContext ctx;
         T2LirFunction lir;
         T2EmitResult blob;
@@ -175,7 +201,7 @@ namespace {
                  * loudly. T2_NO_SPEC=1 forces the identity pipeline
                  * (the A/B lever for the measurement legs). */
                 if (getenv("T2_NO_SPEC") == NULL) {
-                    T2DefaultFactSource facts(hir);
+                    T2ProfileFactSource facts(hir, profile);
                     bool spec_changed = false;
 
                     if (!t2_speculate(hir,
@@ -401,6 +427,79 @@ extern "C" void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
     t2_stats.build_failed += (Uint64)build_failures;
     t2_stats.modules++;
     t2_stats.compile_ns += t2_now_ns() - t0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tier-up worker entry (P2 commit 9; called from t2_tier.c under      *
+ * code-modification permission)                                       *
+ * ------------------------------------------------------------------ */
+
+extern "C" unsigned erts_t2_tier_compile_batch(Eterm module,
+                                               const Uint32 *fn_indices,
+                                               unsigned n) {
+    Module *modp = erts_get_module(module, erts_active_code_ix());
+    const ErtsT2RetainedCode *ret;
+    const BeamCodeHeader *code_hdr;
+    struct erl_module_instance *mi;
+    unsigned installed = 0;
+
+    if (modp == NULL || modp->curr.code_hdr == NULL ||
+        modp->curr.t2_retained == NULL) {
+        /* Purged/reloaded between trip and compile: drop the batch
+         * (the new instance's own counters retrip). */
+        return 0;
+    }
+
+    mi = &modp->curr;
+    ret = mi->t2_retained;
+    code_hdr = mi->code_hdr;
+
+    if (ret->profiles == NULL) {
+        return 0;
+    }
+
+    (void)t2_build_selected(
+            ret,
+            fn_indices,
+            n,
+            [&](T2Function &hir) {
+                const ErtsT2Profile *rec =
+                        (const ErtsT2Profile *)((const char *)ret->profiles +
+                                                (size_t)hir.fn_index *
+                                                        ERTS_T2_PROFILE_STRIDE);
+                std::string diag;
+                T2CompileStatus st = t2_compile_install_one(hir,
+                                                            ret,
+                                                            code_hdr,
+                                                            mi,
+                                                            &diag,
+                                                            rec);
+
+                if (st == T2CompileStatus::Installed) {
+                    installed++;
+                    if (t2_install_trace()) {
+                        erts_fprintf(stderr,
+                                     "t2_tier: installed %T:%T/%u\n",
+                                     hir.module,
+                                     hir.function,
+                                     (unsigned)hir.arity);
+                    }
+                } else if (getenv("T2_DEBUG") != NULL) {
+                    erts_fprintf(stderr,
+                                 "t2_tier: %T:%T/%u failed: %s\n",
+                                 hir.module,
+                                 hir.function,
+                                 (unsigned)hir.arity,
+                                 diag.c_str());
+                }
+                /* Success or failure, the record stays pending: a
+                 * failed shape cannot improve without new code
+                 * (PLAN/T2/08 §4.6's permanent-demote rule for static
+                 * exits, applied to compile rejections). */
+            },
+            nullptr);
+
+    return installed;
 }
 
 extern "C" Eterm erts_t2_debug_stats(Process *p) {

@@ -668,6 +668,13 @@ typedef struct ErtsSchedulerRegisters_ {
             /* Temporary memory used by beamasm for allocations within
              * instructions */
             UWord TMP_MEM[5];
+
+            /* T2 tier-up profiling redirect (jit/t2, PLAN/T2/02 §7.3):
+             * NULL on scheduler 1, the shared throwaway profile record
+             * on every other (and every dirty) scheduler, so only
+             * scheduler 1 writes real profile records and the other
+             * schedulers' stores all land on one dead cache line. */
+            UWord t2_profile_redirect;
 #endif
 
             /* erl_bits.c state */

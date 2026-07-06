@@ -6282,6 +6282,11 @@ init_aux_work_data(ErtsAuxWorkData *awdp, ErtsSchedulerData *esdp,
     awdp->debug.wait_completed.arg = NULL;
 }
 
+#ifdef BEAMASM
+/* jit/t2/t2_tier.c; a plain prototype dodges the retention header. */
+UWord erts_t2_profile_throwaway_addr(void);
+#endif
+
 static void
 init_scheduler_registers(ErtsSchedulerData* esdp) {
     ErtsSchedulerRegisters *registers = NULL;
@@ -6299,6 +6304,15 @@ init_scheduler_registers(ErtsSchedulerData* esdp) {
         registers =
             erts_alloc_permanent_cache_aligned(ERTS_ALC_T_BEAM_REGISTER,
                                                sizeof(ErtsSchedulerRegisters));
+#ifdef BEAMASM
+        /* T2 tier-up profiling: dirty schedulers never profile — all
+         * their (never-executed) profile stores would go to the shared
+         * throwaway record. Normal schedulers initialize this field in
+         * the process_main prologue, where their register structure is
+         * carved out of the C stack. */
+        registers->aux_regs.d.t2_profile_redirect =
+                erts_t2_profile_throwaway_addr();
+#endif
     }
 
     esdp->registers = registers;

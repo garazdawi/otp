@@ -1144,6 +1144,7 @@ JIT_OBJS += \
 	$(OBJDIR)/t2/t2_ranges.o \
 	$(OBJDIR)/t2/t2_regalloc.o \
 	$(OBJDIR)/t2/t2_retain.o \
+	$(OBJDIR)/t2/t2_tier.o \
 	$(OBJDIR)/t2/t2_spec.o
 
 JIT_OBJS += $(ASMJIT_OBJS)

@@ -66,6 +66,7 @@ extern "C"
 #include "code_ix.h"
 #include "erl_binary.h"
 #include "erl_map.h"
+#include "t2_retain.h"
 }
 
 using namespace asmjit;
@@ -3150,6 +3151,17 @@ void BeamModuleAssembler::emit_i_test_yield() {
     ASSERT((a.offset() - code.label_offset_from_base(current_label)) ==
            TEST_YIELD_RETURN_OFFSET);
 
+    /* T2 tier-up profiling (P2 commit 9; PLAN/T2FULL/09 §1,
+     * PLAN/T2/02 §7.3): for eligible loop functions, bump the call
+     * counter, record which arguments were seen non-small, and trip
+     * into the compile queue when the counter crosses the threshold.
+     * Scheduler-1-only writes: every other scheduler's redirect
+     * pointer swaps the baked record for the shared throwaway (whose
+     * threshold never trips), so the real record's cache line is
+     * single-writer. Functions without an armed record (ineligible,
+     * or no self-recursive loop) emit nothing. */
+    emit_t2_profile_sequence();
+
     /* MVP T2 hook: for T2-targeted functions, register a T2 entry
      * (emitted later by emit_t2_specializations) and branch to it.
      * The side_exit label is bound here, so anything emitted next —
@@ -3181,6 +3193,87 @@ void BeamModuleAssembler::emit_i_test_yield() {
         a.b(t2_entry);
         a.bind(side_exit);
     }
+}
+
+/* The T1 tier-up profiling sequence (see the caller above). Layout of
+ * ErtsT2Profile (t2_retain.h): count @0, threshold @4, nonsmall @8. */
+void BeamModuleAssembler::emit_t2_profile_sequence() {
+    const ErtsT2Profile *rec;
+    size_t ordinal;
+
+    if (t2_profiles == nullptr || functions.empty()) {
+        return;
+    }
+    ordinal = functions.size() - 1;
+    if (ordinal >= (size_t)t2_profile_count) {
+        return;
+    }
+    rec = (const ErtsT2Profile *)((const char *)t2_profiles +
+                                  ordinal * ERTS_T2_PROFILE_STRIDE);
+    if (rec->threshold == 0) {
+        return; /* not armed: no counter, no tax (PLAN/T2/08 §3) */
+    }
+
+    ERTS_CT_ASSERT(offsetof(ErtsT2Profile, count) == 0 &&
+                   offsetof(ErtsT2Profile, threshold) == 4);
+
+    comment("T2 tier-up profile");
+
+    Label skip = a.new_label();
+
+    /* Record base: the baked address on scheduler 1, the shared
+     * throwaway record elsewhere. */
+    mov_imm(TMP1, (Uint64)rec);
+    a.ldr(TMP2,
+          getSchedulerRegRef(offsetof(ErtsSchedulerRegisters,
+                                      aux_regs.d.t2_profile_redirect)));
+    a.cmp(TMP2, imm(0));
+    a.csel(TMP1, TMP1, TMP2, imm(arm::CondCode::kEQ));
+
+    /* count++ / threshold, one ldp. Argument-type observation happens
+     * on the (cold) trip path only — a T1 self-recursive loop runs
+     * this sequence per *iteration*, so every hot-path instruction is
+     * a measurable tax (the trip's sampled observations, held stable
+     * across the 05 §15.2 retries, are what the speculation facts
+     * consume instead). */
+    a.ldp(TMP3.w(), TMP4.w(), a64::Mem(TMP1));
+    a.add(TMP3.w(), TMP3.w(), imm(1));
+    a.str(TMP3.w(), a64::Mem(TMP1));
+
+    /* Threshold trip: rare, cold. */
+    a.cmp(TMP3.w(), TMP4.w());
+    a.b_lo(skip);
+    a.mov(ARG1, TMP1);
+    fragment_call(ga->get_t2_profile_trip_shared());
+    a.bind(skip);
+}
+
+/* Trip path of the profiling sequence: ARG1 = the profile record;
+ * the leading argument registers ride along so the handler can sample
+ * their types. Preserves the argument registers (the register-backed
+ * X file is flushed/reloaded around the C call) and returns into the
+ * function body. */
+void BeamGlobalAssembler::emit_t2_profile_trip_shared() {
+    emit_enter_runtime_frame();
+    a.str(ARG1, TMP_MEM1q);
+    /* The observed arguments, before the X file is flushed. */
+    a.mov(ARG2, XREG0);
+    a.mov(ARG3, XREG1);
+    a.mov(ARG4, XREG2);
+    a.mov(ARG5, XREG3);
+    a.stp(ARG2, ARG3, TMP_MEM2q);
+    a.stp(ARG4, ARG5, TMP_MEM4q);
+    emit_enter_runtime<Update::eXRegs>();
+    a.ldr(ARG1, TMP_MEM1q);
+    a.ldp(ARG2, ARG3, TMP_MEM2q);
+    a.ldp(ARG4, ARG5, TMP_MEM4q);
+
+    runtime_call<void (*)(ErtsT2Profile *, Eterm, Eterm, Eterm, Eterm),
+                 erts_t2_profile_trip>();
+
+    emit_leave_runtime<Update::eXRegs>();
+    emit_leave_runtime_frame();
+    a.ret(a64::x30);
 }
 
 void BeamModuleAssembler::emit_i_yield() {

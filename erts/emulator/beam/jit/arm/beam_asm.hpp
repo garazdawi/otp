@@ -1157,6 +1157,20 @@ public:
     std::vector<T2PcRaw> t2_pc_raw;
     bool t2_pc_collect = false;
 
+    /* T2 tier-up profiling (P2 commit 9): base of the module's
+     * per-function profile records (ErtsT2Profile, stride
+     * ERTS_T2_PROFILE_STRIDE; module-lifetime — the record addresses
+     * are baked into the entry sequences as immediates), or null when
+     * counter-triggered tier-up is off for this load. */
+    void *t2_profiles = nullptr;
+    int t2_profile_count = 0;
+
+    /* Emit the tier-up profiling sequence for the current function
+     * (counter + non-small argument bits + threshold trip); no-op
+     * unless the function's record is armed. Called from
+     * emit_i_test_yield. Defined in instr_common.cpp. */
+    void emit_t2_profile_sequence();
+
     /* True iff re-entry offsets should be recorded for the current op. */
     bool t2_pc_collecting() const {
         return t2_pc_collect && !functions.empty();

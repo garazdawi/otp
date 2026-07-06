@@ -692,6 +692,18 @@ namespace erts_t2 {
                        int *failures,
                        std::string *err);
 
+    /* Decode the retained module ONCE and build + validate exactly the
+     * eligible functions whose indices are listed (others are skipped;
+     * a listed ineligible/out-of-range index is skipped too). The
+     * tier-up worker's per-module batch path — the ModuleDecode is
+     * shared across all listed functions (PLAN/T2FULL/09 §1's queue
+     * decode caching). Same emit contract as t2_build_each. */
+    bool t2_build_selected(const ErtsT2RetainedCode *ret,
+                           const uint32_t *fn_indices,
+                           size_t n,
+                           const std::function<void(T2Function &)> &emit,
+                           std::string *err);
+
 } /* namespace erts_t2 */
 
 /* ------------------------------------------------------------------ *

@@ -57,12 +57,28 @@ int beam_load_prepare_emit(LoaderState *stp) {
                                     &stp->beam);
 
     /* T2-Full P0 (PLAN/T2FULL/07 §4): enable PC side-table offset
-     * collection when T2 retention is on. The eligibility bitmap does not
-     * exist yet (erts_t2_prepare runs after this whole codegen pass), so
-     * offsets are collected for every function and filtered to the
-     * eligible ones at retain-commit. Default, non-T2 loads collect
-     * nothing. */
+     * collection when T2 retention is on. Offsets are collected for
+     * every function and filtered to the eligible ones at
+     * retain-commit. Default, non-T2 loads collect nothing. */
     beamasm_set_t2_collect(stp->ba, erts_t2_enabled());
+
+    /* T2-Full P2 commit 9: prepare the retention copy *before* codegen
+     * (hoisted from erts_prepare_loading — PLAN/T2FULL/09 §1 surprise
+     * 2), so the eligibility scan has run and the tier-up profile
+     * records exist when the per-function profiling sequences are
+     * emitted below. The records' addresses are module-lifetime (the
+     * profile block rides the retained struct); the codegen bakes
+     * them as immediates. on_load modules discard the retention at
+     * finalize. */
+    if (erts_t2_enabled()) {
+        stp->t2_retained = erts_t2_prepare(&stp->beam);
+        if (stp->t2_retained != NULL &&
+            stp->t2_retained->profiles != NULL) {
+            beamasm_set_t2_profiles(stp->ba,
+                                    stp->t2_retained->profiles,
+                                    stp->beam.code.function_count);
+        }
+    }
 
     /* Initialize code header */
     stp->codev_size = stp->beam.code.function_count + 1;
@@ -1270,8 +1286,20 @@ void beam_load_finalize_code(LoaderState *stp,
     /* Register debug / profiling info with external tools. */
     inst_p->metadata = beamasm_register_metadata(stp->ba, stp->code_hdr);
 
+    /* T2-Full: on_load modules keep no retention (their instance
+     * ownership moves in erts_finish_after_on_load, which has no
+     * release hooks); the prepared copy — created before codegen since
+     * P2 commit 9 — is discarded here, and their armed profile records
+     * die with it (the profiling sequences were emitted, but a record
+     * behind a freed pointer must never be reachable, so the discard
+     * happens before the module can run). */
+    if (stp->t2_retained != NULL && stp->on_load != NULL) {
+        erts_t2_retained_free(stp->t2_retained);
+        stp->t2_retained = NULL;
+    }
+
     /* T2-Full: commit the retention struct prepared during
-     * erts_prepare_loading. Must run after beamfile_move_literals
+     * beam_load_prepare_emit. Must run after beamfile_move_literals
      * (above) so the literal map resolves to literal-area terms, and
      * before the BeamFile dies with the loader state. */
     if (stp->t2_retained != NULL) {

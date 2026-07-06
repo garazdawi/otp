@@ -1942,6 +1942,45 @@ namespace erts_t2 {
         return status;
     }
 
+    bool t2_build_selected(const ErtsT2RetainedCode *ret,
+                           const uint32_t *fn_indices,
+                           size_t n,
+                           const std::function<void(T2Function &)> &emit,
+                           std::string *err) {
+        ModuleDecode md;
+        std::string local_err;
+
+        if (!decode_module(ret, md, &local_err)) {
+            if (err != nullptr) {
+                *err = "decode: " + local_err;
+            }
+            md.cleanup();
+            return false;
+        }
+
+        for (size_t j = 0; j < n; j++) {
+            size_t i = fn_indices[j];
+
+            if (i >= md.functions.size() ||
+                i >= (size_t)ret->function_count ||
+                !(ret->eligible_bitmap[i / 32] & (((Uint32)1) << (i % 32)))) {
+                continue;
+            }
+
+            FunctionBuilder builder(md, md.functions[i], (uint32_t)i);
+            std::unique_ptr<T2Function> fn = builder.build(&local_err);
+
+            if (fn == nullptr || !t2_validate(*fn, &local_err)) {
+                continue; /* degrade to T1 for this function */
+            }
+
+            emit(*fn);
+        }
+
+        md.cleanup();
+        return true;
+    }
+
     bool t2_build_each(const ErtsT2RetainedCode *ret,
                        const std::function<void(T2Function &)> &emit,
                        int *failures,

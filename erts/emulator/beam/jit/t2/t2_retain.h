@@ -88,6 +88,21 @@ typedef struct ErtsT2RetainedCode {
      * tier-2 supported set. */
     Uint32 *eligible_bitmap;
 
+    /* One bit per function, set iff the function contains a local
+     * self-recursive tail call (call_only/call_last back to its own
+     * entry label) — the loop shape tier-up profiles. Computed by the
+     * same eligibility scan; only meaningful where the eligible bit is
+     * set. */
+    Uint32 *loop_bitmap;
+
+    /* Tier-up profile block (P2 commit 9), or NULL: one cache-line
+     * record per function (ERTS_T2_PROFILE_STRIDE bytes, indexed by
+     * function index), armed (threshold != 0) only for eligible loop
+     * functions. Allocated separately at prepare time — before T1
+     * codegen, which bakes the record addresses into the profiling
+     * sequence — and freed with the retained struct. */
+    struct ErtsT2Profile *profiles;
+
     /* Total size of this allocation, for accounting. */
     Uint bytes;
 
@@ -214,8 +229,101 @@ int erts_t2_build_all(const ErtsT2RetainedCode *ret, const void *code_hdr);
 
 /* t2_eligible.c: scans every function's generic ops; returns a bitmap
  * with one bit per function (caller frees, ERTS_ALC_T_T2_CODE), or
- * NULL when the module has no functions. Sets \p *any_eligible . */
-Uint32 *erts_t2_eligibility_scan(BeamFile *beam, int *any_eligible);
+ * NULL when the module has no functions. Sets \p *any_eligible . When
+ * \p loop_bitmap_out is non-null it receives a second same-sized
+ * bitmap (caller frees) marking functions with a local self-recursive
+ * tail call — the loop shape tier-up profiles. */
+Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
+                                 int *any_eligible,
+                                 Uint32 **loop_bitmap_out,
+                                 int *on_load_out,
+                                 Uint32 *arities_out);
+
+/* --------------------------------------------------------------------
+ * Profile-driven tier-up (P2 commit 9; PLAN/T2FULL/09 §1,
+ * PLAN/T2/02 §§7.1-7.4, PLAN/T2/05 §15).
+ *
+ * Per eligible loop function, T1 emits a short profiling sequence at
+ * function entry (arm/instr_common.cpp emit_i_test_yield): a call
+ * counter, a "non-small argument observed" bitmask (exactly the fact
+ * the speculation inserter's T2FactSource consumes — the full
+ * seen-types bitmask of 02 §7.2 carries nothing the v1 consumer
+ * reads), and a threshold compare whose trip path calls
+ * erts_t2_profile_trip. Scheduler-1-only writes (02 §7.3): every
+ * scheduler's registers carry a redirect pointer that is NULL on
+ * scheduler 1 and the shared throwaway block elsewhere, so the store
+ * traffic of other schedulers hits one dead cache line and the real
+ * records stay uncontended. The throwaway block's threshold is
+ * ~0, so it never trips.
+ * ------------------------------------------------------------------ */
+
+typedef struct ErtsT2Profile {
+    Uint32 count;     /* call counter (scheduler-1 writes, racy)      */
+    Uint32 threshold; /* trip when count >= threshold; 0 = not armed  */
+    Uint32 nonsmall;  /* bit i set: argument i observed non-small
+                       * (sampled at each trip; see the trip handler) */
+    Uint32 snapshot;  /* nonsmall at the previous trip (stability)    */
+    Uint32 retries;   /* stability retries so far                     */
+    Uint32 fn_index;  /* function index within the module             */
+    Uint32 arity;     /* function arity (masks the sampled bits)      */
+    Eterm module;     /* module atom (worker re-lookup + identity)    */
+} ErtsT2Profile;
+
+/* One cache line per record: scheduler-1's stores never share a line
+ * with a neighbouring function's record. */
+#define ERTS_T2_PROFILE_STRIDE 64
+
+/* threshold value while a compile is pending/consumed: never trips
+ * again (the counter stays below it until a 2^32 wrap). */
+#define ERTS_T2_TIER_PENDING 0xFFFFFFFFu
+
+/* True iff counter-triggered tier-up is on: the tier is enabled and
+ * +JT2enable (forced compile-at-load) is not. */
+int erts_t2_tier_enabled(void);
+
+/* The default trip threshold (05 §15.1's `base`; the size/recompile/
+ * cache-pressure terms are deferred with the recompile machinery).
+ * Overridable with T2_TIER_THRESHOLD for testing and for the tax
+ * measurement's "thresholds never tripped" leg. */
+Uint32 erts_t2_tier_threshold(void);
+
+/* t2_tier.c: queue-lock init; called from erts_t2_init at boot. */
+void erts_t2_tier_init(void);
+
+/* t2_tier.c: trip handler, called from the T1 profiling sequence's
+ * cold path (scheduler 1 only). Applies the stability rule
+ * (05 §15.2, simplified to the nonsmall mask), CASes the record to
+ * pending and enqueues a compile job for the single worker. */
+void erts_t2_profile_trip(ErtsT2Profile *p,
+                          Eterm a0,
+                          Eterm a1,
+                          Eterm a2,
+                          Eterm a3);
+
+/* t2_tier.c: {trips, stability_resets, enqueued, dropped, compiled,
+ * installed, failed} for the t2_tier_stats debug BIF. */
+Eterm erts_t2_tier_stats_term(Process *p);
+
+/* t2_tier.c: address of the throwaway record, for the scheduler
+ * redirect initialization (a plain-prototype-friendly accessor). */
+UWord erts_t2_profile_throwaway_addr(void);
+
+/* beam_jit_main.cpp: hand the module assembler the profile block so
+ * the per-function entry sequences can be emitted (bridge in the
+ * beamasm_t2_pc_raw_* style). NULL/0 emits nothing. */
+void beamasm_set_t2_profiles(void *ba,
+                             struct ErtsT2Profile *profiles,
+                             int function_count);
+
+/* t2_compile.cpp: compile + install a batch of profiled functions of
+ * one module (the tier worker's per-module body; the caller holds
+ * code-modification permission). The module is re-looked-up by name —
+ * a purge/reload between trip and compile drops the batch. The module
+ * decode is shared across the whole batch (PLAN/T2FULL/09 §1's queue
+ * decode caching). Returns the number of functions installed. */
+unsigned erts_t2_tier_compile_batch(Eterm module,
+                                    const Uint32 *fn_indices,
+                                    unsigned n);
 
 /* t2_debug.cpp: debug BIF backing erts_debug:get_internal_state(
  * {t2_build_ssa, M, F, A}). Looks up module M's active instance, runs the

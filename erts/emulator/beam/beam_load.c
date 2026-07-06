@@ -229,19 +229,13 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
         goto load_error;
     }
 
-#ifdef BEAMASM
-    /* T2-Full: prepare the tier-2 retention copy while `code` (which
-     * beam->code.data points into) is still alive; it is not
-     * guaranteed to survive until erts_finish_loading. Committed to
-     * the module instance at finalize; freed by the dtor if loading
-     * fails. Gated so default runs pay nothing. on_load modules are
-     * skipped in P0: their instance ownership moves in
-     * erts_finish_after_on_load, which would need release hooks on the
-     * failure path. */
-    if (erts_t2_enabled() && !stp->on_load) {
-        stp->t2_retained = erts_t2_prepare(&stp->beam);
-    }
-#endif
+    /* T2-Full: the tier-2 retention copy is prepared inside
+     * beam_load_prepare_emit (before codegen) since P2 commit 9 — the
+     * eligibility bitmap and the tier-up profile records must exist
+     * when T1 emits the per-function profiling sequences
+     * (PLAN/T2FULL/09 §1 surprise 2). on_load modules discard the
+     * retention at finalize (their instance ownership moves in
+     * erts_finish_after_on_load, which has no release hooks yet). */
 
     /* Good so far */
     retval = NIL;

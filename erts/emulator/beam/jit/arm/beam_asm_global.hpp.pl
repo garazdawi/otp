@@ -113,6 +113,7 @@ my @beam_global_funcs = qw(
     raise_shared
     store_unaligned
     t2_call_light_bif_shared
+    t2_profile_trip_shared
     unloaded_fun
     unary_minus_body_shared
     update_map_assoc_shared

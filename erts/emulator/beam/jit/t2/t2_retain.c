@@ -57,6 +57,34 @@ int erts_t2_enabled(void) {
     return enabled;
 }
 
+int erts_t2_tier_enabled(void) {
+    /* Counter-triggered tier-up is the tier's default mode
+     * (PLAN/T2FULL/09 §1): on whenever the tier is enabled, except
+     * under +JT2enable, which is the forced compile-everything mode
+     * and needs no counters. */
+    return erts_t2_enabled() && !erts_jit_t2_force;
+}
+
+Uint32 erts_t2_tier_threshold(void) {
+    static Uint32 thr = 0;
+
+    if (thr == 0) {
+        const char *env = getenv("T2_TIER_THRESHOLD");
+
+        if (env != NULL && env[0] != '\0') {
+            Sint64 v = atoll(env);
+
+            thr = (v <= 0 || v >= (Sint64)ERTS_T2_TIER_PENDING)
+                          ? (ERTS_T2_TIER_PENDING - 1)
+                          : (Uint32)v;
+        } else {
+            /* 05 §15.1's base. */
+            thr = 1000;
+        }
+    }
+    return thr;
+}
+
 /* Diagnostics on stderr for every retention decision (T2_DEBUG=1). */
 static int t2_debug_enabled(void) {
     static int enabled = -1;
@@ -71,6 +99,7 @@ static int t2_debug_enabled(void) {
 
 void erts_t2_init(void) {
     erts_atomic_init_nob(&t2_retained_bytes, 0);
+    erts_t2_tier_init();
 }
 
 UWord erts_t2_retained_sz(void) {
@@ -88,14 +117,26 @@ static size_t align_up(size_t size) {
 ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     ErtsT2RetainedCode *ret;
     Uint32 *bitmap;
+    Uint32 *loops = NULL;
+    Uint32 *arities = NULL;
     int any_eligible = 0;
+    int on_load = 0;
 
     size_t atoms_size, imports_size, types_size, literals_size, bitmap_size;
     size_t code_size, total;
     size_t offset;
     byte *base;
 
-    bitmap = erts_t2_eligibility_scan(beam, &any_eligible);
+    arities = erts_alloc(ERTS_ALC_T_T2_CODE,
+                         (beam->code.function_count > 0
+                                  ? beam->code.function_count
+                                  : 1) *
+                                 sizeof(Uint32));
+    bitmap = erts_t2_eligibility_scan(beam,
+                                      &any_eligible,
+                                      &loops,
+                                      &on_load,
+                                      arities);
     if (t2_debug_enabled()) {
         erts_fprintf(stderr,
                      "t2_retain: module=%T functions=%d any_eligible=%d\n",
@@ -107,6 +148,10 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
         if (bitmap != NULL) {
             erts_free(ERTS_ALC_T_T2_CODE, bitmap);
         }
+        if (loops != NULL) {
+            erts_free(ERTS_ALC_T_T2_CODE, loops);
+        }
+        erts_free(ERTS_ALC_T_T2_CODE, arities);
         return NULL;
     }
 
@@ -121,7 +166,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
      * unaligned code bytes last. */
     total = align_up(sizeof(ErtsT2RetainedCode)) + align_up(atoms_size) +
             align_up(imports_size) + align_up(types_size) +
-            align_up(literals_size) + align_up(bitmap_size) + code_size;
+            align_up(literals_size) + 2 * align_up(bitmap_size) + code_size;
 
     base = erts_alloc(ERTS_ALC_T_T2_CODE, total);
     ret = (ErtsT2RetainedCode *)base;
@@ -156,6 +201,10 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     sys_memcpy(ret->eligible_bitmap, bitmap, bitmap_size);
     offset += align_up(bitmap_size);
 
+    ret->loop_bitmap = (Uint32 *)(base + offset);
+    sys_memcpy(ret->loop_bitmap, loops, bitmap_size);
+    offset += align_up(bitmap_size);
+
     /* The input binary that code.data points into is only guaranteed
      * to be alive here, during prepare; this copy is the reason this
      * function cannot run at finalize. */
@@ -170,7 +219,52 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     ASSERT(offset == total);
     ret->bytes = total;
 
+    /* Tier-up profile block (P2 commit 9): allocated here, before T1
+     * codegen, so the profiling sequences can bake record addresses.
+     * Only under counter-triggered tier-up (never with +JT2enable's
+     * forced compile-at-load, which needs no counters), and only when
+     * some eligible function has the loop shape. */
+    if (erts_t2_tier_enabled() && !on_load) {
+        int any_loop = 0;
+        Sint32 i;
+
+        for (i = 0; i < beam->code.function_count; i++) {
+            if ((bitmap[i / 32] & (((Uint32)1) << (i % 32))) &&
+                (loops[i / 32] & (((Uint32)1) << (i % 32)))) {
+                any_loop = 1;
+                break;
+            }
+        }
+
+        if (any_loop) {
+            size_t psize = (size_t)beam->code.function_count *
+                           ERTS_T2_PROFILE_STRIDE;
+            byte *pbase = erts_alloc(ERTS_ALC_T_T2_CODE, psize);
+            Uint32 thr = erts_t2_tier_threshold();
+
+            sys_memset(pbase, 0, psize);
+            for (i = 0; i < beam->code.function_count; i++) {
+                ErtsT2Profile *rec =
+                        (ErtsT2Profile *)(pbase +
+                                          (size_t)i *
+                                                  ERTS_T2_PROFILE_STRIDE);
+
+                rec->fn_index = (Uint32)i;
+                rec->arity = arities[i];
+                rec->module = beam->module;
+                if ((bitmap[i / 32] & (((Uint32)1) << (i % 32))) &&
+                    (loops[i / 32] & (((Uint32)1) << (i % 32)))) {
+                    rec->threshold = thr;
+                }
+            }
+            ret->profiles = (ErtsT2Profile *)pbase;
+            ret->bytes += psize;
+        }
+    }
+
     erts_free(ERTS_ALC_T_T2_CODE, bitmap);
+    erts_free(ERTS_ALC_T_T2_CODE, loops);
+    erts_free(ERTS_ALC_T_T2_CODE, arities);
 
     return ret;
 }
@@ -208,6 +302,9 @@ void erts_t2_retain_commit(ErtsT2RetainedCode *ret,
 
 void erts_t2_retained_free(ErtsT2RetainedCode *ret) {
     if (ret != NULL) {
+        if (ret->profiles != NULL) {
+            erts_free(ERTS_ALC_T_T2_CODE, ret->profiles);
+        }
         erts_free(ERTS_ALC_T_T2_CODE, ret);
     }
 }
@@ -223,6 +320,9 @@ void erts_t2_release(struct erl_module_instance *inst_p) {
     erts_t2_pctab_free(ret);
 
     erts_atomic_add_nob(&t2_retained_bytes, -(erts_aint_t)ret->bytes);
+    if (ret->profiles != NULL) {
+        erts_free(ERTS_ALC_T_T2_CODE, ret->profiles);
+    }
     erts_free(ERTS_ALC_T_T2_CODE, ret);
 
     inst_p->t2_retained = NULL;
