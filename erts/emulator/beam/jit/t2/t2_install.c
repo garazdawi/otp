@@ -43,6 +43,7 @@
 #include "t2_install.h"
 #include "t2_ranges.h"
 #include "t2_pctab.h"
+#include "t2_retain.h"
 
 #if defined(BEAMASM) && defined(__aarch64__)
 
@@ -755,6 +756,82 @@ void erts_t2_jettison_deps(const void *code_hdr) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Counter self-disarm (P2 commit 10)                                 *
+ * ------------------------------------------------------------------ */
+
+/* aarch64 `b #imm` over `bytes` (forward, word-aligned). */
+static Uint32 t2_encode_b_fwd(Uint32 bytes) {
+    ASSERT(bytes >= 4 && bytes % 4 == 0 && (bytes >> 2) < (1u << 26));
+    return (Uint32)0x14000000 | (Uint32)(bytes >> 2);
+}
+
+/* Patch one armed profiling sequence to a single `b` over it. The
+ * store is one aligned instruction word: a racing executor runs either
+ * the old sequence or the branch — both valid. The caller holds code
+ * modification permission (worker path) or load permission with the
+ * module unsealed (forced-disarm path). */
+static void t2_profile_disarm_one(struct erl_module_instance *mi,
+                                  ErtsT2Profile *rec,
+                                  int module_unsealed) {
+    Uint32 volatile *rw_p;
+
+    if (rec->seq_addr == NULL || rec->seq_size < 4) {
+        return;
+    }
+
+    if (!module_unsealed) {
+        erts_unseal_module(mi);
+    }
+
+    rw_p = (Uint32 volatile *)erts_writable_code_ptr(mi, rec->seq_addr);
+    *rw_p = t2_encode_b_fwd(rec->seq_size);
+
+    if (!module_unsealed) {
+        /* Flush + reseal, then require an instruction barrier on all
+         * schedulers before anything depends on the disarmed state
+         * (mirrors the install path's discipline). */
+        erts_seal_module(mi);
+        erts_t2_free_spans_after_barrier(NULL, 0, NULL, 0);
+    }
+
+    rec->seq_addr = NULL;
+}
+
+void erts_t2_profile_disarm(struct erl_module_instance *mi,
+                            struct ErtsT2Profile *rec) {
+    t2_assert_write_permission();
+    t2_profile_disarm_one(mi, rec, 0);
+}
+
+int erts_t2_tier_disarm_forced(void) {
+    static int forced = -1;
+
+    if (forced < 0) {
+        const char *env = getenv("T2_TIER_DISARM");
+        forced = (env != NULL && env[0] == '1') ? 1 : 0;
+    }
+    return forced;
+}
+
+void erts_t2_disarm_module_profiles(struct erl_module_instance *mi,
+                                    struct ErtsT2RetainedCode *ret) {
+    Sint32 i;
+
+    if (ret == NULL || ret->profiles == NULL) {
+        return;
+    }
+    for (i = 0; i < ret->function_count; i++) {
+        ErtsT2Profile *rec =
+                (ErtsT2Profile *)((char *)ret->profiles +
+                                  (size_t)i * ERTS_T2_PROFILE_STRIDE);
+
+        /* The loader holds the module unsealed; its final
+         * erts_seal_module provides the flush. */
+        t2_profile_disarm_one(mi, rec, 1);
+    }
+}
+
+/* ------------------------------------------------------------------ *
  * P2 commit 5 introspection (erts_debug:get_internal_state)          *
  * ------------------------------------------------------------------ */
 
@@ -819,6 +896,22 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
 
 void erts_t2_jettison_deps(const void *code_hdr) {
     (void)code_hdr;
+}
+
+void erts_t2_profile_disarm(struct erl_module_instance *mi,
+                            struct ErtsT2Profile *rec) {
+    (void)mi;
+    (void)rec;
+}
+
+int erts_t2_tier_disarm_forced(void) {
+    return 0;
+}
+
+void erts_t2_disarm_module_profiles(struct erl_module_instance *mi,
+                                    struct ErtsT2RetainedCode *ret) {
+    (void)mi;
+    (void)ret;
 }
 
 Eterm erts_t2_debug_in_blob(Process *p, Eterm pid) {

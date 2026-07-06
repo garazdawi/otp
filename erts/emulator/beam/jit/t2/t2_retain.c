@@ -85,6 +85,56 @@ Uint32 erts_t2_tier_threshold(void) {
     return thr;
 }
 
+/* Was the flat threshold forced with T2_TIER_THRESHOLD? (Testing and
+ * the tax legs need determinism; the size term is skipped then.) */
+static int t2_tier_threshold_forced(void) {
+    static int forced = -1;
+
+    if (forced < 0) {
+        const char *env = getenv("T2_TIER_THRESHOLD");
+        forced = (env != NULL && env[0] != '\0') ? 1 : 0;
+    }
+    return forced;
+}
+
+/* The per-function trip threshold (05 s15.1): base * sqrt(size + 1),
+ * size = the function's generic-op count from the eligibility scan (a
+ * stable proxy for the IR-op count the formula names -- the IR does
+ * not exist before the first compile). The recompile and
+ * cache-pressure terms stay deferred with the recompile machinery
+ * (P2 commit 10). */
+Uint32 erts_t2_tier_threshold_for(Uint32 size) {
+    Uint32 base = erts_t2_tier_threshold();
+    Uint32 root;
+    Uint64 scaled;
+
+    if (t2_tier_threshold_forced()) {
+        return base;
+    }
+
+    /* Integer sqrt(size + 1). */
+    {
+        Uint32 x = size + 1;
+        Uint32 r = 0, b = 1u << 15;
+
+        while (b > 0) {
+            Uint32 t = r + b;
+
+            if ((Uint64)t * t <= (Uint64)x) {
+                r = t;
+            }
+            b >>= 1;
+        }
+        root = r == 0 ? 1 : r;
+    }
+
+    scaled = (Uint64)base * root;
+    if (scaled >= (Uint64)ERTS_T2_TIER_PENDING) {
+        scaled = ERTS_T2_TIER_PENDING - 1;
+    }
+    return (Uint32)scaled;
+}
+
 /* Diagnostics on stderr for every retention decision (T2_DEBUG=1). */
 static int t2_debug_enabled(void) {
     static int enabled = -1;
@@ -119,6 +169,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     Uint32 *bitmap;
     Uint32 *loops = NULL;
     Uint32 *arities = NULL;
+    Uint32 *sizes = NULL;
     int any_eligible = 0;
     int on_load = 0;
 
@@ -133,11 +184,17 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
                                   ? beam->code.function_count
                                   : 1) *
                                  sizeof(Uint32));
+    sizes = erts_alloc(ERTS_ALC_T_T2_CODE,
+                       (beam->code.function_count > 0
+                                ? beam->code.function_count
+                                : 1) *
+                               sizeof(Uint32));
     bitmap = erts_t2_eligibility_scan(beam,
                                       &any_eligible,
                                       &loops,
                                       &on_load,
-                                      arities);
+                                      arities,
+                                      sizes);
     if (t2_debug_enabled()) {
         erts_fprintf(stderr,
                      "t2_retain: module=%T functions=%d any_eligible=%d\n",
@@ -153,6 +210,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
             erts_free(ERTS_ALC_T_T2_CODE, loops);
         }
         erts_free(ERTS_ALC_T_T2_CODE, arities);
+        erts_free(ERTS_ALC_T_T2_CODE, sizes);
         return NULL;
     }
 
@@ -263,7 +321,6 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
             size_t psize = (size_t)beam->code.function_count *
                            ERTS_T2_PROFILE_STRIDE;
             byte *pbase = erts_alloc(ERTS_ALC_T_T2_CODE, psize);
-            Uint32 thr = erts_t2_tier_threshold();
 
             sys_memset(pbase, 0, psize);
             for (i = 0; i < beam->code.function_count; i++) {
@@ -277,7 +334,8 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
                 rec->module = beam->module;
                 if ((bitmap[i / 32] & (((Uint32)1) << (i % 32))) &&
                     (loops[i / 32] & (((Uint32)1) << (i % 32)))) {
-                    rec->threshold = thr;
+                    rec->threshold =
+                            erts_t2_tier_threshold_for(sizes[i]);
                 }
             }
             ret->profiles = (ErtsT2Profile *)pbase;
@@ -288,6 +346,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     erts_free(ERTS_ALC_T_T2_CODE, bitmap);
     erts_free(ERTS_ALC_T_T2_CODE, loops);
     erts_free(ERTS_ALC_T_T2_CODE, arities);
+    erts_free(ERTS_ALC_T_T2_CODE, sizes);
 
     return ret;
 }

@@ -1317,6 +1317,17 @@ void beam_load_finalize_code(LoaderState *stp,
                             stp->ba,
                             (const byte *)beamasm_get_base(stp->ba));
 
+        /* Counter self-disarm (P2 commit 10): record where each armed
+         * profiling sequence landed, so a terminal tier-up outcome can
+         * patch it out; T2_TIER_DISARM=1 (the tax-measurement lever)
+         * patches them all right now, while the module is unsealed. */
+        beamasm_t2_fill_profile_seqs(stp->ba,
+                                     (const char *)beamasm_get_base(
+                                             stp->ba));
+        if (erts_t2_tier_disarm_forced()) {
+            erts_t2_disarm_module_profiles(inst_p, committed);
+        }
+
         /* T2_BUILD=1: reconstruct + validate SSA for every eligible
          * function as a load-time corpus test (plus isel coverage with
          * T2_ISEL=1, which consults the pctab just built). */

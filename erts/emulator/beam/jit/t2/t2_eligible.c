@@ -320,7 +320,8 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                                  int *any_eligible,
                                  Uint32 **loop_bitmap_out,
                                  int *on_load_out,
-                                 Uint32 *arities_out) {
+                                 Uint32 *arities_out,
+                                 Uint32 *sizes_out) {
     BeamOpAllocator op_alloc;
     BeamCodeReader *reader;
     BeamOp *op;
@@ -331,6 +332,7 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
     int fn_idx = -1;
     int fn_ok = 0;
     int fn_loop = 0;
+    Uint32 fn_size = 0;
     int expect_entry = 0;
     UWord entry_label = 0;
     int done = 0;
@@ -366,6 +368,7 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
             fn_idx++;
             fn_ok = 1;
             fn_loop = 0;
+            fn_size = 0;
             expect_entry = 1;
             entry_label = 0;
             if (arities_out != NULL && fn_idx >= 0 &&
@@ -375,6 +378,9 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
             break;
         case genop_int_func_end_2:
             if (fn_idx >= 0 && fn_idx < beam->code.function_count) {
+                if (sizes_out != NULL) {
+                    sizes_out[fn_idx] = fn_size;
+                }
                 if (fn_ok) {
                     bitmap[fn_idx / 32] |= ((Uint32)1) << (fn_idx % 32);
                     *any_eligible = 1;
@@ -410,6 +416,9 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
             }
             break;
         default:
+            /* The threshold formula's size term (05 Â§15.1): count
+             * the function's generic ops. */
+            fn_size++;
             if (fn_ok && op->op == genop_bif2_5) {
                 /* Comparison subset only (see t2_bif2_op_supported). */
                 if (!t2_bif2_op_supported(beam, op)) {

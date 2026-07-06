@@ -748,6 +748,32 @@ extern "C"
         ba->t2_profile_count = function_count;
     }
 
+    /* Counter self-disarm (P2 commit 10): write each armed record's
+     * profiling-sequence address + length now that the executable
+     * base is known. */
+    void beamasm_t2_fill_profile_seqs(void *instance, const char *base) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        struct ErtsT2Profile *profiles =
+                (struct ErtsT2Profile *)ba->t2_profiles;
+
+        if (profiles == nullptr) {
+            return;
+        }
+        for (const BeamModuleAssembler::T2ProfileSeq &s :
+             ba->t2_profile_seqs) {
+            if ((int)s.ordinal >= ba->t2_profile_count) {
+                continue;
+            }
+            struct ErtsT2Profile *rec =
+                    (struct ErtsT2Profile *)((char *)profiles +
+                                             (size_t)s.ordinal *
+                                                     ERTS_T2_PROFILE_STRIDE);
+
+            rec->seq_addr = (ErtsCodePtr)(base + s.start);
+            rec->seq_size = s.size;
+        }
+    }
+
     size_t beamasm_t2_pc_raw_count(void *instance) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
         return ba->t2_pc_raw.size();

@@ -580,7 +580,17 @@ extern "C" unsigned erts_t2_tier_compile_batch(Eterm module,
                 /* Success or failure, the record stays pending: a
                  * failed shape cannot improve without new code
                  * (PLAN/T2/08 §4.6's permanent-demote rule for static
-                 * exits, applied to compile rejections). */
+                 * exits, applied to compile rejections). Either way
+                 * the outcome is terminal — patch the T1 profiling
+                 * sequence out (P2 commit 10): an installed function's
+                 * demote/resume paths, and a failed function's every
+                 * T1 entry, then cost one taken branch instead of the
+                 * counter sequence. */
+                erts_t2_profile_disarm(
+                        mi,
+                        (ErtsT2Profile *)((char *)ret->profiles +
+                                          (size_t)hir.fn_index *
+                                                  ERTS_T2_PROFILE_STRIDE));
             },
             nullptr);
 

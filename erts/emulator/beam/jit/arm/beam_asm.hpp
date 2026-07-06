@@ -1171,6 +1171,18 @@ public:
      * emit_i_test_yield. Defined in instr_common.cpp. */
     void emit_t2_profile_sequence();
 
+    /* Where each armed function's profiling sequence landed (P2
+     * commit 10, counter self-disarm): module-relative start offset +
+     * byte length. Collected by emit_t2_profile_sequence; written
+     * back into the profile records at finalize, when the executable
+     * base is known (beamasm_t2_fill_profile_seqs). */
+    struct T2ProfileSeq {
+        uint32_t ordinal;
+        uint32_t start;
+        uint32_t size;
+    };
+    std::vector<T2ProfileSeq> t2_profile_seqs;
+
     /* True iff re-entry offsets should be recorded for the current op. */
     bool t2_pc_collecting() const {
         return t2_pc_collect && !functions.empty();

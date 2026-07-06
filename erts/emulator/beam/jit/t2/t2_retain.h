@@ -263,7 +263,8 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                                  int *any_eligible,
                                  Uint32 **loop_bitmap_out,
                                  int *on_load_out,
-                                 Uint32 *arities_out);
+                                 Uint32 *arities_out,
+                                 Uint32 *sizes_out);
 
 /* --------------------------------------------------------------------
  * Profile-driven tier-up (P2 commit 9; PLAN/T2FULL/09 §1,
@@ -293,6 +294,17 @@ typedef struct ErtsT2Profile {
     Uint32 fn_index;  /* function index within the module             */
     Uint32 arity;     /* function arity (masks the sampled bits)      */
     Eterm module;     /* module atom (worker re-lookup + identity)    */
+
+    /* Counter self-disarm (P2 commit 10): where the T1 profiling
+     * sequence landed (executable view) and its byte length, written
+     * at finalize once the module base is known. Disarming patches
+     * the sequence's first instruction to `b <seq_size>` — a tripped
+     * (or failed) function's counter then costs one taken branch on
+     * every T1 entry/demote instead of the full sequence. seq_addr is
+     * NULLed after the patch (single writer: the tier worker / the
+     * loader, both under code permission). */
+    ErtsCodePtr seq_addr;
+    Uint32 seq_size;
 } ErtsT2Profile;
 
 /* One cache line per record: scheduler-1's stores never share a line
@@ -312,6 +324,12 @@ int erts_t2_tier_enabled(void);
  * Overridable with T2_TIER_THRESHOLD for testing and for the tax
  * measurement's "thresholds never tripped" leg. */
 Uint32 erts_t2_tier_threshold(void);
+
+/* base * sqrt(size + 1) (05 s15.1's size term; P2 commit 10), size =
+ * the function's generic-op count from the eligibility scan; a flat
+ * T2_TIER_THRESHOLD override skips the size term for determinism. The
+ * recompile and cache-pressure terms stay deferred. */
+Uint32 erts_t2_tier_threshold_for(Uint32 size);
 
 /* t2_tier.c: queue-lock init; called from erts_t2_init at boot. */
 void erts_t2_tier_init(void);
@@ -340,6 +358,29 @@ UWord erts_t2_profile_throwaway_addr(void);
 void beamasm_set_t2_profiles(void *ba,
                              struct ErtsT2Profile *profiles,
                              int function_count);
+
+/* beam_jit_main.cpp: write each armed record's profiling-sequence
+ * address/length (see ErtsT2Profile.seq_addr) once codegen is done and
+ * the executable base is known. Called at finalize, before
+ * erts_t2_disarm_module_profiles can run. */
+void beamasm_t2_fill_profile_seqs(void *ba, const char *base);
+
+/* t2_install.c: patch the function's T1 profiling sequence to a single
+ * `b` over it (P2 commit 10) — called by the tier worker under code
+ * modification permission once the record's outcome is terminal
+ * (installed OR failed: a failed shape cannot improve without new
+ * code). Idempotent; no-op when the record has no sequence. */
+void erts_t2_profile_disarm(struct erl_module_instance *mi,
+                            struct ErtsT2Profile *rec);
+
+/* t2_install.c: force-disarm every armed profiling sequence of a
+ * freshly loaded module (T2_TIER_DISARM=1) — the tax-measurement
+ * lever: the "never tripped" leg with the sequences patched out
+ * measures the residual cost of the disarmed state. Runs at finalize
+ * while the loader holds the module unsealed. */
+int erts_t2_tier_disarm_forced(void);
+void erts_t2_disarm_module_profiles(struct erl_module_instance *mi,
+                                    struct ErtsT2RetainedCode *ret);
 
 /* t2_compile.cpp: compile + install a batch of profiled functions of
  * one module (the tier worker's per-module body; the caller holds

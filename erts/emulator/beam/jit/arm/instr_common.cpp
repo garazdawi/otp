@@ -3220,6 +3220,7 @@ void BeamModuleAssembler::emit_t2_profile_sequence() {
     comment("T2 tier-up profile");
 
     Label skip = a.new_label();
+    uint32_t seq_start = (uint32_t)a.offset();
 
     /* Record base: the baked address on scheduler 1, the shared
      * throwaway record elsewhere. */
@@ -3246,6 +3247,13 @@ void BeamModuleAssembler::emit_t2_profile_sequence() {
     a.mov(ARG1, TMP1);
     fragment_call(ga->get_t2_profile_trip_shared());
     a.bind(skip);
+
+    /* Self-disarm bookkeeping (P2 commit 10): once this function's
+     * tier-up outcome is terminal, the whole sequence is patched to a
+     * single `b` over it. */
+    t2_profile_seqs.push_back({(uint32_t)ordinal,
+                               seq_start,
+                               (uint32_t)(a.offset() - seq_start)});
 }
 
 /* Trip path of the profiling sequence: ARG1 = the profile record;
