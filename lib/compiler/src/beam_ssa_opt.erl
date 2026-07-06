@@ -628,8 +628,16 @@ scan_guard(Bool, Is) ->
     end.
 
 %% Normalize to `Byte Op Lit`, flipping Op when Byte is the 2nd arg.
-scan_normalize(Op, [B, #b_literal{val=L}], B) -> {Op, L};
-scan_normalize(Op, [#b_literal{val=L}, B], B) -> {scan_flip(Op), L};
+%% A comparison against a non-integer literal cannot define a byte
+%% class; bail rather than skip, because a dropped constraint would
+%% enlarge the class (mirrors the non-integer switch-value bail in
+%% scan_switch_constraints/3). Guards not involving the byte at all
+%% still skip: they do not constrain it.
+scan_normalize(Op, [B, #b_literal{val=L}], B) when is_integer(L) -> {Op, L};
+scan_normalize(Op, [#b_literal{val=L}, B], B) when is_integer(L) ->
+    {scan_flip(Op), L};
+scan_normalize(_Op, [B, #b_literal{}], B) -> throw(bail);
+scan_normalize(_Op, [#b_literal{}, B], B) -> throw(bail);
 scan_normalize(_Op, _As, _B) -> skip.
 
 scan_flip('>=') -> '=<';
