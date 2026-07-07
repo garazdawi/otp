@@ -218,6 +218,27 @@ loop tier stands alone on its own evidence.
 deep-trials and Flambda calibrations
 ([`03_optimizer.md`](03_optimizer.md) §2.5).
 
+> **REFRAMED (2026-07-07, [11_body_recursion_prize.md](11_body_recursion_prize.md)):
+> rung-2 (framestates + eager-CP-push) is the FLAGSHIP of P3, not a
+> sub-item — it is the precondition for T2 mattering on real code.**
+> Measured on dialyzer + a compiler run: the loop tier (all of P0–P2)
+> reaches only **2–5 %** of run time; **40–59 % is locked behind the
+> non-tail-call barrier** (body-recursive + non-tail-helper shapes the
+> P2.6 gate rejects — 92–93 % of all hot functions), and it is hot
+> (`are_all_limited`+`is_limited` = 10.8 % of the dialyzer run alone). The
+> barrier is *any* non-tail call, not just body recursion. **Realizable
+> speedup ≠ coverage:** these run in T1 today (no demote tax), so bare
+> ascent-in-T2 parity buys ≈0 — the win is the *elimination* delta on top,
+> above all **inlining the non-tail helper into the loop** (the 33 %
+> helper bucket). Estimate **~10–25 % on analysis/compiler-class with full
+> P3**, ~0 from parity alone. Scope LARGE (persistent T2 CPs on Erlang
+> stacks → every CP walker + a tombstone/lazy-stack-scan jettison
+> lifecycle; no cheap parity-only shortcut). **OCaml TMC / destination-
+> passing** is a SEPARATE, lower-priority, compiler-level track for the
+> cons-builder ~8 % subset (helps T1 too, but needs GC-mutation support
+> that collides with the large-heap-GC rework). The "20 % on most apps"
+> thesis lives or dies on this P3.
+
 Contents: interior profiling (call-return/switch type slots,
 monomorphic-target slots with frequency counts, branch counters —
 [`02_profiling.md`](02_profiling.md) §2); framestates +
