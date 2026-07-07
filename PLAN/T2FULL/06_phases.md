@@ -175,10 +175,22 @@ rescope:
 >     lands after A. dialyzer's +11 % is body-recursive installs (the
 >     gate's prime target) + churn (A's target); 14 tripped-then-failed
 >     = P3 backlog.
-> **P2 close: (A) async compile LANDED (`3b89ce7c5f`); only (B) the
-> install-quality gate remains. Behavioral + G1 gates hold; kernel wins
-> hold. Once B lands and the G2 tax gate reads ≤1 %/never-slower, P2
-> fully closes → P3-narrow.**
+> **P2.6 COMPLETE (2026-07-07): (A) async compile `3b89ce7c5f` + (B)
+> install-quality gate `41af0c4985` both landed.** The gate restores the
+> never-slower floor — losers no longer install (dialyzer: 20 of 25
+> tripped functions rejected, recover to T1; lists micro 1103→443 µs =
+> T1), winners preserved (mvp 1.85–2.0×, scan 2.5–2.9×, fold intact),
+> behaviorally safe by construction (strictly subtractive; phash2
+> identical across modes). Dialyzer PLT **+13 %→+3.3 %** over T1.
+> **Residual + fundamental limit:** the +3.3 % is profiling +
+> wasted-compile overhead on an all-body-recursive workload T2 *cannot
+> accelerate* — dialyzer gets ~0 T2 benefit regardless of tax, because
+> demote-on-return runs the ascent (the real work) in T1. That's the
+> real story for body-recursion-heavy code, tracked for P2.7/P3
+> (early-reject-before-compile to kill the wasted compile; body-recursion
+> is a later-tier problem). **P2 substantially CLOSED** — behavioral +
+> G1 gates hold, kernel wins hold (≥20 % class met), never-slower floor
+> restored. Next: **P3-narrow** (pending user go).
 
 Identical scope, gates, and estimates to
 [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §8 Track B —
