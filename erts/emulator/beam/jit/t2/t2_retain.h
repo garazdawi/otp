@@ -398,10 +398,13 @@ void erts_t2_disarm_module_profiles(struct erl_module_instance *mi,
  * code-modification permission). The module is re-looked-up by name —
  * a purge/reload between trip and compile drops the batch. The module
  * decode is shared across the whole batch (PLAN/T2FULL/09 §1's queue
- * decode caching). Returns the number of functions installed. */
+ * decode caching). Returns the number of functions installed; on return
+ * `*rejected_out` (may be NULL) holds how many the install-quality gate
+ * refused (P2.6 blocker B) -- terminal, so counted apart from failures. */
 unsigned erts_t2_tier_compile_batch(Eterm module,
                                     const Uint32 *fn_indices,
-                                    unsigned n);
+                                    unsigned n,
+                                    unsigned *rejected_out);
 
 /* t2_debug.cpp: debug BIF backing erts_debug:get_internal_state(
  * {t2_build_ssa, M, F, A}). Looks up module M's active instance, runs the

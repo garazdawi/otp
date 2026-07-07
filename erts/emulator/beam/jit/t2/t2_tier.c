@@ -126,6 +126,7 @@ static struct {
     Uint64 compiled;
     Uint64 installed;
     Uint64 failed;
+    Uint64 rejected; /* install-quality gate refusals (P2.6 blocker B) */
 } t2_tier_stats;
 
 void erts_t2_tier_init(void) {
@@ -295,6 +296,7 @@ static void t2_tier_worker(void *arg) {
             Uint32 idxs[T2_TIER_QUEUE_SIZE];
             unsigned m = 0;
             unsigned installed;
+            unsigned rejected = 0;
             unsigned j;
 
             if (batch[i].module == THE_NON_VALUE) {
@@ -311,9 +313,11 @@ static void t2_tier_worker(void *arg) {
             t2_tier_stats.compiled += m;
             installed = erts_t2_tier_compile_batch(batch[i].module,
                                                    idxs,
-                                                   m);
+                                                   m,
+                                                   &rejected);
             t2_tier_stats.installed += installed;
-            t2_tier_stats.failed += m - installed;
+            t2_tier_stats.rejected += rejected;
+            t2_tier_stats.failed += m - installed - rejected;
         }
     }
 
@@ -324,16 +328,17 @@ static void t2_tier_worker(void *arg) {
 }
 
 Eterm erts_t2_tier_stats_term(Process *p) {
-    Eterm *hp = HAlloc(p, 8);
+    Eterm *hp = HAlloc(p, 9);
 
-    return TUPLE7(hp,
+    return TUPLE8(hp,
                   make_small((Uint)t2_tier_stats.trips),
                   make_small((Uint)t2_tier_stats.stability_resets),
                   make_small((Uint)t2_tier_stats.enqueued),
                   make_small((Uint)t2_tier_stats.dropped),
                   make_small((Uint)t2_tier_stats.compiled),
                   make_small((Uint)t2_tier_stats.installed),
-                  make_small((Uint)t2_tier_stats.failed));
+                  make_small((Uint)t2_tier_stats.failed),
+                  make_small((Uint)t2_tier_stats.rejected));
 }
 
 /* Diagnostic census (debug-only) of the armed profiling records — the

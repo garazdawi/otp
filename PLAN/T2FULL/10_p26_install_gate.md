@@ -89,3 +89,65 @@ catches tail-cons + dispatch losers. Thresholds (`fused_arith ≥ 2`,
 - Install point: `erts/emulator/beam/jit/t2/t2_compile.cpp:~370`
 - Call lowering: `erts/emulator/beam/jit/t2/t2_emit.cpp:1342-1384`
 - Optional codegen fix: T2 `switch` isel/emit → port T1 `i_select_val_bins`
+
+## Implementation — LANDED (2026-07-07, on top of blocker A)
+
+Base rebased onto `lukas/erts/beamjit2` tip `7057c02a97` (A's async compile
++ P2.5). The gate is evaluated in `t2_compile_install_one`
+(`t2_compile.cpp`) right after the blob is emitted and before
+`erts_t2_install`. Signals are read off the post-isel + post-regalloc LIR
+(op-kind counts) plus a hoisted `leaf_inlined` flag:
+
+- `calls_retained` = #Call + #CallExt (light-BIF `CallBif` and tail calls
+  excluded — only the demote-on-return non-tail call carries the tax);
+- `fused_arith` = #AddSmall + #SubSmall;  `spec_guards` = #SpeculateSmall;
+- `bs_scan` = #{StartMatch,BsMatch,BsGetTail,BsTestTail};
+- `switch_max_cases` = widest `Switch.num_cases`;
+- `calls_inlined` = `leaf_inlined` + presence of a foldl-class intrinsic
+  loop (`ReductionCheckCallee`/`ChargeReds`/`DemoteCallee` erase the lists
+  callee they stand in for);
+- `spills` structurally 0 (the placement allocator keeps every value in an
+  X/Y home) — trace only, not in the rule.
+
+Rule exactly as designed. On REJECT: the blob is freed through the same
+barrier-scheduled path a failed install uses, `RejectedGate` is returned,
+and the tier worker's existing disarm-on-any-non-install makes it terminal
+(never retries). Behind `T2_INSTALL_GATE` (default ON; `=0` = pre-B
+behaviour). Rejections counted in a new `t2_tier_stats.rejected` field
+(counter path, kept distinct from `failed`) and `t2_stats.gate_rejected`
+(+JT2enable path); `t2_gate: REJECT …` trace under `T2_DEBUG`/`T2_INSTALL_TRACE`.
+
+### Validation (aarch64-apple-darwin, pinned {scheduler,1}, best-of-N)
+
+Winners still install + win (measured, gate ON):
+| winner | mode | T1 | T2 gate-ON | speedup |
+|---|---|---|---|---|
+| mvp `total/2`   | +JT2 / RETAIN | 3.63 / 3.50 µs | 1.96 / 1.75 µs | 1.85–2.0× |
+| scanbench plain | +JT2 / RETAIN | 1267 / 1210 µs | 445 / 484 µs | 2.5–2.8× |
+| scanbench digit | +JT2 | 1124 µs | 390 µs | 2.9× |
+| `tsum` tail-arith | +JT2 | 411 µs | 287 µs | 1.43× |
+| foldl `sumfold/1` | +JT2 | — | installs (intrinsic) | — |
+
+Losers rejected → recover to the T1 floor (gate ON vs OFF vs T1):
+| loser | T1 | gate ON | gate OFF (installs loser) |
+|---|---|---|---|
+| lists micro (+JT2) | 445 µs | **443 µs** | 1103 µs (2.5× slower) |
+| apponly (+JT2) | 292 µs | **292 µs** | 929 µs |
+| revonly (+JT2) | 172 µs | **172 µs** | (T2 ~15% slower) |
+
+`t2_tier_stats` (RETAIN, aggressive threshold): gate ON → 25 compiled, **2
+installed** (the two winners), **20 rejected**, 3 failed (genuine compile
+failures, kept separate); gate OFF → 22 installed, 0 rejected.
+
+A+B macro: dialyzer PLT build (stdlib+kernel, aggressive tiering) — gate
+OFF 6.59 s (≈13% over T1), gate ON 6.00 s (within ~3% of T1 5.81 s): the
+gate recovers nearly all of the residual regression (dialyzer is almost
+entirely body-recursive analysis = the loser shape, so it has few T2 wins;
+the ~3% residual is counter/async overhead, not installed losers).
+
+Behavioral smoke (T1 vs RETAIN-gate-ON vs +JT2-gate-ON/OFF): identical
+`phash2` across all modes over two workloads covering spawn/link/monitor,
+exits, GC, receive-timeout, exceptions, many-way dispatch, and bitstring
+scanning. The gate is compile-time and strictly subtractive (installs a
+subset of the pre-B set, each blob byte-identical), so it cannot introduce
+new behaviour.

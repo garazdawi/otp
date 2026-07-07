@@ -82,7 +82,9 @@ namespace {
         RejectedProloguePatched,
         RejectedReach,
         RejectedDup,
-        RejectedState
+        RejectedState,
+        RejectedGate /* install-quality gate: the blob would not beat T1
+                      * (P2.6 blocker B; PLAN/T2FULL/10)               */
     };
 
     T2CompileStatus map_install_result(ErtsT2InstallResult r) {
@@ -101,6 +103,140 @@ namespace {
         default:
             return T2CompileStatus::RejectedState;
         }
+    }
+
+    /* ---- P2.6 blocker B: install-quality gate ----------------------
+     *
+     * A static, compile-time decision (PLAN/T2FULL/10). Diagnosis found
+     * that T2 beats T1 *only when it removes work* (inlines a call, fuses
+     * unboxed arithmetic, or fuses a per-byte bs loop into a scan run);
+     * a blob that re-emits T1's ops plus speculation guards can only
+     * tie-or-lose the warm steady state. Two taxes make the "tie" a loss:
+     *   - a retained non-tail call lowers as `mov x30,cont; br target`
+     *     (demote-on-return), defeating the CPU return-stack predictor
+     *     (~3.5 ns/call vs T1's `bl`); measured 3-4x on body recursion;
+     *   - a wide `select_val` lowers as a linear scan where T1 emits a
+     *     binary search (i_select_val_bins).
+     * A runtime A/B timer is unsafe (effectful functions can't be re-run
+     * to benchmark), so the gate is purely static: it reads the signals
+     * off the post-isel + post-regalloc LIR, all byproducts of passes
+     * that already ran. Refuse to install anything that is not a clear
+     * win — the "never slower than T1" floor. */
+    struct T2InstallSignals {
+        unsigned calls_inlined;    /* leaf-inline or foldl-class intrinsic:
+                                    * a callee was erased                 */
+        unsigned calls_retained;   /* Call+CallExt: non-tail generic calls
+                                    * that demote-on-return (the tax)     */
+        unsigned fused_arith;      /* AddSmall+SubSmall: unboxed speculated
+                                    * arithmetic                          */
+        unsigned bs_scan;          /* the byte-aligned bs scan subset      */
+        unsigned switch_max_cases; /* widest Switch (T2 lowers linear;
+                                    * T1 binary-searches)                 */
+        unsigned spec_guards;      /* SpeculateSmall                       */
+        unsigned spills;           /* the placement allocator keeps every
+                                    * value in an X/Y home, so it cannot
+                                    * spill in the classic sense (verified
+                                    * T2_RA_DUMP=0); kept for the trace    */
+        unsigned blob_size;        /* emitted bytes (trace only)           */
+    };
+
+    void t2_collect_install_signals(const T2LirFunction &lir,
+                                    bool leaf_inlined,
+                                    unsigned blob_size,
+                                    T2InstallSignals *s) {
+        unsigned intrinsic_loop = 0;
+
+        s->calls_inlined = 0;
+        s->calls_retained = 0;
+        s->fused_arith = 0;
+        s->bs_scan = 0;
+        s->switch_max_cases = 0;
+        s->spec_guards = 0;
+        s->spills = 0;
+        s->blob_size = blob_size;
+
+        for (const T2LirBlock &b : lir.blocks) {
+            for (const T2LirOp &op : b.ops) {
+                switch (op.kind) {
+                case T2LirKind::Call:
+                case T2LirKind::CallExt:
+                    /* Non-tail, demote-on-return. CallBif (light BIF) is
+                     * NOT counted: it returns into the blob, so it does
+                     * not carry the return-predictor tax. Tail calls are
+                     * the loop back-edge, not a tax. */
+                    s->calls_retained++;
+                    break;
+                case T2LirKind::AddSmall:
+                case T2LirKind::SubSmall:
+                    s->fused_arith++;
+                    break;
+                case T2LirKind::SpeculateSmall:
+                    s->spec_guards++;
+                    break;
+                case T2LirKind::StartMatch:
+                case T2LirKind::BsMatch:
+                case T2LirKind::BsGetTail:
+                case T2LirKind::BsTestTail:
+                    s->bs_scan++;
+                    break;
+                case T2LirKind::Switch:
+                    if (op.num_cases > s->switch_max_cases) {
+                        s->switch_max_cases = op.num_cases;
+                    }
+                    break;
+                case T2LirKind::ReductionCheckCallee:
+                case T2LirKind::ChargeReds:
+                case T2LirKind::DemoteCallee:
+                    /* foldl-class intrinsic markers: the lists call it
+                     * stands in for is erased. The markers recur per
+                     * error edge, so count presence, not occurrences. */
+                    intrinsic_loop++;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+
+        s->calls_inlined = (leaf_inlined ? 1u : 0u) + (intrinsic_loop ? 1u : 0u);
+    }
+
+    /* T2_INSTALL_GATE=0 disables the gate (install everything, the pre-B
+     * behaviour, for before/after measurement). Default ON. */
+    bool t2_install_gate_on(void) {
+        static int on = -1;
+
+        if (on < 0) {
+            const char *env = getenv("T2_INSTALL_GATE");
+            on = (env != NULL && env[0] == '0') ? 0 : 1;
+        }
+        return on;
+    }
+
+    /* True to INSTALL, false to REJECT. On reject `*reason` names the
+     * dominating signal (trace only). */
+    bool t2_install_gate_accept(const T2InstallSignals &s,
+                                const char **reason) {
+        bool eliminated = s.calls_inlined >= 1 || s.fused_arith >= 2 ||
+                          s.bs_scan >= 1;
+        bool disqualified = s.calls_retained >= 1 || s.switch_max_cases > 4 ||
+                            (s.spec_guards >= 1 && s.fused_arith == 0);
+
+        if (!eliminated) {
+            if (reason != NULL) {
+                *reason = "no work eliminated (T1 re-emit)";
+            }
+            return false;
+        }
+        if (disqualified) {
+            if (reason != NULL) {
+                *reason = s.calls_retained >= 1  ? "retained non-tail call"
+                          : s.switch_max_cases > 4 ? "wide switch (linear scan)"
+                                                   : "speculation without fusion";
+            }
+            return false;
+        }
+        return true;
     }
 
     /* Facts observed by the tier-up profile (P2 commit 9): the default
@@ -141,6 +277,8 @@ namespace {
         T2LirFunction lir;
         T2EmitResult blob;
         std::string err;
+        bool leaf_inlined = false; /* the leaf inliner erased a local call
+                                    * (install-quality gate signal)        */
 
         ctx.ret = ret;
         ctx.code_hdr = (const void *)code_hdr;
@@ -243,6 +381,7 @@ namespace {
                                     (const void *)code_hdr);
                         }
                         rewritten = true;
+                        leaf_inlined = true;
                     }
                 }
 
@@ -356,6 +495,48 @@ namespace {
             fwrite(disasm.data(), 1, disasm.size(), stderr);
         }
 
+        /* Install-quality gate (P2.6 blocker B; PLAN/T2FULL/10). The
+         * blob is fully emitted but not yet reachable: decide, purely
+         * from the static signals, whether it can beat T1. On reject,
+         * free it through the same barrier-scheduled path the install-
+         * failure branch uses (the emission flushed this thread's icache)
+         * and return terminal — the tier worker disarms the record so it
+         * never retries (a rejected shape cannot improve without new
+         * code). */
+        if (t2_install_gate_on()) {
+            T2InstallSignals sig;
+            const char *reason = "";
+
+            t2_collect_install_signals(lir, leaf_inlined,
+                                       (unsigned)blob.size, &sig);
+
+            if (!t2_install_gate_accept(sig, &reason)) {
+                if (getenv("T2_DEBUG") != NULL ||
+                    getenv("T2_INSTALL_TRACE") != NULL) {
+                    erts_fprintf(stderr,
+                                 "t2_gate: REJECT %T:%T/%u -- %s "
+                                 "(inl=%u ret=%u fus=%u bs=%u sw=%u "
+                                 "spec=%u sz=%u)\n",
+                                 hir.module,
+                                 hir.function,
+                                 (unsigned)hir.arity,
+                                 reason,
+                                 sig.calls_inlined,
+                                 sig.calls_retained,
+                                 sig.fused_arith,
+                                 sig.bs_scan,
+                                 sig.switch_max_cases,
+                                 sig.spec_guards,
+                                 sig.blob_size);
+                }
+                erts_t2_free_spans_after_barrier((void *)blob.base,
+                                                 blob.size,
+                                                 NULL,
+                                                 0);
+                return T2CompileStatus::RejectedGate;
+            }
+        }
+
         std::vector<ErtsT2ResumeEntry> rpoints;
 
         rpoints.reserve(blob.resume_points.size());
@@ -411,6 +592,7 @@ static struct {
     Uint64 isel_unsupported; /* outside the P1 identity table          */
     Uint64 emit_failed;
     Uint64 install_rejected; /* bp/prologue/reach/dup/state            */
+    Uint64 gate_rejected;    /* install-quality gate refusals (P2.6 B) */
     Uint64 build_failed;     /* SSA build/validate failures            */
     Uint64 compile_ns;       /* wall time inside the driver            */
 } t2_stats;
@@ -501,6 +683,9 @@ extern "C" void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
                 case T2CompileStatus::EmitFailed:
                     t2_stats.emit_failed++;
                     break;
+                case T2CompileStatus::RejectedGate:
+                    t2_stats.gate_rejected++;
+                    break;
                 default:
                     t2_stats.install_rejected++;
                     break;
@@ -521,12 +706,18 @@ extern "C" void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
 
 extern "C" unsigned erts_t2_tier_compile_batch(Eterm module,
                                                const Uint32 *fn_indices,
-                                               unsigned n) {
+                                               unsigned n,
+                                               unsigned *rejected_out) {
     Module *modp = erts_get_module(module, erts_active_code_ix());
     const ErtsT2RetainedCode *ret;
     const BeamCodeHeader *code_hdr;
     struct erl_module_instance *mi;
     unsigned installed = 0;
+    unsigned rejected = 0;
+
+    if (rejected_out != NULL) {
+        *rejected_out = 0;
+    }
 
     if (modp == NULL || modp->curr.code_hdr == NULL ||
         modp->curr.t2_retained == NULL) {
@@ -569,6 +760,8 @@ extern "C" unsigned erts_t2_tier_compile_batch(Eterm module,
                                      hir.function,
                                      (unsigned)hir.arity);
                     }
+                } else if (st == T2CompileStatus::RejectedGate) {
+                    rejected++;
                 } else if (getenv("T2_DEBUG") != NULL) {
                     erts_fprintf(stderr,
                                  "t2_tier: %T:%T/%u failed: %s\n",
@@ -613,21 +806,28 @@ extern "C" unsigned erts_t2_tier_compile_batch(Eterm module,
         }
     }
 
+    if (rejected_out != NULL) {
+        *rejected_out = rejected;
+    }
     return installed;
 }
 
 extern "C" Eterm erts_t2_debug_stats(Process *p) {
-    Eterm *hp = HAlloc(p, 9);
+    /* Nine fields -> past the TUPLE8 macro; build the tuple by hand. */
+    Eterm *hp = HAlloc(p, 1 + 9);
+    Eterm tup = make_tuple(hp);
 
-    return TUPLE8(hp,
-                  make_small((Uint)t2_stats.modules),
-                  make_small((Uint)t2_stats.functions),
-                  make_small((Uint)t2_stats.installed),
-                  make_small((Uint)t2_stats.isel_unsupported),
-                  make_small((Uint)t2_stats.emit_failed),
-                  make_small((Uint)t2_stats.install_rejected),
-                  make_small((Uint)t2_stats.build_failed),
-                  make_small((Uint)(t2_stats.compile_ns / 1000)));
+    hp[0] = make_arityval(9);
+    hp[1] = make_small((Uint)t2_stats.modules);
+    hp[2] = make_small((Uint)t2_stats.functions);
+    hp[3] = make_small((Uint)t2_stats.installed);
+    hp[4] = make_small((Uint)t2_stats.isel_unsupported);
+    hp[5] = make_small((Uint)t2_stats.emit_failed);
+    hp[6] = make_small((Uint)t2_stats.install_rejected);
+    hp[7] = make_small((Uint)t2_stats.gate_rejected);
+    hp[8] = make_small((Uint)t2_stats.build_failed);
+    hp[9] = make_small((Uint)(t2_stats.compile_ns / 1000));
+    return tup;
 }
 
 /* ------------------------------------------------------------------ *
@@ -690,6 +890,8 @@ namespace {
             return ERTS_MAKE_AM("rejected_reach");
         case T2CompileStatus::RejectedDup:
             return ERTS_MAKE_AM("rejected_dup");
+        case T2CompileStatus::RejectedGate:
+            return ERTS_MAKE_AM("rejected_gate");
         case T2CompileStatus::RejectedState:
         default:
             return ERTS_MAKE_AM("rejected_state");
