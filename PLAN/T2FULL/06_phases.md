@@ -262,6 +262,32 @@ deep-trials and Flambda calibrations
 > optimizer work, not a runtime-safety gamble). Full build ≈ 12–19
 > weeks.** Spike code sits on branch `spike-rung2-derisk` behind
 > `T2_RUNG2_SPIKE` (default off, byte-identical when off), unmerged.
+>
+> **VALUE DE-RISK: FALLS SHORT (2026-07-07,
+> [13_rung2_value_ceiling.md](13_rung2_value_ceiling.md)).** With
+> correctness retired, we measured the inliner's *value ceiling* on the
+> hottest rejected pair (`erl_types:are_all_limited`/`is_limited`, 10.8 %
+> of a dialyzer run) before funding the 12–19-week build. **MEASURED
+> source-fusion win is only ~3–5 %** (are_all_limited/is_limited ~5 %;
+> `cerl_trees:fold` ~3.5 %, dragged by an irreducible user-closure call;
+> `sets` is map-based with nothing to inline). The T2 elimination delta
+> on top is estimated **+1–3 %** — unbox-K ≈ 0 (a hoist variant was
+> *slower*; the counter arithmetic isn't the cost), tag-guards are
+> *genuine* `atom | #c{}` dispatch, not redundant. **Weighted total:
+> ~3–6 % on dialyzer / ~2–4 % on the compiler (optimistic ceiling
+> ~6–8 %) — it does NOT clear the ~10 % bar.** The decisive finding:
+> memo 11's 10–25 % conflated large *coverage* (40–59 % of time) with
+> large *per-unit* speedup; the prize is the **wrong kind of code** for
+> T2 elimination — pointer-chasing tree/graph traversal, `select_val`
+> dispatch, closures, hash lookups — where fusion removes only a cheap
+> call barrier and there is little to unbox. **Conclusion: the general
+> rung-2 + inliner build is NOT justified on the analysis/compiler-class
+> value case.** The "20 % on most apps" thesis is not reachable via
+> rung-2; T2-Full is a strong *specialist* tier (loop/numeric/binary
+> 2–3×, never-slower floor elsewhere), not a general-everywhere tier.
+> Cheap insurance before a final NO (agent-suggested): a minimal measured
+> T2 unbox-K + `#c{}`-speculation prototype on the single best pair
+> (estimate B is unmeasured). Awaiting user direction.
 
 Contents: interior profiling (call-return/switch type slots,
 monomorphic-target slots with frequency counts, branch counters —
