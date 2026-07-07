@@ -145,12 +145,18 @@ rescope:
 > - **BUT the production headline is NOT the entry tax.** With the fix
 >   in, prod estone still ≈−30 % / dialyzer +11 %, dominated by two
 >   SEPARATE problems P2.5 cannot touch:
->   - **(A) Synchronous inline compilation on the hot path** — the
->     tier worker compiles in the code-mod aux callback synchronously;
->     estone's single-shot micros pay a ~4× first-run hit (1671 µs vs
->     433 µs T1). `t2_tier.c` already flags the dirty-scheduler move as
->     a follow-up — this data shows it is **load-bearing, not
->     optional**.
+>   - **(A) Synchronous inline compilation on the hot path — FIXED
+>     (2026-07-07, `3b89ce7c5f`).** The trip on sched-1 now only enqueues
+>     + schedules the compile as misc aux work on another normal
+>     scheduler (re-seizing code-mod trampoline `t2_tier_seize_and_run`),
+>     returning to Erlang immediately. (Dirty scheduler ruled out: can't
+>     run aux work / can't hold code-mod permission that install+disarm
+>     require.) Estone pattern first-run **1717 µs → 727 µs** (≈ T1 554);
+>     prod estone TOTAL back to T1 (441 k vs 442 k µs); dialyzer
+>     5.46 → 5.31 s. Kernel wins byte-identical (only dispatch moved);
+>     behavioral smoke CLEAN incl. the code-loading race suites
+>     (code/code_parallel_load/multi_load/trace). Also fixed a latent
+>     no-reseize bug in the old async path.
 >   - **(B) Net-negative T2 blobs — DIAGNOSED (2026-07-07,
 >     [10_p26_install_gate.md](10_p26_install_gate.md)).** Principle: T2
 >     beats T1 *iff it removes work*; losers re-emit T1's ops + a tax.
@@ -169,10 +175,10 @@ rescope:
 >     lands after A. dialyzer's +11 % is body-recursive installs (the
 >     gate's prime target) + churn (A's target); 14 tripped-then-failed
 >     = P3 backlog.
-> **P2 close is now gated on (A) async compile + (B) the install-quality
-> gate — NOT the entry tax. Behavioral + G1 gates hold; kernel wins
-> hold. B-diagnosis shows production regressions are milder than the
-> +JT2enable headline and fully addressable.**
+> **P2 close: (A) async compile LANDED (`3b89ce7c5f`); only (B) the
+> install-quality gate remains. Behavioral + G1 gates hold; kernel wins
+> hold. Once B lands and the G2 tax gate reads ≤1 %/never-slower, P2
+> fully closes → P3-narrow.**
 
 Identical scope, gates, and estimates to
 [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §8 Track B —
