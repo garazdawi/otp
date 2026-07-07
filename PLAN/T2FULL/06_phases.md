@@ -238,6 +238,30 @@ deep-trials and Flambda calibrations
 > cons-builder ~8 % subset (helps T1 too, but needs GC-mutation support
 > that collides with the large-heap-GC rework). The "20 % on most apps"
 > thesis lives or dies on this P3.
+>
+> **DE-RISK SPIKE: GO (2026-07-07,
+> [12_rung2_derisk_spike.md](12_rung2_derisk_spike.md)).** The scariest
+> rung-2 unknown — persistent T2 return-CPs on live Erlang stacks — is
+> proven tractable on a narrow case under DEBUG assertions across all 4
+> hazards (GC mid-recursion, stacktrace/exception unwind, jettison-while-
+> live, yield-then-jettison). The CP-walker family is **~80% already
+> handled** (`erts_lookup_function_info` is blob-aware from the P2
+> back-edge work → stacktrace/trace/crash-dump resolve a T2 CP to the
+> correct MFA for free; exception unwind + GC validators are structurally
+> CP-agnostic; aarch64 is RA-only). The **one genuine hazard** —
+> `check_process_code`/purge silently missing T2 stack CPs → UAF — is
+> closed with a ~15-line fix, proven load-bearing. Jettison-while-live is
+> safe via a tombstone + two-phase retire generalizing the shipping
+> `c_p->i` resume-retire. **Two honest findings:** (1) the demote
+> mispredict tax is ~0 for *self*-recursion (monomorphic return → BTB
+> predicts; the tax is a polymorphic-return/helper phenomenon), and (2)
+> the naive eager-CP-push spike is a **~9 % regression** — bare parity
+> buys ≤0, so rung-2's entire value is the elimination/**inliner** delta,
+> exactly as the prize memo predicted. **The correctness risk is retired;
+> the remaining cost is the inliner + framestates (larger, but normal
+> optimizer work, not a runtime-safety gamble). Full build ≈ 12–19
+> weeks.** Spike code sits on branch `spike-rung2-derisk` behind
+> `T2_RUNG2_SPIKE` (default off, byte-identical when off), unmerged.
 
 Contents: interior profiling (call-return/switch type slots,
 monomorphic-target slots with frequency counts, branch counters —
