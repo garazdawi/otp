@@ -151,16 +151,28 @@ rescope:
 >     433 µs T1). `t2_tier.c` already flags the dirty-scheduler move as
 >     a follow-up — this data shows it is **load-bearing, not
 >     optional**.
->   - **(B) Net-negative T2 blobs** — installed T2 code for `pattern`
->     (−60 %) and `lists` (−52 %) shapes is genuinely **slower than T1
->     warm**, contradicting the T1-floor "never slower" promise
->     (§Risks). Needs an install-selection gate (refuse a blob that
->     loses to T1) or codegen fixes for those shapes. dialyzer's +11 %
->     is 191 installed blobs + churn; 14 tripped-then-failed = P3
->     expressiveness backlog.
-> **P2 close is now gated on (A) async compile + (B) an install-quality
+>   - **(B) Net-negative T2 blobs — DIAGNOSED (2026-07-07,
+>     [10_p26_install_gate.md](10_p26_install_gate.md)).** Principle: T2
+>     beats T1 *iff it removes work*; losers re-emit T1's ops + a tax.
+>     Two mechanisms — (i) non-tail-call demote-on-return lowering
+>     (`t2_emit.cpp:1342`): body-recursive functions run their real work
+>     in T1 anyway and pay a ~3.5 ns/call indirect-branch tax (append/2
+>     3.1× slower) — NOT codegen-fixable, gate it; (ii) T2 lowers a big
+>     `select_val` as a 27-way linear scan vs T1's binary search — IS
+>     fixable (port `i_select_val_bins`) but only reaches parity, gate it
+>     too. **Reframe:** the −52 %/−60 % were `+JT2enable` artifacts —
+>     under production `T2_RETAIN` these shapes are BREAK-EVEN (losers
+>     mostly never trip), so B only bites when a loser actually installs.
+>     **Static install-quality gate designed + verified** (INSTALL iff
+>     eliminated-work ∧ ¬disqualifying-tax; passes all winners
+>     mvp/scan/tsum, rejects all losers append/reverse/nsum/pat_loop) —
+>     lands after A. dialyzer's +11 % is body-recursive installs (the
+>     gate's prime target) + churn (A's target); 14 tripped-then-failed
+>     = P3 backlog.
+> **P2 close is now gated on (A) async compile + (B) the install-quality
 > gate — NOT the entry tax. Behavioral + G1 gates hold; kernel wins
-> hold.**
+> hold. B-diagnosis shows production regressions are milder than the
+> +JT2enable headline and fully addressable.**
 
 Identical scope, gates, and estimates to
 [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) §8 Track B —
