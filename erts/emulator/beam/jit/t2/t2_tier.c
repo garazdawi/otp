@@ -38,14 +38,35 @@
  * (t2_build_selected builds all queued functions of one module from a
  * single decode).
  *
- * Deviation from 05 §15.3 recorded: the worker body runs in the
- * code-mod-permission aux callback (a normal-scheduler aux job), not on
- * a dirty CPU scheduler — the permission machinery serializes it and
- * the measured per-function compile cost (~25-130 us) is a GC-pause-
- * class stall; routing the callback through a dirty scheduler is a
- * follow-up. Only one worker can ever run (the permission is
- * exclusive), so asmjit's allocator needs no extra locking, exactly as
- * §15.3 prescribes.
+ * Off the hot path (P2.6 blocker A): the tripping scheduler only
+ * enqueues the job, marks the record pending and schedules the
+ * compile as misc aux work on a normal scheduler other than
+ * scheduler 1 (t2_tier_compiler_tid) — it never compiles inline and
+ * returns to running Erlang immediately. The aux callback
+ * (t2_tier_seize_and_run) is a canonical re-seizing trampoline (cf.
+ * load_nif_1st_finisher / trace_session_destroy_aux in erl_nif.c /
+ * erl_bif_trace.c): the aux callback does NOT inherit the permission,
+ * it (re-)acquires code-mod permission and only then runs the worker
+ * body, which compiles + installs + disarms under that permission and
+ * releases it.
+ *
+ * A dirty CPU scheduler was ruled out (05 §15.3's original target):
+ * dirty schedulers cannot run aux work at all (erl_process.c:
+ * ERTS_INTERNAL_ERROR "Executing aux work on a dirty scheduler.") and
+ * code-mod permission can only be released from a normal scheduler
+ * (release_code_permission schedules queued aux waiters via
+ * erts_schedule_misc_aux_work((int)esdp->no,...) under
+ * ASSERT(esdp->type == ERTS_SCHED_NORMAL)). Since the install + disarm
+ * steps assert code-mod permission (t2_install.c), the
+ * permission-holding work must stay on a normal scheduler; routing it
+ * to a dirty scheduler would require splitting codegen from install
+ * into a detached-blob handoff (address-stability-across-reload risk)
+ * plus a process/NIF dispatch harness — larger and racier for no gain
+ * on the measured hot path, since the profiled process runs on
+ * scheduler 1 and the compile now lands on a different normal
+ * scheduler in parallel. Only one worker can ever run (the permission
+ * is exclusive), so asmjit's allocator needs no extra locking, exactly
+ * as §15.3 prescribes.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -116,6 +137,38 @@ void erts_t2_tier_init(void) {
 }
 
 static void t2_tier_worker(void *arg);
+static void t2_tier_seize_and_run(void *arg);
+
+/* Which normal scheduler runs the compile. misc aux work tids
+ * 1..erts_no_schedulers map one-to-one to the normal scheduler threads
+ * (0 and >erts_no_schedulers are aux threads, which must not be used:
+ * releasing code-mod permission asserts a normal scheduler). P2.5
+ * confines profiling/tripping to scheduler 1, so route the compile to
+ * a different normal scheduler when one exists; the profiled process on
+ * scheduler 1 then never pauses for it. */
+static int t2_tier_compiler_tid(void) {
+    Uint n = erts_no_schedulers;
+
+    return (n >= 2) ? 2 : 1;
+}
+
+/* Aux-work trampoline: the tripping scheduler schedules this on a
+ * normal scheduler so the compile+install runs off the hot path. Per
+ * the code-mod aux protocol the callback does NOT inherit the
+ * permission — it must (re-)seize. On failure it has re-enqueued
+ * itself and runs again when the current holder releases; only when it
+ * holds the permission does it run the worker body (which releases it).
+ */
+static void t2_tier_seize_and_run(void *arg) {
+    (void)arg;
+
+    if (!erts_try_seize_code_mod_permission_aux(t2_tier_seize_and_run,
+                                                NULL)) {
+        return;
+    }
+
+    t2_tier_worker(NULL);
+}
 
 static void t2_tier_kick(void) {
     int kick = 0;
@@ -128,11 +181,14 @@ static void t2_tier_kick(void) {
     erts_mtx_unlock(&t2_tier_q.lock);
 
     if (kick) {
-        /* Seized immediately -> run here; otherwise the callback runs
-         * when the current holder releases. */
-        if (erts_try_seize_code_mod_permission_aux(t2_tier_worker, NULL)) {
-            t2_tier_worker(NULL);
-        }
+        /* Off the hot path: hand the compile+install to a normal
+         * scheduler's aux-work slot and return to running Erlang
+         * immediately. worker_kicked stays 1 until the worker drains
+         * the ring empty, so concurrent trips enqueue without
+         * re-scheduling (no lost or double compile). */
+        erts_schedule_misc_aux_work(t2_tier_compiler_tid(),
+                                    t2_tier_seize_and_run,
+                                    NULL);
     }
 }
 
