@@ -51,11 +51,12 @@ runs:
         if: inputs.TYPE == '64-bit' || inputs.TYPE == 'clang'
         with:
             path: otp_docker_base.tar
-            ## ${{ runner.arch }} (X64/ARM64) MUST be part of the key: the base
-            ## image is arch-specific (native docker build), but runner.os is
-            ## "Linux" for both arches. Without it an arm runner could restore an
-            ## x86_64 base image (and vice versa).
-            key: ${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/dockerfiles/Dockerfile.ubuntu-base', '.github/scripts/build-base-image.sh') }}-${{ steps.date.outputs.date }}-${{ hashFiles('OTP_VERSION') }}
+            ## The base image is arch-specific (native docker build), but
+            ## runner.os is "Linux" for both arches, so an arm runner could
+            ## otherwise restore an x86_64 base image. We append the arch ONLY on
+            ## arm, so x86_64 keeps its exact historical key (cache hit preserved,
+            ## no gratuitous from-scratch rebuild) while arm gets a distinct key.
+            key: ${{ runner.os }}${{ runner.arch == 'ARM64' && '-ARM64' || '' }}-${{ hashFiles('.github/dockerfiles/Dockerfile.ubuntu-base', '.github/scripts/build-base-image.sh') }}-${{ steps.date.outputs.date }}-${{ hashFiles('OTP_VERSION') }}
 
       - name: Docker login
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -88,11 +89,11 @@ runs:
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
             path: otp_cache.tar.gz
-            ## otp_cache.tar.gz holds *compiled C* (arch-specific). ${{ runner.arch }}
-            ## MUST be in the key so an arm runner never restores the x86_64 cache
-            ## produced by `pack` (which builds on x86_64 only). Kept in sync with
-            ## the `pack` job's own binary cache key in main.yaml.
-            key: prebuilt-cache-${{ inputs.TYPE }}-${{ runner.arch }}-${{ github.ref_name }}-${{ github.sha }}
+            ## otp_cache.tar.gz holds *compiled C* (arch-specific). Append the arch
+            ## ONLY on arm so an arm runner never restores the x86_64 cache produced
+            ## by `pack` (x86_64 only), while x86_64 keeps its exact historical key.
+            ## Kept in sync with the `pack` job's binary cache key in main.yaml.
+            key: prebuilt-cache-${{ inputs.TYPE }}${{ runner.arch == 'ARM64' && '-ARM64' || '' }}-${{ github.ref_name }}-${{ github.sha }}
 
       - name: Download pre-built binaries
         if: inputs.BUILD_IMAGE == 'true' && steps.cache-binary.outputs.cache-hit != 'true'

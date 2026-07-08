@@ -145,13 +145,13 @@ jobs:
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
             path: otp_cache.tar.gz
-            ## Compiled C is arch-specific: ${{ runner.arch }} keeps this in sync
-            ## with the build-base-image action's binary cache key. `pack` only
-            ## runs on x86_64 so this resolves to ...-X64-... (unchanged sharing
-            ## with the x86_64 build jobs).
-            key: prebuilt-cache-64-bit-${{ runner.arch }}-${{ github.ref_name }}-${{ github.sha }}
+            ## Compiled C is arch-specific; kept in sync with the build-base-image
+            ## action's binary cache key. `pack` runs on x86_64, so the arch suffix
+            ## is empty here and the key is byte-identical to before (x86_64 cache
+            ## sharing unchanged); arm never matches it.
+            key: prebuilt-cache-64-bit${{ runner.arch == 'ARM64' && '-ARM64' || '' }}-${{ github.ref_name }}-${{ github.sha }}
             restore-keys: |
-                prebuilt-cache-64-bit-${{ runner.arch }}-${{ github.base_ref }}-${{ github.event.pull_request.base.sha }}
+                prebuilt-cache-64-bit${{ runner.arch == 'ARM64' && '-ARM64' || '' }}-${{ github.base_ref }}-${{ github.event.pull_request.base.sha }}
       - name: Create initial pre-release tar
         run: .github/scripts/init-pre-release.sh otp_archive.tar.gz otp_src.tar.gz
       - name: Upload source tar archive
