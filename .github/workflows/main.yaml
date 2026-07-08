@@ -145,9 +145,13 @@ jobs:
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
             path: otp_cache.tar.gz
-            key: prebuilt-cache-64-bit-${{ github.ref_name }}-${{ github.sha }}
+            ## Compiled C is arch-specific: ${{ runner.arch }} keeps this in sync
+            ## with the build-base-image action's binary cache key. `pack` only
+            ## runs on x86_64 so this resolves to ...-X64-... (unchanged sharing
+            ## with the x86_64 build jobs).
+            key: prebuilt-cache-64-bit-${{ runner.arch }}-${{ github.ref_name }}-${{ github.sha }}
             restore-keys: |
-                prebuilt-cache-64-bit-${{ github.base_ref }}-${{ github.event.pull_request.base.sha }}
+                prebuilt-cache-64-bit-${{ runner.arch }}-${{ github.base_ref }}-${{ github.event.pull_request.base.sha }}
       - name: Create initial pre-release tar
         run: .github/scripts/init-pre-release.sh otp_archive.tar.gz otp_src.tar.gz
       - name: Upload source tar archive
@@ -409,14 +413,29 @@ jobs:
           path: otp/release/win32/otp*.exe
 
   build-flavors:
-    name: Build Erlang/OTP (Types and Flavors)
-    runs-on: ubuntu-latest
+    ## Explicit name keeps the x86_64 check name identical to before
+    ## ("Build Erlang/OTP (Types and Flavors) (jit)"); arm adds an " arm64" tag.
+    name: Build Erlang/OTP (Types and Flavors) (${{ matrix.flavor }}${{ matrix.arch == 'arm64' && ' arm64' || '' }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: pack
     if: needs.pack.outputs.build-c-code == 'true'
+    ## aarch64 is unproven -> non-blocking. Evaluates to false on x86_64
+    ## (the default), so the x86_64 path is unchanged. Delete this line to make
+    ## arm blocking once green.
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
 
     strategy:
       matrix:
         flavor: [jit, emu]
+        ## Single-value x86_64 dimension: keeps the existing job set identical and
+        ## forces the arm `include` entries below into *new* matrix combinations
+        ## (they override `arch`, so they can't merge into an x86_64 combination).
+        arch: [x64]
+        ## --- aarch64 (ARM), additive & non-blocking (pass 1) ------------------
+        ## Gated to the fork with free arm runners -> on every other repo the
+        ## include is empty and the x86_64 matrix is byte-for-byte identical.
+        ## KNOB: add {"flavor":"emu","arch":"arm64"} to also cover the emu flavor.
+        include: ${{ github.repository == 'garazdawi/otp' && fromJson('[{"flavor":"jit","arch":"arm64"}]') || fromJson('[]') }}
       fail-fast: false
 
     steps:
@@ -427,6 +446,9 @@ jobs:
       - name: Build Erlang/OTP flavors and types
         run: |
             TYPES="opt debug lcnt asan gcov valgrind"
+            ## Cost-sane arm subset while unproven (skip lcnt/asan/gcov/valgrind).
+            ## KNOB: drop this line to run the full type set on arm too.
+            if [ "${{ matrix.arch }}" = "arm64" ]; then TYPES="opt debug"; fi
             FLAVORS="${{ matrix.flavor }}"
             for TYPE in ${TYPES}; do
               for FLAVOR in ${FLAVORS}; do
@@ -465,7 +487,9 @@ jobs:
               done
             done
       - name: Build Erlang/OTP JIT Win32 ABI
-        if: ${{ matrix.flavor == 'jit' }}
+        ## The Win32 ABI is x86_64-specific; skip it on arm. `matrix.arch != 'arm64'`
+        ## is always true on x86_64, so the x86_64 condition is unchanged.
+        if: ${{ matrix.flavor == 'jit' && matrix.arch != 'arm64' }}
         run: >
             docker run otp \
                 'set -xe;
@@ -527,14 +551,26 @@ jobs:
     secrets: inherit
 
   build:
-    name: Build Erlang/OTP
-    runs-on: ubuntu-latest
+    ## Explicit name keeps the x86_64 check names identical ("Build Erlang/OTP
+    ## (32-bit)" etc.); arm adds an " arm64" tag.
+    name: Build Erlang/OTP (${{ matrix.type }}${{ matrix.arch == 'arm64' && ' arm64' || '' }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: pack
     if: needs.pack.outputs.build-c-code == 'true'
+    ## aarch64 is unproven -> non-blocking (false on x86_64, i.e. unchanged).
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
 
     strategy:
       matrix:
         type: [32-bit,cross-compile,clang]
+        ## Single-value x86_64 dimension: keeps the existing job set identical and
+        ## forces the arm `include` entry into a *new* matrix combination.
+        arch: [x64]
+        ## --- aarch64 (ARM), additive & non-blocking (pass 1) ------------------
+        ## 32-bit/cross-compile target i386/x86_64 and are meaningless on arm, so
+        ## arm only exercises the clang build here. Gated to the fork with free
+        ## arm runners; empty include elsewhere keeps the x86_64 matrix identical.
+        include: ${{ github.repository == 'garazdawi/otp' && fromJson('[{"type":"clang","arch":"arm64"}]') || fromJson('[]') }}
       fail-fast: false
 
     steps:
@@ -648,7 +684,8 @@ jobs:
           ENV BASE_URL=$BASE_URL
           RUN ./otp_build download_ex_doc
           ## Need later jdk to create correct anchors in html docs
-          RUN sudo update-java-alternatives -s java-1.11.0-openjdk-amd64
+          ## dpkg --print-architecture -> amd64 on x86_64 (unchanged), arm64 on aarch64
+          RUN sudo update-java-alternatives -s java-1.11.0-openjdk-\$(dpkg --print-architecture)
           RUN make release docs release_docs && sudo make install-docs
           EOF
       - name: Release docs to publish
@@ -700,15 +737,33 @@ jobs:
           upload: true
 
   test:
-    name: Test Erlang/OTP
-    runs-on: ubuntu-latest
+    ## Explicit name keeps the x86_64 check names identical ("Test Erlang/OTP
+    ## (stdlib)" etc.); arm adds an " arm64" tag.
+    name: Test Erlang/OTP (${{ matrix.type }}${{ matrix.arch == 'arm64' && ' arm64' || '' }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: pack
     if: needs.pack.outputs.changes != '[]'
+    ## aarch64 is unproven -> non-blocking (false on x86_64, i.e. unchanged).
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
     strategy:
       matrix:
         # type: ${{ fromJson(needs.pack.outputs.all) }}
         type: ${{ fromJson(needs.pack.outputs.changes) }}
         # type: ["os_mon","sasl"]
+        ## Single-value x86_64 dimension: keeps the existing (dynamic) job set
+        ## identical and forces the arm `include` entries into *new* combinations.
+        arch: [x64]
+        ## --- aarch64 (ARM), additive & non-blocking (pass 1) ------------------
+        ## Curated smoke subset only (emulator, stdlib, kernel) so arm cost stays
+        ## low while unproven -- deliberately NOT the full fromJson(changes) app
+        ## matrix. Gated to the fork with free arm runners; empty include on every
+        ## other repo keeps the x86_64 matrix byte-for-byte identical.
+        ##
+        ## KNOB - widen arm coverage by adding app names to the JSON array below
+        ## (e.g. "crypto","ssl"). To run arm on the SAME full set as x86_64, drop
+        ## this include and instead change `arch: [x64]` above to `arch: [x64, arm64]`
+        ## (that doubles the whole matrix, so only do it once arm is green).
+        include: ${{ github.repository == 'garazdawi/otp' && fromJson('[{"type":"emulator","arch":"arm64"},{"type":"stdlib","arch":"arm64"},{"type":"kernel","arch":"arm64"}]') || fromJson('[]') }}
       fail-fast: false
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -750,19 +805,39 @@ jobs:
         run: |
           rm -rf make_test_dir/otp || true
           sudo bash -c "chown -R `whoami` make_test_dir && chmod -R +r make_test_dir"
-          tar czf ${{ matrix.type }}_test_results.tar.gz make_test_dir
+          ## The arch tag is appended *after* `_test_results` on purpose: the
+          ## system-test merge glob is `*_test_results/*.tar.gz`, which does not
+          ## match `..._test_results_arm64`, so arm results never leak into the
+          ## x86_64 system-test aggregation (x86_64 name is unchanged: suffix '').
+          tar czf ${{ matrix.type }}_test_results${{ matrix.arch == 'arm64' && '_arm64' || '' }}.tar.gz make_test_dir
       - name: Upload test results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: ${{ !cancelled() }}
         with:
-          name: ${{ matrix.type }}_test_results
-          path: ${{ matrix.type }}_test_results.tar.gz
+          name: ${{ matrix.type }}_test_results${{ matrix.arch == 'arm64' && '_arm64' || '' }}
+          path: ${{ matrix.type }}_test_results${{ matrix.arch == 'arm64' && '_arm64' || '' }}.tar.gz
 
   system-test:
-    name: Test Erlang/OTP (system)
-    runs-on: ubuntu-latest
+    ## Explicit name keeps the x86_64 check name identical ("Test Erlang/OTP
+    ## (system)"); arm adds an " (arm64)" tag.
+    name: Test Erlang/OTP (system)${{ matrix.arch == 'arm64' && ' (arm64)' || '' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     if: ${{ !cancelled() }} # Run even if the need has failed
     needs: test
+    ## aarch64 is unproven -> non-blocking (false on x86_64, i.e. unchanged).
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    strategy:
+      matrix:
+        ## Single-value x86_64 dimension; the arm include below becomes a *new*
+        ## combination. arm system-test merges only the arm test artifacts
+        ## (`*_test_results_arm64`), so the x86_64 aggregation is unaffected.
+        arch: [x64]
+        ## --- aarch64 (ARM), additive & non-blocking (pass 1) ------------------
+        ## Gated to the fork with free arm runners; empty include elsewhere keeps
+        ## the x86_64 job byte-for-byte identical. Remove this include entry to
+        ## keep system-test x86_64-only (arm test artifacts are ignored either way).
+        include: ${{ github.repository == 'garazdawi/otp' && fromJson('[{"arch":"arm64"}]') || fromJson('[]') }}
+      fail-fast: false
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: ./.github/actions/build-base-image
@@ -774,7 +849,9 @@ jobs:
         run: |
           shopt -s nullglob
           mkdir -p make_test_dir
-          for file in *_test_results/*.tar.gz; do
+          ## x86_64 evaluates to `*_test_results/*.tar.gz` (unchanged); arm to
+          ## `*_test_results_arm64/*.tar.gz`, so each arch merges only its own results.
+          for file in *_test_results${{ matrix.arch == 'arm64' && '_arm64' || '' }}/*.tar.gz; do
             tar xzf $file
           done
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
@@ -796,7 +873,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           rm -rf make_test_dir/otp || true
-          tar czf test_results.tar.gz make_test_dir
+          tar czf test_results${{ matrix.arch == 'arm64' && '_arm64' || '' }}.tar.gz make_test_dir
           # Translate file="/buildroot/otp/lib/os_mon/make_test_dir/os_mon_test/cpu_sup_SUITE.erl"
           # to file="lib/os_mon/test/cpu_sup_SUITE.erl"
           sed -i -e 's:file="/buildroot/otp/:file=":g' \
@@ -807,13 +884,18 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: ${{ !cancelled() }}
         with:
-          name: test_results
-          path: test_results.tar.gz
+          ## x86_64 name unchanged (suffix ''); arm uses a distinct artifact name.
+          name: test_results${{ matrix.arch == 'arm64' && '_arm64' || '' }}
+          path: test_results${{ matrix.arch == 'arm64' && '_arm64' || '' }}.tar.gz
       - name: Upload Test Results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: Unit Test Results
+          ## x86_64 keeps the exact name "Unit Test Results" that pr-comment.yaml
+          ## matches on; arm publishes under a distinct name so it is not double
+          ## counted (add "Unit Test Results (arm64)" to pr-comment.yaml to surface
+          ## arm results in the PR comment later).
+          name: Unit Test Results${{ matrix.arch == 'arm64' && ' (arm64)' || '' }}
           path: |
             make_test_dir/*_junit.xml
 
