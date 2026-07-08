@@ -570,6 +570,9 @@ is_ignored(Filename) ->
                "^LICENSE.md$",
                "^LICENSES/.*",
                "^FILE-HEADERS/.*",
+               %% T2-Full planning/verification scaffolding (internal design
+               %% notes + throwaway benchmark scripts, not shipped OTP source).
+               "^PLAN/.*",
                "^system/COPYRIGHT$",
                "^.mailmap$",
                "^OTP_VERSION$",
