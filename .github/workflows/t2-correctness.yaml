@@ -66,6 +66,7 @@ on:
     branches:
       - lukas/erts/beamjit2
       - lukas/erts/beamjit2-t2ci
+      - lukas/otp/aarch64-ci
 
 permissions:
   contents: read
