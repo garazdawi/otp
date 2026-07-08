@@ -29,15 +29,22 @@
 > consolidation** — retained here for the evidence record, not as live
 > plan.
 >
-> **Consolidation closeout (in progress):**
-> 1. **Gate false-accept fix** — restore the never-slower floor for
->    multi-clause bs scanners (`lex_wl:classify/4` +38 %; the `bs_scan≥1`
->    signal over-accepts — tighten to the fused-scan-run shape). *(in
->    progress)*
-> 2. **Definitive scope memo** — what T2-Full is, the measured niche, the
->    floor, the evidence trail. *(pending fix #1)*
+> **Consolidation closeout:**
+> 1. **Gate false-accept fix — DONE (`cf33c4cee8`).** Tightened the bs
+>    "eliminated-work" arm from `bs_scan≥1` to the emitter's fused
+>    scan-run count `scan_runs≥1`, and added a disqualifier
+>    `bs_unfused = (bs_scan≥1 && scan_runs==0)` (the loser also tripped
+>    `fused_arith≥2` via mutually-exclusive per-clause increments, so the
+>    bs arm alone was insufficient). Measured: `lex_wl:classify/4` now
+>    rejects → recovers to the T1 floor (was +40 %); scanbench 2.5×/3.2×,
+>    tsum 1.65×, mvp 1.63× all still install + win; estone +0.4 %; phash2
+>    identical. Never-slower floor is hole-free.
+> 2. **Definitive scope memo — DONE**
+>    ([15_scope_and_disposition.md](15_scope_and_disposition.md); README
+>    landing banner + status updated to point at it).
 > 3. **Confirm default config** (gate ON, async compile, sched-1
->    profiling) + P2 behavioral sweep holds. *(largely done at P2 close)*
+>    profiling) + P2 behavioral sweep holds. *(largely done at P2 close;
+>    final confirmation pending.)*
 
 ## M0 — Measurement & scope-setting (6–8 weeks, mostly tooling)
 

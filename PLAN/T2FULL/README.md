@@ -1,5 +1,17 @@
 # T2-Full — The Profile-Driven Optimizing Tier
 
+> ## ⟹ LANDING (2026-07-08): T2-Full is a SPECIALIST tier — see [`15_scope_and_disposition.md`](15_scope_and_disposition.md)
+>
+> The measurement program concluded. The **"≥20 % on most applications"
+> mandate below is superseded** — it is measured-dead (marginal ~3–6 % on
+> analysis/compiler, ~0 %/ineligible on services; rung-2/P3 rescues neither).
+> **Owner decision: consolidate as a specialist tier** — 2.5–3.1× on byte
+> scan-and-count kernels + integer/float tail loops, never-slower-than-T1 floor
+> elsewhere. **P3–P7 are decided-against**, retained below for the evidence
+> record only. Start at [`15`](15_scope_and_disposition.md) for the conclusion;
+> the plan text below (00–09) is the historical plan-of-record and the mechanism
+> specs. Evidence trail: memos [`10`](10_p26_install_gate.md)–[`14`](14_real_service_value.md).
+
 **The authoritative T2 plan** (July 2026). Supersedes
 [`../T2/08_v1_loop_tier.md`](../T2/08_v1_loop_tier.md) as the
 project direction: the loop tier is absorbed as the first shippable
@@ -26,7 +38,9 @@ first. Backend open — evaluated in [`04_backend.md`](04_backend.md).
 | [`03_optimizer.md`](03_optimizer.md) | The pass pipeline and each mandated optimization: the **elimination-scored cross-module inliner** (never for call overhead — G3-2 is a design input; calibrated against HotSpot/Maglev/JSC budgets, Graal deep-trials and Flambda evidence), GVN/CSE on immutable terms, LICM with speculative guard motion, unrolling + SWAR, and the escape-analysis/allocation-sinking/float-unboxing group with its two-stage deopt design and PyPy/LuaJIT/Graal calibration. |
 | [`04_backend.md`](04_backend.md) | Backend evaluation matrix (asmjit+own mid-end, LLVM ORC, Cranelift, MIR, others) and the decision: **asmjit + BEAM-specific mid-end**, HIR/LIR hard seam, linear-scan-on-SSA regalloc — with the B3 structural argument and July-2026 evidence. |
 | [`05_runtime.md`](05_runtime.md) | Delta map onto the inherited runtime integration: what applies as written, the code-load/trace jettison contract spelled out, what re-activates at P3 (CPs into blobs → tombstone lifecycle), the two new runtime obligations, observability additions (eligibility metric, inline-tree introspection). |
-| [`06_phases.md`](06_phases.md) | The roadmap: **M0 measurement phase** (prices the two pools the thesis rests on) → P0–P2 loop tier (shippable) → P3 general inlining → P4 classic opts → P5 allocation elimination → P6 ship → P7 x86_64 port. Gates, effort (~60–68 weeks aarch64), risks, open questions. |
+| [`06_phases.md`](06_phases.md) | The roadmap: **M0 measurement phase** (prices the two pools the thesis rests on) → P0–P2 loop tier (shippable) → P3 general inlining → P4 classic opts → P5 allocation elimination → P6 ship → P7 x86_64 port. Gates, effort (~60–68 weeks aarch64), risks, open questions. **Top banner = PROGRAM STATUS (consolidating as specialist tier); P3+ decided-against.** |
+| [`10`](10_p26_install_gate.md)–[`14`](14_real_service_value.md) | **The measurement/de-risk memos** that drove the landing: P2.6 install gate (10), body-recursion prize (11), rung-2 correctness spike GO (12), rung-2 value FALLS SHORT (13), real-service value ~0 %/SPECIALIST (14). |
+| [`15_scope_and_disposition.md`](15_scope_and_disposition.md) | **⟹ START HERE for the conclusion.** What T2-Full actually is (measured), what it does not deliver and why, the hole-free install gate, and the disposition (specialist tier; P3+ decided-against). |
 
 ## Reading paths
 
@@ -41,11 +55,17 @@ first. Backend open — evaluated in [`04_backend.md`](04_backend.md).
 
 ## Status
 
-Planning complete (July 2026); implementation not started. Built on
-the completed MVP + five-experiment program and the July 2026
-research round (production-tier ablations, inlining-heuristic
-survey, deopt-policy survey, backend evaluation, T1 cost-structure
-analysis with the HiPE≈BeamAsm calibration). The plan's central
-discipline: the two pools that make the 20 % thesis arithmetic work
-— elimination-rich call boundaries and sinkable allocation — are
-**measured in M0 before the phases that exploit them are funded**.
+**CONSOLIDATING AS A SPECIALIST TIER (2026-07-08).** M0–P2 built and
+measured (loop tier, sched-1 profiling, async compile, install gate —
+now hole-free, `cf33c4cee8`). The M0/de-risk program ran the missing
+measurements *before* funding the expensive phases and found the 20 %
+thesis unreachable (marginal on analysis, ineligible on services,
+rung-2 rescues neither), so **P3–P7 are decided-against.** The plan's
+central discipline — measure the pools before funding the phases that
+exploit them — did its job: it retired the general-tier ambition on
+evidence and saved the 12–19-week rung-2 build. See
+[`15_scope_and_disposition.md`](15_scope_and_disposition.md) for the
+disposition and [`06_phases.md`](06_phases.md) for the phase-by-phase
+status. Remaining closeout: the definitive scope memo (this =
+[`15`](15_scope_and_disposition.md), done) and a final default-config
+confirmation.
