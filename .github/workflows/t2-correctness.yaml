@@ -1,0 +1,320 @@
+## %CopyrightBegin%
+##
+## SPDX-License-Identifier: Apache-2.0
+##
+## Copyright Ericsson AB 2026. All Rights Reserved.
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+##
+## %CopyrightEnd%
+
+## T2-Full codegen-correctness leg.
+##
+## Builds a sanitizer emulator (TYPE=asan, address sanitizer; the assertions
+## variant TYPE=debug is selectable) and runs a T2-exercising slice of the OTP
+## test suite with the tier-2 JIT forced ON for *every* eligible function
+## (`+JT2enable true`) and the install-quality gate turned OFF
+## (`T2_INSTALL_GATE=0`, so even the non-winning "loser" blobs install and get
+## exercised). The existing OTP corpus thereby becomes a T2 miscompile fuzzer:
+## a codegen bug shows up as an ASan report (memory-safety) or, in the debug
+## variant, a runtime assertion / a test failure.
+##
+## Snapshot branch of lukas/erts/beamjit2. Runs on the garazdawi/otp fork only
+## (free arm64 hosted runners for public forks); NEVER on erlang/otp.
+##
+## Scope note: the default suite set is a curated T2-dense slice (byte
+## scan-and-count, integer/float loops, bitstring match, list/map/string/re
+## kernels). Expanding to the full suite is a later step -- override the
+## *_suites inputs, or lift the curated defaults, once this pass-1 slice is
+## green in CI.
+
+name: T2 codegen correctness
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Emulator build type: asan (address sanitizer) or debug (runtime assertions).'
+        type: choice
+        options:
+          - asan
+          - debug
+        default: asan
+      erts_suites:
+        description: 'erts (emulator_test) suites, space separated.'
+        type: string
+        default: 'num_bif_SUITE bif_SUITE bs_match_int_SUITE bs_match_misc_SUITE bs_construct_SUITE binary_SUITE'
+      stdlib_suites:
+        description: 'stdlib (stdlib_test) suites, space separated.'
+        type: string
+        default: 'lists_SUITE binary_module_SUITE string_SUITE maps_SUITE re_SUITE base64_SUITE unicode_SUITE'
+      install_floor:
+        description: 'Minimum tier-2 blobs the install-count probe must install, else the job fails as vacuous.'
+        type: string
+        default: '500'
+  push:
+    branches:
+      - lukas/erts/beamjit2
+      - lukas/erts/beamjit2-t2ci
+
+permissions:
+  contents: read
+
+env:
+  ERL_TOP: ${{ github.workspace }}
+  ## Keep stray crash dumps out of the workspace and the artifact.
+  ERL_CRASH_DUMP: /dev/null
+  ERL_CRASH_DUMP_SECONDS: "0"
+  ## Defaults applied on the push trigger (where inputs.* are empty). Keep in
+  ## sync with the workflow_dispatch defaults above.
+  BUILD_TYPE: ${{ inputs.build_type || 'asan' }}
+  ERTS_SUITES: ${{ inputs.erts_suites || 'num_bif_SUITE bif_SUITE bs_match_int_SUITE bs_match_misc_SUITE bs_construct_SUITE binary_SUITE' }}
+  STDLIB_SUITES: ${{ inputs.stdlib_suites || 'lists_SUITE binary_module_SUITE string_SUITE maps_SUITE re_SUITE base64_SUITE unicode_SUITE' }}
+  INSTALL_FLOOR: ${{ inputs.install_floor || '500' }}
+
+jobs:
+  t2-correctness:
+    name: T2 codegen correctness (${{ inputs.build_type || 'asan' }}, ubuntu-24.04-arm)
+    ## Fork-only: the hosted arm64 runners are free for public forks; never let
+    ## this run if the branch ever lands on erlang/otp.
+    if: github.repository == 'garazdawi/otp'
+    runs-on: ubuntu-24.04-arm
+    ## Bounded under the hosted-runner 6h hard limit. The sanitizer emulator
+    ## plus a forced-tier (+JT2enable) test run is slow; the curated slice
+    ## keeps it well inside this.
+    timeout-minutes: 330
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install build dependencies
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential autoconf m4 libncurses-dev libssl-dev ccache
+          ## Put ccache's compiler shims first on PATH for every later step, so
+          ## a plain ./configure && make transparently uses ccache.
+          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
+
+      - name: Restore ccache
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: ~/.cache/ccache
+          key: t2-correctness-ccache-${{ github.sha }}
+          restore-keys: |
+            t2-correctness-ccache-
+
+      - name: Configure
+        run: |
+          set -eux
+          ccache --zero-stats || true
+          ./configure
+
+      - name: Build (opt) - bootstrap + libraries
+        run: |
+          set -eux
+          ## The opt build bootstraps the compiler and builds the Erlang
+          ## libraries and the release-test plumbing that the sanitizer
+          ## emulator then runs on.
+          make -j"$(nproc)"
+
+      - name: Build sanitizer emulator (TYPE=${{ inputs.build_type || 'asan' }})
+        run: |
+          set -eux
+          ## TYPE=asan -> beam.asan (address sanitizer; -fsanitize-recover so a
+          ## hit is logged and execution continues). TYPE=debug -> beam.debug
+          ## (runtime ASSERT/ERTS_LC_ASSERT). Either way this is the emulator
+          ## the tests run under.
+          make -j"$(nproc)" TYPE="$BUILD_TYPE"
+          ccache --show-stats || true
+
+      - name: Verify JIT flavor and build type
+        run: |
+          set -eux
+          FLAVOR=$("$ERL_TOP/bin/cerl" -"$BUILD_TYPE" -noshell \
+            -eval 'io:format("~p~n",[erlang:system_info(emu_flavor)]), halt()')
+          BT=$("$ERL_TOP/bin/cerl" -"$BUILD_TYPE" -noshell \
+            -eval 'io:format("~p~n",[erlang:system_info(build_type)]), halt()')
+          echo "emu_flavor=$FLAVOR build_type=$BT"
+          test "$FLAVOR" = jit
+          test "$BT" = "$BUILD_TYPE"
+
+      - name: T2 install-count probe (validity gate)
+        ## Mandatory: a green run that tiered nothing is vacuous. Force-compile
+        ## every eligible function (+JT2enable) with the gate OFF over a broad
+        ## T2-surface module set, then read the driver's install count
+        ## (t2_stats element 3) and fail if it is below the floor.
+        run: |
+          set -eux
+          mkdir -p "$ERL_TOP/t2-results"
+          ASAN_LOG_DIR="$ERL_TOP/t2-results/asan_probe"
+          mkdir -p "$ASAN_LOG_DIR"
+          export ASAN_LOG_DIR
+          export ASAN_OPTIONS="halt_on_error=0:detect_leaks=0:abort_on_error=0"
+          PROBE='
+            _ = erts_debug:set_internal_state(available_internal_state, true),
+            Mods = [lists,string,binary,unicode,unicode_util,base64,maps,re,
+                    ordsets,proplists,sets,dict,array,queue,json,erl_types,
+                    binary,ordsets,gb_trees,gb_sets,math,erlang],
+            _ = [code:ensure_loaded(M) || M <- Mods],
+            S = erts_debug:get_internal_state(t2_stats),
+            Installed = element(3, S),
+            io:format("t2_stats=~p~n", [S]),
+            io:format("T2_INSTALLED=~p~n", [Installed]),
+            halt(0)'
+          ERL_AFLAGS="+JT2enable true" T2_INSTALL_GATE=0 \
+            "$ERL_TOP/bin/cerl" -"$BUILD_TYPE" -noshell -eval "$PROBE" -s init stop \
+            2>&1 | tee "$ERL_TOP/t2-results/00_install_probe.txt"
+          INSTALLED=$(grep -aoE 'T2_INSTALLED=[0-9]+' "$ERL_TOP/t2-results/00_install_probe.txt" \
+                        | head -1 | cut -d= -f2)
+          echo "installed=$INSTALLED floor=$INSTALL_FLOOR"
+          if [ -z "$INSTALLED" ] || [ "$INSTALLED" -lt "$INSTALL_FLOOR" ]; then
+            echo "::error::T2 install-count probe installed ${INSTALLED:-0} blobs (< floor $INSTALL_FLOOR) - the run would be vacuous."
+            exit 1
+          fi
+
+      - name: Run erts (emulator_test) T2 slice
+        ## +JT2enable + gate-off in the env so every erl the tests spawn runs
+        ## eager and installs even the loser blobs. TYPE selects the sanitizer
+        ## emulator (adds -emu_type to ERL_AFLAGS). ASAN_OPTIONS log each hit to
+        ## a file and keep going (halt_on_error=0) so one run surfaces every bug;
+        ## the log_path basename follows the cerl -asan convention
+        ## (<emu>-<tag>-<n>) that test_server's per-case asan log rotation
+        ## parses. The step records make's exit code for the result check and
+        ## itself exits 0 so later steps (asan scan, artifacts) always run.
+        run: |
+          set -ux
+          export ASAN_LOG_DIR="$ERL_TOP/t2-results/asan_logs"
+          mkdir -p "$ASAN_LOG_DIR"
+          export ASAN_OPTIONS="halt_on_error=0:detect_leaks=0:abort_on_error=0:log_path=$ASAN_LOG_DIR/beam.asan-t2-0"
+          export LSAN_OPTIONS="suppressions=$ERL_TOP/erts/emulator/asan/suppress"
+          export ERL_AFLAGS="+JT2enable true"
+          export T2_INSTALL_GATE=0
+          SUITES=""
+          for s in $ERTS_SUITES; do SUITES="$SUITES -suite $s"; done
+          set -o pipefail
+          make emulator_test \
+            ARGS="$SUITES" \
+            EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"$ERL_TOP/t2-results/emulator_junit.xml\"}]" \
+            TYPE="$BUILD_TYPE" \
+            2>&1 | tee "$ERL_TOP/t2-results/10_emulator_test.log"
+          echo "${PIPESTATUS[0]}" > "$ERL_TOP/t2-results/emulator_rc"
+          exit 0
+
+      - name: Run stdlib (stdlib_test) T2 slice
+        run: |
+          set -ux
+          export ASAN_LOG_DIR="$ERL_TOP/t2-results/asan_logs"
+          mkdir -p "$ASAN_LOG_DIR"
+          export ASAN_OPTIONS="halt_on_error=0:detect_leaks=0:abort_on_error=0:log_path=$ASAN_LOG_DIR/beam.asan-t2-0"
+          export LSAN_OPTIONS="suppressions=$ERL_TOP/erts/emulator/asan/suppress"
+          export ERL_AFLAGS="+JT2enable true"
+          export T2_INSTALL_GATE=0
+          SUITES=""
+          for s in $STDLIB_SUITES; do SUITES="$SUITES -suite $s"; done
+          set -o pipefail
+          make stdlib_test \
+            ARGS="$SUITES" \
+            EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"$ERL_TOP/t2-results/stdlib_junit.xml\"}]" \
+            TYPE="$BUILD_TYPE" \
+            2>&1 | tee "$ERL_TOP/t2-results/11_stdlib_test.log"
+          echo "${PIPESTATUS[0]}" > "$ERL_TOP/t2-results/stdlib_rc"
+          exit 0
+
+      - name: Collect ct logs
+        if: always()
+        run: |
+          set -ux
+          ## `make <app>_test` writes ct logs to <app>/make_test_dir/ct_logs.
+          ## Gather every such tree into the results dir for the artifact.
+          mkdir -p "$ERL_TOP/t2-results/ct_logs"
+          while IFS= read -r d; do
+            dest="$ERL_TOP/t2-results/ct_logs/$(echo "$d" | sed "s#$ERL_TOP/##; s#/#_#g")"
+            cp -R "$d" "$dest" 2>/dev/null || true
+          done < <(find "$ERL_TOP" -type d -name ct_logs -path '*make_test_dir*' 2>/dev/null)
+
+      - name: Check ASan reports (fail on any sanitizer hit)
+        if: always()
+        run: |
+          set -ux
+          ASAN_LOG_DIR="$ERL_TOP/t2-results/asan_logs"
+          ## Any non-empty asan.<pid> file is a real memory-safety error
+          ## (leak detection is off), i.e. a candidate T2 miscompile.
+          HITS=$(find "$ASAN_LOG_DIR" -type f -size +0c 2>/dev/null | wc -l | tr -d ' ')
+          echo "asan_report_files=$HITS"
+          if [ "$HITS" != "0" ]; then
+            echo "::error::AddressSanitizer produced $HITS report file(s) - see the asan_logs artifact."
+            ## Render a compact human-readable summary if the helper is present.
+            "$ERL_TOP/bin/escript" "$ERL_TOP/erts/emulator/asan/asan_logs_to_html" \
+              "$ERL_TOP/t2-results/asan_html" 2>/dev/null || true
+            for f in $(find "$ASAN_LOG_DIR" -type f -size +0c); do
+              echo "===== $f ====="; sed -n '1,40p' "$f"
+            done
+            exit 1
+          fi
+
+      - name: Check test results (fail on any test failure)
+        if: always()
+        run: |
+          set -ux
+          RC=0
+          ## Primary signal: the recorded `make <app>_test` exit code. Non-zero
+          ## covers failed cases, an aborted assertion (debug build) and a
+          ## test_server crash -- none of which a junit/"Failed:" grep alone
+          ## reliably catches.
+          for r in "$ERL_TOP"/t2-results/emulator_rc "$ERL_TOP"/t2-results/stdlib_rc; do
+            if [ ! -f "$r" ]; then
+              echo "::error::test step did not record an exit code ($r) - it likely never ran"
+              RC=1
+            elif [ "$(cat "$r")" != "0" ]; then
+              echo "::error::$(basename "$r" _rc) test run exited $(cat "$r")"
+              RC=1
+            fi
+          done
+          ## cth_surefire junit as corroboration + case-level detail.
+          for x in "$ERL_TOP"/t2-results/emulator_junit.xml "$ERL_TOP"/t2-results/stdlib_junit.xml; do
+            [ -f "$x" ] || { echo "::warning::missing junit $x"; continue; }
+            if grep -qaE '<(failure|error)\b' "$x"; then
+              echo "::error::test failures in $x"
+              RC=1
+            fi
+          done
+          exit $RC
+
+      - name: T2 install stats (record)
+        if: always()
+        run: |
+          set -ux
+          cat "$ERL_TOP/t2-results/00_install_probe.txt" 2>/dev/null || true
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## T2 codegen correctness ($BUILD_TYPE)"
+              echo ""
+              echo "install-count probe: \`$(grep -a T2_INSTALLED "$ERL_TOP/t2-results/00_install_probe.txt" 2>/dev/null)\` (floor $INSTALL_FLOOR)"
+              echo ""
+              echo "erts suites: \`$ERTS_SUITES\`"
+              echo ""
+              echo "stdlib suites: \`$STDLIB_SUITES\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: t2-correctness-${{ inputs.build_type || 'asan' }}
+          path: |
+            ${{ github.workspace }}/t2-results/
+          if-no-files-found: warn
