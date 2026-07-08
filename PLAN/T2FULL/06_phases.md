@@ -42,9 +42,19 @@
 > 2. **Definitive scope memo — DONE**
 >    ([15_scope_and_disposition.md](15_scope_and_disposition.md); README
 >    landing banner + status updated to point at it).
-> 3. **Confirm default config** (gate ON, async compile, sched-1
->    profiling) + P2 behavioral sweep holds. *(largely done at P2 close;
->    final confirmation pending.)*
+> 3. **Confirm default config — DONE.** Shipping defaults verified at
+>    source: install gate default ON (`t2_compile.cpp:222`, only
+>    `T2_INSTALL_GATE=0` disables), sched-1-only profiling
+>    (`instr_common.cpp:3238`+), async compile off the hot scheduler
+>    (`t2_tier.c:150/190`). Behavioral parity: 290-leg P2-close sweep
+>    (0 deltas) + post-fix phash2-identical across T1/counter/force
+>    modes. The gate fix is strictly subtractive (installs a byte-
+>    identical subset), so no fresh full re-sweep is warranted; one is
+>    available on request as belt-and-suspenders.
+>
+> **⟹ CONSOLIDATION COMPLETE (2026-07-08).** T2-Full is landed as a
+> specialist tier; the definitive statement is
+> [15_scope_and_disposition.md](15_scope_and_disposition.md).
 
 ## M0 — Measurement & scope-setting (6–8 weeks, mostly tooling)
 
