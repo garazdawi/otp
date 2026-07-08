@@ -257,12 +257,15 @@ namespace {
         }
         if (disqualified) {
             if (reason != NULL) {
-                *reason = s.calls_retained >= 1 ? "retained non-tail call"
-                          : s.switch_max_cases > 4
-                                  ? "wide switch (linear scan)"
-                          : bs_unfused
-                                  ? "un-fused per-byte bs loop (slower than T1)"
-                                  : "speculation without fusion";
+                if (s.calls_retained >= 1) {
+                    *reason = "retained non-tail call";
+                } else if (s.switch_max_cases > 4) {
+                    *reason = "wide switch (linear scan)";
+                } else if (bs_unfused) {
+                    *reason = "un-fused per-byte bs loop (slower than T1)";
+                } else {
+                    *reason = "speculation without fusion";
+                }
             }
             return false;
         }

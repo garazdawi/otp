@@ -359,7 +359,9 @@ namespace erts_t2 {
         unsigned emitted_scan_runs() const {
             unsigned n = 0;
             for (const ScanLoop &sl : scan_loops) {
-                n += sl.emitted ? 1u : 0u;
+                if (sl.emitted) {
+                    n++;
+                }
             }
             return n;
         }
