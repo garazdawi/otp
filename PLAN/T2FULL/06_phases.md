@@ -7,6 +7,38 @@
 > results. Effort figures are single-engineer implementation weeks
 > (the reference design's currency; multiply ~×1.5–2 for calendar).
 
+> ## PROGRAM STATUS (2026-07-08): CONSOLIDATING AS A SPECIALIST TIER
+>
+> The de-risk arc is complete and the **"20 % on most apps" thesis is
+> measured-dead** — not abandoned on a hunch, but retired on a full
+> evidence trail (memos 11–14): **marginal ~3–6 % on analysis/compiler**
+> (eligible but irreducible pointer-chasing — memo 13), **~0 % on
+> canonical services** (JSON/HTTP/codec are 97–100 % *ineligible* at the
+> frontend — memo 14), and **rung-2 (P3) rescues neither** — it is a
+> backend CP-on-stack change that adds zero opcode coverage, so it is
+> *measured-irrelevant* to the service case and only ~3–6 % on the
+> analysis case. **Owner decision: consolidate T2-Full as a SPECIALIST
+> tier; do NOT build rung-2/P3.** What T2 genuinely delivers, measured:
+> **2.5–3.1× on single-clause byte scan-and-count kernels and
+> integer/float tail loops**, with a **never-slower-than-T1 floor**
+> everywhere else (the P2.6 install gate). Making T2 broadly valuable
+> would require a *different, larger frontend* project (binary
+> construction + maps + `call_fun` eligibility + real per-shape bs cost
+> modeling) — bigger than rung-2 and unsupported by the evidence; not
+> funded. **P3 and below (P4/P5) are decided-against / superseded by this
+> consolidation** — retained here for the evidence record, not as live
+> plan.
+>
+> **Consolidation closeout (in progress):**
+> 1. **Gate false-accept fix** — restore the never-slower floor for
+>    multi-clause bs scanners (`lex_wl:classify/4` +38 %; the `bs_scan≥1`
+>    signal over-accepts — tighten to the fused-scan-run shape). *(in
+>    progress)*
+> 2. **Definitive scope memo** — what T2-Full is, the measured niche, the
+>    floor, the evidence trail. *(pending fix #1)*
+> 3. **Confirm default config** (gate ON, async compile, sched-1
+>    profiling) + P2 behavioral sweep holds. *(largely done at P2 close)*
+
 ## M0 — Measurement & scope-setting (6–8 weeks, mostly tooling)
 
 Prices the two pools the 20 % thesis depends on and closes the
