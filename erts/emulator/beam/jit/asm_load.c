@@ -35,9 +35,11 @@
 #include "erl_record.h"
 
 #include "beam_asm.h"
+#ifdef ERTS_ENABLE_JIT_T2
 #include "t2_retain.h"
 #include "t2_pctab.h"
 #include "t2_install.h"
+#endif
 
 #ifdef ADDRESS_SANITIZER
 #    include <sanitizer/lsan_interface.h>
@@ -56,6 +58,7 @@ int beam_load_prepare_emit(LoaderState *stp) {
                                     stp->beam.code.function_count,
                                     &stp->beam);
 
+#ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full P0 (PLAN/T2FULL/07 §4): enable PC side-table offset
      * collection when T2 retention is on. Offsets are collected for
      * every function and filtered to the eligible ones at
@@ -79,6 +82,7 @@ int beam_load_prepare_emit(LoaderState *stp) {
                                     stp->beam.code.function_count);
         }
     }
+#endif /* ERTS_ENABLE_JIT_T2 */
 
     /* Initialize code header */
     stp->codev_size = stp->beam.code.function_count + 1;
@@ -251,11 +255,13 @@ int beam_load_prepared_dtor(Binary *magic) {
     /* This should have been freed earlier! */
     ASSERT(stp->op_allocator.beamop_blocks == NULL);
 
+#ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full: prepared but never committed (loading failed). */
     if (stp->t2_retained != NULL) {
         erts_t2_retained_free(stp->t2_retained);
         stp->t2_retained = NULL;
     }
+#endif
 
     beamfile_free(&stp->beam);
     beamopallocator_dtor(&stp->op_allocator);
@@ -1265,9 +1271,11 @@ void beam_load_finalize_code(LoaderState *stp,
 
             beamasm_patch_lambda(stp->ba, stp->writable_region, i, fun_entry);
 
+#ifdef ERTS_ENABLE_JIT_T2
             /* T2-Full (P2 commit 8): capture the entry for the retained
              * lambda table, so make_fun3 can be lowered after load. */
             erts_t2_retain_lambda_entry(stp->t2_retained, i, fun_entry);
+#endif
         }
     }
 
@@ -1290,6 +1298,7 @@ void beam_load_finalize_code(LoaderState *stp,
     /* Register debug / profiling info with external tools. */
     inst_p->metadata = beamasm_register_metadata(stp->ba, stp->code_hdr);
 
+#ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full: on_load modules keep no retention (their instance
      * ownership moves in erts_finish_after_on_load, which has no
      * release hooks); the prepared copy — created before codegen since
@@ -1359,6 +1368,7 @@ void beam_load_finalize_code(LoaderState *stp,
 
         stp->t2_retained = NULL;
     }
+#endif /* ERTS_ENABLE_JIT_T2 */
 
     erts_seal_module(inst_p);
 

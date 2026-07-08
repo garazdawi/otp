@@ -45,7 +45,7 @@
 #include "erl_unicode.h"
 #include "beam_file.h"
 
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 #include "jit/t2/t2_retain.h"
 #endif
 

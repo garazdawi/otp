@@ -68,7 +68,7 @@
 #define HAVE_USE_DTRACE 1
 #endif
 #include "jit/beam_asm.h"
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 #    include "jit/t2/t2_install.h"
 #endif
 #include "erl_global_literals.h"
@@ -5079,6 +5079,7 @@ static void patch_call_nif_early(ErlNifEntry* entry,
             code_ptr[0] = BeamSetCodeAddr(code_ptr[0], call_nif_early);
         }
 #else
+#ifdef ERTS_ENABLE_JIT_T2
         /* T2-Full: a tier-2 blob owns the same prologue word the
          * call_nif_early flag rewrites; strict mutual exclusion
          * (PLAN/T2/06 §2.4) means the blob is jettisoned before the
@@ -5088,6 +5089,7 @@ static void patch_call_nif_early(ErlNifEntry* entry,
             erts_t2_jettison_function(this_mi, ci_exec);
         }
         erts_t2_jettison_deps((const void *)this_mi->code_hdr);
+#endif
         /* Re-assert JIT-write mode: jettisoning a dependent blob seals
          * its module, flipping this thread to execute mode, while the
          * loop below keeps writing through this_mi's writable view. */

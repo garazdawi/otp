@@ -176,6 +176,7 @@ static erts_lc_lock_order_t erts_lock_order[] = {
     LEVEL,
     {"record_staging_lock",                     NULL},
     {"global_literals",                         NULL},
+#ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full tier-up work queue (jit/t2/t2_tier.c). A leaf lock (no
      * other lock is taken while it is held) acquired by the tier worker
      * under code_mod_permission, so it orders after it; grouped here with
@@ -186,6 +187,7 @@ static erts_lc_lock_order_t erts_lock_order[] = {
      * t2_ranges.c) and the allocation-profiling site list
      * (erl_process.c:erts_galloc_*). */
     {"t2_ranges",				NULL},
+#endif
     {"alloc_profile",				NULL},
     LEVEL,
     {"alcu_allocator",			        "index"},

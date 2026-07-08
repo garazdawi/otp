@@ -284,6 +284,15 @@ CFLAGS  = @STATIC_CFLAGS@ $(TYPE_FLAGS) $(FLAVOR_FLAGS) $(DEFS) $(WFLAGS) $(THR_
 ifeq ($(FLAVOR),jit)
 CFLAGS  += -DBEAMASM=1
 ENABLE_ALLOC_TYPE_VARS += beamasm
+# The Tier-2 (T2-Full) second-tier JIT is currently aarch64-only: its code
+# generator (beam/jit/t2/) is written against the arm assembler backend.
+# Gate the whole subsystem on a single switch so x86 (and any non-arm JIT
+# arch) builds with T2 entirely absent, while arm is unchanged.
+ifeq ($(JIT_ARCH),arm)
+ERTS_ENABLE_JIT_T2 = yes
+CFLAGS  += -DERTS_ENABLE_JIT_T2=1
+ENABLE_ALLOC_TYPE_VARS += jit_t2
+endif
 endif
 CXXFLAGS = $(filter-out -Werror=implicit -Wstrict-prototypes -Wmissing-prototypes -Wdeclaration-after-statement,$(CFLAGS)) $(TYPE_CXXFLAGS)
 HCC     = @HCC@
@@ -1126,8 +1135,10 @@ JIT_OBJS += \
 	$(OBJDIR)/instr_trace.o
 endif
 
-# Tier-2 (T2-Full) mid-end. Architecture-independent; the arch-specific
-# emitter hooks live in the per-arch files above. See PLAN/T2FULL/.
+# Tier-2 (T2-Full) mid-end. Currently aarch64-only (see ERTS_ENABLE_JIT_T2
+# above); the arch-specific emitter hooks live in the per-arch files above.
+# See PLAN/T2FULL/. On non-arm JIT arches no t2/ source is compiled at all.
+ifeq ($(ERTS_ENABLE_JIT_T2),yes)
 JIT_OBJS += \
 	$(OBJDIR)/t2/t2_compile.o \
 	$(OBJDIR)/t2/t2_debug.o \
@@ -1147,6 +1158,7 @@ JIT_OBJS += \
 	$(OBJDIR)/t2/t2_retain.o \
 	$(OBJDIR)/t2/t2_tier.o \
 	$(OBJDIR)/t2/t2_spec.o
+endif
 
 JIT_OBJS += $(ASMJIT_OBJS)
 
@@ -1413,8 +1425,13 @@ BEAM_SRC=$(wildcard beam/*.c)
 ifeq ($(FLAVOR),emu)
 BEAM_SRC+=$(wildcard beam/emu/*.c)
 else
+BEAM_CPP_SRC=$(wildcard beam/*.cpp) $(wildcard beam/jit/*.cpp) $(wildcard beam/jit/$(JIT_ARCH)/*.cpp)
+# T2-Full is aarch64-only (see ERTS_ENABLE_JIT_T2); only pull its sources
+# into the dependency scan when the gate is on.
+ifeq ($(ERTS_ENABLE_JIT_T2),yes)
 BEAM_SRC+=$(wildcard beam/jit/t2/*.c)
-BEAM_CPP_SRC=$(wildcard beam/*.cpp) $(wildcard beam/jit/*.cpp) $(wildcard beam/jit/t2/*.cpp) $(wildcard beam/jit/$(JIT_ARCH)/*.cpp)
+BEAM_CPP_SRC+=$(wildcard beam/jit/t2/*.cpp)
+endif
 endif
 DRV_COMMON_SRC=$(wildcard drivers/common/*.c)
 DRV_OSTYPE_SRC=$(wildcard drivers/$(ERLANG_OSTYPE)/*.c)

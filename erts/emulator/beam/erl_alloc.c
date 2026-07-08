@@ -65,7 +65,7 @@
 #  error "Too many schedulers; cannot create that many pref alloc instances"
 #endif
 
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 /* jit/t2/t2_retain.h; bare prototype to avoid the beam_file.h chain. */
 extern UWord erts_t2_retained_sz(void);
 /* jit/t2/t2_ranges.h + t2_install.h: blob range array + installed
@@ -2511,7 +2511,7 @@ erts_memory(fmtfn_t *print_to_p, void *print_to_arg, void *proc, Eterm earg)
 	size.code += erts_fun_entries_sz();
 	size.code += erts_ranges_sz();
 	size.code += erts_total_code_size;
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 	size.code += erts_t2_retained_sz();
 	size.code += erts_t2_blobs_sz();
 	size.code += erts_t2_installed_sz();
@@ -2672,7 +2672,7 @@ erts_allocated_areas(fmtfn_t *print_to_p, void *print_to_arg, void *proc)
     values[i].arity = 2;
     values[i].name = "loaded_code";
     values[i].ui[0] = erts_total_code_size;
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full: retained tier-2 tables (jit/t2/t2_retain.c), the blob
      * range array and installed tier-2 code. This is the value
      * erlang:memory(code) aggregates via allocated_areas. */

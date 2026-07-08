@@ -60,7 +60,7 @@
 #include "erl_iolist.h"
 #include "erl_debugger.h"
 #include "erl_record.h"
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 /* T2-Full debug BIFs, defined in jit/t2/ (JIT-only; their headers live on
  * the jit-only include path, so forward-declare them here to keep this
  * common file off that path — must match t2_retain.h / t2_pctab.h). */
@@ -4319,7 +4319,7 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	    /* T2-Full P1 +JT2enable driver statistics:
 	       {Modules, FunctionsBuilt, Installed, IselUnsupported,
 	        EmitFailed, InstallRejected, BuildFailed, CompileMicros} */
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 	    BIF_RET(erts_t2_debug_stats(BIF_P));
 #else
 	    BIF_RET(am_undefined);
@@ -4329,7 +4329,7 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	    /* T2-Full P2 commit 5: {BackEdgeYields, BackEdgeResumes} —
 	       the racy monitoring counters bumped by the recovered
 	       loops' cold yield/resume stubs. */
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 	    BIF_RET(erts_t2_debug_yield_stats(BIF_P));
 #else
 	    BIF_RET(am_undefined);
@@ -4339,7 +4339,7 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	    /* T2-Full P2 commit 9: {Trips, StabilityResets, Enqueued,
 	       Dropped, Compiled, Installed, Failed} — the counter-triggered
 	       tier-up path (advisory counters). */
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 	    BIF_RET(erts_t2_tier_stats_term(BIF_P));
 #else
 	    BIF_RET(am_undefined);
@@ -4349,7 +4349,7 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	    /* T2-Full P2.5 (diagnostic, debug-only): census of armed
 	       profiling records bucketed by how close their sched-1 counter
 	       got to the trip threshold (see erts_t2_profile_census_term). */
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 	    BIF_RET(erts_t2_profile_census_term(BIF_P));
 #else
 	    BIF_RET(am_undefined);
@@ -4610,7 +4610,7 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 		/* T2-Full P2 commit 5: is Pid's saved instruction
 		   pointer inside a registered tier-2 blob (yielded at
 		   a recovered loop's back edge, to resume INTO T2)? */
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 		BIF_RET(erts_t2_debug_in_blob(BIF_P, tp[2]));
 #else
 		BIF_RET(am_undefined);
@@ -4938,7 +4938,7 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	       term. Requires the module to have been loaded with T2_RETAIN=1;
 	       returns 'undefined' otherwise. */
 	    if (ERTS_IS_ATOM_STR("t2_build_ssa", tp[1])) {
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 		BIF_RET(erts_t2_debug_build_ssa(BIF_P, tp[2], tp[3], tp[4]));
 #else
 		/* No tier-2 in the interpreter: nothing is ever retained, so
@@ -4947,7 +4947,7 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 #endif
 	    }
 	    else if (ERTS_IS_ATOM_STR("t2_pc_table", tp[1])) {
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 		BIF_RET(erts_t2_debug_pc_table(BIF_P, tp[2], tp[3], tp[4]));
 #else
 		BIF_RET(am_undefined);
@@ -4961,7 +4961,7 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	    else if (ERTS_IS_ATOM_STR("t2_install", tp[1]) ||
 		     ERTS_IS_ATOM_STR("t2_jettison", tp[1]) ||
 		     ERTS_IS_ATOM_STR("t2_installed", tp[1])) {
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 		Eterm res;
 
 		if (!erts_try_seize_code_mod_permission(BIF_P)) {
@@ -4993,7 +4993,7 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	       input). The debugging workhorse before the P1 install wave.
 	       Requires T2_RETAIN=1. */
 	    if (ERTS_IS_ATOM_STR("t2_exec", tp[1])) {
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 		BIF_RET(erts_t2_debug_exec(BIF_P, tp[2], tp[3], tp[4], tp[5]));
 #else
 		BIF_RET(am_undefined);

@@ -44,8 +44,10 @@
 #include "erl_record.h"
 
 #include "jit/beam_asm.h"
+#ifdef ERTS_ENABLE_JIT_T2
 #include "jit/t2/t2_retain.h"
 #include "jit/t2/t2_install.h"
+#endif
 
 #if defined(BEAMASM) && defined(ADDRESS_SANITIZER)
 #  include <sanitizer/lsan_interface.h>
@@ -1168,7 +1170,7 @@ check_process_code(Process* rp, Module* modp, int *redsp, int fcalls)
 	return am_true;
     }
 
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
     /*
      * T2-Full (P2 commit 5): a process yielded at a tier-2 back edge
      * holds a *blob* resume PC in rp->i — outside the module range,
@@ -2250,6 +2252,7 @@ BIF_RETTYPE erts_internal_purge_module_2(BIF_ALIST_2)
 #   endif
                 beamasm_unregister_metadata(modp->old.metadata);
 
+#ifdef ERTS_ENABLE_JIT_T2
                 /* T2-Full: jettison any installed tier-2 blobs. The
                  * prologue is not reverted -- the T1 code it lives in
                  * is freed right below, under purge's own guarantee
@@ -2258,13 +2261,16 @@ BIF_RETTYPE erts_internal_purge_module_2(BIF_ALIST_2)
                  * code barrier (thread-progress two-phase free, like
                  * the purger itself). */
                 erts_t2_jettison_instance(&modp->old, 0);
+#endif
 
                 beamasm_purge_module(modp->old.executable_region,
                                      modp->old.writable_region,
                                      modp->old.code_length);
 
+#ifdef ERTS_ENABLE_JIT_T2
                 /* T2-Full: free any retained tier-2 tables. */
                 erts_t2_release(&modp->old);
+#endif
 #endif
 
                 modp->old.code_hdr = NULL;
@@ -2425,7 +2431,7 @@ delete_code(Module* modp)
 
     erts_record_module_delete(module);
 
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full (P2 commit 8): blobs of OTHER modules may have this
      * instance's T1 addresses baked in (the lists helpers their
      * intrinsic loops demote to). The instance is being made old —

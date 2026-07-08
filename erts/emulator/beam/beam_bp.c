@@ -38,7 +38,7 @@
 
 #include "beam_common.h"
 #include "jit/beam_asm.h"
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
 #    include "jit/t2/t2_install.h"
 #endif
 
@@ -630,6 +630,7 @@ erts_install_breakpoints(BpFunctions* f)
 	    ASSERT(g->data[erts_staging_bp_ix()].flags != 0);
             ASSERT(g->to_insert == NULL);
 
+#ifdef ERTS_ENABLE_JIT_T2
             /* T2-Full: trace always wins (PLAN/T2/06 §1.1, §2.4). A
              * tier-2 blob owns the same prologue word the breakpoint
              * flag rewrites, so jettison it before the flag commits;
@@ -642,6 +643,7 @@ erts_install_breakpoints(BpFunctions* f)
                 erts_t2_jettison_function(mi, ci_exec);
             }
             erts_t2_jettison_deps((const void *)mi->code_hdr);
+#endif
             /* Jettisoning a dependent blob seals ITS module, flipping
              * this thread out of JIT-write mode (Apple single-map
              * W^X); the caller still writes through mi's unsealed
@@ -1780,7 +1782,7 @@ void erts_free_timem_info(void)
 void erts_install_line_breakpoint(struct erl_module_instance *mi, ErtsCodePtr cp_exec) {
     ErtsCodePtr cp_rw;
 
-#ifdef BEAMASM
+#ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full: a tier-2-installed function never executes its T1 body,
      * so a line breakpoint inside it would silently never fire. Trace
      * always wins (PLAN/T2/06 §1.1): jettison the instance's blobs

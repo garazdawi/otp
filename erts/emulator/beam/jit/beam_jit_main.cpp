@@ -21,9 +21,11 @@
  */
 
 #include "beam_asm.hpp"
+#ifdef ERTS_ENABLE_JIT_T2
 #include "t2_hir.hpp"
 #include "t2_loop.hpp"
 #include "t2_emit.hpp"
+#endif
 
 extern "C"
 {
@@ -32,9 +34,11 @@ extern "C"
 #include "code_ix.h"
 #include "export.h"
 #include "erl_threads.h"
+#ifdef ERTS_ENABLE_JIT_T2
 #include "t2_retain.h"
 #include "t2_pctab.h"
 #include "t2_ranges.h"
+#endif
 
 #if defined(__APPLE__)
 #    include <libkern/OSCacheControl.h>
@@ -88,6 +92,7 @@ static BeamGlobalAssembler *bga;
 static BeamModuleAssembler *bma;
 static CpuInfo cpuinfo;
 
+#ifdef ERTS_ENABLE_JIT_T2
 /* Accessors for the T2-Full emitter (t2_emit.cpp / t2_compile.cpp), which
  * lives in a separate translation unit but needs the process-wide global
  * assembler and JIT allocator to build standalone tier-2 blobs. */
@@ -122,6 +127,7 @@ extern "C" void beamasm_t2_jit_release(void *rx) {
     ASSERT(jit_allocator != nullptr);
     jit_allocator->release(rx);
 }
+#endif /* ERTS_ENABLE_JIT_T2 */
 
 #if defined(__aarch64__) && !(defined(WIN32) || defined(__APPLE__)) &&         \
         defined(__GNUC__) && defined(ERTS_THR_INSTRUCTION_BARRIER) &&          \
@@ -334,8 +340,10 @@ void beamasm_init() {
 
     beamasm_metadata_early_init();
     init_cache_info();
+#ifdef ERTS_ENABLE_JIT_T2
     erts_t2_init();
     erts_t2_ranges_init();
+#endif
 
     /*
      * Ensure that commonly used fields in the PCB can be accessed with
@@ -446,6 +454,7 @@ void beamasm_init() {
 
     beamasm_metadata_late_init();
 
+#ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full P0: HIR round-trip + blob range self-tests, gated on
      * T2_SELFTEST=1 so default boots pay nothing. */
     if (erts_t2_selftest_enabled()) {
@@ -481,6 +490,7 @@ void beamasm_init() {
 
         erts_fprintf(stderr, "T2 emit self-test passed\n");
     }
+#endif /* ERTS_ENABLE_JIT_T2 */
 }
 
 bool BeamAssemblerCommon::hasCpuFeature(uint32_t featureId) {
@@ -733,6 +743,7 @@ extern "C"
         return (char *)ba->getBaseAddress();
     }
 
+#ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full P0 (PLAN/T2FULL/07 §4): PC side-table collection bridges. */
     void beamasm_set_t2_collect(void *instance, int on) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
@@ -790,6 +801,7 @@ extern "C"
         *fn_index = e.fn_index;
         *kind = e.kind;
     }
+#endif /* ERTS_ENABLE_JIT_T2 */
 
     size_t beamasm_get_offset(void *instance) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
