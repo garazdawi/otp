@@ -66,7 +66,7 @@ either in intrinsically-irreducible symbolic code (analysis) or in opcodes T2's
 frontend doesn't cover (services). The 20 % general win is not reachable by any
 currently-scoped T2 work.
 
-## The install gate — floor now hole-free (2026-07-08, `cf33c4cee8`)
+## The install gate — the one measured hole closed (2026-07-08, `cf33c4cee8`)
 
 Memo 14 §4 found the one hole in the never-slower floor: a **multi-clause** byte
 classifier (`lex_wl:classify/4`) *installed* yet ran **+40 %** slower, because the
@@ -82,14 +82,32 @@ still install and win; estone +0.4 %; phash2 identical. The distinguishing signa
 (single-path fused loop vs multi-path per-byte) fully separates winners from the
 loser with no winner lost.
 
+**Known residual (unmeasured, scoped out).** `bs_unfused` closes the one
+*measured* hole. Its root — the histogram signals sum statically-counted,
+path-mutually-exclusive ops with no path awareness (`fused_arith` sums every
+`AddSmall`/`SubSmall` across all blocks; `lex_wl`'s three per-clause increments
+run one-per-byte yet count as 3) — is patched only where a bs op co-occurs. A
+*non-bs* multi-clause integer accumulator (e.g. `loop([a|T],X,Y)->loop(T,X+1,Y);
+loop([b|T],X,Y)->loop(T,X,Y+1)`) has `bs_scan==0`, so `bs_unfused` does not fire
+and `fused_arith≥2` could over-accept via the same mechanism. This is unmeasured
+and may not even be a real regression (T1 also boxes per clause, so a multi-path
+arith loop can still clear the T1 floor absent a co-occurring per-op tax like the
+bs match). The general fix is cheap — surface the "recovered loop body is
+single-path" bit the emitter already computes (`admit_scan_loop`, `t2_emit.cpp`
+"two in-region successors → reject") and require it for *any* histogram-summed win
+signal, not just bs — but on a wound-down specialist tier it is scoped out until
+(and unless) the non-bs case is measured to regress. So: the floor's one measured
+hole is closed; the path-blind histogram over-count is a documented residual.
+
 ## What "T2 for services" would actually require (not funded)
 
 To make T2 relevant to the service class you would need a **different, larger
 frontend project** than rung-2: teach the eligibility scan + isel + emit to
 handle **binary construction, map operations, and `call_fun`**, and — because the
-`lex_wl` case proves eligible-bs code is not reliably faster — replace the
-histogram signals with **real per-shape bs cost modeling**. That is a bigger bet
-than rung-2, and this evidence gives it no support. Recorded as an option, not a
+`lex_wl` case proves eligible code is not reliably faster — replace the path-blind
+histogram signals with **real per-shape cost modeling** (the summing defect is
+signal-general, not bs-specific; see the known residual above). That is a bigger
+bet than rung-2, and this evidence gives it no support. Recorded as an option, not a
 plan.
 
 ## Evidence trail
@@ -106,7 +124,8 @@ The gate → [`10`](10_p26_install_gate.md). The prize + technique survey →
 
 1. **Consolidate + present T2-Full as a specialist tier**: 2.5–3.1× on byte
    scan-and-count kernels and integer/float tail loops, never-slower floor
-   elsewhere (now hole-free). Do not market or ship it as a general 20 % tier.
+   elsewhere (the one measured hole closed; one documented path-blind-histogram
+   residual). Do not market or ship it as a general 20 % tier.
 2. **Do not build rung-2 / P3, P4, P5** on the current evidence — decided-against
    (retained in the plan docs for the evidence record only).
 3. If broad-service value ever becomes a hard requirement, scope the **frontend

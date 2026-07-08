@@ -38,7 +38,10 @@
 >    bs arm alone was insufficient). Measured: `lex_wl:classify/4` now
 >    rejects → recovers to the T1 floor (was +40 %); scanbench 2.5×/3.2×,
 >    tsum 1.65×, mvp 1.63× all still install + win; estone +0.4 %; phash2
->    identical. Never-slower floor is hole-free.
+>    identical. Closes the one *measured* hole; the path-blind histogram
+>    over-count (`fused_arith` sums mutually-exclusive per-clause ops) is
+>    a documented residual for the non-bs multi-clause case — unmeasured,
+>    scoped out on a wound-down tier (see memo 15).
 > 2. **Definitive scope memo — DONE**
 >    ([15_scope_and_disposition.md](15_scope_and_disposition.md); README
 >    landing banner + status updated to point at it).
