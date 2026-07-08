@@ -81,6 +81,16 @@ namespace erts_t2 {
          * jettison (P2 commit 5). */
         void *rw_base = nullptr;
 
+        /* Number of admitted+emitted fused byte scan-run regions
+         * (P2.6 blocker B; PLAN/T2FULL/10). The install-quality gate's
+         * "eliminated-work" bs signal: a fused scan-run is the only bs
+         * shape that beats T1 (single guarded clause + catch-all over an
+         * integer accumulator). An un-fused per-byte match loop -- a
+         * multi-clause classifier whose recovered loop admit_scan_loop
+         * rejects -- re-emits T1's bs ops 1:1 and is measured slower, so
+         * it must NOT count as work eliminated. */
+        unsigned scan_runs = 0;
+
         /* Blob-relative offsets of each recovered loop's back-edge
          * resume PC (the address a back-edge yield stores into c_p->i
          * via i_test_yield_shared), ascending, each with its own

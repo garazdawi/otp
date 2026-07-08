@@ -129,7 +129,16 @@ namespace {
                                     * that demote-on-return (the tax)     */
         unsigned fused_arith;      /* AddSmall+SubSmall: unboxed speculated
                                     * arithmetic                          */
-        unsigned bs_scan;          /* the byte-aligned bs scan subset      */
+        unsigned bs_scan;          /* raw byte-aligned bs match ops
+                                    * (StartMatch/BsMatch/…): present in
+                                    * BOTH a fused scan-run and a slow
+                                    * un-fused per-byte match loop        */
+        unsigned scan_runs;        /* fused bs scan-run regions the
+                                    * emitter actually laid down (memo 10's
+                                    * `bs_scan_runs`): the ONLY bs shape
+                                    * that beats T1. bs_scan>=1 with
+                                    * scan_runs==0 is the un-fused per-byte
+                                    * loser (lex_wl:classify/4)            */
         unsigned switch_max_cases; /* widest Switch (T2 lowers linear;
                                     * T1 binary-searches)                 */
         unsigned spec_guards;      /* SpeculateSmall                       */
@@ -142,6 +151,7 @@ namespace {
 
     void t2_collect_install_signals(const T2LirFunction &lir,
                                     bool leaf_inlined,
+                                    unsigned scan_runs,
                                     unsigned blob_size,
                                     T2InstallSignals *s) {
         unsigned intrinsic_loop = 0;
@@ -150,6 +160,7 @@ namespace {
         s->calls_retained = 0;
         s->fused_arith = 0;
         s->bs_scan = 0;
+        s->scan_runs = scan_runs;
         s->switch_max_cases = 0;
         s->spec_guards = 0;
         s->spills = 0;
@@ -217,9 +228,25 @@ namespace {
      * dominating signal (trace only). */
     bool t2_install_gate_accept(const T2InstallSignals &s,
                                 const char **reason) {
+        /* The bs "work eliminated" signal is the *fused scan-run*
+         * (memo 10's bs_scan_runs), NOT any bs match op. A multi-clause
+         * byte classifier lowers to raw bs match ops (bs_scan >= 1) that
+         * the fused-scan-loop emitter refuses to admit (scan_runs == 0):
+         * it re-emits T1's per-byte match 1:1 and is measured slower
+         * (lex_wl:classify/4: T1 193 us -> T2 268 us, +38%). Requiring a
+         * real scan-run here is memo 10's original intent; the drift to
+         * bs_scan >= 1 was the false-accept. */
+        bool bs_unfused = s.bs_scan >= 1 && s.scan_runs == 0;
         bool eliminated = s.calls_inlined >= 1 || s.fused_arith >= 2 ||
-                          s.bs_scan >= 1;
+                          s.scan_runs >= 1;
+        /* An un-fused per-byte bs loop is a *tax*, not merely a missing
+         * win: it can trip the eliminated-work arm on the side (its
+         * mutually-exclusive per-clause increments over-count fused_arith
+         * -- lex_wl statically shows 3 add_small, only one per byte), yet
+         * the slow bs loop dominates. Disqualify it outright so the
+         * never-slower floor holds regardless of which arm accepted. */
         bool disqualified = s.calls_retained >= 1 || s.switch_max_cases > 4 ||
+                            bs_unfused ||
                             (s.spec_guards >= 1 && s.fused_arith == 0);
 
         if (!eliminated) {
@@ -230,9 +257,12 @@ namespace {
         }
         if (disqualified) {
             if (reason != NULL) {
-                *reason = s.calls_retained >= 1  ? "retained non-tail call"
-                          : s.switch_max_cases > 4 ? "wide switch (linear scan)"
-                                                   : "speculation without fusion";
+                *reason = s.calls_retained >= 1 ? "retained non-tail call"
+                          : s.switch_max_cases > 4
+                                  ? "wide switch (linear scan)"
+                          : bs_unfused
+                                  ? "un-fused per-byte bs loop (slower than T1)"
+                                  : "speculation without fusion";
             }
             return false;
         }
@@ -508,6 +538,7 @@ namespace {
             const char *reason = "";
 
             t2_collect_install_signals(lir, leaf_inlined,
+                                       blob.scan_runs,
                                        (unsigned)blob.size, &sig);
 
             if (!t2_install_gate_accept(sig, &reason)) {
@@ -515,7 +546,7 @@ namespace {
                     getenv("T2_INSTALL_TRACE") != NULL) {
                     erts_fprintf(stderr,
                                  "t2_gate: REJECT %T:%T/%u -- %s "
-                                 "(inl=%u ret=%u fus=%u bs=%u sw=%u "
+                                 "(inl=%u ret=%u fus=%u bs=%u run=%u sw=%u "
                                  "spec=%u sz=%u)\n",
                                  hir.module,
                                  hir.function,
@@ -525,6 +556,7 @@ namespace {
                                  sig.calls_retained,
                                  sig.fused_arith,
                                  sig.bs_scan,
+                                 sig.scan_runs,
                                  sig.switch_max_cases,
                                  sig.spec_guards,
                                  sig.blob_size);

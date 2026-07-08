@@ -350,6 +350,20 @@ namespace erts_t2 {
             return emit_error;
         }
 
+        /* Count of fused byte scan-run regions admit_scan_loop accepted
+         * and emit_scan_region laid down (valid after emit_all; the
+         * install-quality gate's "bs work eliminated" signal). A
+         * multi-clause classifier whose recovered loop is not
+         * single-path is rejected by admission and emitted 1:1, so it
+         * contributes 0 here even though its LIR still carries bs ops. */
+        unsigned emitted_scan_runs() const {
+            unsigned n = 0;
+            for (const ScanLoop &sl : scan_loops) {
+                n += sl.emitted ? 1u : 0u;
+            }
+            return n;
+        }
+
         /* Emit the whole blob: entry, enter-frame prologue, the body, then
          * the Fail->T1-PC trampolines, then the standard finalize (dispatch
          * table + veneer/constant flush). */
@@ -2880,6 +2894,7 @@ namespace erts_t2 {
         out->size = ma.blob_size;
         out->rw_base = ma.blob_rw;
         out->resume_points = ma.resume_points;
+        out->scan_runs = ma.emitted_scan_runs();
         return true;
     }
 
