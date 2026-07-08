@@ -167,7 +167,7 @@ jobs:
             _ = erts_debug:set_internal_state(available_internal_state, true),
             Mods = [lists,string,binary,unicode,unicode_util,base64,maps,re,
                     ordsets,proplists,sets,dict,array,queue,json,erl_types,
-                    binary,ordsets,gb_trees,gb_sets,math,erlang],
+                    gb_trees,gb_sets,math,erlang],
             _ = [code:ensure_loaded(M) || M <- Mods],
             S = erts_debug:get_internal_state(t2_stats),
             Installed = element(3, S),
