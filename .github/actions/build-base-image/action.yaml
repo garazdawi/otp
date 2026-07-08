@@ -51,7 +51,11 @@ runs:
         if: inputs.TYPE == '64-bit' || inputs.TYPE == 'clang'
         with:
             path: otp_docker_base.tar
-            key: ${{ runner.os }}-${{ hashFiles('.github/dockerfiles/Dockerfile.ubuntu-base', '.github/scripts/build-base-image.sh') }}-${{ steps.date.outputs.date }}-${{ hashFiles('OTP_VERSION') }}
+            ## ${{ runner.arch }} (X64/ARM64) MUST be part of the key: the base
+            ## image is arch-specific (native docker build), but runner.os is
+            ## "Linux" for both arches. Without it an arm runner could restore an
+            ## x86_64 base image (and vice versa).
+            key: ${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/dockerfiles/Dockerfile.ubuntu-base', '.github/scripts/build-base-image.sh') }}-${{ steps.date.outputs.date }}-${{ hashFiles('OTP_VERSION') }}
 
       - name: Docker login
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -84,7 +88,11 @@ runs:
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
             path: otp_cache.tar.gz
-            key: prebuilt-cache-${{ inputs.TYPE }}-${{ github.ref_name }}-${{ github.sha }}
+            ## otp_cache.tar.gz holds *compiled C* (arch-specific). ${{ runner.arch }}
+            ## MUST be in the key so an arm runner never restores the x86_64 cache
+            ## produced by `pack` (which builds on x86_64 only). Kept in sync with
+            ## the `pack` job's own binary cache key in main.yaml.
+            key: prebuilt-cache-${{ inputs.TYPE }}-${{ runner.arch }}-${{ github.ref_name }}-${{ github.sha }}
 
       - name: Download pre-built binaries
         if: inputs.BUILD_IMAGE == 'true' && steps.cache-binary.outputs.cache-hit != 'true'
@@ -96,6 +104,13 @@ runs:
         if: inputs.BUILD_IMAGE == 'true'
         shell: bash -eo pipefail {0}
         run: |
+          ## The `otp_prebuilt` artifact (and the shared source cache) may carry an
+          ## x86_64 otp_cache.tar.gz produced by `pack`. On a non-x86_64 runner it
+          ## would poison the build (linking x86_64 objects), so drop it and let arm
+          ## recompile the C from source. otp_src.tar.gz (source + bootstrap .beam)
+          ## is architecture-independent and is kept.
+          ## NOTE: remove this guard once `pack` also produces a native arm cache.
+          if [ "${{ runner.arch }}" != "X64" ]; then rm -f otp_cache.tar.gz; fi
           .github/scripts/restore-from-prebuilt.sh `pwd` .github/otp.tar.gz
           rm -f otp_{src,cache}.tar.gz
           docker build --tag otp \

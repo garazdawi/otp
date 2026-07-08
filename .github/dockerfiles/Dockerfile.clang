@@ -41,9 +41,10 @@ ENV CC=clang CXX=clang++ \
         CFLAGS="-O2 -g -Werror -DwxSTC_DISABLE_MACRO_DEPRECATIONS=1"
 
 ## Configure, check that no application are disabled and then make
-# We need --with-ssl-lib-subdir=lib/x86_64-linux-gnu since clang does not
-# give us this information such as gcc does...
-RUN  ./configure --with-ssl --with-ssl-lib-subdir=lib/x86_64-linux-gnu --prefix=/otp && \
+# We need --with-ssl-lib-subdir=lib/<multiarch-triplet> since clang does not
+# give us this information such as gcc does. dpkg-architecture keeps this
+# arch-neutral: lib/x86_64-linux-gnu on x86_64, lib/aarch64-linux-gnu on arm64.
+RUN  ./configure --with-ssl --with-ssl-lib-subdir=lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH) --prefix=/otp && \
         if cat lib/*/CONF_INFO || cat lib/*/SKIP || cat lib/SKIP-APPLICATIONS; then exit 1; fi && \
     ./otp_build download_gdb_tools && \
     make && sudo make install && \
