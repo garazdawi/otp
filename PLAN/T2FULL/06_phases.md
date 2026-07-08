@@ -285,9 +285,60 @@ deep-trials and Flambda calibrations
 > value case.** The "20 % on most apps" thesis is not reachable via
 > rung-2; T2-Full is a strong *specialist* tier (loop/numeric/binary
 > 2–3×, never-slower floor elsewhere), not a general-everywhere tier.
-> Cheap insurance before a final NO (agent-suggested): a minimal measured
-> T2 unbox-K + `#c{}`-speculation prototype on the single best pair
-> (estimate B is unmeasured). Awaiting user direction.
+>
+> **DECISION (2026-07-08): MEASURE A REAL SERVICE FIRST
+> ([14_real_service_value.md](14_real_service_value.md)).**
+> Memo 13 measured the *worst case* (dialyzer/compiler = symbolic,
+> pointer-chasing, nothing to eliminate). Before concluding T2 is
+> specialist-only, measure T2 TODAY (P2, gate ON) on representative
+> **production-service** workloads — JSON decode/encode, a binary
+> framing/codec loop, HTTP header parsing, estone — the binary/
+> allocation-heavy hot paths T2's "remove work" model is built for.
+> User's guard-rail: **hard measured numbers only, no rung-2 estimates.**
+> "If it is hard to reason about a real number, just go for the rung-2
+> implementation." So the verdict buckets are all measured/decisive, none
+> speculative: (a) **broadly valuable now** — T2 today ≥10 % whole-app on
+> a canonical service → ship/harden P2, rung-2 not the deciding factor;
+> (b) **specialist** — single-digit AND the hot code is structurally
+> gate-hostile/irreducible so rung-2 provably can't help → done;
+> (c) **inconclusive-by-measurement** — single-digit today but the
+> service hot code carries the inlinable loop+non-tail-helper shape rung-2
+> targets, so today's number can't bound rung-2's ceiling without
+> hand-waving → **build rung-2 rather than guess.** (b)-vs-(c) is decided
+> by classifying WHY the gate rejected each hot function (irreducible vs
+> inlinable), which is observation, not projection.
+>
+> **RESULT: SPECIALIST (confirmed + tightened) — bucket (b), decisively
+> NOT (c).** Measured whole-workload wall-clock on canonical services
+> (best-of-9 ×2, pinned sched 1, T2 RETAIN gate-ON vs T1): JSON
+> decode+encode **+0.6%**, binary frame codec **+0.9%**, HTTP/1.1 parse
+> **−1.7%**, base64 **+0.2%**, estone **−3.8%** (gate recovers it to
+> −1.9% vs −5.4% gate-off) — **all within ±2% noise = ~0% real change,
+> zero hot-path installs.** The cause is *not* memo 13's "eligible but
+> irreducible"; it is worse: **97–100% of every service's own-time is in
+> functions T2 cannot even compile** — binary *construction*
+> (`bs_create_bin`/`bs_put*`), map ops, `call_fun` continuations, and
+> `bs_get/set_position`, **none of which are in T2's eligible-opcode
+> set**. This is a **frontend eligibility** barrier. **Decisive on
+> rung-2 with no estimation:** the service hot functions are rejected at
+> *eligibility*, not at the gate's `calls_retained` non-tail-call tax, so
+> rung-2 (framestates + CP-on-stack, which only keeps the T2 *ascent*
+> alive across a non-tail call) adds **zero opcode coverage** and would
+> move every service number by **0%**. Rung-2 is therefore
+> *measured-irrelevant* to services — this is a settled (b), not an
+> "inconclusive → build" (c). Positive control confirms the machinery +
+> the narrow niche: single-clause byte scan-and-count kernels install and
+> win **2.5–3.1×** (scanbench), but a realistic *multi-clause* classifier
+> (`lex_wl:classify/4`) installs yet runs **+38% slower** — a **gate
+> false-accept** (`bs≥1` over-accepts; the memo-10 "never slower than T1"
+> floor has a hole for multi-clause bs scanners — file + fix). **Net
+> across memos 11–14: the "20% on most apps" thesis is measured-dead on
+> both paths — marginal (~3–6%) on analysis/compiler, ~0% (ineligible) on
+> services — and rung-2 rescues neither. T2-Full is a specialist tier.**
+> Making T2 matter for services would take a *different, larger frontend*
+> project (binary construction + maps + `call_fun` eligibility, plus real
+> per-shape bs cost modeling) — a bigger bet than rung-2, and this
+> evidence gives it no support.
 
 Contents: interior profiling (call-return/switch type slots,
 monomorphic-target slots with frequency counts, branch counters —
