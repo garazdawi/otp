@@ -424,6 +424,15 @@ namespace erts_t2 {
                         return;
                     }
                     cur_op_idx = oi;
+                    /* Match T1's per-instruction cadence: a long
+                     * straight-line block can emit more than dispMin
+                     * bytes between the per-block checks above, drifting
+                     * pending veneers out of range (asserted in
+                     * check_pending_stubs). Checking per op keeps the
+                     * flush interval bounded; it is compile-time only and
+                     * flushes exactly when the interval is exceeded, so
+                     * generated code is unchanged. */
+                    check_pending_stubs();
                     emit_op(b.ops[oi]);
                 }
             }
@@ -1143,15 +1152,20 @@ namespace erts_t2 {
                 emit_i_is_tuple(failL, ArgSource(src_argval(op.srcs[0])));
                 break;
             case T2LirKind::TestArity:
+                /* op.imm may be 0 (a test against the empty tuple {});
+                 * make_arityval_unchecked still validates the upper bound
+                 * but permits 0, where the checked macro asserts > 0. The
+                 * emitted header (_make_header(0, ARITYVAL)) is identical
+                 * to make_arityval_zero(). */
                 emit_i_test_arity(failL,
                                   ArgSource(src_argval(op.srcs[0])),
-                                  ArgWord(make_arityval((UWord)op.imm)));
+                                  ArgWord(make_arityval_unchecked((UWord)op.imm)));
                 break;
             case T2LirKind::IsTupleOfArity:
                 emit_i_is_tuple_of_arity(
                         failL,
                         ArgSource(src_argval(op.srcs[0])),
-                        ArgWord(make_arityval((UWord)op.imm)));
+                        ArgWord(make_arityval_unchecked((UWord)op.imm)));
                 break;
             case T2LirKind::IsTaggedTuple:
                 emit_i_is_tagged_tuple(failL,
@@ -1326,6 +1340,13 @@ namespace erts_t2 {
                     const T2LirSwitchCase &c =
                             fn.switch_cases[op.first_case + i];
 
+                    /* Long linear chains (unicode_util's generated
+                     * many-way switches) can emit more than dispMin bytes
+                     * between the per-op checks, drifting pending case-
+                     * target veneers out of range. T1 caps its linear
+                     * search at 128 and checks stubs per chunk; do the
+                     * same here (compile-time only, flushes when needed). */
+                    check_pending_stubs();
                     if (!is_small(c.value)) {
                         fail("arity switch case is not a small");
                         return;
@@ -1343,10 +1364,13 @@ namespace erts_t2 {
 
             /* A linear compare chain, semantically identical to T1's
              * i_select_val_lins on immediates (exact-equal compare per
-             * case, then the default). */
+             * case, then the default). check_pending_stubs per case keeps
+             * long chains' case-target veneers in range (see the arity
+             * loop above). */
             for (uint32_t i = 0; i < op.num_cases; i++) {
                 const T2LirSwitchCase &c = fn.switch_cases[op.first_case + i];
 
+                check_pending_stubs();
                 cmp_arg(TMP1, ArgVal(ArgVal::Type::Immediate, c.value));
                 a.b_eq(resolve_label(rawLabels.at(1 + c.target), disp1MB));
             }

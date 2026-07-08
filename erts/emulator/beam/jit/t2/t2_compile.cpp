@@ -683,6 +683,24 @@ extern "C" void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
         return;
     }
 
+#ifdef DEBUG
+    /* The forced compile pipeline reads the live module/code tables
+     * (erts_get_module + erts_active_code_ix during isel/emit/install).
+     * The debug lock checker requires those reads happen on a managed
+     * scheduler (or under a thread-progress delay); the pre-scheduler
+     * early-boot phase that loads the preloaded modules on the main
+     * thread satisfies neither (erts_get_scheduler_id() == 0), so it
+     * trips ERTS_LC_ASSERT in erts_get_module under an assertions build.
+     * That window is single-threaded (the table is stable regardless),
+     * so under an assertions build defer force-compiling until schedulers
+     * are running: every application/test module loads post-boot on a
+     * scheduler and is compiled as before. Non-assertions builds have no
+     * lock checker and keep compiling the preloaded modules too. */
+    if (erts_get_scheduler_id() == 0) {
+        return;
+    }
+#endif
+
     t0 = t2_now_ns();
 
     (void)t2_build_each(

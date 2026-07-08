@@ -176,6 +176,11 @@ static erts_lc_lock_order_t erts_lock_order[] = {
     LEVEL,
     {"record_staging_lock",                     NULL},
     {"global_literals",                         NULL},
+    /* T2-Full tier-up work queue (jit/t2/t2_tier.c). A leaf lock (no
+     * other lock is taken while it is held) acquired by the tier worker
+     * under code_mod_permission, so it orders after it; grouped here with
+     * the other T2 lock. */
+    {"t2_tier_queue",				NULL},
     /* Both allocate/deallocate while held, so they must order before
      * the allocator locks: the T2-Full blob range array (jit/t2/
      * t2_ranges.c) and the allocation-profiling site list
