@@ -44,12 +44,18 @@ on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: 'Emulator build type: asan (address sanitizer) or debug (runtime assertions).'
+        ## Default is debug (runtime assertions + T2 IR validators): it boots
+        ## cleanly on the arm runner and is a strong T2 correctness fuzzer. asan
+        ## (memory safety) is the higher-value signal but currently fails to boot
+        ## erl under the sanitizer on ubuntu-24.04-arm (prim_tty re stack-check +
+        ## inet ets system_limit at kernel start) -- selectable, pending a fix to
+        ## the asan boot env. See the 'debug' default in the push path below.
+        description: 'Emulator build type: debug (runtime assertions, default) or asan (address sanitizer; boot-env fix pending on arm).'
         type: choice
         options:
-          - asan
           - debug
-        default: asan
+          - asan
+        default: debug
       erts_suites:
         description: 'erts (emulator_test) suites, space separated.'
         type: string
@@ -78,14 +84,14 @@ env:
   ERL_CRASH_DUMP_SECONDS: "0"
   ## Defaults applied on the push trigger (where inputs.* are empty). Keep in
   ## sync with the workflow_dispatch defaults above.
-  BUILD_TYPE: ${{ inputs.build_type || 'asan' }}
+  BUILD_TYPE: ${{ inputs.build_type || 'debug' }}
   ERTS_SUITES: ${{ inputs.erts_suites || 'num_bif_SUITE bif_SUITE bs_match_int_SUITE bs_match_misc_SUITE bs_construct_SUITE binary_SUITE' }}
   STDLIB_SUITES: ${{ inputs.stdlib_suites || 'lists_SUITE binary_module_SUITE string_SUITE maps_SUITE re_SUITE base64_SUITE unicode_SUITE' }}
   INSTALL_FLOOR: ${{ inputs.install_floor || '500' }}
 
 jobs:
   t2-correctness:
-    name: T2 codegen correctness (${{ inputs.build_type || 'asan' }}, ubuntu-24.04-arm)
+    name: T2 codegen correctness (${{ inputs.build_type || 'debug' }}, ubuntu-24.04-arm)
     ## Fork-only: the hosted arm64 runners are free for public forks; never let
     ## this run if the branch ever lands on erlang/otp.
     if: github.repository == 'garazdawi/otp'
@@ -131,7 +137,7 @@ jobs:
           ## emulator then runs on.
           make -j"$(nproc)"
 
-      - name: Build sanitizer emulator (TYPE=${{ inputs.build_type || 'asan' }})
+      - name: Build sanitizer emulator (TYPE=${{ inputs.build_type || 'debug' }})
         run: |
           set -eux
           ## TYPE=asan -> beam.asan (address sanitizer; -fsanitize-recover so a
@@ -315,7 +321,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: t2-correctness-${{ inputs.build_type || 'asan' }}
+          name: t2-correctness-${{ inputs.build_type || 'debug' }}
           path: |
             ${{ github.workspace }}/t2-results/
           if-no-files-found: warn
