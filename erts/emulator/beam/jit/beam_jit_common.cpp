@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 2021-2025. All Rights Reserved.
+ * Copyright Ericsson AB 2021-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -278,7 +278,7 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *_ga,
                                          const BeamFile *file)
         : BeamAssembler(getAtom(_mod)), BeamModuleAssemblerCommon(file, _mod),
           ga(_ga) {
-    rawLabels.reserve(num_labels + 1);
+    rawLabels.resize(num_labels + 1);
 
     if (logger.file() && beam) {
         /* Dig out all named labels from the BEAM-file and sort them on the
@@ -330,11 +330,11 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *_ga,
             /* The named_labels are sorted, so no need for a search. */
             if (e->label == i) {
                 erts_snprintf(tmp, sizeof(tmp), "%T/%d", e->function, e->arity);
-                rawLabels.emplace(i, a.new_named_label(tmp));
+                rawLabels[i] = a.new_named_label(tmp);
                 e++;
             } else {
                 std::string lblName = "label_" + std::to_string(i);
-                rawLabels.emplace(i, a.new_named_label(lblName.data()));
+                rawLabels[i] = a.new_named_label(lblName.data());
             }
         }
 
@@ -345,12 +345,12 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *_ga,
          * labels. */
         for (int i = 1; i < num_labels; i++) {
             std::string lblName = "label_" + std::to_string(i);
-            rawLabels.emplace(i, a.new_named_label(lblName.data()));
+            rawLabels[i] = a.new_named_label(lblName.data());
         }
     } else {
         /* No output is requested, go with unnamed labels */
         for (int i = 1; i < num_labels; i++) {
-            rawLabels.emplace(i, a.new_label());
+            rawLabels[i] = a.new_label();
         }
     }
 
@@ -404,7 +404,7 @@ void *BeamModuleAssembler::register_metadata(const BeamCodeHeader *header) {
         }
 
         n = erts_snprintf(name_buffer,
-                          1024,
+                          sizeof(name_buffer),
                           "%T:%T/%d",
                           ci->mfa.module,
                           ci->mfa.function,

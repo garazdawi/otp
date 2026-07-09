@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2023-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -62,6 +62,8 @@
 -module(beam_core_to_ssa).
 -moduledoc false.
 
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
+
 -export([module/2,format_error/1]).
 
 -import(lists, [all/2,append/1,droplast/1,
@@ -75,6 +77,7 @@
 
 -include("core_parse.hrl").
 -include("beam_ssa.hrl").
+-include("beam_types.hrl").
 
 %% Matches collapse max segment in v3_core.
 -define(EXPAND_MAX_SIZE_SEGMENT, 1024).
@@ -82,63 +85,63 @@
 %% Internal records created by the first pass and eliminated in the
 %% second pass.
 
--record(ivalues, {args}).
--record(iset, {vars,arg}).
--record(ilet, {vars,arg,body}).
--record(iletrec, {defs}).
--record(ialias, {vars,pat}).
+-record #ivalues {args}.
+-record #iset {vars,arg}.
+-record #ilet {vars,arg,body}.
+-record #iletrec {defs}.
+-record #ialias {vars,pat}.
 
--record(ifun, {anno=[],vars,body}).
--record(iclause, {anno=[],sub,pats,guard,body}).
+-record #ifun {anno=[],vars,body}.
+-record #iclause {anno=[],sub,pats,guard,body}.
 
 %% The following records are used to represent complex terms used for
 %% matching. (Construction of those term types is translated directly
 %% to SSA instructions.)
 
--record(cg_tuple, {es,keep=ordsets:new()}).
--record(cg_map, {var=#b_literal{val=#{}},op,es}).
--record(cg_map_pair, {key,val}).
--record(cg_record, {rec}).
--record(cg_record_id, {id :: {_,_} | atom() | [], es}).
+-record #cg_tuple {es,keep=[]}.
+-record #cg_map {var,op,es}.
+-record #cg_map_pair {key,val}.
+-record #cg_record {rec}.
+-record #cg_record_id {id :: {_,_} | atom() | [], es}.
 -type scope() :: #b_literal{val::'local'} |
                  #b_literal{val::'external'} |
                  #b_literal{val::'auto_local'}.
--record(cg_record_pairs, {scope::scope(),es}).
--record(cg_record_pair, {key,val}).
--record(cg_cons, {hd,tl}).
--record(cg_binary, {segs}).
--record(cg_bin_seg, {size,unit,type,flags,seg,next}).
--record(cg_bin_int, {size,unit,flags,val,next}).
--record(cg_bin_end, {}).
+-record #cg_record_pairs {scope::scope(),es}.
+-record #cg_record_pair {key,val}.
+-record #cg_cons {hd,tl}.
+-record #cg_binary {segs}.
+-record #cg_bin_seg {size,unit,type,flags,seg,next}.
+-record #cg_bin_int {size,unit,flags,val,next}.
+-record #cg_bin_end {}.
 
 %% Other internal records.
 
--record(cg_seq, {arg,body}).
--record(cg_call, {anno=[],op,args,ret=[]}).
--record(cg_internal, {anno=[],op,args,ret=[]}).
+-record #cg_seq {arg,body}.
+-record #cg_call {anno=[],op,args,ret=[]}.
+-record #cg_internal {anno=[],op,args,ret=[]}.
 
--record(cg_try, {arg,vars,body,evars,handler,ret=[]}).
--record(cg_catch, {body,ret=[]}).
+-record #cg_try {arg,vars,body,evars,handler,ret=[]}.
+-record #cg_catch {body,ret=[]}.
 
--record(cg_letrec_goto, {label,vars=[],first,then,ret=[]}).
--record(cg_goto, {label,args=[]}).
+-record #cg_letrec_goto {label,vars=[],first,then,ret=[]}.
+-record #cg_goto {label,args=[]}.
 
--record(cg_opaque, {val}).
+-record #cg_opaque {val}.
 
--record(cg_match, {body,ret=[]}).
--record(cg_alt, {anno=[],first,then}).
--record(cg_select, {anno=[],var,types}).
--record(cg_type_clause, {anno=[],type,values}).
--record(cg_val_clause, {anno=[],val,body}).
--record(cg_guard, {anno=[],clauses}).
--record(cg_guard_clause, {guard,body}).
--record(cg_test, {op,args}).
+-record #cg_match {body,ret=[]}.
+-record #cg_alt {anno=[],first,then}.
+-record #cg_select {anno=[],var,types}.
+-record #cg_type_clause {anno=[],type,values}.
+-record #cg_val_clause {anno=[],val,body}.
+-record #cg_guard {anno=[],clauses}.
+-record #cg_guard_clause {guard,body}.
+-record #cg_test {op,args}.
 
--record(cg_break, {args=[] :: [beam_ssa:value()],
-                   phi :: label() | 'undefined'}).
--record(cg_phi, {vars :: [beam_ssa:b_var()]}).
--record(cg_unreachable, {}).
--record(cg_succeeded, {set :: beam_ssa:b_set()}).
+-record #cg_break {args=[] :: [beam_ssa:value()],
+                   phi=none :: label() | 'none'}.
+-record #cg_phi {vars :: [beam_ssa:b_var()]}.
+-record #cg_unreachable {}.
+-record #cg_succeeded {set :: beam_ssa:b_set()}.
 
 get_anno(#iclause{anno=Anno}) -> Anno;
 get_anno(#cg_alt{anno=Anno}) -> Anno;
@@ -148,28 +151,35 @@ get_anno(#cg_select{anno=Anno}) -> Anno.
 -type warning() :: {'failed' | 'nomatch', term()}.
 
 %% State record for the first two passes (formerly `v3_kernel`).
--record(kern, {module :: atom(),       %Current module
+-record #kern {module :: atom(),       %Current module
                func,                   %Current host function
                fargs=[] :: [#b_var{}], %Arguments for current function
                vcount=0,               %Variable counter
                fcount=0,               %Fun counter
-               ds=sets:new() :: sets:set(), %Defined variables
+               ds :: sets:set(),       %Defined variables
                funs=[],                         %Fun functions
                free=#{},                        %Free variables
+               rec_defaults :: #{atom() => type()},  %Native records.
                ws=[]   :: [warning()],          %Warnings.
                beam_debug_info=false :: boolean()
-              }).
+              }.
 
 -spec module(cerl:c_module(), [compile:option()]) ->
           {'ok', #b_module{}, [warning()]}.
 
 module(#c_module{name=#c_literal{val=Mod},exports=Es,attrs=As,defs=Fs}, Options) ->
+    _ = beam_ssa:module_info(module),           %Load modules with records.
+
     Records = records(As),
     Anno = #{records => Records},
+    RecDefaults = record_defaults(Records),
     Kas = attributes(As),
     Kes = map(fun (#c_var{name={_,_}=Fname}) -> Fname end, Es),
     DebugInfo = proplists:get_bool(beam_debug_info, Options),
     St0 = #kern{module=Mod,
+                func=none,
+                ds=sets:new(),
+                rec_defaults=RecDefaults,
                 beam_debug_info=DebugInfo},
     {Kfs,St} = mapfoldl(fun function/2, St0, Fs),
     Body = Kfs ++ St#kern.funs,
@@ -231,6 +241,12 @@ record_field({record_field,_,{atom,_,Key}}) ->
     Key;
 record_field({typed_record_field,F,_}) ->
     record_field(F).
+
+record_defaults(Records) ->
+    #{Name =>
+          #{F => {present, beam_types:make_type_from_value(Val)} ||
+              {F,Val} <- Fs} ||
+        {Name,_,Fs} <:- Records}.
 
 function({#c_var{anno=Anno,name={F,Arity}=FA},Body0}, St0) ->
     try
@@ -428,7 +444,7 @@ expr(#c_call{anno=A,module=M0,name=F0,args=Cargs}, Sub, St0) ->
 expr(#c_primop{anno=A0,name=#c_literal{val=debug_line},
                args=Cargs}, Sub, St0) ->
     {Args,Ap,St1} = atomic_list(Cargs, Sub, St0),
-    #b_set{anno=A1} = I0 = primop(debug_line, A0, Args),
+    #b_set{anno=A1} = I0 = primop(debug_line, A0, Args, St1),
     {_,Alias0} = Sub,
     %% Get rid of of useless mapping of variables to funs (in letrecs
     %% and named funs).
@@ -442,7 +458,7 @@ expr(#c_primop{anno=A,name=#c_literal{val=match_fail},args=[Arg]}, Sub, St) ->
     translate_match_fail(Arg, Sub, A, St);
 expr(#c_primop{anno=A,name=#c_literal{val=Op},args=Cargs}, Sub, St0) ->
     {Args,Ap,St1} = atomic_list(Cargs, Sub, St0),
-    {primop(Op, A, Args),Ap,St1};
+    {primop(Op, A, Args, St0),Ap,St1};
 expr(#c_try{arg=Ca,vars=Cvs,body=Cb,evars=Evs,handler=Ch}, Sub0, St0) ->
     {Ka,Pa,St1} = body(Ca, Sub0, St0),
     {Kcvs,Sub1,St2} = pattern_list(Cvs, Sub0, St1),
@@ -458,11 +474,7 @@ expr(#c_catch{body=Cb}, Sub, St0) ->
 expr(#c_opaque{val=Check}, _Sub, St) ->
     {#cg_opaque{val=Check},[],St}.
 
-primop(raise, Anno, Args) ->
-    primop_succeeded(resume, Anno, Args);
-primop(raw_raise, Anno, Args) ->
-    primop_succeeded(raw_raise, Anno, Args);
-primop(record_field, Anno, Args0) ->
+primop(record_field, Anno0, Args0, St) ->
     Args = case Args0 of
                [Src,#b_literal{val=[]},F] ->
                    [Src,#b_literal{val='_'},F];
@@ -471,8 +483,17 @@ primop(record_field, Anno, Args0) ->
            end,
     %% For simplicity, pretend that this instruction is a guard
     %% BIF. The beam_asm pass will turn it into an instruction.
-    Set = #b_set{anno=internal_anno(Anno),op={bif,get_record_field},args=Args},
+    Anno1 = internal_anno(Anno0),
+    Anno = Anno1#{record_module => St#kern.module},
+    Set = #b_set{anno=Anno,op={bif,get_record_field},args=Args},
     #cg_succeeded{set=Set};
+primop(Op, Anno, Args, _St) ->
+    primop(Op, Anno, Args).
+
+primop(raise, Anno, Args) ->
+    primop_succeeded(resume, Anno, Args);
+primop(raw_raise, Anno, Args) ->
+    primop_succeeded(raw_raise, Anno, Args);
 primop(is_native_record, Anno, Args) ->
     #b_set{anno=internal_anno(Anno),op={bif,is_record},args=Args};
 primop(Op, Anno, Args) when Op =:= recv_peek_message;
@@ -697,16 +718,19 @@ record_split_pairs_1(A, Rec0, Id, Pairs0, Esp0, St0) ->
 record_group_pairs(A, Var, Id, Pairs0, Esp, St0) ->
     Pairs = ordsets:from_list(Pairs0),
     Flatten = append([[K,V] || {K,V} <- Pairs]),
-    {ssa_struct(A, Var, Id, Flatten),Esp,St0}.
+    {ssa_native_record(A, Var, Id, Flatten, St0),Esp,St0}.
 
-ssa_struct(A, SrcRec, Id0, Pairs) ->
+ssa_native_record(A, SrcRec, Id0, Pairs, St) ->
     Id = case Id0 of
              #b_literal{val=[]} -> #b_literal{val='_'};
              #b_literal{} -> Id0
          end,
     Args = [SrcRec,Id|Pairs],
-    LineAnno = line_anno(A),
-    Set = #b_set{anno=LineAnno,op=put_record,args=Args},
+    Defaults = maps:get(Id#b_literal.val, St#kern.rec_defaults, #{}),
+    Anno0 = line_anno(A),
+    Anno = Anno0#{record_module => St#kern.module,
+                  record_defaults => Defaults},
+    Set = #b_set{anno=Anno,op=put_record,args=Args},
     #cg_succeeded{set=Set}.
 
 %% match_vars(Kexpr, State) -> {[Kvar],[PreKexpr],State}.
@@ -877,7 +901,7 @@ pattern(#c_tuple{es=Ces}, Sub0, St0) ->
     {#cg_tuple{es=Kes},Sub1,St1};
 pattern(#c_map{es=Ces}, Sub0, St0) ->
     {Kes,Sub1,St1} = pattern_map_pairs(Ces, Sub0, St0),
-    {#cg_map{op=exact,es=Kes},Sub1,St1};
+    {#cg_map{var=#b_literal{val=#{}},op=exact,es=Kes},Sub1,St1};
 pattern(#c_record{id=#c_literal{val=Id}, es=Ces}, Sub0, St0) ->
     {Kes,Sub1,St1} = pattern_record_pairs(Ces, Sub0, St0),
     Scope = case Id of
@@ -998,8 +1022,8 @@ build_bin_seg_integer(Bits, Val, Next) ->
                 seg=Seg,next=Next}.
 
 integer_fits_and_is_expandable(Int, Size)
-  when is_integer(Int), is_integer(Size),
-       0 < Size, Size =< ?EXPAND_MAX_SIZE_SEGMENT ->
+  when is_integer(Int),
+       is_integer(Size, 1, ?EXPAND_MAX_SIZE_SEGMENT) ->
     case <<Int:Size>> of
         <<Int:Size>> -> true;
         _ -> false
@@ -1461,8 +1485,9 @@ do_combine_lit_pat(_) ->
     throw(not_possible).
 
 combine_bin_segs(#cg_bin_seg{size=#b_literal{val=8},unit=1,type=integer,
-                             flags=[unsigned,big],seg=#b_literal{val=Int},next=Next})
-  when is_integer(Int), 0 =< Int, Int =< 255 ->
+                             flags=[unsigned,big],
+                             seg=#b_literal{val=Int},next=Next})
+  when is_integer(Int, 0, 255) ->
     <<Int,(combine_bin_segs(Next))/bits>>;
 combine_bin_segs(#cg_bin_end{}) ->
     <<>>;
@@ -1859,10 +1884,14 @@ group_keeping_order_fun(C1) ->
                         {{S,U,T1,_,Next}, {S,U,_T2,_,Next}}
                           when T1 =:= integer; T1 =:= binary ->
                             %% The patterns in clauses `C1` and `C`
-                            %% match the same number of bits, meaning
-                            %% that clause `C` clause will not be
-                            %% reached if clause `C1` succeeds.
-                            true;
+                            %% match the same number of bits. If the
+                            %% value for clause `C1` is a variable,
+                            %% clause `C1` will always be reached and
+                            %% clause `C` will never be reached.
+                            case arg_arg(clause_arg(C1)) of
+                                #cg_bin_seg{seg=#b_var{}} -> true;
+                                _ -> false
+                            end;
                         {_, _} ->
                             false
                     end
@@ -1965,7 +1994,7 @@ get_match(#cg_map{op=exact,es=Es0}, St0) ->
     {Es,_} = mapfoldl(fun(#cg_map_pair{}=Pair, [V|Vs]) ->
                               {Pair#cg_map_pair{val=V},Vs}
                       end, Mes, Es0),
-    {#cg_map{op=exact,es=Es},Mes,St1};
+    {#cg_map{var=#b_literal{val=#{}},op=exact,es=Es},Mes,St1};
 get_match(#cg_record{}, St0) ->
     {V,St1} = new_var(St0),
     {#cg_record{rec=V},[V],St1};
@@ -2090,7 +2119,7 @@ clause_count_segments(_) -> error.
 count_segments(#cg_bin_seg{size=#b_literal{val=8},
                            unit=1,type=integer,flags=[unsigned,big],
                            seg=#b_literal{val=Int},next=Next}, Count)
-  when is_integer(Int), 0 =< Int, Int =< 255 ->
+  when is_integer(Int, 0, 255) ->
     count_segments(Next, Count + 1);
 count_segments(_, Count) when Count > 0 ->
     {literal,Count};
@@ -2647,14 +2676,14 @@ pat_list_vars(Ps) ->
 -type label() :: beam_ssa:label().
 
 %% Main codegen structure for the SSA pass (formerly `beam_kernel_to_ssa`).
--record(cg, {module :: atom(),                  %Current module
+-record #cg {module :: atom(),                  %Current module
              lcount=1 :: label(),               %Label counter
              bfail=1 :: label(),
              catch_label=none :: 'none' | label(),
              vars=#{} :: map(),                 %Defined variables.
              break=0 :: label(),                %Break label
              checks=[] :: [term()]
-            }).
+            }.
 
 make_ssa_function(Anno0, Name, As, #cg_match{}=Body,
                   #kern{module=Mod,vcount=Count0}) ->
@@ -2775,7 +2804,7 @@ cg(#cg_goto{label=Label,args=As0}, St) ->
     Break = #cg_break{args=As,phi=Label},
     {[Break],St};
 cg(#cg_opaque{val=Check}, St) ->
-    {ssa_check_when,_,_,_,_} = Check,           %Assertion.
+    {ssa_check_when,_,_,_,_,_} = Check,           %Assertion.
     {[],St#cg{checks=[Check|St#cg.checks]}}.
 
 %% match_cg(Match, Fail, State) -> {[Ainstr],State}.

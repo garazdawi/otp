@@ -29,13 +29,13 @@ extern "C"
 
 void BeamModuleAssembler::emit_is_any_native_record(const ArgLabel &Fail,
                                                     const ArgRegister &Src) {
-    mov_arg(ARG1, Src);
+    mov_arg(ARG3, Src);
 
-    emit_is_boxed(resolve_beam_label(Fail), Src, ARG1);
+    emit_is_boxed(resolve_beam_label(Fail), Src, ARG3);
 
     preserve_cache(
             [&]() {
-                x86::Gp boxed_ptr = emit_ptr_val(RET, ARG1);
+                x86::Gp boxed_ptr = emit_ptr_val(RET, ARG3);
                 a.mov(RETd, emit_boxed_val(boxed_ptr, 0, sizeof(Uint32)));
                 a.and_(RETb, imm(_TAG_HEADER_MASK));
                 a.cmp(RETb, imm(_TAG_HEADER_RECORD));
@@ -48,37 +48,67 @@ void BeamModuleAssembler::emit_is_native_record(const ArgLabel &Fail,
                                                 const ArgRegister &Src,
                                                 const ArgAtom &Module,
                                                 const ArgAtom &Name) {
-    mov_arg(ARG1, Src);
-    mov_arg(ARG2, Module);
-    mov_arg(ARG3, Name);
+    x86::Gp boxed_ptr;
 
-    emit_enter_runtime();
-    runtime_call<bool (*)(Eterm, Eterm, Eterm), erl_is_native_record>();
-    emit_leave_runtime();
+    mov_arg(ARG3, Src);
+    boxed_ptr = emit_ptr_val(RET, ARG3);
 
-    a.test(RETb, RETb);
-    a.je(resolve_beam_label(Fail));
+    mov_preserve_cache(
+            RET,
+            emit_boxed_val(boxed_ptr,
+                           offsetof(ErtsRecordInstance, record_definition),
+                           sizeof(Uint64)));
+    boxed_ptr = emit_ptr_val(RET, RET);
+    cmp_arg(emit_boxed_val(boxed_ptr, offsetof(ErtsRecordDefinition, module)),
+            Module);
+    preserve_cache([&]() {
+        a.jne(resolve_beam_label(Fail));
+    });
+    cmp_arg(emit_boxed_val(boxed_ptr, offsetof(ErtsRecordDefinition, name)),
+            Name);
+    preserve_cache([&]() {
+        a.jne(resolve_beam_label(Fail));
+    });
 }
 
 void BeamModuleAssembler::emit_is_record_accessible(const ArgLabel &Fail,
                                                     const ArgRegister &Src,
                                                     const ArgAtom &Scope) {
-    mov_arg(ARG1, Src);
+    x86::Gp boxed_ptr;
+    mov_arg(ARG3, Src);
 
-    emit_enter_runtime();
+    boxed_ptr = emit_ptr_val(RET, ARG3);
+
+    mov_preserve_cache(
+            RET,
+            emit_boxed_val(boxed_ptr,
+                           offsetof(ErtsRecordInstance, record_definition)));
+    boxed_ptr = emit_ptr_val(RET, RET);
+    cmp_arg(emit_boxed_val(boxed_ptr,
+                           offsetof(ErtsRecordDefinition, is_exported)),
+            ArgAtom(am_true));
     if (Scope.get() == am_external) {
         comment("external operation");
-        runtime_call<bool (*)(Eterm), erl_is_record_accessible>();
+        preserve_cache([&]() {
+            a.jne(resolve_beam_label(Fail));
+        });
     } else {
-        comment("auto_local operation");
-        mov_arg(ARG2, ArgAtom(mod));
-        runtime_call<bool (*)(Eterm, Eterm),
-                     erl_is_wildcard_record_accessible>();
-    }
-    emit_leave_runtime();
+        Label next = a.new_label();
 
-    a.test(RETb, RETb);
-    a.je(resolve_beam_label(Fail));
+        comment("auto_local operation");
+        preserve_cache([&]() {
+            a.short_().je(next);
+        });
+
+        cmp_arg(emit_boxed_val(boxed_ptr,
+                               offsetof(ErtsRecordDefinition, module)),
+                ArgAtom(mod));
+        preserve_cache([&]() {
+            a.jne(resolve_beam_label(Fail));
+        });
+
+        a.bind(next);
+    }
 }
 
 void BeamModuleAssembler::emit_i_get_record_elements(
@@ -86,16 +116,16 @@ void BeamModuleAssembler::emit_i_get_record_elements(
         const ArgRegister &Src,
         const ArgWord &Size,
         const Span<const ArgVal> &args) {
+    mov_arg(ARG3, Src);
     a.mov(ARG1, c_p);
     load_x_reg_array(ARG2);
-    mov_arg(ARG3, Src);
     mov_imm(ARG4, args.size());
     embed_vararg_rodata(args, ARG5, 0);
 
-    emit_enter_runtime<Update::eHeapAlloc>();
+    emit_enter_runtime<Update::eStack>();
     runtime_call<bool (*)(Process *, Eterm *, Eterm, Uint, const Eterm *),
                  erl_get_record_elements>();
-    emit_leave_runtime<Update::eHeapAlloc>();
+    emit_leave_runtime<Update::eStack>();
 
     a.test(RETb, RETb);
     a.je(resolve_beam_label(Fail));
@@ -173,9 +203,9 @@ void BeamModuleAssembler::emit_i_update_native_record(
         const Span<const ArgVal> &args) {
     Label next = a.new_label();
 
+    mov_arg(ARG3, Src);
     a.mov(ARG1, c_p);
     load_x_reg_array(ARG2);
-    mov_arg(ARG3, Src);
     mov_arg(ARG4, Live);
     mov_imm(ARG5, args.size());
     embed_vararg_rodata(args, ARG6, 0);

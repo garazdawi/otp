@@ -321,6 +321,16 @@ namespace erts_t2 {
                 : BeamModuleAssembler(ga, mod, num_labels, t2_synth_beamfile()),
                   fn(fn_), next_label((unsigned)fn_.blocks.size() + 1) {
             entry_label = a.new_label();
+            /* fail_label_num() appends one label per distinct T1 fail edge
+             * during emission. rawLabels is a std::vector (upstream changed
+             * LabelMap from a map), so reserve an upper bound -- one per LIR
+             * op -- up front to keep it from reallocating and invalidating
+             * live Label references while we emit. */
+            size_t max_fail = 0;
+            for (const T2LirBlock &b : fn_.blocks) {
+                max_fail += b.ops.size();
+            }
+            rawLabels.reserve(rawLabels.size() + max_fail);
         }
 
         void set_string_logger(StringLogger *slog) {
@@ -526,7 +536,14 @@ namespace erts_t2 {
                 return it->second;
             }
             unsigned n = next_label++;
-            rawLabels.emplace(n, a.new_label());
+            /* rawLabels is a std::vector now (upstream changed LabelMap from a
+             * pointer-stable map). n is sequential, so this only appends; the
+             * ctor reserved enough capacity that it never reallocates and
+             * invalidates live Label references held during emission. */
+            if (n >= rawLabels.size()) {
+                rawLabels.resize(n + 1);
+            }
+            rawLabels[n] = a.new_label();
             fail_labels.emplace(key, n);
             return n;
         }

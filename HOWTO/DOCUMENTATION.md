@@ -4,7 +4,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2023-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -60,7 +60,8 @@ All user facing documentation is written using [Markdown], specifically
 the [Markdown flavor] used by [earmark_parser].
 The flavor is described in detail in the [earmark_parser README],
 but it is basically [GFM] with some extra extensions, such as [IAL] and
-[Mathematical Expressions].
+[Mathematical Expressions]. Inline HTML elements are not allowed as they make
+it impossible to produce shell docs or man pages.
 
 The documentation is built using [ex_doc] and [$ERL_TOP/make/ex_doc.exs], which is
 a top level [ex_doc configuration file] describing how to build the docs for
@@ -287,7 +288,7 @@ For code examples with several steps and for long examples:
 - Ensure that it is obvious for the reader what belongs to the example.
 - Use a subheading `## Examples`.
 
-All examples should be tested if possible using [`shell_docs:test/2`](../lib/stdlib/src/shell_docs.erl).
+All examples should be tested if possible using [`ct_doctest:module/2`](../lib/common_test/src/ct_doctest.erl).
 See [lists_SUITE:doctests/1](../lib/stdlib/test/lists_SUITE.erl) for an example
 on how to do that.
 

@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 2005-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2005-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -176,6 +176,7 @@ static erts_lc_lock_order_t erts_lock_order[] = {
     LEVEL,
     {"record_staging_lock",                     NULL},
     {"global_literals",                         NULL},
+    {"errno_table",                             NULL},
 #ifdef ERTS_ENABLE_JIT_T2
     /* T2-Full tier-up work queue (jit/t2/t2_tier.c). A leaf lock (no
      * other lock is taken while it is held) acquired by the tier worker

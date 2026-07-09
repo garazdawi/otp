@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 2020-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -754,6 +754,13 @@ int beam_load_emit_op(LoaderState *stp, BeamOp *tmp_op) {
         Uint location_index = tmp_op->a[0].val;
         Sint index = tmp_op->a[1].val - 1;
 
+        if (index >= stp->beam.debug.item_count) {
+            BeamLoadError2(stp,
+                           "debug_line index %u out of range (only %u entries)",
+                           index,
+                           stp->beam.debug.item_count);
+        }
+
         /* Each i_debug_line is a distinct instrumentation point and we don't
          * want to miss a single one of them (so they all can be selected),
          * so allow duplicates here.
@@ -961,12 +968,14 @@ static const BeamDebugTab *finish_debug_table(LoaderState *stp,
 
     for (i = 0; i < item_count; i++) {
         Uint num_vars = debug->items[i].num_vars;
+        Uint num_calls_terms = debug->items[i].num_calls_terms;
 
         debug_tab_items[i].location_index = debug->items[i].location_index;
         debug_tab_items[i].frame_size = debug->items[i].frame_size;
         debug_tab_items[i].num_vars = num_vars;
+        debug_tab_items[i].num_calls_terms = num_calls_terms;
         debug_tab_items[i].first = debug_tab_terms;
-        debug_tab_terms += 2 * num_vars;
+        debug_tab_terms += 2 * num_vars + num_calls_terms;
     }
 
     return debug_tab_ro;

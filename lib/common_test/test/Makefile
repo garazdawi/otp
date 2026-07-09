@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2008-2025. All Rights Reserved.
+# Copyright Ericsson AB 2008-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -79,7 +79,8 @@ MODULES= \
 	ct_auto_clean_SUITE \
 	ct_util_SUITE \
 	ct_tc_repeat_SUITE \
-	ct_property_test_SUITE
+	ct_property_test_SUITE \
+	ct_doctest_SUITE
 
 ERL_FILES= $(MODULES:%=%.erl)
 HRL_FILES= test_server_test_lib.hrl

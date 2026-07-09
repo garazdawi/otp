@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -211,7 +211,7 @@ release_handler does.
 > If the upgrade or downgrade fails, the application can end up in an
 > inconsistent state.
 
-## See Also
+### See Also
 
 [OTP Design Principles](`e:system:index.html`),
 [`config`](`e:kernel:config.md`), [`rel`](rel.md), [`relup`](relup.md),
@@ -220,6 +220,10 @@ release_handler does.
 -behaviour(gen_server).
 
 -include_lib("kernel/include/file.hrl").
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}},
+          {nowarn_possibly_unsafe_function, {file, consult, 1}},
+          {nowarn_possibly_unsafe_function, {file, path_consult, 2}}]).
 
 %% External exports
 -export([start_link/0,
@@ -1154,8 +1158,9 @@ be done by [`install_release/1,2`](`install_release/1`).
                                App :: atom(),
                                ToVsn :: string(),
                                ToDir :: string(),
-                               Unpurged :: [Module],
+                               Unpurged :: [{Module, PurgeMethod}],
                                Module :: atom(),
+                               PurgeMethod :: term(),
                                Reason :: term().
 eval_appup_script(App, ToVsn, ToDir, Script) ->
     EnvBefore = application_controller:prep_config_change(),

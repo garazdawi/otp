@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -214,29 +214,29 @@ openssl_server_hrr_multiple_tickets(Config) when is_list(Config) ->
 openssl_server_early_data_basic() ->
     [{doc,"Test early data (erlang client - openssl server)"}].
 openssl_server_early_data_basic(Config) when is_list(Config) ->
-   erlang_client_auto_ticket(Config, [{supported_groups, one_supported_grop()}], [], true).
+   erlang_client_auto_ticket(Config, [{supported_groups, one_supported_group(Config)}], [], true).
 
 openssl_server_early_data_big() ->
     [{doc,"Send more early data than the max_early_data_size (erlang client - openssl server)"}].
 openssl_server_early_data_big(Config) when is_list(Config) ->
-    erlang_client_auto_ticket(Config, [{supported_groups, one_supported_grop()}, 
+    erlang_client_auto_ticket(Config, [{supported_groups, one_supported_group(Config)},
                                        {early_data, <<"SampleData">>}], [{early_data, 5}], false).
-    
+
 openssl_server_early_data_manual() ->
     [{doc,"Test sending early data - manual ticket handling (erlang client - openssl server)"}].
 openssl_server_early_data_manual(Config) when is_list(Config) ->
-    erlang_client_manual_ticket(Config, [{supported_groups, one_supported_grop()}],
+    erlang_client_manual_ticket(Config, [{supported_groups, one_supported_group(Config)}],
                                 [{early_data, <<"SampleData">>}], [{early_data, 16384}]).
 
 openssl_server_early_data_manual_2_tickets() ->
     [{doc,"Test sending early data - manual ticket handling, 2 tickets (erlang client - openssl server)"}].
 openssl_server_early_data_manual_2_tickets(Config) when is_list(Config) ->
-    erlang_client_manual_ticket(Config, [{supported_groups, one_supported_grop()}], 
+    erlang_client_manual_ticket(Config, [{supported_groups, one_supported_group(Config)}],
                                 [{early_data, <<"SampleData">>}], [{early_data, 16384}]).
 openssl_server_early_data_manual_2_chacha_tickets() ->
     [{doc,"Test sending early data - manual ticket handling, 2 tickets - chacha (erlang client - openssl server)"}].
 openssl_server_early_data_manual_2_chacha_tickets(Config) when is_list(Config) ->
-    erlang_client_manual_ticket(Config, [{supported_groups, one_supported_grop()}, {ciphers, ["TLS_CHACHA20_POLY1305_SHA256"]}], 
+    erlang_client_manual_ticket(Config, [{supported_groups, one_supported_group(Config)}, {ciphers, ["TLS_CHACHA20_POLY1305_SHA256"]}],
                                 [{early_data, <<"SampleData">>}], [{early_data, 16384}]).
 
 openssl_server_early_data_manual_big() ->
@@ -434,8 +434,13 @@ create_request(File, EarlyData) ->
     io:format(S, "~s", [binary_to_list(EarlyData)]),
     file:close(S).
 
-one_supported_grop() ->
-   [hd(ssl:groups())].
+one_supported_group(Config) ->
+    case proplists:get_value(openssl_version, Config) of
+        "OpenSSL 3.5" ++ _ ->
+            [hd(tls_v1:groups(tls_v1:pqc_groups()))];
+         _ ->
+            [hd(tls_v1:groups(tls_v1:ec_groups()))]
+    end.
 
 verify_early_data([]) ->
     [];

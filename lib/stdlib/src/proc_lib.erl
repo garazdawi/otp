@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -57,12 +57,12 @@ The crash report contains the previously stored information, such as ancestors
 and initial function, the termination reason, and information about other
 processes that terminate as a result of this process terminating.
 
-## See Also
+### See Also
 
 `m:logger`
 """.
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 %% This module is used to set some initial information
 %% in each created process. 
@@ -1168,28 +1168,35 @@ visit(_, {_N, _Vs} = NVs) ->
 -spec adjacents(pid()) -> [pid()].
 
 adjacents(Pid) ->
-  case catch proc_info(Pid, links) of
-    {links, Links} -> no_trap(Links);
-    _              -> []
-  end.
+    try proc_info(Pid, links)
+    of
+        {links, Links} -> no_trap(Links);
+        _              -> []
+    catch
+        _:_            -> []
+    end.
   
 no_trap([P|Ps]) ->
-  case catch proc_info(P, trap_exit) of
-    {trap_exit, false} -> [P|no_trap(Ps)];
-    _                  -> no_trap(Ps)
-  end;
+    try proc_info(P, trap_exit)
+    of
+        {trap_exit, false} -> [P|no_trap(Ps)];
+        _                  -> no_trap(Ps)
+    catch
+        _:_                -> no_trap(Ps)
+    end;
 no_trap([]) ->
-  [].
+    [].
  
 get_process_info(Pid, Tag) ->
-    translate_process_info(Tag, catch proc_info(Pid, Tag)).
-
-translate_process_info({dictionary, '$process_label'} = Tag, {Tag, Value}) ->
-    {process_label, Value};
-translate_process_info(_ , {'EXIT', _}) ->
-    undefined;
-translate_process_info(_, Result) ->
-    Result.
+    try proc_info(Pid, Tag)
+    of
+        {{dictionary, '$process_label'} = Tag, Value} ->
+            {process_label, Value};
+        Result ->
+            Result
+    catch
+        _:_ -> undefined
+    end.
 
 %%% -----------------------------------------------------------
 %%% Misc. functions

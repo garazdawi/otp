@@ -3,8 +3,8 @@
 ##
 ## SPDX-License-Identifier: Apache-2.0
 ##
+## Copyright Ericsson AB 2024-2026. All Rights Reserved.
 ## Copyright 2024-2025 Wojtek Mach <wojtek@wojtekmach.pl>
-## Copyright Ericsson AB 2024-2025. All Rights Reserved.
 ##
 ## Licensed under the Apache License, Version 2.0 (the "License");
 ## you may not use this file except in compliance with the License.
@@ -41,20 +41,26 @@ jobs:
     permissions:
         contents: write
     env:
-      basename: otp_${{ inputs.target }}_${{ inputs.version }}
+      BASENAME: otp_${{ inputs.target }}_${{ inputs.version }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Install OTP
         shell: cmd
+        env:
+          INPUTS_VERSION: ${{ inputs.version }}
         run: |
-          curl.exe --fail -Lo otp.exe https://github.com/erlang/otp/releases/download/OTP-${{ inputs.version }}/${{ env.basename }}.exe
-          otp.exe /S /D=%CD%\${{ env.basename }}
+          curl.exe --fail -Lo otp.exe https://github.com/erlang/otp/releases/download/OTP-%INPUTS_VERSION%/%BASENAME%.exe
+          otp.exe /S /D=%CD%\%BASENAME%
 
       - name: Download vc_redist.exe
         shell: bash
+        env:
+          INPUTS_TARGET: ${{ inputs.target }}
         run: |
-          case "${{ inputs.target }}" in
+          case "${INPUTS_TARGET}" in
             win32)
               vc_redist_target=x86
               ;;
@@ -73,22 +79,23 @@ jobs:
         run: |
           $root = Get-Location
 
-          cd ${{ env.basename }}
+          cd "$env:BASENAME"
           Get-ChildItem -Recurse -Filter erl.ini | Remove-Item
           rm Install.exe,Install.ini,Uninstall.exe
           $sha256 = Get-FileHash $root\otp.exe -Algorithm SHA256
           $sha256.Hash.ToLower() | Out-File -FilePath installer.sha256
           cp $root/vc_redist.exe .
           cp $root/erts/etc/win32/INSTALL.txt .
-          Compress-Archive -Path * -DestinationPath $root\${{ env.basename }}.zip
+          Compress-Archive -Path * -DestinationPath $root\"$env:BASENAME.zip"
 
           cd $root
-          Expand-Archive -Path ${{ env.basename }}.zip -DestinationPath .\otp_test
+          Expand-Archive -Path "$env:BASENAME.zip" -DestinationPath .\otp_test
           .\otp_test\bin\erl.exe +V
 
       - name: Upload
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUTS_VERSION: ${{ inputs.version }}
         run: |
-          gh release upload -R $env:GITHUB_REPOSITORY --clobber OTP-${{ inputs.version }} ${{ env.basename }}.zip
+          gh release upload -R "$env:GITHUB_REPOSITORY" --clobber "OTP-$env:INPUTS_VERSION" "$env:BASENAME.zip"

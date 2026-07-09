@@ -3,7 +3,7 @@
 
 SPDX-License-Identifier: Apache-2.0
 
-Copyright Ericsson AB 2023-2025. All Rights Reserved.
+Copyright Ericsson AB 2023-2026. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -271,11 +271,6 @@ handling decoding errors and directly verifying signatures.
 For more details see `{verify_fun, Verify}` [in common_option_cert](`t:ssl:common_option_cert/0`)
 
 
-> #### Note {: .info }
-> The legacy command line format for `verify_fun` cannot be used
-> in a `-ssl_dist_optfile` file as described below in
-> [Specifying TLS Options (Legacy)](#specifying-tls-options-legacy).
-
 ## Using TLS distribution over IPv6
 
 It is possible to use TLS distribution over IPv6 instead of IPv4. To do this,
@@ -294,100 +289,4 @@ $ erl -boot /home/me/ssl/start_ssl -proto_dist inet6_tls
 A node started in this way will only be able to communicate with other nodes
 using TLS distribution over IPv6.
 
-
-## Specifying TLS Options (Legacy)
-
-> #### Note {: .info }
-> The following section describes TLS Option handling prior to OTP 20.2
-> and can only handle a small subset of the actual available options.
-> It is here only for the sake of backwards compatibility .
-
-As in the previous section the PEM file `"/home/me/ssl/erlserver.pem"` contains
-both the server certificate and its private key.
-
-On the `erl` command line you can specify options that the TLS distribution adds
-when creating a socket.
-
-The simplest TLS options in the following list can be specified by adding the
-prefix `server_` or `client_` to the option name:
-
-- `certfile`
-- `keyfile`
-- `password`
-- `cacertfile`
-- `verify`
-- `verify_fun` (write as `{Module, Function, InitialUserState}`)
-- `crl_check`
-- `crl_cache` (write as Erlang term)
-- `reuse_sessions`
-- `secure_renegotiate`
-- `depth`
-- `hibernate_after`
-- `ciphers` (use old string format)
-
-Note that `verify_fun` needs to be written in a different form than the
-corresponding TLS option, since funs are not accepted on the command line.
-
-The server can also take the options `dhfile` and `fail_if_no_peer_cert` (also
-prefixed).
-
-`client_`\-prefixed options are used when the distribution initiates a
-connection to another node. `server_`\-prefixed options are used when accepting
-a connection from a remote node.
-
-Raw socket options, such as `packet` and `size` must not be specified on the
-command line.
-
-The command-line argument for specifying the TLS options is named
-`-ssl_dist_opt` and is to be followed by pairs of SSL options and their values.
-Argument `-ssl_dist_opt` can be repeated any number of times.
-
-An example command line doing the same as the example in the previous section
-can now look as follows (line breaks in the command are for readability, and
-shall not be there when typed):
-
-```text
-$ erl -boot /home/me/ssl/start_ssl -proto_dist inet_tls
-  -ssl_dist_opt server_certfile "/home/me/ssl/erlserver.pem"
-  -ssl_dist_opt server_secure_renegotiate true client_secure_renegotiate true
-  -sname ssl_test
-Erlang (BEAM) emulator version 5.0 [source]
-
-Eshell V5.0  (abort with ^G)
-(ssl_test@myhost)1>
-```
-
-### Setting up Environment to Always Use TLS
-
-A convenient way to specify arguments to Erlang is to use environment variable
-`ERL_FLAGS`. All the flags needed to use the TLS distribution can be specified
-in that variable and are then interpreted as command-line arguments for all
-subsequent invocations of Erlang.
-
-In a Unix (Bourne) shell, it can look as follows (line breaks are for
-readability, they are not to be there when typed):
-
-```erlang
-$ ERL_FLAGS="-boot /home/me/ssl/start_ssl -proto_dist inet_tls
-  -ssl_dist_opt server_certfile /home/me/ssl/erlserver.pem
-  -ssl_dist_opt server_secure_renegotiate true client_secure_renegotiate true"
-$ export ERL_FLAGS
-$ erl -sname ssl_test
-Erlang (BEAM) emulator version 5.0 [source]
-
-Eshell V5.0  (abort with ^G)
-(ssl_test@myhost)1> init:get_arguments().
-[{root,["/usr/local/erlang"]},
- {progname,["erl "]},
- {sname,["ssl_test"]},
- {boot,["/home/me/ssl/start_ssl"]},
- {proto_dist,["inet_tls"]},
- {ssl_dist_opt,["server_certfile","/home/me/ssl/erlserver.pem"]},
- {ssl_dist_opt,["server_secure_renegotiate","true",
-                "client_secure_renegotiate","true"]
- {home,["/home/me"]}]
-```
-
-The `init:get_arguments()` call verifies that the correct arguments are supplied
-to the emulator.
 

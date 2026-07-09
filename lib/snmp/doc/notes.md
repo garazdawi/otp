@@ -21,6 +21,92 @@ limitations under the License.
 -->
 # SNMP Release Notes
 
+## SNMP 5.20.4
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a bug in snmpm_usm:generate_outgoing_msg/5 that caused a badmatch crash when constructing an error response for an unknown user/engineID combination.
+
+  Own Id: OTP-20138 Aux Id: ERIERL-1321, [PR-11100]
+
+[PR-11100]: https://github.com/erlang/otp/pull/11100
+
+## SNMP 5.20.3
+
+### Improvements and New Features
+
+- The legacy `and` and `or` operators have been replaced with other language constructs.
+
+  Own Id: OTP-19744 Aux Id: [PR-10114], [PR-10554], [PR-10568], [PR-10579], [PR-10585], [PR-10598], [PR-10710], [PR-10718], [PR-10580], [PR-10730]
+
+[PR-10114]: https://github.com/erlang/otp/pull/10114
+[PR-10554]: https://github.com/erlang/otp/pull/10554
+[PR-10568]: https://github.com/erlang/otp/pull/10568
+[PR-10579]: https://github.com/erlang/otp/pull/10579
+[PR-10585]: https://github.com/erlang/otp/pull/10585
+[PR-10598]: https://github.com/erlang/otp/pull/10598
+[PR-10710]: https://github.com/erlang/otp/pull/10710
+[PR-10718]: https://github.com/erlang/otp/pull/10718
+[PR-10580]: https://github.com/erlang/otp/pull/10580
+[PR-10730]: https://github.com/erlang/otp/pull/10730
+
+## SNMP 5.20.2.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a bug in snmpm_usm:generate_outgoing_msg/5 that caused a badmatch crash when constructing an error response for an unknown user/engineID combination.
+
+  Own Id: OTP-20138 Aux Id: ERIERL-1321, [PR-11100]
+
+[PR-11100]: https://github.com/erlang/otp/pull/11100
+
+## SNMP 5.20.2
+
+### Improvements and New Features
+
+- The SNMP manager now propagates `msgAuthoritativeEngineID` and
+    `msgUserName` from USM security parameters through to the
+    `snmpm_user:handle_error/3` callback when an incoming message is
+    discarded due to an unknown EngineID (`usmStatsUnknownEngineIDs`).
+  
+    This enables users to programmatically discover the correct
+    authoritative EngineID from the error callback and re-register
+    USM credentials, supporting SNMPv3 USM EngineID discovery as
+    described in RFC 3414, Section 4.
+  The failed_processing_message variant has been added to the
+    `snmpm:user:handle_error/3` callback type specification.
+
+  Own Id: OTP-20056 Aux Id: [GH-7156], ERIERL-1312, [PR-10911]
+
+[GH-7156]: https://github.com/erlang/otp/issues/7156
+[PR-10911]: https://github.com/erlang/otp/pull/10911
+
+## SNMP 5.20.1
+
+### Improvements and New Features
+
+- Release applications, tests, and documentation are now placed in their respective directories. Source SBOM with more packages.
+  
+  A `make release` application places only the necessary code in the release folder. The main change is that the documentation and examples are not part of the release folder anymore.
+  
+  `make release_docs` places the documentation in the released code under the `doc` folder.
+  
+  `make release_tests` places the tests in their own directory. It used to be the case that some source code was mixed with the tests, and this should not happen anymore.
+  
+  The Software Bill of Materials places the examples folders as if they are part of the `SPDX-otp-<app>-doc` packge, instead of placing examples as if they were running source code.
+  
+  Overall, this change cleans up many things that were not quite correct by definition, and everything should still continue to work as expected. To test a release, one can still run `./Install -minimal \`pwd\`` and add the release to the `PATH`. After that, one can run tests as usual, going into the released tests directory, entering `test_server` and running the emulator.
+  
+  Improves the source Software-Bill-of-Materials
+  
+  - The improvements adds new SPDX relations for `asmjit` and `zlib` to be `optional_components_of` the Erlang/OTP project.
+  - The `autoconf` scripts in `make` and `erts` have now been categorised as `build_tool_of` the Erlang/OTP project.
+  - All remaining `configure`, `configure.ac`, `config.h.in`, `Makefile.in`, `Makefile.src`, `EMakefile`, and `GNUMakefile` are now part of a specific SPDX package with relation `build_tool_of` the Erlang/OTP project.
+
+  Own Id: OTP-19886 Aux Id: [PR-10434]
+
+[PR-10434]: https://github.com/erlang/otp/pull/10434
+
 ## SNMP 5.20
 
 ### Fixed Bugs and Malfunctions

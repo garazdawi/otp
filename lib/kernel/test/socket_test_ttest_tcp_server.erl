@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %% 
-%% Copyright Ericsson AB 2018-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2026. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -175,7 +175,7 @@ server_init(Starter, Parent, Transport, Active) ->
 				  hcnt     => 0
 				 });
                 {error, PReason} ->
-                    (catch Mod:close(LSock)),
+                    ?CATCH_AND_IGNORE( Mod:close(LSock) ),
                     exit({port, PReason})
             end;
         {error, LReason} ->
@@ -204,7 +204,7 @@ server_accept(#{mod := Mod, lsock := LSock} = State, Timeout) ->
         {error, timeout} when (Timeout =/= nowait) ->
             State;
         {error, AReason} ->
-	    (catch Mod:close(LSock)),
+	    ?CATCH_AND_IGNORE( Mod:close(LSock) ),
             exit({accept, AReason})
     end.
 
@@ -230,8 +230,8 @@ server_handle_accepted(#{mod      := Mod,
             Handlers2 = [Pid | Handlers],
             State#{handlers => Handlers2};
         {error, CPReason} ->
-            (catch Mod:close(Sock)),
-            (catch Mod:close(LSock)),
+            ?CATCH_AND_IGNORE( Mod:close(Sock) ),
+            ?CATCH_AND_IGNORE( Mod:close(LSock) ),
             exit({controlling_process, CPReason})
     end.
     
@@ -280,7 +280,7 @@ server_handle_message(#{mod      := Mod,
                                   handler_stop(P)
                           end, H),
             ?I("try close listen socket"),
-            (catch Mod:close(LSock)),
+            ?CATCH_AND_IGNORE( Mod:close(LSock) ),
             ?I("stopped"),
             exit(normal);
 
@@ -550,7 +550,7 @@ handler_send_reply(Mod, Sock, ID, Data) ->
         ok ->
             ok;
         {error, Reason} ->
-            (catch Mod:close(Sock)),
+            ?CATCH_AND_IGNORE( Mod:close(Sock) ),
             exit({send, Reason})
     end.
 
@@ -563,7 +563,7 @@ handler_done(#{start := Start,
                sock  := Sock,
                mcnt  := MCnt,
                bcnt  := BCnt}, Stop) ->
-    (catch Mod:close(Sock)),
+    ?CATCH_AND_IGNORE( Mod:close(Sock) ),
     exit({done, ?TDIFF(Start, Stop), MCnt, BCnt}).
 
 
@@ -572,14 +572,14 @@ handler_handle_message(#{mod := Mod, sock := Sock, parent := Parent} = State) ->
         {?MODULE, Ref, Parent, stop} ->
             ?I("handler: received stop from parent ~p", [Parent]),
             reply(Parent, Ref, ok),
-            (catch Mod:close(Sock)),
+            ?CATCH_AND_IGNORE( Mod:close(Sock) ),
             ?I("handler: stopped"),
             exit(normal);
 
         {'EXIT', Parent, Reason} ->
             ?E("handler: parent ~p exit: "
                "~n   ~p", [Parent, Reason]),
-            (catch Mod:close(Sock)),
+            ?CATCH_AND_IGNORE( Mod:close(Sock) ),
             exit({parent_exit, Reason})
     after 0 ->
             State

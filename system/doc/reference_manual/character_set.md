@@ -23,7 +23,7 @@ limitations under the License.
 
 ## Character Set
 
-The syntax of Erlang tokens allow the use of the full ISO-8859-1 (Latin-1)
+The syntax of Erlang tokens allows the use of the full ISO-8859-1 (Latin-1)
 character set. This is noticeable in the following ways:
 
 - All the Latin-1 printable characters can be used and are shown without the

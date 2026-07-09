@@ -31,12 +31,13 @@ commands.
 > These functions are intended for interactive use in the Erlang shell only. The
 > module prefix can be omitted.
 
-## See Also
+### See Also
 
 `m:filename`, `m:compile`, `m:erlang`, `m:yecc`, `m:xref`
 """.
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}},
+          nowarn_deprecated_catch]).
 
 -include_lib("kernel/include/eep48.hrl").
 
@@ -969,7 +970,7 @@ i(X, Y, Z) -> pi(X, Y, Z).
 -doc """
 Equivalent to `pi(pid(X, Y, Z))`.
 """.
--doc(#{since => ~"OTP @OTP-19903@"}).
+-doc(#{since => ~"OTP 29.0"}).
 -spec pi(X, Y, Z) -> [{atom(), term()}] when
       X :: non_neg_integer(),
       Y :: non_neg_integer(),
@@ -981,7 +982,7 @@ pi(X, Y, Z) -> pi(pid(X, Y, Z)).
 Displays information about a process, Equivalent to
 [`process_info(Pid)`](`process_info/1`), but location transparent.
 """.
--doc(#{since => ~"OTP @OTP-19903@"}).
+-doc(#{since => ~"OTP 29.0"}).
 -spec pi(Pid) -> [{atom(), term()}] when
       Pid :: pid().
 

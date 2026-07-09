@@ -32,8 +32,6 @@
 
 -export([start/0]).
 
--compile(nowarn_obsolete_bool_op).
-
 %%%Lots of IDs to declare!
 -define(menuID_FILE_QUIT,           ?wxID_EXIT).
 -define(menuID_FILE_CLEAR_LOG,      100).
@@ -532,7 +530,7 @@ onMenuAction(#wx{id=?menuID_MENU_APPEND_SUB, obj=Frame}, #state{} = State) ->
 
     State;
 
-onMenuAction(#wx{id=Id, obj=Frame}, #state{}=State) when ((Id >= ?menuID_DUMMY_FIRST) and (Id =< ?menuID_DUMMY_LAST)) ->
+onMenuAction(#wx{id=Id, obj=Frame}, #state{}=State) when Id >= ?menuID_DUMMY_FIRST, Id =< ?menuID_DUMMY_LAST ->
     logMessage(Frame, "Dummy item #~p ~n", [Id - ?menuID_DUMMY_FIRST + 1]),
     State;
 

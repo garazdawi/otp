@@ -2,8 +2,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
+%% Copyright Ericsson AB 2024-2026. All Rights Reserved.
 %% Copyright WhatsApp Inc. and its affiliates. All rights reserved.
-%% Copyright Ericsson AB 2024-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -122,9 +122,14 @@ call_count_ad_hoc(Config) when is_list(Config) ->
     {{'EXIT', timeout}, {call_count, Profile2}} = tprof:profile(
         fun () -> Delay = hd(lists:seq(5001, 5032)), receive after Delay -> ok end end,
         #{timeout => 1000, report => return, type => call_count }),
-    ?assertMatch([{lists, seq, 2, [{_, 1, _}]},
-                  {lists, seq_loop, 3, [{_, 9, _}]},
-                  {?MODULE, _, _, _}], lists:sort(Profile2)),
+    {_,111} = {Profile2,
+               lists:foldl(fun({lists, seq, 2, [{_, 1, _}]}, Acc) -> Acc+1;
+                              ({lists, seq_loop, 3, [{_, 9, _}]}, Acc) -> Acc+10;
+                              ({?MODULE, _, _, _}, Acc) -> Acc+100;
+                              ({_,_,_,_}, Acc) -> Acc % ignore background call noise
+                           end,
+                           0, Profile2)
+              },
 
     %% timer with patterns
     {{'EXIT', timeout}, Profile3} = tprof:profile(
@@ -438,6 +443,7 @@ server(Config) when is_list(Config) ->
     %% test live trace
     1 = tprof:set_pattern(?MODULE, dispatch, '_'),
     _ = tprof:set_pattern(pg, '_', '_'),
+    _ = tprof:set_pattern(data_publisher, '_', '_'),
     %% watch for pg traces and for our process
     2 = tprof:enable_trace([Pid, Name]),
     %% run the traced operation
@@ -448,7 +454,7 @@ server(Config) when is_list(Config) ->
     %%  and at least something from pg in two processes
     ?assertNotEqual([], FirstProfile),
     ?assertEqual({?MODULE, dispatch, 2, [{Pid, 1, 3}]}, lists:keyfind(?MODULE, 1, FirstProfile)),
-    ?assertMatch({pg, handle_call, 3, [{Scope, _, _}]}, lists:keyfind(handle_call, 2, FirstProfile)),
+    ?assertMatch({data_publisher, handle_call, 3, [{Scope, _, _}]}, lists:keyfind(handle_call, 2, FirstProfile)),
     ?assertMatch({pg, join, 3, [{Pid, _, _}]}, lists:keyfind(join, 2, FirstProfile)),
     %% pause tracing
     ok = tprof:pause(),

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("stdlib/include/erl_compile.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
 	 init_per_group/2,end_per_group/2,
@@ -46,6 +47,10 @@
          annotations_pp/1, option_order/1,
          sys_coverage/1
 	]).
+
+-import_record(v3_core, [c_case, c_clause, c_fun, c_literal,
+                         c_map, c_module,
+                         c_receive, c_values, c_var]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
@@ -480,17 +485,18 @@ makedep_modify_target(Mf, Target) ->
 %% Tests that conditional compilation, defining values, including files work.
 
 no_core_prepare(_Config) ->
-    Mod = {c_module,[],
-              {c_literal,[],sample_receive},
-              [{c_var,[],{discard,0}}],
-              [],
-              [{{c_var,[],{discard,0}},
-                {c_fun,[],[],
-                    {c_case,[],
-                        {c_values,[],[]},
-                        [{c_clause,[],[],
-                             {c_literal,[],true},
-                             {c_receive,[],[],{c_literal,[],0},{c_literal,[],ok}}}]}}}]},
+    Case = #c_case{arg=#c_values{es=[]},
+                   clauses=[#c_clause{pats=[],
+                                      guard=#c_literal{val=true},
+                                      body=#c_receive{clauses=[],
+                                                      timeout=#c_literal{val=0},
+                                                      action=#c_literal{val=ok}}}]},
+    Mod = #c_module{name=#c_literal{val=sample_receive},
+                    exports=[#c_var{name={discard,0}}],
+                    attrs=[],
+                    defs=[{#c_var{name={discard,0}},
+                           #c_fun{vars=[],
+                                  body=Case}}]},
 
     {ok,sample_receive,_,_} = compile_forms(Mod, [from_core,binary,return]),
     {error,_,_} = compile_forms(Mod, [from_core,binary,return,no_core_prepare]),
@@ -632,7 +638,7 @@ other_output(Config) when is_list(Config) ->
 
     io:put_chars("to_core (file)"),
     {ok,simple,Core} = compile:file(Simple, [to_core,binary,time]),
-    c_module = element(1, Core),
+    #c_module{} = Core,
     {ok,_} = core_lint:module(Core),
     io:put_chars("to_core (forms)"),
     {ok,simple,Core} = compile_forms(PP, [to_core,binary,time]),
@@ -659,7 +665,10 @@ encrypted_abstr(Config) when is_list(Config) ->
 		  OldPath = code:get_path(),
 		  try
 		      NewPath = OldPath -- [filename:dirname(code:which(crypto))],
-		      (catch application:stop(crypto)),
+                      try
+                          application:stop(crypto)
+                      catch _:_ -> ok
+                      end,
 		      code:delete(crypto),
 		      code:purge(crypto),
 		      code:set_path(NewPath),
@@ -902,10 +911,12 @@ get_files(Config, Module, OutputName) ->
 run(Target, Func, Args) ->
     Module = list_to_atom(filename:rootname(filename:basename(Target))),
     {module, Module} = code:load_abs(filename:rootname(Target)),
-    Result = (catch apply(Module, Func, Args)),
-    true = code:delete(Module),
-    false = code:purge(Module),
-    Result.
+    try
+        apply(Module, Func, Args)
+    after
+        true = code:delete(Module),
+        false = code:purge(Module)
+    end.
 
 exists(Name) ->
     case file:read_file_info(Name) of
@@ -1026,16 +1037,16 @@ tuple_calls(Config) when is_list(Config) ->
     TupleCallsFalse = [{attribute,Anno,module,tuple_calls_false}|Forms],
     {ok,_,TupleCallsFalseBinary} = compile_forms(TupleCallsFalse, [binary]),
     code:load_binary(tuple_calls_false, "compile_SUITE.erl", TupleCallsFalseBinary),
-    {'EXIT',{badarg,_}} = (catch tuple_calls_false:store(dict())),
-    {'EXIT',{badarg,_}} = (catch tuple_calls_false:size(dict())),
-    {'EXIT',{badarg,_}} = (catch tuple_calls_false:size(empty_tuple())),
+    ?assertError(badarg, tuple_calls_false:store(dict())),
+    ?assertError(badarg, tuple_calls_false:size(dict())),
+    ?assertError(badarg, tuple_calls_false:size(empty_tuple())),
 
     TupleCallsTrue = [{attribute,Anno,module,tuple_calls_true}|Forms],
     {ok,_,TupleCallsTrueBinary} = compile_forms(TupleCallsTrue, [binary,tuple_calls]),
     code:load_binary(tuple_calls_true, "compile_SUITE.erl", TupleCallsTrueBinary),
     Dict = tuple_calls_true:store(dict()),
     1 = tuple_calls_true:size(Dict),
-    {'EXIT',{badarg,_}} = (catch tuple_calls_true:size(empty_tuple())),
+    ?assertError(badarg, tuple_calls_true:size(empty_tuple())),
 
     ok.
 
@@ -1260,18 +1271,14 @@ diff(E, E) ->
     E;
 diff([H1|T1], [H2|T2]) ->
     [diff(H1, H2)|diff(T1, T2)];
+diff(#c_var{}=T1, #c_var{}=T2) ->
+    diff_var(T1, T2);
+diff(#c_map{}=T1, #c_map{}=T2) ->
+    diff_map(T1, T2);
+diff(T1, T2) when is_record(T1), is_record(T2) ->
+    diff_record(T1, T2);
 diff(T1, T2) when tuple_size(T1) =:= tuple_size(T2) ->
-    case cerl:is_c_var(T1) andalso cerl:is_c_var(T2) of
-        true ->
-            diff_var(T1, T2);
-        false ->
-            case cerl:is_c_map(T1) andalso cerl:is_c_map(T2) of
-                true ->
-                    diff_map(T1, T2);
-                false ->
-                    diff_tuple(T1, T2)
-            end
-    end;
+    diff_tuple(T1, T2);
 diff(E1, E2) ->
     {'DIFF',E1,E2}.
 
@@ -1300,15 +1307,35 @@ diff_map(M, M) ->
 diff_map(M1, M2) ->
     case cerl:get_ann(M1) =:= cerl:get_ann(M2) of
         false ->
-            diff_tuple(M1, M2);
+            diff_record(M1, M2);
         true ->
             case remove_compiler_gen(M1) =:= remove_compiler_gen(M2) of
                 true ->
                     M1;
                 false ->
-                    diff_tuple(M1, M2)
+                    diff_record(M1, M2)
             end
     end.
+
+diff_record(T1, T2) ->
+    L = diff(record_to_list(T1), record_to_list(T2)),
+    list_to_record(L).
+
+record_to_list(R) ->
+    v3_core = records:get_module(R),
+    Fs = [records:get(F, R) || F <- records:get_field_names(R)],
+    [records:get_name(R)|Fs].
+
+list_to_record([Name|Vs]) ->
+    Mod = v3_core,
+    {Opts,Fs0} = records:get_definition(Mod, Name),
+    Fs = [case F0 of
+              {F, _Default} ->
+                  {F, V};
+              F when is_atom(F) ->
+                  {F, V}
+          end || F0 <- Fs0 && V <- Vs],
+    records:create(Mod, Name, Fs, Opts).
 
 diff_tuple(T1, T2) ->
     L = diff(tuple_to_list(T1), tuple_to_list(T2)),
@@ -1534,14 +1561,14 @@ message_printing(Config) ->
     ] = messages(BadEncErrors),
 
     UTF8File = filename:join(DataDir, "col_utf8.erl"),
-    {ok,_,UTF8Errors} = compile:file(UTF8File, [return]),
+    {ok,_,UTF8Errors} = compile:file(UTF8File, [return,nowarn_latin1_binary]),
     [":5:23: a term is constructed, but never used\n"
      "%    5|     B = <<\"xyzåäö\">>,\t<<\"12345\">>,\n"
      "%     |                      \t^\n\n"
     ] = messages(UTF8Errors),
 
     Latin1File = filename:join(DataDir, "col_lat1.erl"),
-    {ok,_,Latin1Errors} = compile:file(Latin1File, [return]),
+    {ok,_,Latin1Errors} = compile:file(Latin1File, [return,nowarn_latin1_binary]),
     [":6:23: a term is constructed, but never used\n"
      "%    6|     B = <<\"xyzåäö\">>,\t<<\"12345\">>,\n"
      "%     |                      \t^\n\n"
@@ -1725,27 +1752,26 @@ bc_options(Config) ->
 
     DataDir = proplists:get_value(data_dir, Config),
 
-    L = [{177, small_float, []},
+    L = [{183, small_float, []},
 
-         {177, funs, [no_ssa_opt_record,
+         {183, funs, [no_ssa_opt_record,
                       no_ssa_opt_float,
                       no_line_info,
                       no_stack_trimming,
                       no_type_opt]},
 
-         {177, small_maps, [no_type_opt]},
+         {183, small_maps, [no_type_opt]},
 
-         {177, big, [no_ssa_opt_record,
+         {183, big, [no_ssa_opt_record,
                      no_ssa_opt_float,
                      no_line_info,
                      no_type_opt]},
 
-         {178, funs, []},
-         {178, big, []},
+         {183, funs, []},
+         {183, big, []},
 
-         {182, small, [r26]},
-         {182, small, []},
-         {182, small, [no_ssa_opt_record,
+         {183, small, []},
+         {183, small, [no_ssa_opt_record,
                        no_ssa_opt_float,
                        no_line_info,
                        no_type_opt]},
@@ -2381,23 +2407,24 @@ get_unique_beam_files() ->
 
 run(Config, Tests) ->
     F = fun({N,P,Env,Ws,Run}, _BadL) when is_function(Run, 1) ->
-                case catch run_test(Config, P, Env, Ws, Run) of
+                try run_test(Config, P, Env, Ws, Run) of
                     ok ->
-                        ok;
-                    Bad ->
+                        ok
+                catch
+                    error:Bad:Stack ->
                         io:format("~nTest ~p failed. Expected~n  ~p~n"
-                                  "but got~n  ~p~n", [N, ok, Bad]),
+                                  "but got~n  ~p ~p~n", [N, ok, Bad, Stack]),
                         fail()
                 end;
            ({N,P,Env,Ws,Expected}, BadL)
               when is_list(Expected); is_tuple(Expected) ->
                 io:format("### ~s\n", [N]),
-                case catch run_test(Config, P, Env, Ws, none) of
+                try run_test(Config, P, Env, Ws, none) of
                     Expected ->
-                        BadL;
-                    Bad ->
+                        BadL
+                catch errore:Bad:Stack ->
                         io:format("~nTest ~p failed. Expected~n  ~p~n"
-                                  "but got~n  ~p~n", [N, Expected, Bad]),
+                                  "but got~n  ~p ~p~n", [N, Expected, Bad, Stack]),
 			fail()
                 end
         end,

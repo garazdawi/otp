@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -20,27 +20,8 @@
 %% %CopyrightEnd%
 %%
 
--record('REASON', {mod, line, desc}).
-
--define(LOG(Format, Args),
-	tftp_test_lib:log(Format, Args, ?MODULE, ?LINE)).
-
--define(ERROR(Reason),
-	tftp_test_lib:error(Reason, ?MODULE, ?LINE)).
-
--define(VERIFY(Expected, Expr),
-	fun() ->
-		AcTuAlReS = (catch (Expr)),
-		case AcTuAlReS of
-		    Expected -> ?LOG("Ok, ~p\n", [AcTuAlReS]);
-		    _        ->	?ERROR(AcTuAlReS)
-	       end,
-		AcTuAlReS
-	end()).
-
--define(IGNORE(Expr), 
-	fun() ->
-		AcTuAlReS = (catch (Expr)),
-		?LOG("Ok, ~p\n", [AcTuAlReS]),
-		AcTuAlReS
-	end()).
+-define(TRY(Expr),
+        begin
+            tftp_test_lib:try_catch(fun () -> begin Expr end end,
+                                    ?MODULE, ?LINE, ?FUNCTION_NAME)
+        end).

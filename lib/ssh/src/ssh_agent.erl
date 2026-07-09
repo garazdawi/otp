@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2019-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ option can be set.
 
 > #### Note {: .info }
 >
-> The functions are _Callbacks_ for the SSH app. They are not intended to be
+> The functions are _Callbacks_ for the SSH application. They are not intended to be
 > called from the user's code\!
 """.
 -moduledoc(#{since => "OTP 23.0"}).

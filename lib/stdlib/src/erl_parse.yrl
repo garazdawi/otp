@@ -4,7 +4,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -154,12 +154,12 @@ typed_attr_val -> expr '::' top_type           : {type_def, '$1', '$3'}.
 
 %% Pretty much like attr_val, but record name must be an atom,
 %% to not allow variable names as record names when there is no leading '#'.
-record_spec -> atom : {record, ['$1']}.
+record_spec -> atom : error_bad_decl('$1', record).
 record_spec -> atom ',' exprs: {record, ['$1' | '$3']}.
 record_spec -> '(' atom ',' exprs ')': {record, ['$2' | '$4']}.
 
 %% More record-like record declaration that allows record_name.
-record_spec -> '#' record_name : {native_record, ['$2']}.
+record_spec -> '#' record_name : error_bad_decl('$1', record).
 record_spec -> '#' record_name exprs: {native_record, ['$2' | '$3']}.
 record_spec -> '(' '#' record_name exprs ')': {native_record, ['$3' | '$4']}.
 
@@ -693,11 +693,17 @@ ssa_check_when_clauses -> ssa_check_when_clause ssa_check_when_clauses :
 
 ssa_check_when_clause -> '%ssa%' atom ssa_check_clause_args_ls 'when' atom '->'
                              ssa_check_exprs '.' :
-   {ssa_check_when, ?anno('$1'), '$2', '$3', '$5', '$7'}.
+   {ssa_check_when, ?anno('$1'), '$2', '$3', [], '$5', '$7'}.
+ssa_check_when_clause -> '%ssa%' atom ssa_check_clause_args_ls ssa_check_anno 'when' atom '->'
+                             ssa_check_exprs '.' :
+   {ssa_check_when, ?anno('$1'), '$2', '$3', '$4', '$6', '$8'}.
 
 ssa_check_when_clause -> '%ssa%' ssa_check_clause_args_ls 'when' atom '->'
                              ssa_check_exprs '.' :
-   {ssa_check_when, ?anno('$1'), {atom,?anno('$1'),pass}, '$2', '$4', '$6'}.
+   {ssa_check_when, ?anno('$1'), {atom,?anno('$1'),pass}, '$2', [], '$4', '$6'}.
+ssa_check_when_clause -> '%ssa%' ssa_check_clause_args_ls ssa_check_anno 'when' atom '->'
+                             ssa_check_exprs '.' :
+   {ssa_check_when, ?anno('$1'), {atom,?anno('$1'),pass}, '$2', '$3', '$5', '$7'}.
 
 ssa_check_exprs -> ssa_check_expr : [add_anno_check('$1', [])].
 ssa_check_exprs -> ssa_check_expr ssa_check_anno : [add_anno_check('$1', '$2')].
@@ -1649,7 +1655,8 @@ build_attribute({atom,Aa,import_record}, Val) ->
     case Val of
 	[{atom,_Am,Mod},StrList] ->
 	    {attribute,Aa,import_record,{Mod,native_record_name_list(StrList)}};
-        [_,Other|_] -> error_bad_decl(Other, import_record)
+        [_,Other|_] -> error_bad_decl(Other, import_record);
+        [Other|_] -> error_bad_decl(Other, import_record)
     end;
 build_attribute({atom,Aa,record}, Val) ->
     case Val of

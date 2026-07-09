@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 1998-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -173,11 +173,7 @@ pdisplay1(fmtfn_t to, void *to_arg, Process* p, Eterm obj)
 	erts_putc(to, to_arg, ']');
 	break;
     case RECORD_DEF:
-        /* FIXME: placeholder. */
-        erts_putc(to, to_arg, '#');
-        erts_putc(to, to_arg, '_');
-        erts_putc(to, to_arg, '{');
-        erts_putc(to, to_arg, '}');
+        erts_print(to, to_arg, "%T", obj);
         break;
     case TUPLE_DEF:
         nobj = tuple_val(obj);      /* pointer to arity */

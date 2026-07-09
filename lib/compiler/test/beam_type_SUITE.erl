@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2015-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2015-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@
 %% %CopyrightEnd%
 %%
 -module(beam_type_SUITE).
+-include_lib("stdlib/include/assert.hrl").
 
 -export([all/0,suite/0,groups/0,init_per_suite/1,end_per_suite/1,
 	 init_per_group/2,end_per_group/2,
@@ -35,7 +36,7 @@
          cover_maps_functions/1,min_max_mixed_types/1,
          not_equal/1,infer_relops/1,binary_unit/1,premature_concretization/1,
          funs/1,will_succeed/1,float_confusion/1,
-         cover_convert_ext/1]).
+         cover_convert_ext/1, catch_setelement/1]).
 
 %% Force id/1 to return 'any'.
 -export([id/1]).
@@ -83,7 +84,8 @@ groups() ->
        funs,
        will_succeed,
        float_confusion,
-       cover_convert_ext
+       cover_convert_ext,
+       catch_setelement
       ]}].
 
 init_per_suite(Config) ->
@@ -104,7 +106,7 @@ integers(_Config) ->
     b = do_integers_1(2#11001),
 
     a = do_integers_2(<<0:1>>),
-    {'EXIT',{{case_clause,-1},_}} = (catch do_integers_2(<<1:1>>)),
+    ?assertError({case_clause,-1}, do_integers_2(<<1:1>>)),
 
     college = do_integers_3(),
 
@@ -117,27 +119,27 @@ integers(_Config) ->
     two = do_integers_5(0, 2),
     three = do_integers_5(0, 3),
 
-    {'EXIT',{badarith,_}} = (catch do_integers_6()),
+    ?assertError(badarith, do_integers_6()),
 
     house = do_integers_7(),
 
-    {'EXIT',{badarith,_}} = (catch do_integers_8()),
+    ?assertError(badarith, do_integers_8()),
 
     -693 = do_integers_9(id(7), id(1)),
 
     3 = do_integers_10(1, 2),
     10 = do_integers_10(-2, -5),
 
-    {'EXIT',{badarith,_}} = catch do_integers_11(42),
-    {'EXIT',{badarith,_}} = catch do_integers_11({a,b}),
+    ?assertError(badarith, do_integers_11(42)),
+    ?assertError(badarith, do_integers_11({a,b})),
 
-    {'EXIT',{system_limit,_}} = catch do_integers_12(42),
-    {'EXIT',{system_limit,_}} = catch do_integers_12([]),
+    ?assertError(system_limit, do_integers_12(42)),
+    ?assertError(system_limit, do_integers_12([])),
 
-    {'EXIT',{{badmatch,42},_}} = catch do_integers_13(-43),
-    {'EXIT',{{badmatch,0},_}} = catch do_integers_13(-1),
-    {'EXIT',{{badmatch,-1},_}} = catch do_integers_13(0),
-    {'EXIT',{{badmatch,-18},_}} = catch do_integers_13(17),
+    ?assertError({badmatch,42}, do_integers_13(-43)),
+    ?assertError({badmatch,0}, do_integers_13(-1)),
+    ?assertError({badmatch,-1}, do_integers_13(0)),
+    ?assertError({badmatch,-18}, do_integers_13(17)),
 
     ok.
 
@@ -313,12 +315,12 @@ fcmp(F1, F2) when (F1 - F2) / F2 < 0.0000001 -> ok;
 fcmp(_, _) -> error.
 
 coverage(Config) ->
-    {'EXIT',{badarith,_}} = (catch id(1) bsl 0.5),
-    {'EXIT',{badarith,_}} = (catch id(2.0) bsl 2),
-    {'EXIT',{badarith,_}} = (catch a + 0.5),
-    {'EXIT',{badarith,_}} = (catch 2.0 * b),
+    ?assertError(badarith, id(1) bsl 0.5),
+    ?assertError(badarith, id(2.0) bsl 2),
+    ?assertError(badarith, a + 0.5),
+    ?assertError(badarith, 2.0 * b),
 
-    {'EXIT',{badarith,_}} = (catch id(42.0) / (1 bsl 2000)),
+    ?assertError(badarith, id(42.0) / (1 bsl 2000)),
 
     id(id(42) band 387439739874298734983787934283479243879),
     id(-1 band id(13)),
@@ -348,16 +350,16 @@ coverage(Config) ->
          end,
 
     %% Cover beam_type:verified_type(none).
-    {'EXIT',{badarith,_}} = (catch (id(2) / id(1)) band 16#ff),
+    ?assertError(badarith, (id(2) / id(1)) band 16#ff),
 
     false = fun lot:life/147 == #{},
 
-    {'EXIT',{badarith,_}} = catch coverage_1(),
+    ?assertError(badarith, coverage_1()),
 
-    {'EXIT',{badarith,_}} = catch coverage_2(),
+    ?assertError(badarith, coverage_2()),
 
-    {'EXIT',{function_clause,_}} = catch coverage_3("a"),
-    {'EXIT',{function_clause,_}} = catch coverage_3("b"),
+    ?assertError(function_clause, coverage_3("a")),
+    ?assertError(function_clause, coverage_3("b")),
 
     Number = id(1),
     if
@@ -368,18 +370,18 @@ coverage(Config) ->
             30 = coverage_4(2, Number)
     end,
 
-    {'EXIT',{badarg,_}} = catch false ++ true,
-    {'EXIT',{badarg,_}} = catch false -- true,
+    ?assertError(badarg, false ++ true),
+    ?assertError(badarg, false -- true),
 
     ok = coverage_5(id(0)),
-    {'EXIT',{function_clause,_}} = catch coverage_5(id(0.0)),
+    ?assertError(function_clause, coverage_5(id(0.0))),
     ok = coverage_5(id(16)),
-    {'EXIT',{{case_clause,false},_}} = catch coverage_5(id(-1)),
+    ?assertError({case_clause,false}, coverage_5(id(-1))),
 
     ok = coverage_6(id(0)),
     ok = catch coverage_6(id(0.0)),
     ok = coverage_6(id(16)),
-    {'EXIT',{{case_clause,false},_}} = catch coverage_6(id(-1)),
+    ?assertError({case_clause,false}, coverage_6(id(-1))),
 
     ok.
 
@@ -421,7 +423,7 @@ coverage_6(A) ->
 
 
 booleans(_Config) ->
-    {'EXIT',{{case_clause,_},_}} = (catch do_booleans_1(42)),
+    ?assertError({case_clause,_}, do_booleans_1(42)),
 
     ok = do_booleans_2(42, 41),
     error = do_booleans_2(42, 42),
@@ -451,17 +453,17 @@ booleans(_Config) ->
     end,
     false = is_boolean(NotBool),
 
-    {'EXIT',{{case_clause,false},_}} = catch do_booleans_4(42),
-    {'EXIT',{{case_clause,true},_}} = catch do_booleans_4(a),
-    {'EXIT',{{case_clause,true},_}} = catch do_booleans_4(false),
-    {'EXIT',{{badmatch,true},_}} = catch do_booleans_4(true),
+    ?assertError({case_clause,false}, do_booleans_4(42)),
+    ?assertError({case_clause,true}, do_booleans_4(a)),
+    ?assertError({case_clause,true}, do_booleans_4(false)),
+    ?assertError({badmatch,true}, do_booleans_4(true)),
 
     true = do_booleans_5(id(0), id(<<0>>), id(0)),
-    {'EXIT',{function_clause,_}} = catch do_booleans_6(id(0), id(0), id(0)),
+    ?assertError(function_clause, do_booleans_6(id(0), id(0), id(0))),
 
-    {'EXIT',{{bad_filter,_},_}} = catch do_booleans_7(id(0)),
-    {'EXIT',{function_clause,_}} = catch do_booleans_8(id(0)),
-    {'EXIT',{{try_clause,_},_}} = catch do_booleans_9(id(0)),
+    ?assertError({bad_filter,_}, do_booleans_7(id(0))),
+    ?assertError(function_clause, do_booleans_8(id(0))),
+    ?assertError({try_clause,_}, do_booleans_9(id(0))),
 
     ok.
 
@@ -562,29 +564,29 @@ setelement(_Config) ->
                  0 -> 4;
                  1 -> 5
              end,
-    {'EXIT',{badarg,_}} = catch setelement(Index1, {a,b,c}, y),
+    ?assertError(badarg, setelement(Index1, {a,b,c}, y)),
 
     %% Cover some edge cases in beam_call_types:will_succeed/3 and
     %% beam_call_types:types/3
     {y} = setelement(1, tuple_or_integer(0), y),
     {y} = setelement(1, record_or_integer(0), y),
-    {'EXIT',{badarg,_}} = catch setelement(2, tuple_or_integer(id(0)), y),
-    {'EXIT',{badarg,_}} = catch setelement(2, tuple_or_integer(id(1)), y),
-    {'EXIT',{badarg,_}} = catch setelement(2, record_or_integer(id(0)), y),
-    {'EXIT',{badarg,_}} = catch setelement(2, record_or_integer(id(1)), y),
-    {'EXIT',{badarg,_}} = catch setelement(id(2), not_a_tuple, y),
+    ?assertError(badarg, setelement(2, tuple_or_integer(id(0)), y)),
+    ?assertError(badarg, setelement(2, tuple_or_integer(id(1)), y)),
+    ?assertError(badarg, setelement(2, record_or_integer(id(0)), y)),
+    ?assertError(badarg, setelement(2, record_or_integer(id(1)), y)),
+    ?assertError(badarg, setelement(id(2), not_a_tuple, y)),
 
     %% Cover some edge cases in beam_types:update_tuple/2
-    {'EXIT',{badarg,_}} = catch setelement(2, not_a_tuple, y),
-    {'EXIT',{badarg,_}} = catch setelement(not_an_index, {a,b,c}, y),
-    {'EXIT',{badarg,_}} = catch setelement(8, {out_of_range}, y),
+    ?assertError(badarg, setelement(2, not_a_tuple, y)),
+    ?assertError(badarg, setelement(not_an_index, {a,b,c}, y)),
+    ?assertError(badarg, setelement(8, {out_of_range}, y)),
     {y,_,_} = update_tuple_1(#update_tuple_a{}, y),
     {y,_,_,_} = update_tuple_1(#update_tuple_b{}, y),
     #update_tuple_a{a=y} = update_tuple_2(#update_tuple_a{}, y),
     #update_tuple_b{a=y} = update_tuple_2(#update_tuple_b{}, y),
-    {'EXIT',{badarg,_}} = catch update_tuple_3(id(#update_tuple_a{}), y),
-    {'EXIT',{badarg,_}} = catch update_tuple_3(id(#update_tuple_b{}), y),
-    {'EXIT',{badarg,_}} = catch update_tuple_4(id(#update_tuple_a{}), y),
+    ?assertError(badarg, update_tuple_3(id(#update_tuple_a{}), y)),
+    ?assertError(badarg, update_tuple_3(id(#update_tuple_b{}), y)),
+    ?assertError(badarg, update_tuple_4(id(#update_tuple_a{}), y)),
     #update_tuple_b{c=y} = update_tuple_4(id(#update_tuple_b{}), y),
 
     ok.
@@ -653,8 +655,8 @@ cons(_Config) ->
     {$a,"bc"} = cons_hdtl(true),
     {$d,"ef"} = cons_hdtl(false),
 
-    {'EXIT',{badarg,_}} = catch hd(ok),
-    {'EXIT',{badarg,_}} = catch tl(ok),
+    ?assertError(badarg, hd(ok)),
+    ?assertError(badarg, tl(ok)),
 
     ok.
 
@@ -694,7 +696,7 @@ cons_hdtl(B) ->
 -record(bird, {a=a,b=id(42)}).
 
 tuple(_Config) ->
-    {'EXIT',{{badmatch,{necessary}},_}} = (catch do_tuple()),
+    ?assertError({badmatch,{necessary}}, do_tuple()),
 
     [] = [X || X <- [], #bird{a = a} == {r,X,foo}],
     [] = [X || X <- [], #bird{b = b} == {bird,X}],
@@ -702,8 +704,8 @@ tuple(_Config) ->
 
     1 = do_literal_tuple_1(1),
     1 = do_literal_tuple_1(20),
-    {'EXIT', _} = catch do_literal_tuple_1(id(0)),
-    {'EXIT', _} = catch do_literal_tuple_1(id(bad)),
+    ?assertError(_, do_literal_tuple_1(id(0))),
+    ?assertError(_, do_literal_tuple_1(id(bad))),
 
     2 = do_literal_tuple_2(1),
     2 = do_literal_tuple_2(15),
@@ -716,15 +718,15 @@ tuple(_Config) ->
     Counters10 = {id(0),id(0),id(0)},           %Exact size.
     {0,-1,0} = decrement_element(2, Counters10),
     {0,0,-1} = decrement_element(3, Counters10),
-    {'EXIT',{badarg,_}} = catch decrement_element(4, Counters10),
+    ?assertError(badarg, decrement_element(4, Counters10)),
 
     [] = gh_6458(id({true})),
-    {'EXIT',{function_clause,_}} = catch gh_6458(id({false})),
-    {'EXIT',{function_clause,_}} = catch gh_6458(id({42})),
-    {'EXIT',{function_clause,_}} = catch gh_6458(id(a)),
+    ?assertError(function_clause, gh_6458(id({false}))),
+    ?assertError(function_clause, gh_6458(id({42}))),
+    ?assertError(function_clause, gh_6458(id(a))),
 
-    {'EXIT',{badarg,_}} = catch gh_6927(id({a,b})),
-    {'EXIT',{badarg,_}} = catch gh_6927(id([])),
+    ?assertError(badarg, gh_6927(id({a,b}))),
+    ?assertError(badarg, gh_6927(id([]))),
 
     ok.
 
@@ -771,9 +773,9 @@ gh_6927(X) ->
 record_float(_Config) ->
     17.0 = record_float(#x{a={0}}, 1700),
     23.0 = record_float(#x{a={0}}, 2300.0),
-    {'EXIT',{if_clause,_}} = (catch record_float(#x{a={1}}, 88)),
-    {'EXIT',{if_clause,_}} = (catch record_float(#x{a={}}, 88)),
-    {'EXIT',{if_clause,_}} = (catch record_float(#x{}, 88)),
+    ?assertError(if_clause, record_float(#x{a={1}}, 88)),
+    ?assertError(if_clause, record_float(#x{a={}}, 88)),
+    ?assertError(if_clause, record_float(#x{}, 88)),
     ok.
 
 record_float(R, N0) ->
@@ -784,7 +786,7 @@ record_float(R, N0) ->
 
 binary_float(_Config) ->
     <<-1/float>> = binary_negate_float(<<1/float>>),
-    {'EXIT',{badarg,_}} = catch binary_float_1(id(64.0), id(0)),
+    ?assertError(badarg, binary_float_1(id(64.0), id(0))),
     ok.
 
 binary_negate_float(<<Float/float>>) ->
@@ -821,7 +823,7 @@ float_overflow(_Config) ->
     Res2 = id((-1 bsl 1023) * two()),
     Res2 = float_overflow_2(),
 
-    {'EXIT',{{bad_filter,[0]},_}} = catch float_overflow_3(),
+    ?assertError({bad_filter,[0]}, float_overflow_3()),
 
     ok.
 
@@ -956,19 +958,19 @@ do_test_size(Term) when is_binary(Term) ->
 cover_lists_functions(Config) ->
     foo = lists:foldl(id(fun(_, _) -> foo end), foo, Config),
     foo = lists:foldl(fun(_, _) -> foo end, foo, Config),
-    {'EXIT',_} = catch lists:foldl(not_a_fun, foo, Config),
+    ?assertError(_, lists:foldl(not_a_fun, foo, Config)),
 
     foo = lists:foldr(id(fun(_, _) -> foo end), foo, Config),
     foo = lists:foldr(fun(_, _) -> foo end, foo, Config),
-    {'EXIT',_} = catch lists:foldr(not_a_fun, foo, Config),
+    ?assertError(_, lists:foldr(not_a_fun, foo, Config)),
 
     {data_dir,_DataDir} = lists:keyfind(data_dir, id(1), Config),
-    {'EXIT',_} = catch lists:keyfind(data_dir, not_a_position, Config),
-    {'EXIT',_} = catch lists:keyfind(data_dir, 1, not_a_list),
+    ?assertError(_, lists:keyfind(data_dir, not_a_position, Config)),
+    ?assertError(_, lists:keyfind(data_dir, 1, not_a_list)),
 
-    {'EXIT',_} = catch lists:map(not_a_fun, Config),
-    {'EXIT',_} = catch lists:map(not_a_fun, []),
-    {'EXIT',_} = catch lists:map(fun id/1, not_a_list),
+    ?assertError(_, lists:map(not_a_fun, Config)),
+    ?assertError(_, lists:map(not_a_fun, [])),
+    ?assertError(_, lists:map(fun id/1, not_a_list)),
     Config = lists:map(id(fun id/1), Config),
 
     case lists:suffix([no|Config], Config) of
@@ -979,7 +981,7 @@ cover_lists_functions(Config) ->
     end,
 
     [] = lists:zip([], []),
-    {'EXIT',_} = (catch lists:zip(not_list, [b])),
+    ?assertError(_, lists:zip(not_list, [b])),
 
     Zipper = fun(A, B) -> {A,B} end,
 
@@ -995,17 +997,17 @@ cover_lists_functions(Config) ->
                               Zipped),
     [{zip_zip,{zip,_}}|_] = DoubleZip,
 
-    {'EXIT',_} = (catch lists:zipwith(not_a_fun, [a], [b])),
-    {'EXIT',{bad,_}} = (catch lists:zipwith(fun(_A, _B) -> error(bad) end,
+    ?assertError(_, lists:zipwith(not_a_fun, [a], [b])),
+    ?assertError(bad, lists:zipwith(fun(_A, _B) -> error(bad) end,
                                             [a], [b])),
-    {'EXIT',_} = (catch lists:zipwith(fun(_A, _B) -> error(bad) end,
+    ?assertError(_, lists:zipwith(fun(_A, _B) -> error(bad) end,
                                       not_list, [b])),
-    {'EXIT',{bad,_}} = (catch lists:zipwith(fun(_A, _B) -> error(bad) end,
+    ?assertError(bad, lists:zipwith(fun(_A, _B) -> error(bad) end,
                                             lists:duplicate(length(Zipped), zip_zip),
                                             Zipped)),
 
-    {'EXIT',_} = catch lists:unzip(not_a_list),
-    {'EXIT',_} = catch lists:unzip([not_a_tuple]),
+    ?assertError(_, lists:unzip(not_a_list)),
+    ?assertError(_, lists:unzip([not_a_tuple])),
     {[_|_],[_|_]} = lists:unzip(Zipped),
 
     ok.
@@ -1109,9 +1111,13 @@ type_subtraction(Config) when is_list(Config) ->
 
     ok = type_subtraction_2(id(true)),
     <<"aaaa">> = type_subtraction_2(id(false)),
-    {'EXIT', _} = catch type_subtraction_3(id(false)),
+    ?assertError(_, type_subtraction_3(id(false))),
     ok = catch type_subtraction_4(id(ok)),
-    {'EXIT', _} = catch type_subtraction_4(id(false)),
+    ?assertError(_, type_subtraction_4(id(false))),
+
+    outside = id(type_subtraction_5(<<"c">>)),
+    {inside, 1} = id(type_subtraction_5(<<"a">>)),
+    {inside, 2} = id(type_subtraction_5(<<"b">>)),
 
     ok.
 
@@ -1175,6 +1181,16 @@ type_subtraction_4(_V0) ->
             >>
     end.
 
+%% GH-10562: Types were erroneously applied in #b_switch{} over bitstrings.
+type_subtraction_5(X) ->
+    _ = id(X),
+    case X =:= <<"a">> orelse X =:= <<"b">> of
+        false -> outside;
+        true ->
+            Y = case X of <<"a">> -> 1; _ -> 2 end,
+            {inside, Y}
+    end.
+    
 %% GH-4774: The validator didn't update container contents on type subtraction.
 container_subtraction(Config) when is_list(Config) ->
     A = id(baz),
@@ -1199,7 +1215,7 @@ is_list_opt(_Config) ->
 
     ok = is_list_opt_3(id([])),
     true = is_list_opt_3(id([a])),
-    {'EXIT',{badarg,_}} = catch is_list_opt_3(id(no_list)),
+    ?assertError(badarg, is_list_opt_3(id(no_list))),
 
     ok.
 
@@ -1345,9 +1361,9 @@ sfi_send_return_value({412}) ->
     error.
 
 failures(_Config) ->
-    {'EXIT',{function_clause,_}} = catch failures_1(id(a), id(b), id(c)),
-    {'EXIT',{badarith,_}} = catch failures_1([], 2, 3),
-    {'EXIT',{badarith,_}} = catch failures_1([], x, y),
+    ?assertError(function_clause, failures_1(id(a), id(b), id(c))),
+    ?assertError(badarith, failures_1([], 2, 3)),
+    ?assertError(badarith, failures_1([], x, y)),
     ok.
 
 failures_1([] = V1, V2, V3)  ->
@@ -1361,61 +1377,67 @@ failures_1([] = V1, V2, V3)  ->
 
 %% Covers various edge cases in beam_call_types:types/3 relating to maps
 cover_maps_functions(_Config) ->
-    {'EXIT',_} = catch maps:filter(fun(_, _) -> true end, not_a_map),
-    {'EXIT',_} = catch maps:filter(not_a_predicate, #{}),
+    ?assertError(_, maps:filter(fun(_, _) -> true end, not_a_map)),
+    ?assertError(_, maps:filter(not_a_predicate, #{})),
 
     error = maps:find(key_not_present, #{}),
 
-    {'EXIT',_} = catch maps:fold(fun(_, _, _) -> true end, init, not_a_map),
-    {'EXIT',_} = catch maps:fold(not_a_fun, init, #{}),
+    ?assertError(_, maps:fold(fun(_, _, _) -> true end, init, not_a_map)),
+    ?assertError(_, maps:fold(not_a_fun, init, #{})),
 
     #{} = maps:from_keys([], gurka),
     #{ hello := gurka } = maps:from_keys([hello], gurka),
-    {'EXIT',_} = catch maps:from_keys(not_a_list, gurka),
+    ?assertError(_, maps:from_keys(not_a_list, gurka)),
 
     #{} = catch maps:from_list([]),
-    {'EXIT',_} = catch maps:from_list([not_a_tuple]),
+    ?assertError(_, maps:from_list([not_a_tuple])),
 
     default = maps:get(key_not_present, #{}, default),
-    {'EXIT',_} = catch maps:get(key_not_present, #{}),
+    ?assertError(_, maps:get(key_not_present, #{})),
 
     [] = maps:keys(#{}),
-    {'EXIT',_} = catch maps:keys(not_a_map),
+    ?assertError(_, maps:keys(not_a_map)),
 
     #{ a := ok } = catch maps:map(fun(_, _) -> ok end, #{ a => a }),
-    {'EXIT',_} = catch maps:map(fun(_, _) -> error(crash) end, #{ a => a }),
-    {'EXIT',_} = catch maps:map(not_a_fun, #{}),
-    {'EXIT',_} = catch maps:map(fun(_, _) -> ok end, not_a_map),
+    ?assertError(_, maps:map(fun(_, _) -> error(crash) end, #{ a => a })),
+    ?assertError(_, maps:map(not_a_fun, #{})),
+    ?assertError(_, maps:map(fun(_, _) -> ok end, not_a_map)),
 
-    {'EXIT',_} = catch maps:merge(not_a_map, #{}),
+    ?assertError(_, maps:merge(not_a_map, #{})),
 
     #{} = maps:new(),
 
-    {'EXIT',_} = catch maps:put(key, value, not_a_map),
+    ?assertError(_, maps:put(key, value, not_a_map)),
 
     #{} = maps:remove(a, #{ a => a }),
-    {'EXIT',_} = catch maps:remove(gurka, not_a_map),
+    ?assertError(_, maps:remove(gurka, not_a_map)),
 
     error = maps:take(key_not_present, #{}),
-    {'EXIT',_} = catch maps:take(key, not_a_map),
+    ?assertError(_, maps:take(key, not_a_map)),
 
-    {'EXIT',_} = catch maps:to_list(not_a_map),
+    ?assertError(_, maps:to_list(not_a_map)),
 
     #{ a := ok } = maps:update_with(a, fun(_) -> ok end, #{ a => a }),
-    {'EXIT',_} = catch maps:update_with(a, fun(_) -> error(a) end, #{ a => a }),
-    {'EXIT',_} = catch maps:update_with(key_not_present, fun(_) -> ok end, #{}),
-    {'EXIT',_} = catch maps:update_with(key, not_a_fun, not_a_map),
+    ?assertError(_, maps:update_with(a, fun(_) -> error(a) end, #{ a => a })),
+    ?assertError(_, maps:update_with(key_not_present, fun(_) -> ok end, #{})),
+    ?assertError(_, maps:update_with(key, not_a_fun, not_a_map)),
 
     [] = maps:values(#{}),
-    {'EXIT',_} = catch maps:values(not_a_map),
+    ?assertError(_, maps:values(not_a_map)),
 
     #{} = maps:with([key_not_present], #{}),
-    {'EXIT',_} = catch maps:with(not_a_list, #{}),
-    {'EXIT',_} = catch maps:with([], not_a_map),
-    {'EXIT',_} = catch maps:with([foobar], not_a_map),
+    ?assertError(_, maps:with(not_a_list, #{})),
+    ?assertError(_, maps:with([], not_a_map)),
+    ?assertError(_, maps:with([foobar], not_a_map)),
 
-    {'EXIT',_} = catch maps:without(not_a_list, #{}),
-    {'EXIT',_} = catch maps:without([], not_a_map),
+    ?assertError(_, maps:without(not_a_list, #{})),
+    ?assertError(_, maps:without([], not_a_map)),
+
+    Fails = fun(_) -> error(blurf) end,
+    EmptyMap = #{},
+
+    {'EXIT',_} = catch maps:from_list(lists:map(Fails, [id(a), id(b)])),
+    EmptyMap = maps:from_list(lists:map(Fails, [])),
 
     ok.
 
@@ -1445,10 +1467,10 @@ min_max_mixed_types(_Config) ->
 
 not_equal(_Config) ->
     true = do_not_equal(true),
-    {'EXIT',{function_clause,_}} = catch do_not_equal(false),
-    {'EXIT',{function_clause,_}} = catch do_not_equal(0),
-    {'EXIT',{function_clause,_}} = catch do_not_equal(42),
-    {'EXIT',{function_clause,_}} = catch do_not_equal(self()),
+    ?assertError(function_clause, do_not_equal(false)),
+    ?assertError(function_clause, do_not_equal(0)),
+    ?assertError(function_clause, do_not_equal(42)),
+    ?assertError(function_clause, do_not_equal(self())),
 
     ok.
 
@@ -1457,9 +1479,9 @@ do_not_equal(V) when (V / V < (V orelse true)); V; V ->
 
 
 infer_relops(_Config) ->
-    {'EXIT',{badarith,_}} = catch infer_relops_1(),
-    {'EXIT',{badarith,_}} = catch infer_relops_2(),
-    {'EXIT',{badarith,_}} = catch infer_relops_3(id(0)),
+    ?assertError(badarith, infer_relops_1()),
+    ?assertError(badarith, infer_relops_2()),
+    ?assertError(badarith, infer_relops_3(id(0))),
     infer_relops_4(),
 
     ok.
@@ -1533,10 +1555,10 @@ pm_concretization_3(_) -> ok.
 pm_concretization_4(_) -> ok.
 
 funs(_Config) ->
-    {'EXIT',{badarg,_}} = catch gh_7179(),
+    ?assertError(badarg, gh_7179()),
     false = is_function(id(fun() -> ok end), 1024),
 
-    {'EXIT',{badarg,_}} = catch gh_7197(),
+    ?assertError(badarg, gh_7197()),
 
     ok.
 
@@ -1569,11 +1591,11 @@ will_succeed_1(_, _) ->
 float_confusion(_Config) ->
     ok = float_confusion_1(catch (true = ok), -0.0),
     ok = float_confusion_1(ok, 0.0),
-    {'EXIT', _} = catch float_confusion_2(),
-    {'EXIT', _} = catch float_confusion_3(id(0.0)),
+    ?assertError(_, float_confusion_2()),
+    ?assertError(_, float_confusion_3(id(0.0))),
     ok = float_confusion_4(id(1)),
-    {'EXIT', _} = catch float_confusion_5(),
-    {'EXIT', _} = catch float_confusion_6(),
+    ?assertError(_, float_confusion_5()),
+    ?assertError(_, float_confusion_6()),
     ok.
 
 float_confusion_1(_, _) ->
@@ -1624,21 +1646,26 @@ float_confusion_6() ->
     >>.
 
 cover_convert_ext(_Config) ->
+    Otp27AllTypes = 2#1111_1111_1111,
+    Otp27Version = 3,
+    Otp27Types = <<Otp27AllTypes:16, -1:16,0:64,0:64,1:8>>,
+    _ = beam_types:decode_ext(beam_types:convert_ext(Otp27Version, Otp27Types)),
 
-    Otp26AllTypes = 2#1111_1111_1111,
-    Otp26Version = 2,
-    Otp26Types = <<Otp26AllTypes:16, -1:16,0:64,0:64,1:8>>,
-    _ = beam_types:decode_ext(beam_types:convert_ext(Otp26Version, Otp26Types)),
-
-    Otp25AllTypes = 2#1111_1111_1111,
-    Otp25Version = 1,
-    Otp25Types = <<Otp25AllTypes:16,1:64,0:64, Otp25AllTypes:16,7:64,10:64>>,
-    _ = beam_types:decode_ext(beam_types:convert_ext(Otp25Version, Otp25Types)),
-
+    none = beam_types:convert_ext(2, <<>>),     %OTP 26
+    none = beam_types:convert_ext(1, <<>>),     %OTP 25
     none = beam_types:convert_ext(0, <<>>),
 
     ok.
 
+
+%% This used to cause an exception instead of returning an error.
+catch_setelement(_Config) ->
+    {'EXIT', _} = catch_setelement_2(id(true), id(foo)),
+    ok.
+
+catch_setelement_2(B, V) ->
+    T = if B -> {1}; true -> {1,2} end,
+    catch setelement(2, T, V).
 
 %%%
 %%% Common utilities.

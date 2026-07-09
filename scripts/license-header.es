@@ -5,7 +5,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2025. All Rights Reserved.
+%% Copyright Ericsson AB 2025-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -25,6 +25,9 @@
 %% REUSE-IgnoreStart
 -include_lib("kernel/include/file.hrl").
 -export([read_file_info/1, read_link_info/1, list_dir/1]).
+
+-compile([{nowarn_unsafe_function, {os, cmd, 1}},
+          {nowarn_unsafe_function, {os, cmd, 2}}]).
 
 main(Args) ->
     argparse:run(Args, cli(), #{ progname => 'license-header' }).
@@ -134,6 +137,7 @@ ci(Opts) ->
     %%   git diff --name-only --diff-filter=d OTP-27.3 HEAD | ./scripts/license-header.es scan --no-missing --path stdin | grep ":" | grep -v "^See" | awk -F: '{print "\"" $1 "\","}' | sort
     NoWarnNewFiles = ["erts/emulator/test/big_SUITE_data/eq_big.dat",
                       "erts/emulator/test/big_SUITE_data/eq_big_rem.dat",
+                      "erts/emulator/test/big_SUITE_data/karatsuba.dat",
                       "erts/emulator/test/float_SUITE_data/fp_drv.c",
                       "lib/asn1/test/asn1_SUITE_data/PrimStrings.asn1",
                       "lib/common_test/test/ct_surefire_SUITE_data/skip_one_suite.spec",
@@ -149,7 +153,6 @@ ci(Opts) ->
                       "lib/dialyzer/test/indent_SUITE_data/results/queue_use",
                       "lib/dialyzer/test/indent_SUITE_data/results/rec",
                       "lib/dialyzer/test/indent_SUITE_data/results/simple",
-                      "lib/dialyzer/test/indent_SUITE_data/src/record_send_test.erl",
                       "lib/dialyzer/test/indent_SUITE_data/src/rec/rec_adt.erl",
                       "lib/dialyzer/test/indent_SUITE_data/src/rec/rec_use.erl",
                       "lib/dialyzer/test/indent_SUITE_data/src/simple/is_rec.erl",
@@ -188,10 +191,8 @@ ci(Opts) ->
                       "lib/dialyzer/test/overspecs_SUITE_data/results/opaque",
                       "lib/dialyzer/test/r9c_SUITE_data/dialyzer_options",
                       "lib/dialyzer/test/r9c_SUITE_data/results/asn1",
-                      "lib/dialyzer/test/r9c_SUITE_data/results/mnesia",
                       "lib/dialyzer/test/r9c_SUITE_data/src/asn1/asn1ct_value.erl",
                       "lib/dialyzer/test/r9c_SUITE_data/src/asn1/asn1rt_per.erl",
-                      "lib/dialyzer/test/r9c_SUITE_data/src/mnesia/mnesia_lib.erl",
                       "lib/dialyzer/test/small_SUITE_data/results/bif1",
                       "lib/dialyzer/test/small_SUITE_data/results/maps_sum",
                       "lib/dialyzer/test/small_SUITE_data/src/contracts_with_subtypes.erl",
@@ -201,7 +202,6 @@ ci(Opts) ->
                       "lib/dialyzer/test/unmatched_returns_SUITE_data/results/lc_warnings",
                       "lib/dialyzer/test/user_SUITE_data/dialyzer_options",
                       "lib/dialyzer/test/user_SUITE_data/results/gcpFlowControl",
-                      "lib/edoc/test/eep48_SUITE_data/eep48_specs.erl",
                       "lib/kernel/test/interactive_shell_SUITE_data/ssh_host_rsa_key",
                       "lib/kernel/test/interactive_shell_SUITE_data/valid_keymap.config",
                       "lib/stdlib/test/erl_lint_SUITE_data/bad_behaviour1.erl",
@@ -221,7 +221,10 @@ ci(Opts) ->
                       "lib/stdlib/test/re_SUITE_data/testoutput5",
                       "lib/stdlib/test/unicode_util_SUITE_data/unicode_table.bin",
                       "lib/stdlib/test/zstd_SUITE_data/dict",
-                      "lib/syntax_tools/test/syntax_tools_SUITE_data/syntax_tools_SUITE_test_module.erl",
+                      "lib/tools/test/crashdump_SUITE_data/rsa_decrypted_dump",
+                      "lib/tools/test/crashdump_SUITE_data/rsa_encrypted_dump",
+                      "lib/tools/test/crashdump_SUITE_data/ml-kem_decrypted_dump",
+                      "lib/tools/test/crashdump_SUITE_data/ml-kem_encrypted_dump",
                       "lib/tools/test/emacs_SUITE_data/comprehensions",
                       "lib/tools/test/emacs_SUITE_data/type_specs",
                       "make/ex_doc_link",
@@ -490,7 +493,7 @@ check_license([], _Template, #{ lines_after_license := LinesAfterLicense,
         NeedsNoLicense -> ok;
         IsShort, NeedsNoLicenseIfShort -> ok;
         NeedsNoLicenseIfShort ->
-            throw({warn, "is longer than 10 lines, needs license in header.", []});
+            throw({warn, "is longer than 20 lines, needs license in header.", []});
         true ->
             throw({warn, "needs license in header.", []})
     end;

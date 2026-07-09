@@ -280,8 +280,8 @@ true
 %% with a cryptographically unpredictable algorithm:
 18> Deck0 = [{Rank,Suit} ||
      Rank <- lists:seq(2, 14),
-     Suit <- [clubs,diamonds,hearts,spades]]
-19> S5 = crypto:rand_seed_alg(crypto_aes, "Nothing up my sleeve")
+     Suit <- [clubs,diamonds,hearts,spades]].
+19> S5 = crypto:rand_seed_alg(crypto_aes, "Nothing up my sleeve").
 20> {Deck, S6} = rand:shuffle_s(Deck0, S5).
 21> Deck.
 [{2,spades},    {12,spades},   {14,diamonds}, {11,clubs},
@@ -906,9 +906,9 @@ To be used with `seed_s/1`.
 7> N.
 334013
 %% Within the same node this works just as well
-6> {N, S4} = rand:uniform_s(1_000_000, S0).
+8> {N, S4} = rand:uniform_s(1_000_000, S0).
 %% S4 is equivalent to S1
-7> N.
+9> N.
 334013
 ```
 """.
@@ -1006,9 +1006,19 @@ seed_s(Alg_or_State) ->
     end.
 
 default_seed() ->
-    {erlang:phash2([{node(),self()}]),
-     erlang:system_time(),
-     erlang:unique_integer()}.
+    %% The purpose of this seed is that it shall be different
+    %% for different calls in a cluster even if they coincide in time.
+    %% High entropy is hard to find and not a primary goal.
+    %%
+    %% Luckily self() in external term format contains the node name
+    %% so the seed will differ between nodes as well as between processes.
+    %% unique_integer makes the seed differ between calls.  system_time
+    %% gives some more entropy.  MD5 is used to spread out the entropy
+    %% over all 3 seed integers.
+    %%
+    SeedTerm = {self(), erlang:unique_integer(), erlang:system_time()},
+    <<A:43, B:43, C:42>> = erlang:md5(term_to_binary(SeedTerm)),
+    {A, B, C}.
 
 %% seed/2: seeds RNG with the algorithm and given values
 %% and returns the NEW state.
@@ -1266,7 +1276,7 @@ See `uniform_real_s/1`.
 %% But, with uniform_real/1 we get better precision;
 %% generate a float() with distribution [0.0, 1.0) in (0.0, 1.0)
 3> rand:seed(S).
-3> rand:uniform_real().
+4> rand:uniform_real().
 2.1911861999281885e-20
 ```
 """.
@@ -1365,7 +1375,7 @@ than the regular `uniform_s/1`
 0.0
 %% But, with uniform_real/1 we get better precision;
 %% generate a float() R with distribution [0.0, 1.0) in (0.0, 1.0)
-3> {R, S2} = rand:uniform_real_s(S0).
+4> {R, S2} = rand:uniform_real_s(S0).
 5> R.
 2.1911861999281885e-20
 ```
@@ -3080,8 +3090,8 @@ is 60% of the time for the default algorithm generating a `t:float/0`.
 3> CX1 band 65535.
 7714
 %% Generate an integer 0 .. 999 with not noticeable bias
-2> CX2 = rand:mwc59(CX1).
-3> CX2 rem 1_000.
+4> CX2 = rand:mwc59(CX1).
+5> CX2 rem 1_000.
 86
 ```
 """.
@@ -3137,8 +3147,8 @@ that is: `(Range*V) bsr 32`, which is much faster than using `rem`.
 3> rand:mwc59_value32(CX1).
 2935831586
 %% Generate an integer 0 .. 999 with not noticeable bias
-2> CX2 = rand:mwc59(CX1).
-3> (rand:mwc59_value32(CX2) * 1_000) bsr 32.
+4> CX2 = rand:mwc59(CX1).
+5> (rand:mwc59_value32(CX2) * 1_000) bsr 32.
 540
 ```
 """.
@@ -3182,8 +3192,8 @@ adding up to 59 bits, which is not a bignum (on a 64-bit VM ):
 5> ((rand:mwc59_value(CX2) bsr (59-39)) * 1_000_000) bsr 39.
 144457
 %% Generate an integer 0 .. 1_000_000_000 with not noticeable bias
-4> CX3 = rand:mwc59(CX2).
-5> rand:mwc59_value(CX3) rem 1_000_000_000.
+6> CX3 = rand:mwc59(CX2).
+7> rand:mwc59_value(CX3) rem 1_000_000_000.
 949193925
 ```
 """.

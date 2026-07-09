@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2008-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -419,11 +419,15 @@ init([Options]) ->
     end.
 
 channel_cb_init_args(Options) ->
+    Cb = proplists:get_value(channel_cb, Options),
     case proplists:get_value(exec, Options) of
         undefined ->
             proplists:get_value(init_args, Options);
-        Exec ->
-            proplists:get_value(init_args, Options) ++ [Exec]
+        Exec when Cb =:= ssh_cli ->
+            proplists:get_value(init_args, Options) ++ [Exec];
+        _Exec ->
+            %% Custom callbacks don't receive exec mode flags
+            proplists:get_value(init_args, Options)
     end.
 
 %%--------------------------------------------------------------------

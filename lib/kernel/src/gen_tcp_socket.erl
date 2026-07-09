@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2019-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -107,9 +107,19 @@
 -define(CLOSED_SOCKET, #{rstates => [closed], wstates => [closed]}).
 
 %% Options that are inherited by accept/2
+%% Ideally we should have an option specifying which socket options
+%% should be "inherited". But for now we just try to be "comaptible"
+%% with inet (plain gen_tcp).
+%% This is a two-tuple list where the first element is an option tag and 
+%% the second is a boolean indicating if an error (to set) should be
+%% propagated (or be ignored).
 -compile({inline, [socket_inherit_opts/0]}).
 socket_inherit_opts() ->
-    [priority].
+    [{nodelay,   false},
+     {keepalive, false},
+     {priority,  true},
+     {linger,    false},
+     {reuseaddr, false}].
 
 
 %%% ========================================================================
@@ -179,7 +189,8 @@ connect_lookup(Domain, Address, Port, Mod, Opts0, Timer) ->
                        opts   = ConnectOpts}} ->
             %%
             %% ?DBG([{domain, Domain}, {bind_ip, BindAddr}]),
-            BindSockaddr = bind_addr(Domain, BindAddr, BindPort),
+            BindSockaddr = bind_addr(is_localhost(Address, Domain),
+				     Domain, BindAddr, BindPort),
             OpenOpts = open_opts(OpenOpts0, open_opts(Fd)),
             connect_open(
               Addrs, Domain, ConnectOpts, StartOpts, OpenOpts,
@@ -281,9 +292,32 @@ default_any(Domain, undefined, _Opts) ->
 default_any(_Domain, BindAddr, _Opts) ->
     BindAddr.
 
-bind_addr(Domain, #{family := Domain} = BindSockaddr, _BindPort) ->
+is_localhost({127,0,0,1} = Loopback, inet) ->
+    {true, Loopback};
+is_localhost({0,0,0,0,0,0,0,1} = Loopback, inet6) ->
+    {true, Loopback};
+is_localhost(_, _) ->
+    {false, undefined}.
+
+bind_addr(_,
+	  Domain, #{family := Domain} = BindSockaddr, _BindPort) ->
     BindSockaddr;
-bind_addr(Domain, BindIP, BindPort)
+bind_addr({true, Localhost},
+	  Domain, BindIP, BindPort)
+  when ((BindIP =:= undefined) andalso (BindPort =:= 0)) ->
+    %% *Maybe* Do not bind! On Windows we actually need to bind
+    %% ?DBG([{localhost, Localhost},
+    %% 	     {bind_ip, BindIP}, {bind_port, BindPort}, {fd, Fd}]),
+    case os:type() of
+        {win32, nt} ->
+            #{family => Domain,
+              addr   => Localhost,
+              port   => BindPort};
+        _ ->
+            undefined
+    end;
+bind_addr(_,
+	  Domain, BindIP, BindPort)
   when ((BindIP =:= undefined) andalso (BindPort =:= 0)) ->
     %% *Maybe* Do not bind! On Windows we actually need to bind
     %% ?DBG([{bind_ip, BindIP}, {bind_port, BindPort}, {fd, Fd}]),
@@ -296,7 +330,8 @@ bind_addr(Domain, BindIP, BindPort)
         _ ->
             undefined
     end;
-bind_addr(local = Domain, BindIP, _BindPort) ->
+bind_addr(_,
+	  local = Domain, BindIP, _BindPort) ->
     case BindIP of
 	any ->
 	    undefined;
@@ -304,7 +339,8 @@ bind_addr(local = Domain, BindIP, _BindPort) ->
 	    #{family => Domain,
 	      path   => Path}
     end;
-bind_addr(Domain, BindIP, BindPort)
+bind_addr(_,
+	  Domain, BindIP, BindPort)
   when (Domain =:= inet) orelse (Domain =:= inet6) ->
     %% ?DBG([{domain, Domain}, {bind_ip, BindIP}, {bind_port, BindPort}]),
     Addr = which_bind_address(Domain, BindIP),
@@ -405,7 +441,8 @@ listen(Port, Opts0) ->
                     Domain    = domain(Mod),
                     %% ?DBG([{domain, Domain}, {bind_ip, BindAddr},
                     %%       {listen_opts, ListenOpts}, {backlog, Backlog}]),
-                    BindSockaddr  = bind_addr(Domain, BindAddr, BindPort),
+                    BindSockaddr  = bind_addr({false, undefined},
+					      Domain, BindAddr, BindPort),
                     %% ?DBG([{bind_sock_addr, BindSockaddr}]),
                     OpenOpts = open_opts(OpenOpts0, open_opts(Fd)),
                     %% ?DBG([{open_opts, OpenOpts}]),
@@ -1208,33 +1245,71 @@ socket_getopt(Socket, DomainProps, _) when is_list(DomainProps) ->
 socket_getopt_value(
   {socket,linger}, {ok, #{onoff := OnOff, linger := Linger}}) ->
     {ok, {OnOff, Linger}};
+socket_getopt_value({ip,tos}, {ok, #{native := TOS, tos := _}}) ->
+    {ok, TOS};
 socket_getopt_value({Level,pktoptions}, {ok, PktOpts})
   when Level =:= ip,   is_list(PktOpts);
        Level =:= ipv6, is_list(PktOpts) ->
-    {ok, [{Type, Value} || #{type := Type, value := Value} <- PktOpts]};
+    {ok,
+     [case {Type, Value} of
+          {tos, #{native := TOS, tos := _}} ->
+              {Type, TOS};
+          Type_Value ->
+              Type_Value
+      end || #{type := Type, value := Value} <- PktOpts]};
 socket_getopt_value(_Tag, {ok, _Value} = Ok) -> Ok;
 socket_getopt_value(_Tag, {error, _} = Error) -> Error.
 
 
-socket_copy_opt(Socket, Tag, TargetSocket) when is_atom(Tag) ->
+%% Copy options from one socket to another.
+%% Any error when getting a socket option will only result in
+%% that option beeing excluded from the list.
+%% Some failures when setting are accepted (ignored).
+socket_copy_opts(FromSocket, ToSocket, Tags) ->
+    socket_copy_opts(FromSocket, ToSocket, Tags, []).
+
+socket_copy_opts(_FromSocket, ToSocket, [], Opts) ->
+    socket_copy_opts(ToSocket, Opts);
+socket_copy_opts(FromSocket, ToSocket, [{Tag, Prop}|Tags], Opts) ->
     case socket_opts() of
         #{Tag := {_Level,_Key} = Opt} ->
 	    case socket:is_supported(options, Opt) of
 		true ->
-		    case socket:getopt(Socket, Opt) of
+		    %% Both 'getopt' and 'setopt' can return 'enotsup'
+		    %% (or 'enoprotoopt' on Windows) even though
+		    %% 'is_supported' returned 'true'.
+		    %% Since we are supposed to be "bug" compatible 
+		    %% with the inet-driver, if we fail to get the option
+		    %% we simply skip the option (return ok anyway).
+		    case socket:getopt(FromSocket, Opt) of
 			{ok, Value} ->
-			    socket:setopt(TargetSocket, Opt, Value);
-			{error, _Reason} = Error ->
-			    Error
+			    socket_copy_opts(FromSocket, ToSocket, Tags,
+					     [{Opt, Value, Prop}|Opts]);
+			_ ->			    
+			    socket_copy_opts(FromSocket, ToSocket, Tags,
+					     Opts)
 		    end;
 		false ->
-		    ok
+		    socket_copy_opts(FromSocket, ToSocket, Tags,
+				     Opts)
 	    end;
-        #{} = _X ->
-	    {error, einval}
+	_ ->
+	    {error, {einval, Tag}}
     end.
-
-
+	    
+socket_copy_opts(_ToSocket, [] = _Opts) ->
+    ok;
+socket_copy_opts(ToSocket, [{Opt, Value, Prop}|Opts]) ->
+    case socket:setopt(ToSocket, Opt, Value) of
+	ok ->
+	    socket_copy_opts(ToSocket, Opts);
+	{error, Reason} when (Prop =:= true) ->
+	    {error, {Reason, Opt, socket:info(ToSocket)}};
+	{error, _Reason} ->
+	    socket_copy_opts(ToSocket, Opts)
+    end.
+    
+    
 -compile({inline, [ignore_optname/1]}).
 ignore_optname(Tag) ->
     case Tag of
@@ -1395,7 +1470,7 @@ server_read_opts() ->
         deliver => term,
         start_opts => [], % Just to make it settable
         line_delimiter => $\n,
-        read_ahead => false},
+        read_ahead => true},
       server_read_write_opts()).
 -compile({inline, [server_write_opts/0]}).
 server_write_opts() ->
@@ -2277,8 +2352,7 @@ handle_accept_success(P, D, From, ListenSocket, AccSocket) ->
     %% ?DBG([{acc_socket, AccSocket}]),
     ok = socket:setopt(AccSocket, {otp,iow}, true),
     ok = socket:setopt(AccSocket, {otp,meta}, meta(D)),
-    [ok = socket_copy_opt(ListenSocket, Opt, AccSocket)
-     || Opt <- socket_inherit_opts()],
+    ok = socket_copy_opts(ListenSocket, AccSocket, socket_inherit_opts()),
     handle_connected(
       P#params{socket = AccSocket}, D#{type => accept},
       [{{timeout, accept}, cancel},

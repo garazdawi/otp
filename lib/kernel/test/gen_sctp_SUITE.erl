@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -48,7 +48,8 @@
          open_multihoming_ipv6_socket/1,
          open_multihoming_ipv4_and_ipv6_socket/1,
          basic_stream/1, xfer_stream_min/1, active_n/1,
-         peeloff_active_once/1, peeloff_active_true/1, peeloff_active_n/1,
+         peeloff_active_once_ipv4/1, peeloff_active_once_ipv6/1,
+         peeloff_active_true/1, peeloff_active_n/1,
          buffers/1, send_block/1,
          names_unihoming_ipv4/1, names_unihoming_ipv6/1,
          names_multihoming_ipv4/1, names_multihoming_ipv6/1,
@@ -86,6 +87,8 @@ groups() ->
      {smoke,       [], smoke_cases()},
      {old_solaris, [], old_solaris_cases()},
      {extensive,   [], extensive_cases()},
+     {peeloff,     [], peeloff_cases()},
+     {names,       [], names_cases()},
 
      {sockaddr,    [], sockaddr_cases()},
 
@@ -111,11 +114,27 @@ extensive_cases() ->
      open_unihoming_ipv6_socket,
      open_multihoming_ipv6_socket,
      open_multihoming_ipv4_and_ipv6_socket, active_n,
-     xfer_stream_min, peeloff_active_once,
-     peeloff_active_true, peeloff_active_n, buffers, send_block,
-     names_unihoming_ipv4, names_unihoming_ipv6,
-     names_multihoming_ipv4, names_multihoming_ipv6,
+     xfer_stream_min,
+     {group, peeloff},
+     buffers, send_block,
+     {group, names},
      recv_close
+    ].
+
+peeloff_cases() ->
+    [
+     peeloff_active_once_ipv4,
+     peeloff_active_once_ipv6,
+     peeloff_active_true,
+     peeloff_active_n
+    ].
+
+names_cases() ->
+    [
+     names_unihoming_ipv4,
+     names_unihoming_ipv6,
+     names_multihoming_ipv4,
+     names_multihoming_ipv6
     ].
 
 sockaddr_cases() ->
@@ -182,9 +201,16 @@ end_per_suite(Config0) ->
 init_per_group(sockaddr = _GroupName, Config) ->
     ?P("init_per_group(sockaddr) -> do we support 'socket'"),
     try socket:info() of
-	_ ->
+	#{load_nif_result := ok} ->
             ?P("init_per_group(sockaddr) -> we support 'socket'"),
-            Config
+            Config;
+	#{load_nif_result := LoadRes} ->
+	    ?P("init_per_group(sockaddr) -> 'socket' not supperted"
+	       "~n   (socket) nif load result: ~p", [LoadRes]),
+	    {skip, "esock not supported"};
+	_ ->
+            ?P("init_per_group(sockaddr) -> 'socket' not supperted"),
+	    {skip, "esock not supported"}
     catch
         error : notsup ->
             ?P("init_per_group(sockaddr) -> we *do not* support 'socket'"),
@@ -1753,21 +1779,140 @@ do_from_other_process(Fun) ->
 
 %% Peel off an SCTP stream socket ({active,once}).
 
-peeloff_active_once(Config) ->
-    peeloff(Config, [{active,once}]).
+peeloff_active_once_ipv4(Config) ->
+    Cond =
+	fun() ->
+		?P("~s:cond -> verify IPv4 (inet) support", [?FUNCTION_NAME]),
+		?HAS_SUPPORT_IPV4()
+	end,
+    Pre =
+	fun() ->
+		?P("~s:pre -> try get \"proper\" local address",
+		   [?FUNCTION_NAME]),
+		case ?WHICH_LOCAL_ADDR(inet) of
+		    {ok, Addr} ->
+			?P("~s:pre -> \"proper\" local address: ~p",
+			   [?FUNCTION_NAME, Addr]),
+			Addr;
+		    {error, _Reason} ->
+			?P("~s:pre -> no \"proper\" local address",
+			   [?FUNCTION_NAME]),
+			undefined
+		end
+	end,
+    TC =
+	fun(Addr) ->
+		?P("~s:tc -> run with loopback address", [?FUNCTION_NAME]),
+		peeloff(Config, [{active,once}], {127,0,0,1}),
+		?P("~s:tc -> maybe run with \"poper\" address",
+		   [?FUNCTION_NAME]),
+		peeloff(Config, [{active,once}], Addr)
+	end,
+    Post =
+	fun(_) ->
+		?P("~s:post -> nothing", [?FUNCTION_NAME]),
+		ok
+	end,
+    ?TC_TRY(?FUNCTION_NAME, Cond, Pre, TC, Post).
+
+peeloff_active_once_ipv6(Config) ->
+    Cond =
+	fun() ->
+		?P("~s:cond -> verify IPv6 (inet6) support", [?FUNCTION_NAME]),
+		?HAS_SUPPORT_IPV6()
+	end,
+    Pre =
+	fun() ->
+		?P("~s:pre -> try get \"proper\" local address",
+		   [?FUNCTION_NAME]),
+		case ?WHICH_LOCAL_ADDR(inet6) of
+		    {ok, Addr} ->
+			?P("~s:pre -> \"proper\" local address: ~p",
+			   [?FUNCTION_NAME, Addr]),
+			Addr;
+		    {error, _Reason} ->
+			?P("~s:pre -> no \"proper\" local address",
+			   [?FUNCTION_NAME]),
+			undefined
+		end
+	end,
+    TC =
+	fun(Addr) ->
+		?P("~s:tc -> run with loopback address", [?FUNCTION_NAME]),
+		peeloff(Config, [{active,once}], {0,0,0,0,0,0,0,1}),
+		?P("~s:tc -> maybe run with local address", [?FUNCTION_NAME]),
+		peeloff(Config, [{active,once}], Addr)
+	end,
+    Post =
+	fun(_) ->
+		?P("~s:post -> nothing", [?FUNCTION_NAME]),
+		ok
+	end,
+    ?TC_TRY(?FUNCTION_NAME, Cond, Pre, TC, Post).
+
 
 %% Peel off an SCTP stream socket ({active,true}).
 
 peeloff_active_true(Config) ->
-    peeloff(Config, [{active,true}]).
+    Cond =
+	fun() ->
+		?P("~s:cond ->  verify IPv4 (inet) support", [?FUNCTION_NAME]),
+		?HAS_SUPPORT_IPV4()
+	end,
+    Pre =
+	fun() ->
+		?P("~s:pre -> nothing", [?FUNCTION_NAME]),
+		undefined
+	end,
+    TC =
+	fun(_) ->
+		?P("~s:tc -> run", [?FUNCTION_NAME]),
+		peeloff(Config, [{active,true}])
+	end,
+    Post =
+	fun(_) ->
+		?P("~s:post -> nothing", [?FUNCTION_NAME]),
+		ok
+	end,
+    ?TC_TRY(?FUNCTION_NAME, Cond, Pre, TC, Post).
+		    
 
 %% Peel off an SCTP stream socket ({active,N}).
 
 peeloff_active_n(Config) ->
-    peeloff(Config, [{active,1}]).
+    Cond =
+	fun() ->
+		?P("~s:cond -> verify (inet) support", [?FUNCTION_NAME]),
+		?HAS_SUPPORT_IPV4()
+	end,
+    Pre =
+	fun() ->
+		?P("~s:pre -> nothing", [?FUNCTION_NAME]),
+		undefined
+	end,
+    TC =
+	fun(_) ->
+		?P("~s:tc -> run", [?FUNCTION_NAME]),
+		peeloff(Config, [{active,1}])
+	end,
+    Post =
+	fun(_) ->
+		?P("~s:post -> nothing", [?FUNCTION_NAME]),
+		ok
+	end,
+    ?TC_TRY(?FUNCTION_NAME, Cond, Pre, TC, Post).
+
 
 peeloff(Config, SockOpts) when is_list(Config) ->
-    Addr = {127,0,0,1},
+    peeloff(Config, SockOpts, {127,0,0,1}).
+
+peeloff(_Config, _SockOpts, undefined) ->
+    ok;
+peeloff(Config, SockOpts, Addr) when is_list(Config) ->
+    ?P("~s -> entry with"
+       "~n   Config:   ~p"
+       "~n   SockOpts: ~p"
+       "~n   Addr:     ~p", [?FUNCTION_NAME, Config, SockOpts, Addr]),
     Stream = 0,
     Timeout = 333,
     InheritOpts = [{priority, 3}, {sctp_nodelay, true}, {linger, {true, 7}}],
@@ -1826,22 +1971,47 @@ peeloff(Config, SockOpts) when is_list(Config) ->
     end,
     %%
     inet:i(sctp),
+    ?P("~s -> try (verbose) close of S1 (~p)", [?FUNCTION_NAME, S1]),
     socket_close_verbose(S1, StartTime),
+    ?P("~s -> await (normal) exit signal from ~p", [?FUNCTION_NAME, S1]),
+    receive {'EXIT', S1, normal} -> ok end,
+    ?P("~s -> try (verbose) close of S2 (~p)", [?FUNCTION_NAME, S2]),
     socket_close_verbose(S2, StartTime),
+    ?P("~s -> await (normal) exit signal from ~p", [?FUNCTION_NAME, S2]),
+    receive {'EXIT', S2, normal} -> ok end,
+    ?P("~s -> await shutdown event from S3 (~p)", [?FUNCTION_NAME, S3]),
     receive
 	{S3,{Addr,P2,#sctp_shutdown_event{assoc_id=S3Ai_X}}} ->
+	    ?P("~s -> received expected shutdown event", [?FUNCTION_NAME]),
 	    match_unless_solaris(S3Ai, S3Ai_X)
     after Timeout ->
+	    ?P("~s -> (shutdown event) timeout", [?FUNCTION_NAME]),
 	    socket_bailout([S3], StartTime)
     end,
+    ?P("~s -> await assoc-change event from S3 (~p)", [?FUNCTION_NAME, S3]),
     receive
 	{S3,{Addr,P2,#sctp_assoc_change{state=shutdown_comp,
-					assoc_id=S3Ai}}} -> ok
+					assoc_id=S3Ai}}} ->
+	    ?P("~s -> received expected assoc-change event", [?FUNCTION_NAME]),
+	    ok
     after Timeout ->
+	    ?P("~s -> (assoc-change event) timeout", [?FUNCTION_NAME]),
 	    socket_bailout([S3], StartTime)
     end,
+    ?P("~s -> try (verbose) close of S3 (~p)", [?FUNCTION_NAME, S3]),
     socket_close_verbose(S3, StartTime),
-    [] = flush(),
+    ?P("~s -> await (normal) exit signal from ~p", [?FUNCTION_NAME, S3]),
+    receive {'EXIT', S3, normal} -> ok end,
+    ?P("~s -> try flush events - expect none", [?FUNCTION_NAME]),
+    case flush() of
+	[] ->
+	    ok;
+	UnexpectedEvents ->
+	    ?P("~s -> unexpected events when flushing:"
+	       "~n   ~p", [?FUNCTION_NAME, UnexpectedEvents]),
+	    exit({unexpected_evs, UnexpectedEvents})
+    end,
+    ?P("~s -> done", [?FUNCTION_NAME]),
     ok.
 
 %% Check sndbuf and recbuf behaviour.
@@ -1948,7 +2118,7 @@ send_block(Config) when is_list(Config) ->
 
 %% Test opening a multihoming ipv4 socket.
 open_multihoming_ipv4_socket(Config) when is_list(Config) ->
-    ?P("get addrs by family (inet)"),
+    ?P("~s -> get addrs by family (inet, 2)", [?FUNCTION_NAME]),
     case get_addrs_by_family(inet, 2) of
 	{ok, [Addr1, Addr2]} ->
             ?P("got addrs: "
@@ -1965,8 +2135,11 @@ open_multihoming_ipv4_socket(Config) when is_list(Config) ->
 %% non-working ipv6 setup.  Test opening a unihoming (non-multihoming)
 %% ipv6 socket.
 open_unihoming_ipv6_socket(Config) when is_list(Config) ->
+    ?P("~s -> get addrs by family (inet6, 1)", [?FUNCTION_NAME]),
     case get_addrs_by_family(inet6, 1) of
 	{ok, [Addr]} ->
+            ?P("got addr: "
+               "~n      Addr: ~p", [Addr]),
 	    do_open_and_connect([Addr], Addr);
 	{error, Reason} ->
 	    {skip, Reason}
@@ -2176,14 +2349,21 @@ do_open_and_connect(ServerAddresses, AddressToConnectTo) ->
     do_open_and_connect(ServerAddresses, AddressToConnectTo, Fun).
 %%
 do_open_and_connect(ServerAddresses, AddressToConnectTo, Fun) ->
+    ?P("~s -> entry with"
+       "~n   ServerAddresses:    ~p"
+       "~n   AddressToConnectTo: ~p",
+       [?FUNCTION_NAME, ServerAddresses, AddressToConnectTo]),
     {ServerFamily, ServerOpts} = get_family_by_addrs(ServerAddresses),
-    io:format("Serving ~p addresses: ~p~n",
-	      [ServerFamily, ServerAddresses]),
+    ?P("~s -> Serving ~p addresses: ~p~n",
+       [?FUNCTION_NAME, ServerFamily, ServerAddresses]),
     S1 = ok(gen_sctp:open(0, [{ip,Addr} || Addr <- ServerAddresses] ++
 			      [ServerFamily|ServerOpts])),
     ok = gen_sctp:listen(S1, true),
     P1 = ok(inet:port(S1)),
-    ?P("S1: ~p", [inet:sockname(S1)]),
+    ?P("~s -> "
+       "~n   S1:          ~p"
+       "~n   port of S1:  ~p"
+       "~n   sockname S1: ~p", [?FUNCTION_NAME, S1, P1, inet:sockname(S1)]),
     ClientFamily = get_family_by_addr(AddressToConnectTo),
     ClientOpts =
 	[ClientFamily |
@@ -2194,19 +2374,26 @@ do_open_and_connect(ServerAddresses, AddressToConnectTo, Fun) ->
 		 []
 	 end],
     S2 = ok(gen_sctp:open(0, ClientOpts)),
-    ?P("S2: ~p", [inet:sockname(S2)]),
+    ?P("~s -> "
+       "~n   S2:          ~p"
+       "~n   sockname S2: ~p", [?FUNCTION_NAME, S2, inet:sockname(S2)]),
     log(open),
-    io:format("Connecting to ~p ~p~n",
-	      [ClientFamily, AddressToConnectTo]),
+    ?P("~s -> [~w] try connect to ~p",
+       [?FUNCTION_NAME, ClientFamily, AddressToConnectTo]),
     %% Verify client can connect
     #sctp_assoc_change{state=comm_up} = S2Assoc =
 	ok(gen_sctp:connect(S2, AddressToConnectTo, P1, [])),
     log(comm_up),
     %% verify server side also receives comm_up from client
+    ?P("~s -> await (server side) comm-up (eventually)", [?FUNCTION_NAME]),
     S1Assoc = recv_comm_up_eventually(S1),
+    ?P("~s -> verify", [?FUNCTION_NAME]),
     Result = Fun(S1, ServerFamily, S1Assoc, S2, ClientFamily, S2Assoc),
+    ?P("~s -> cleanup", [?FUNCTION_NAME]),
     ok = gen_sctp:close(S2),
     ok = gen_sctp:close(S1),
+    ?P("~s -> done when"
+       "~n   Result: ~p", [?FUNCTION_NAME, Result]),
     Result.
 
 %% If at least one of the addresses is an ipv6 address, return inet6, else inet.
@@ -2261,8 +2448,8 @@ recv_close(Config) when is_list(Config) ->
             %% Make sure it does not die for some other reason...
             ?P("unexpected reader termination:"
                "~n   ~p", [PreReason]),
-            (catch gen_sctp:close(S)),
-            (catch gen_sctp:close(C)),
+            ?CATCH_AND_IGNORE( gen_sctp:close(S) ),
+            ?CATCH_AND_IGNORE( gen_sctp:close(C) ),
             ct:fail("Unexpected pre close from reader (~p): ~p",
                           [Pid, PreReason]);
         {Pid, ready} ->
@@ -2273,8 +2460,8 @@ recv_close(Config) when is_list(Config) ->
             %% how long it will take to iterate through all the
             %% addresses of a host...
             ?P("reader ready timeout"),
-            (catch gen_sctp:close(S)),
-            (catch gen_sctp:close(C)),
+            ?CATCH_AND_IGNORE( gen_sctp:close(S) ),
+            ?CATCH_AND_IGNORE( gen_sctp:close(C) ),
             ct:fail("Unexpected pre close timeout (~p)", [Pid])
     end,
 
@@ -2283,8 +2470,8 @@ recv_close(Config) when is_list(Config) ->
         Any ->
             ?P("Received unexpected message: "
                "~n   ~p", [Any]),
-            (catch gen_sctp:close(S)),
-            (catch gen_sctp:close(C)),
+            ?CATCH_AND_IGNORE( gen_sctp:close(S) ),
+            ?CATCH_AND_IGNORE( gen_sctp:close(C) ),
             ct:fail("Unexpected message: ~p", [Any])
     after 5000 ->
             ok
@@ -2296,23 +2483,23 @@ recv_close(Config) when is_list(Config) ->
     receive
         {'DOWN', MRef, process, Pid, {error, closed}} ->
             ?P("expected reader termination result"),
-            (catch gen_sctp:close(C)),
+            ?CATCH_AND_IGNORE( gen_sctp:close(C) ),
             ok;
         {'DOWN', MRef, process, Pid, PostReason} ->
             ?P("unexpected reader termination: "
                "~n   ~p", [PostReason]),
-            (catch gen_sctp:close(C)),
+            ?CATCH_AND_IGNORE( gen_sctp:close(C) ),
             ct:fail("Unexpected post close from reader (~p): ~p",
                           [Pid, PostReason])
     after 5000 ->
             ?P("unexpected reader termination timeout"),
             demonitor(MRef, [flush]),
-            (catch gen_sctp:close(C)),
+            ?CATCH_AND_IGNORE( gen_sctp:close(C) ),
             exit(Pid, kill),
             ct:fail("Reader (~p) termination timeout", [Pid])
     end,
     ?P("close client socket"),
-    (catch gen_sctp:close(C)),
+    ?CATCH_AND_IGNORE( gen_sctp:close(C) ),
     ?P("done"),
     ok.
 
@@ -2550,7 +2737,7 @@ do_simple_sockaddr_send_recv(#{family := _Fam} = SockAddr, _) ->
                       receive
                           {die, Self} ->
                               ?P("[server] terminating"),
-                              (catch gen_tcp:close(Sock)),
+                              ?CATCH_AND_IGNORE( gen_tcp:close(Sock) ),
                               exit(normal)
                       end
               end,
@@ -2675,8 +2862,8 @@ do_simple_sockaddr_send_recv(#{family := _Fam} = SockAddr, _) ->
     end,
     
     ?P("cleanup"),
-    (catch gen_sctp:close(CSock1)),
-    (catch gen_sctp:close(CSock2)),
+    ?CATCH_AND_IGNORE( gen_sctp:close(CSock1) ),
+    ?CATCH_AND_IGNORE( gen_sctp:close(CSock2) ),
 
     ?P("done"),
     ok.

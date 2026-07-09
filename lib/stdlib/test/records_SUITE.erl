@@ -24,14 +24,14 @@
          init_per_suite/1, end_per_suite/1,
 	 init_per_group/2, end_per_group/2,
          init_per_testcase/2, end_per_testcase/2]).
--export([doctests/1]).
+-export([doctests/1, doctests_native_records/1]).
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
      {timetrap,{minutes,1}}].
 
 all() ->
-    [doctests].
+    [doctests, doctests_native_records].
 
 init_per_suite(Config) ->
     Config.
@@ -52,4 +52,10 @@ end_per_testcase(_Case, _Config) ->
     ok.
 
 doctests(_Config) ->
-   shell_docs:test(records, []).
+   ct_doctest:module(records, [{skipped_blocks, 0},
+                               {missing_tests, [{get_definition, 2}]}]).
+
+doctests_native_records(Config) ->
+    Path = filename:join(proplists:get_value(data_dir, Config),
+                         "ref_man_native_records.md"),
+    ok = ct_doctest:file(Path, [{skipped_blocks, 13}]).

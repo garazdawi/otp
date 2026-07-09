@@ -4,8 +4,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
+%% Copyright Ericsson AB 2022-2026. All Rights Reserved.
 %% Copyright 2004-2010 held by the authors. All Rights Reserved.
-%% Copyright Ericsson AB 2022-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -37,6 +37,8 @@
 
 -module(typer_core).
 -moduledoc false.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([run/1]).
 
@@ -909,7 +911,7 @@ analyze_core_tree(Core, Records, SpecInfo, CbInfo, ExpTypes, Analysis, File) ->
   OldExpTypes = dialyzer_codeserver:get_temp_exported_types(CS5),
   MergedExpTypes = sets:union(ExpTypes, OldExpTypes),
   CS6 = dialyzer_codeserver:insert_temp_exported_types(MergedExpTypes, CS5),
-  ExFuncs = [{0,F,A} || {_,_,{F,A}} <- cerl:module_exports(Tree)],
+  ExFuncs = [{0,cerl:fname_id(Es),cerl:fname_arity(Es)} || Es <- cerl:module_exports(Tree)],
   CG = Analysis#analysis.callgraph,
   {V, E} = dialyzer_callgraph:scan_core_tree(Tree, CG),
   dialyzer_callgraph:add_edges(E, V, CG),

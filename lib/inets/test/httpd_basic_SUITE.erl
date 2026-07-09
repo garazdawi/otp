@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -107,6 +107,9 @@ DUMMY
 		 {server_name,   "httpd_test"}, 
 		 {server_root,   PrivDir},
 		 {document_root, PrivDir}, 
+                 {modules, [mod_alias, mod_auth, mod_esi, mod_actions,
+                            mod_cgi, mod_dir, mod_get, mod_head,
+                            mod_log, mod_disk_log]},
 		 {bind_address,  "localhost"}],
 
     [{httpd_conf, HttpdConf}, {cgi_dir, CgiDir},

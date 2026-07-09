@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1998-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -428,12 +428,13 @@ run(Config, Tests) ->
 
 run(Tests, File, WriteBeam) ->
     F = fun({N,P,Ws,E}, BadL) ->
-                case catch run_test(P, File, Ws, WriteBeam) of
-                    E -> 
-                        BadL;
-                    Bad -> 
+                try run_test(P, File, Ws, WriteBeam) of
+                    E ->
+                        BadL
+                catch
+                    error:Bad:Stack ->
                         io:format("~nTest ~p failed. Expected~n  ~p~n"
-                                  "but got~n  ~p~n", [N, E, Bad]),
+                                  "but got~n  ~p ~p~n", [N, E, Bad, Stack]),
 			fail()
                 end
         end,
@@ -445,12 +446,13 @@ run2(Config, Tests) ->
 
 run2(Tests, File, WriteBeam) ->
     F = fun({N,P,Ws,E}, BadL) ->
-                case catch filter(run_test(P, File, Ws, WriteBeam)) of
+                try filter(run_test(P, File, Ws, WriteBeam)) of
                     E ->
-                        BadL;
-                    Bad ->
+                        BadL
+                catch
+                    error:Bad:Stack ->
                         io:format("~nTest ~p failed. Expected~n  ~p~n"
-                                  "but got~n  ~p~n", [N, E, Bad]),
+                                  "but got~n  ~p ~p~n", [N, E, Bad, Stack]),
 			fail()
                 end
         end,

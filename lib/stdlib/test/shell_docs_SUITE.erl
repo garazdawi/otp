@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2020-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2020-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@
 -export([render/1, links/1, normalize/1, render_prop/1,render_non_native/1, ansi/1, columns/1, render_man/1]).
 -export([render_function/1, render_type/1, render_callback/1, doctests/1]).
 
--export([render_all/1, update_render/0, update_render/1]).
+-export([render_all/1, update_render/0, update_render/1, update_render_modules/0]).
 
 -export([execute/3]).
 
@@ -93,7 +93,7 @@ end_per_testcase(_TestCase, Config) ->
 %% in the data_dir in order to compare then with the original
 %% when we fix bugs so that we don't break anything.
 %%
-%% This testcase is always run so that we do now forget to
+%% This testcase is always run so that we do not forget to
 %% check that any bugfix does not break the current behaviour.
 %%
 %% If you do a bugfix that does not break this testcase when
@@ -138,53 +138,30 @@ read_file(Filename) ->
 
 strip_comment(Data) ->
     case re:replace(Data, "^%.*\n", "", [{return, binary}]) of
-        Data -> {ok, Data};
+        Data -> {ok, fixup(Data)};
         NewData -> strip_comment(NewData)
     end.
 
 update_render() ->
-    update_render(
-      filename:join([os:getenv("ERL_TOP"),
-                     "lib", "stdlib", "test", "shell_docs_SUITE_data"])).
-update_render(DataDir) ->
+    update_render(false).
+
+update_render_modules() ->
+    update_render(true).
+
+update_render(Modules) when is_boolean(Modules) ->
+      update_render(filename:join([os:getenv("ERL_TOP"),
+                     "lib", "stdlib", "test", "shell_docs_SUITE_data"]),
+                  Modules).
+update_render(DataDir, Modules) ->
     os:cmd("git rm " ++ filename:join(DataDir, "*.txt"), #{ exception_on_failure => true }),
-    os:cmd("git rm " ++ filename:join(DataDir, "*.docs_v1"), #{ exception_on_failure => true }),
+    Modules andalso os:cmd("git rm " ++ filename:join(DataDir, "*.docs_v1"), #{ exception_on_failure => true }),
     ok = filelib:ensure_path(DataDir),
     lists:foreach(
       fun(Module) ->
-              case code:get_doc(Module) of
-                  {ok, Docs} ->
-                      NewEntries =
-                          case beam_lib:chunks(find_path(Module),[abstract_code]) of
-                              {ok,{Module,[{abstract_code,{raw_abstract_v1,AST}}]}} ->
-                                  lists:map(fun({{Type, F, A}, Anno, Sig, #{} = Doc, Meta} = E) ->
-
-                                                    case lists:search(
-                                                           fun({attribute, _, spec, {FA, _}}) when Type =:= function ->
-                                                                   FA =:= {F,A};
-                                                              ({attribute, _, What, {Name, _, Args}}) when What =:= Type; What =:= opaque andalso Type =:= type ->
-                                                                   {Name,length(Args)} =:= {F,A};
-                                                              (_) ->
-                                                                   false
-                                                           end, AST) of
-                                                        {value, Signature} ->
-                                                            {{Type, F, A}, Anno, Sig, Doc, Meta#{ specification => [Signature] }};
-                                                        _ -> throw({did_not_find, E})
-                                                    end;
-                                               (E) -> E
-
-                                            end, Docs#docs_v1.docs);
-                              {ok,{shell_docs_SUITE,[{abstract_code,no_abstract_code}]}} ->
-                                  Docs#docs_v1.docs
-                          end,
-
-                      Name = filename:join(DataDir, atom_to_list(Module) ++ ".docs_v1"),
-
-                      ok = file:write_file(Name,
-                             io_lib:format("~ts\n~w.",[header(), Docs#docs_v1{ docs = NewEntries }])),
-                      os:cmd("git add " ++ Name, #{ exception_on_failure => true });
-                  {error, _} ->
-                      ok
+              if Modules ->
+                    add_module_to_render(Module, DataDir);
+                not Modules ->
+                    fetch_module_to_render(Module, DataDir)
               end,
               maps:map(
                 fun(FName, Output) ->
@@ -193,6 +170,47 @@ update_render(DataDir) ->
                         os:cmd("git add " ++ FullName, #{ exception_on_failure => true })
                 end, render_module(Module, DataDir))
       end, ?RENDER_MODULES).
+
+add_module_to_render(Module, DataDir) ->
+    case code:get_doc(Module) of
+        {ok, Docs} ->
+            NewEntries =
+                case beam_lib:chunks(find_path(Module),[abstract_code]) of
+                    {ok,{Module,[{abstract_code,{raw_abstract_v1,AST}}]}} ->
+                        lists:map(fun({{Type, F, A}, Anno, Sig, #{} = Doc, Meta} = E) ->
+
+                                        case lists:search(
+                                                fun({attribute, _, spec, {FA, _}}) when Type =:= function ->
+                                                        FA =:= {F,A};
+                                                    ({attribute, _, What, {Name, _, Args}}) when What =:= Type; What =:= opaque andalso Type =:= type ->
+                                                        {Name,length(Args)} =:= {F,A};
+                                                    (_) ->
+                                                        false
+                                                end, AST) of
+                                            {value, Signature} ->
+                                                {{Type, F, A}, Anno, Sig, Doc, Meta#{ specification => [Signature] }};
+                                            _ -> throw({did_not_find, E})
+                                        end;
+                                    (E) -> E
+
+                                end, Docs#docs_v1.docs);
+                    {ok,{shell_docs_SUITE,[{abstract_code,no_abstract_code}]}} ->
+                        Docs#docs_v1.docs
+                end,
+
+            Name = filename:join(DataDir, atom_to_list(Module) ++ ".docs_v1"),
+
+            ok = file:write_file(Name,
+                    io_lib:format("~ts\n~w.",[header(), Docs#docs_v1{ docs = NewEntries }])),
+            os:cmd("git add " ++ Name, #{ exception_on_failure => true });
+        {error, _} ->
+            ok
+    end.
+
+fetch_module_to_render(Module, DataDir) ->
+    Name = filename:join(DataDir, atom_to_list(Module) ++ ".docs_v1"),
+    {ok, Docs} = file:consult(Name),
+    Docs.
 
 header() ->
     {{YY, _, _}, _} = erlang:localtime(),
@@ -544,11 +562,11 @@ render_module(Mod, #docs_v1{ docs = Docs } = D) ->
     Files =
         #{
           SMod ++ ".txt" =>
-              unicode:characters_to_binary(shell_docs:render(Mod, D, Opts)),
+              fixup(unicode:characters_to_binary(shell_docs:render(Mod, D, Opts))),
           SMod ++ "_type.txt" =>
-              unicode:characters_to_binary(shell_docs:render_type(Mod, D, Opts)),
+              fixup(unicode:characters_to_binary(shell_docs:render_type(Mod, D, Opts))),
           SMod ++ "_cb.txt" =>
-                    unicode:characters_to_binary(shell_docs:render_callback(Mod, D, Opts))
+                    fixup(unicode:characters_to_binary(shell_docs:render_callback(Mod, D, Opts)))
          },
     lists:foldl(
       fun({_Type,_Anno,_Sig,none,_Meta}, Acc) ->
@@ -556,8 +574,8 @@ render_module(Mod, #docs_v1{ docs = Docs } = D) ->
          ({{function,Name,Arity},_Anno,_Sig,_Doc,_Meta}, Acc) ->
               FAName = SMod ++ "_"++atom_to_list(Name)++"_"++integer_to_list(Arity)++"_func.txt",
               FName = SMod ++ "_"++atom_to_list(Name)++"_func.txt",
-              FADocs = unicode:characters_to_binary(shell_docs:render(Mod, Name, Arity, D, Opts)),
-              FDocs = unicode:characters_to_binary(shell_docs:render(Mod, Name, D, Opts)),
+              FADocs = fixup(unicode:characters_to_binary(shell_docs:render(Mod, Name, Arity, D, Opts))),
+              FDocs = fixup(unicode:characters_to_binary(shell_docs:render(Mod, Name, D, Opts))),
               case string:equal(FADocs,FDocs) of
                   true -> 
                       Acc#{ sanitize(FAName) => FADocs };
@@ -568,11 +586,11 @@ render_module(Mod, #docs_v1{ docs = Docs } = D) ->
          ({{type,Name,Arity},_Anno,_Sig,_Doc,_Meta}, Acc) ->
               FName = SMod ++ "_"++atom_to_list(Name)++"_"++integer_to_list(Arity)++"_type.txt",
               Acc#{ sanitize(FName) =>
-                        unicode:characters_to_binary(shell_docs:render_type(Mod, Name, Arity, D, Opts))};
+                        fixup(unicode:characters_to_binary(shell_docs:render_type(Mod, Name, Arity, D, Opts)))};
          ({{callback,Name,Arity},_Anno,_Sig,_Doc,_Meta}, Acc) ->
               FName = SMod ++ "_"++atom_to_list(Name)++"_"++integer_to_list(Arity)++"_cb.txt",
               Acc#{ sanitize(FName) =>
-                        unicode:characters_to_binary(shell_docs:render_callback(Mod, Name, Arity, D, Opts))}
+                        fixup(unicode:characters_to_binary(shell_docs:render_callback(Mod, Name, Arity, D, Opts)))}
       end, Files, Docs);
 render_module(Mod, Datadir) ->
     {ok, [Docs]} = file:consult(filename:join(Datadir, atom_to_list(Mod) ++ ".docs_v1")),
@@ -584,6 +602,13 @@ sanitize(FName) ->
               re:replace(Txt,Re,Replace,[global,{return,list}])
       end, FName, [{"/","slash"},{":","colon"},
                    {"\\*","star"},{"<","lt"},{">","gt"},{"=","eq"}]).
+
+fixup(Data) ->
+    Replacements = [{"\\Q\e(B\e[m\\E", "\e[0m"},
+                    {"\e\\[;+", "\e["}],
+    lists:foldl(fun({Replace, With}, D) ->
+        re:replace(D, Replace, With, [{return, binary}, unicode, global])
+    end, Data, Replacements).
 
 ansi(_Config) ->
     {ok, Docs} = code:get_doc(?MODULE),
@@ -640,13 +665,21 @@ columns(_Config) ->
     ok.
 
 doctests(_Config) ->
-    shell_docs:test(
-      shell_docs_test,
-      [
-       {{function, module, 2}, erl_eval:add_binding('Prebound', hello,
-                                                   erl_eval:new_bindings())}
-      ]),
-    ok.
+    ct_doctest:module(shell_docs,
+                      [{skipped_blocks, 0},
+                       {missing_tests,
+                        [{normalize, 1},
+                         {render, 3},
+                         {render, 4},
+                         {render, 5},
+                         {render_callback, 3},
+                         {render_callback, 4},
+                         {render_callback, 5},
+                         {render_type, 3},
+                         {render_type, 4},
+                         {render_type, 5},
+                         {supported_tags, 0},
+                         {validate, 1}]}]).
 
 %%
 %% Parallel map function.

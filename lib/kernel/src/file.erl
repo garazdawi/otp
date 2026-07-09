@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -183,12 +183,14 @@ operating system kernel.
 > handling the file exits. The dead file process can hang if a process tries to
 > access it later. This will be fixed in a future release.
 
-## See Also
+### See Also
 
 `m:filename`
 """.
 
 -removed([{pid2name,1,"this functionality is no longer supported"}]).
+
+-unsafe([{consult, '_', possibly}, {path_consult, '_', possibly}]).
 
 %% Interface module for the file server and the file io servers.
 

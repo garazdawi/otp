@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -72,7 +72,7 @@ timer:cancel(R),
 ...
 ```
 
-## Notes
+## Notes on timer behavior
 
 A timer can always be removed by calling `cancel/1`.
 
@@ -384,7 +384,7 @@ finished or not.
 > started in intervals of 1ms, which would result in 1,000,000 processes running
 > at the same time, far more than a node started with default settings allows
 > (see the
-> [System Limits section in the Effiency Guide](`e:system:system_limits.md`)).
+> [System Limits section in the Efficiency Guide](`e:system:system_limits.md`)).
 """.
 -spec apply_interval(Time, Module, Function, Arguments) ->
           {'ok', TRef} | {'error', Reason}
@@ -562,7 +562,7 @@ sleep(T) ->
 -doc(#{equiv => tc(Fun, microsecond)}).
 -doc(#{since => ~"OTP R14B03"}).
 -spec tc(Fun) -> {Time, Value}
-              when Fun :: function(),
+              when Fun :: fun(() -> term()),
                    Time :: integer(),
                    Value :: term().
 tc(F) ->
@@ -583,12 +583,12 @@ Measures the execution time of `Fun` in `TimeUnit` if called as `tc(Fun, TimeUni
 """.
 -doc #{ since => ~"OTP R14B" }.
 -spec tc(Fun, Arguments) -> {Time, Value}
-              when Fun :: function(),
+              when Fun :: fun((...) -> term()),
                    Arguments :: [term()],
                    Time :: integer(),
                    Value :: term();
         (Fun, TimeUnit) -> {Time, Value}
-              when Fun :: function(),
+              when Fun :: fun(() -> term()),
                    TimeUnit :: erlang:time_unit(),
                    Time :: integer(),
                    Value :: term().
@@ -621,7 +621,7 @@ Equivalent to [`tc(erlang, apply, [Fun, Arguments], TimeUnit)`](`tc/4`) if calle
                    Time :: integer(),
                    Value :: term();
         (Fun, Arguments, TimeUnit) -> {Time, Value}
-              when Fun :: function(),
+              when Fun :: fun((...) -> term()),
                    Arguments :: [term()],
                    TimeUnit :: erlang:time_unit(),
                    Time :: integer(),

@@ -23,6 +23,70 @@ limitations under the License.
 
 This document describes the changes made to the Wx application.
 
+## Wx 2.6
+
+### Fixed Bugs and Malfunctions
+
+- The examples for `wx` are now only installed in one place (in `doc/examples`).
+
+  Own Id: OTP-20119 Aux Id: ERIERL-1315, [PR-11032]
+
+[PR-11032]: https://github.com/erlang/otp/pull/11032
+
+### Improvements and New Features
+
+- Documentation about how to validate the SBOM using sigstore has been added.
+
+  Own Id: OTP-19766 Aux Id: [GH-10151], [PR-10187]
+
+- Added support for `-unsafe` attributes, which is used to mark functions as unsafe to use. 
+  
+  This is similar to but separate from deprecation, and the compiler will by default now generate warnings for calls to functions in Erlang/OTP that are known to be always unsafe.
+  
+  Furthermore, `m:xref` can now be used to find calls to functions in another application that lack a `-doc` attribute (`undocumented_function_calls`), calls to functions in another application marked `-doc false.` (`private_function_calls`), as well as calls to unsafe functions (`unsafe_function_calls`).
+
+  Own Id: OTP-20066 Aux Id: [PR-10839]
+
+[GH-10151]: https://github.com/erlang/otp/issues/10151
+[PR-10187]: https://github.com/erlang/otp/pull/10187
+[PR-10839]: https://github.com/erlang/otp/pull/10839
+
+## Wx 2.5.4.1
+
+### Fixed Bugs and Malfunctions
+
+- The examples for `wx` are now only installed in one place (in `doc/examples`).
+
+  Own Id: OTP-20119 Aux Id: ERIERL-1315, [PR-11032]
+
+[PR-11032]: https://github.com/erlang/otp/pull/11032
+
+## Wx 2.5.4
+
+### Improvements and New Features
+
+- Release applications, tests, and documentation are now placed in their respective directories. Source SBOM with more packages.
+  
+  A `make release` application places only the necessary code in the release folder. The main change is that the documentation and examples are not part of the release folder anymore.
+  
+  `make release_docs` places the documentation in the released code under the `doc` folder.
+  
+  `make release_tests` places the tests in their own directory. It used to be the case that some source code was mixed with the tests, and this should not happen anymore.
+  
+  The Software Bill of Materials places the examples folders as if they are part of the `SPDX-otp-<app>-doc` packge, instead of placing examples as if they were running source code.
+  
+  Overall, this change cleans up many things that were not quite correct by definition, and everything should still continue to work as expected. To test a release, one can still run `./Install -minimal \`pwd\`` and add the release to the `PATH`. After that, one can run tests as usual, going into the released tests directory, entering `test_server` and running the emulator.
+  
+  Improves the source Software-Bill-of-Materials
+  
+  - The improvements adds new SPDX relations for `asmjit` and `zlib` to be `optional_components_of` the Erlang/OTP project.
+  - The `autoconf` scripts in `make` and `erts` have now been categorised as `build_tool_of` the Erlang/OTP project.
+  - All remaining `configure`, `configure.ac`, `config.h.in`, `Makefile.in`, `Makefile.src`, `EMakefile`, and `GNUMakefile` are now part of a specific SPDX package with relation `build_tool_of` the Erlang/OTP project.
+
+  Own Id: OTP-19886 Aux Id: [PR-10434]
+
+[PR-10434]: https://github.com/erlang/otp/pull/10434
+
 ## Wx 2.5.3
 
 ### Fixed Bugs and Malfunctions
@@ -137,6 +201,14 @@ This document describes the changes made to the Wx application.
   Own Id: OTP-18955 Aux Id: [PR-8026]
 
 [PR-8026]: https://github.com/erlang/otp/pull/8026
+
+## Wx 2.4.1.1
+
+### Fixed Bugs and Malfunctions
+
+* Fixed reading out of array bounds and potential memory leaks.
+
+  Own Id: OTP-19843 Aux Id: PR-10353
 
 ## Wx 2.4.1
 

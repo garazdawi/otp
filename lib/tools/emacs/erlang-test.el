@@ -103,14 +103,7 @@ concatenated to form an erlang file to test on.")
           (erlang-test-create-erlang-file erlang-file)
           (erlang-test-compile-tags erlang-file tags-file)
           (setq erlang-buffer (find-file-noselect erlang-file))
-          (if (< emacs-major-version 26)
-              (progn
-                (with-current-buffer erlang-buffer
-                  (setq-local tags-file-name tags-file))
-                ;; Setting global tags-file-name is a workaround for
-                ;; GNU Emacs bug#23164.
-                (setq tags-file-name tags-file))
-            (visit-tags-table tags-file t))
+          (visit-tags-table tags-file t)
           (erlang-test-complete-at-point tags-file)
           (erlang-test-completion-table)
           (erlang-test-xref-find-definitions erlang-file erlang-buffer))

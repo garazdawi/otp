@@ -2,7 +2,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
 %%
-%% Copyright Ericsson AB 1999-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,8 +42,10 @@
          wrapped_subtrees/1,
          t_abstract_type/1,t_erl_parse_type/1,t_type/1,
          t_epp_dodger/1,t_epp_dodger_clever/1,
+         gh11155/1,
          t_comment_scan/1,t_prettypr/1,test_named_fun_bind_ann/1,
-         test_maybe_expr_ann/1,test_mc_ann/1,test_zip_ann/1]).
+         test_maybe_expr_ann/1,test_mc_ann/1,test_zip_ann/1,
+         is_literal/1]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
@@ -52,9 +54,10 @@ all() ->
      revert_preserve_pos_changes,
      wrapped_subtrees,
      t_abstract_type,t_erl_parse_type,t_type,
-     t_epp_dodger,t_epp_dodger_clever,
+     t_epp_dodger,t_epp_dodger_clever,gh11155,
      t_comment_scan,t_prettypr,test_named_fun_bind_ann,
-     test_maybe_expr_ann,test_mc_ann,test_zip_ann].
+     test_maybe_expr_ann,test_mc_ann,test_zip_ann,
+     is_literal].
 
 groups() ->
     [].
@@ -397,6 +400,16 @@ t_epp_dodger_clever(Config) when is_list(Config) ->
     PrivDir   = ?config(priv_dir, Config),
     Filenames = ["epp_dodger_clever.erl"],
     ok = test_epp_dodger_clever(Filenames,DataDir,PrivDir),
+    ok.
+
+%% Test that erl_syntax handles macro-named native records.
+gh11155(Config) when is_list(Config) ->
+    DataDir = ?config(data_dir, Config),
+    File = filename:join(DataDir, "macro_native_record.erl"),
+    {ok, AST} = epp_dodger:parse_file(File, [no_fail]),
+    FormList = erl_syntax:form_list(AST),
+    _ = erl_syntax_lib:fold(fun(_Node, Acc) -> Acc end, ok, FormList),
+    _ = erl_syntax_lib:map(fun(Node) -> Node end, FormList),
     ok.
 
 t_comment_scan(Config) when is_list(Config) ->
@@ -754,6 +767,16 @@ validate_special_type(list,Node) ->
 	    ok
     end;
 validate_special_type(_,_) ->
+    ok.
+
+is_literal(_Config) ->
+    true = erl_syntax:is_literal(string_to_expr(~s'<<"abc">>')),
+    true = erl_syntax:is_literal(string_to_expr(~s'<<"abc"/utf8>>')),
+    true = erl_syntax:is_literal(string_to_expr(~s'~"abc"')),
+    true = erl_syntax:is_literal(string_to_expr(
+                                   ~s'~"""
+                                      abc
+                                      """')),
     ok.
 
 %%% scan_and_parse

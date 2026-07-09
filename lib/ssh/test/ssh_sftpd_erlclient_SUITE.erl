@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -124,7 +124,7 @@ init_per_testcase(TestCase, Config) ->
 		Spec = ssh_sftpd:subsystem_spec([{sftpd_vsn, 6}]),
 		[{subsystems, [Spec]}];
 	    _ ->
-		[]
+                [{subsystems, [ssh_sftpd:subsystem_spec([])]}]
 	end,
 
     {Sftpd, Host, Port} = ssh_test_lib:daemon([{preferred_algorithms,

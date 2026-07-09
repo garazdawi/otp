@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2005-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,10 +26,12 @@
 -moduledoc """
 This module expands records in a module.
 
-## See Also
+### See Also
 
 Section [The Abstract Format](`e:erts:absform.md`) in ERTS User's Guide.
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([module/2]).
 
@@ -51,6 +53,9 @@ Section [The Abstract Format](`e:erts:absform.md`) in ERTS User's Guide.
 
                  %% Compiler option 'dialyzer'.
                  dialyzer=false :: boolean(),
+
+                 %% Option 'expand_inits'.
+                 expand_inits=false :: boolean(),
 
                  %% Whether the size of the tuple should be tested.
                  strict_rec_tests=true :: boolean(),
@@ -85,6 +90,7 @@ module(Fs0, Opts0) ->
     put(erl_expand_records_in_guard, false),
     Opts = Opts0 ++ compiler_options(Fs0),
     St0 = #exprec{dialyzer = lists:member(dialyzer, Opts),
+                  expand_inits = lists:member(expand_inits, Opts),
                   calltype = init_calltype(Fs0),
                   rec_mod = init_rec_mod(Fs0),
                   strict_rec_tests = strict_record_tests(Opts)},
@@ -251,31 +257,9 @@ guard_tests1([], St) -> {[],St}.
 
 guard_test(G0, St0) ->
     in_guard(fun() ->
-                     {G1,St1} = guard_test1(G0, St0),
+                     {G1,St1} = expr(G0, St0),
                      strict_record_access(G1, St1)
              end).
-
-%% Normalising guard tests ensures that none of the Boolean operands
-%% created by strict_record_access/2 calls any of the old guard tests.
-guard_test1({call,Anno,{atom,Tanno,Tname},As}, St) ->
-    Test = {atom,Tanno,normalise_test(Tname, length(As))},
-    expr({call,Anno,Test,As}, St);
-guard_test1(Test, St) ->
-    expr(Test, St).
-
-normalise_test(atom, 1)      -> is_atom;
-normalise_test(binary, 1)    -> is_binary;
-normalise_test(float, 1)     -> is_float;
-normalise_test(function, 1)  -> is_function;
-normalise_test(integer, 1)   -> is_integer;
-normalise_test(list, 1)      -> is_list;
-normalise_test(number, 1)    -> is_number;
-normalise_test(pid, 1)       -> is_pid;
-normalise_test(port, 1)      -> is_port;
-normalise_test(record, 2)    -> is_record;
-normalise_test(reference, 1) -> is_reference;
-normalise_test(tuple, 1)     -> is_tuple;
-normalise_test(Name, _) -> Name.
 
 is_in_guard() ->
     get(erl_expand_records_in_guard).
@@ -417,20 +401,23 @@ expr({map_field_exact,Anno,K0,V0}, St0) ->
 expr({record_index,Anno,Name,F}, St) ->
     I = index_expr(Anno, F, Name, record_fields(Name, Anno, St)),
     expr(I, St);
+expr({record,Anno0,{shell_default,N},Is}, St0) ->
+    #{N := {local, Inits}} = St0#exprec.rec_mod,
+    {yes,{record,Anno1,{M,N},Es0}} = maybe_expand_inits(Anno0, N, Inits, Is, St0),
+    {Es1, St1} = expr_list(Es0, St0),
+    {{record,Anno1,{M,N},Es1},St1};
 expr({record,Anno,{M,N},Inits}, St0) ->
     {Es1, St1} = expr_list(Inits, St0),
     {{record,Anno,{M,N},Es1},St1};
 expr({record,Anno0,Name,Is}, St0) when is_atom(Name) ->
     case St0#exprec.rec_mod of
         #{Name := {local, Inits}} ->
-            M = St0#exprec.module,
-            case M of
-                shell_default ->
-                    Fs = native_record_inits(Anno0, Inits, Is),
-                    expr({record,Anno0,{M,Name},Fs}, St0);
-                _ ->
+            case maybe_expand_inits(Anno0, Name, Inits, Is, St0) of
+                no ->
                     {Es1, St1} = expr_list(Is, St0),
-                    {{record,Anno0,Name,Es1},St1}
+                    {{record,Anno0,Name,Es1},St1};
+                {yes,Record} ->
+                    expr(Record, St0)
             end;
         #{Name := {imported, M}} ->
             expr({record,Anno0,{M,Name},Is}, St0);
@@ -448,8 +435,8 @@ expr({record,_A,Arg0,{_,_}=Id,Updates}, St0) ->
 expr({record,_A,Arg0,[]=Id,Updates}, St0) ->
     Anno = erl_parse:first_anno(Arg0),
     {Arg1,St1} = expr(Arg0, St0),
-    {Es1, St1} = expr_list(Updates, St0),
-    {{record,Anno,Arg1,Id,Es1},St1};
+    {Es1, St2} = expr_list(Updates, St1),
+    {{record,Anno,Arg1,Id,Es1},St2};
 expr({record,Anno0,Arg0,Name,Updates}, St0) when is_atom(Name) ->
     case St0#exprec.rec_mod of
         #{Name := {local, _}} ->
@@ -646,7 +633,7 @@ expr({executable_line,_,_}=E, St) ->
     {E, St};
 expr({debug_line,_,_}=E, St) ->
     {E, St};
-expr({ssa_check_when,_,_,_,_,_}=E, St) ->
+expr({ssa_check_when,_,_,_,_,_,_}=E, St) ->
     {E, St}.
 
 expr_list([E0 | Es0], St0) ->
@@ -682,6 +669,21 @@ strict_record_access(E0, St0) ->
 
     St1 = St0#exprec{check_needed=[], checked_access=NRC},
     expr(E1, St1).
+
+maybe_expand_inits(Anno0, Name, Inits, Is, St) ->
+    M = St#exprec.module,
+    case St of
+        #exprec{dialyzer=true} when is_list(Inits) ->
+            Fs0 = native_record_inits(Anno0, Inits, Is),
+            Fs1 = [F|| {record_field, _, _, V} =F <- Fs0,
+                       V =/= {nil,novalue} andalso V =/= {nil,badfield}],
+            {yes, {record,Anno0,{M,Name},Fs1}};
+        #exprec{expand_inits=true} ->
+            Fs = native_record_inits(Anno0, Inits, Is),
+            {yes, {record,Anno0,{M,Name},Fs}};
+        #exprec{} ->
+            no
+    end.
 
 %% Make it look nice (?) when compiled with the 'E' flag
 %% ('and'/2 is left recursive).
@@ -931,27 +933,35 @@ record_inits(Fs, Is) ->
 	end, Fs).
 
 native_record_inits(Anno0, Inits0, Is) ->
-    Inits1 = native_record_inits_1(Anno0, Inits0, []),
-    WildcardInit = record_wildcard_init(Is),
+    Inits1 = native_record_no_type(Inits0, []),
+    Inits2 = native_record_inits_1(Anno0, Inits1, []),
     IsKeys = [F || {record_field,_,{atom,_,F},_} <- Is],
-    InitKeys = [F || {record_field,_,{atom,_,F},_} <- Inits0] ++
-        [F || {record_field,_,{atom,_,F}} <- Inits0],
+    InitKeys = [F || {record_field,_,{atom,_,F},_} <- Inits1] ++
+        [F || {record_field,_,{atom,_,F}} <- Inits1],
     NoDef = ordsets:subtract(ordsets:from_list(IsKeys),
                              ordsets:from_list(InitKeys)),
     [{record_field,Anno0,{atom,Anno0,F},{nil,badfield}} || F <- NoDef] ++
         map(fun ({record_field,A1,{atom,A2,F},D}) ->
                     case find_field(F, Is) of
                         {ok,Init} -> {record_field,A1,{atom,A2,F},Init};
-                        error when WildcardInit =:= none ->
-                            {record_field,A1,{atom,A2,F},D};
-                        error -> {record_field,A1,{atom,A2,F},WildcardInit}
+                        error ->
+                            {record_field,A1,{atom,A2,F},D}
                     end;
                 ({record_field,A1,{atom,A2,F}}) ->
                     case find_field(F, Is) of
                         {ok,Init} -> {record_field,A1,{atom,A2,F},Init};
                         error -> {record_field,A1,{atom,A2,F},{nil,novalue}}
                     end
-            end, Inits1).
+            end, Inits2).
+
+native_record_no_type([{typed_record_field,Field,_Type} | Fs], Acc) ->
+    native_record_no_type([Field | Fs], Acc);
+native_record_no_type([{record_field,_,_,_}=F|Fs], Acc) ->
+    native_record_no_type(Fs, [F|Acc]);
+native_record_no_type([{record_field,_,_}=F|Fs], Acc) ->
+    native_record_no_type(Fs, [F|Acc]);
+native_record_no_type([], Acc) ->
+    reverse(Acc).
 
 native_record_inits_1(Anno0, [{record_field,_,{atom,_,F},Di}|Fs], Acc) ->
     native_record_inits_1(Anno0, Fs,

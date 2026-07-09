@@ -36,10 +36,11 @@ Interface module for the `tftp` application.
 ## Overwiew
 
 This is a complete implementation of the following IETF standards:
-    RFC 1350, The TFTP Protocol (revision 2).
-    RFC 2347, TFTP Option Extension.
-    RFC 2348, TFTP Blocksize Option.
-    RFC 2349, TFTP Timeout Interval and Transfer Size Options.
+
+* [RFC 1350][], The TFTP Protocol (revision 2).
+* [RFC 2347][], TFTP Option Extension.
+* [RFC 2348][], TFTP Blocksize Option.
+* [RFC 2349][], TFTP Timeout Interval and Transfer Size Options.
 
 The only feature that not is implemented in this release is
 the "netascii" transfer mode.
@@ -54,6 +55,11 @@ with a TFTP daemon and performs the actual transfer of the file.
 
 Most of the options are common for both the client and the server
 side, but some of them differs a little.
+
+[RFC 1350]: https://datatracker.ietf.org/doc/html/rfc1350
+[RFC 2347]: https://datatracker.ietf.org/doc/html/rfc2347
+[RFC 2348]: https://datatracker.ietf.org/doc/html/rfc2348
+[RFC 2349]: https://datatracker.ietf.org/doc/html/rfc2349
 
 ## Callbacks
 
@@ -192,7 +198,7 @@ All options most of them common to the client and server.
   Controls which features to reject. This is mostly useful for the server as it
   can restrict the use of certain TFTP options or read/write access.
 
-- **`{callback, {RegExp ::string(), Module::module(), State :: term()}}`**
+- **`{callback, {RegExp ::string(), Module::module(), InitialState :: term()}}`**
 
   Registration of a callback module. When a file is to be transferred, its local
   filename is matched to the regular expressions of the registered callbacks.
@@ -201,6 +207,24 @@ All options most of them common to the client and server.
 
   The callback module must implement the `tftp` behavior, see
   [callbacks](`m:tftp#callbacks`).
+
+  At the end of the list of callbacks there are always the default callbacks
+  `tftp_file` and `tftp_binary` with the `RegExp = ""` and `InitialState = []`.
+
+  The `InitialState` should be an option list, and the empty list
+  should be accepted by any callback module.  The `tftp_file`
+  callback module accepts an `InitialState = [{root_dir, Dir}]`
+  that restrict local file operations to files in `Dir` and subdirectories.
+  All file names received in protocol requests, relative or absolute,
+  are regarded as relative to this directory.
+
+  > #### Warning {: .warning }
+  >
+  > The default callback module configuration allows access to any file
+  > on any local filesystem that is readable or writable by the user
+  > running the Erlang VM.  This can be a security vulnerability.
+  > It is therefore recommended to explicitly configure the `tftp_file`
+  > callback module to use the `root_dir` option.
 
 - **`{logger, module()}`**
 
@@ -385,6 +409,22 @@ Starts a daemon process listening for UDP packets on a port.
 
 When it receives a request for read or write, it spawns a temporary
 server process handling the actual transfer of the (virtual) file.
+
+The request filename is matched against the regexps of the registered
+callback modules, and the first match selects the callback
+to handle the request.
+
+If there are no registered callback modules, `tftp_file` is used,
+with the initial state `[]`.
+
+> #### Warning {: .warning }
+>
+> The default callback module configuration allows access to any file
+> on any local filesystem that is readable or writable by the user
+> running the Erlang VM.  This can be a security vulnerability.
+> See the [`{callback,_}` option](`t:connection_option/0`)
+> at the start of this module reference for a remedy.
+
 """.
 
 -spec start(Options) -> {ok, Pid} | {error, Reason} when

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2018-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -30,5 +30,10 @@
 -define(SECS(I), timer:seconds(I)).
 
 -define(SLEEP(T), receive after T -> ok end).
+
+-define(CATCH_AND_IGNORE(_X_),
+	try _X_ catch _:_ -> ignore end).
+-define(CATCH_AND_RETURN(_X_),
+	try _X_ catch __C__:__E__ -> {error, {catched, __C__, __E__}} end).
 
 -endif. % -ifdef(socket_test_ttest).

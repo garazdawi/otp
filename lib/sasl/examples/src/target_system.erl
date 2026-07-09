@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2011-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@
 %module
 -module(target_system).
 -export([create/1, create/2, install/2]).
+
+-compile([{nowarn_possibly_unsafe_function, {file, consult, 1}}]).
 
 %% Note: RelFileName below is the *stem* without trailing .rel,
 %% .script etc.

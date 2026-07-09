@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2018-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -588,6 +588,15 @@ send_or_buffer(Transport, Socket, Msgs, From, #data{buff = undefined} = StateDat
     case tls_socket:send(Transport, Socket, Msgs, nowait) of
         ok ->
             send_reply(From, ok),
+            {ok, StateData0};
+        {error, timeout} = Error ->
+            %% This clause is to retain some backwards compatibility with
+            %% inet-driver behavior for gen_tcp:send timeout. That
+            %% happened to work before OTP-28, due to the fact that
+            %% the inet-driver always buffers and will not return rest data.
+            %% Buy time for people that might have relied on this behavior
+            %% for better solutions to be crated.
+            send_reply(From, Error),
             {ok, StateData0};
         {error, _Err} = Error ->
             send_reply(From, Error),

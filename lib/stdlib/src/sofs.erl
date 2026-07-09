@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2001-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -843,7 +843,7 @@ Returns a triple of sets:
 1> S1 = sofs:set([a,b,c]).
 2> S2 = sofs:set([c,d,e]).
 3> {S3,S4,S5} = sofs:symmetric_partition(S1, S2).
-4> {sofs:to_external(S3),sofs:to_external(S4),sofs:to_external(S5)}
+4> {sofs:to_external(S3),sofs:to_external(S4),sofs:to_external(S5)}.
 {[a,b],[c],[d,e]}
 ```
 """.
@@ -1150,7 +1150,7 @@ Returns the [union](`m:sofs#union_n`) of the set of sets `SetOfSets`.
 ```erlang
 1> S1 = sofs:set([a,b,c]).
 2> S2 = sofs:set([b,1,2]).
-3> S3 = sofs:set([a,d,e])
+3> S3 = sofs:set([a,d,e]).
 4> S4 = sofs:from_sets([S1,S2,S3]).
 5> S5 = sofs:union(S4).
 6> sofs:to_external(S5).

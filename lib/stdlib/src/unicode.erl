@@ -706,7 +706,7 @@ true
 false
 ```
 """.
--doc(#{since => ~"OTP @OTP-19858@"}).
+-doc(#{since => ~"OTP 29.0"}).
 -spec is_whitespace(char()) -> boolean().
 is_whitespace(X) %% ASCII (and low number) Optimizations
   when X =:= 9; X =:= 10; X =:= 11; X =:= 12; X =:= 13; X =:= 32;
@@ -735,7 +735,7 @@ false
 false
 ```
 """.
--doc(#{since => ~"OTP @OTP-19858@"}).
+-doc(#{since => ~"OTP 29.0"}).
 -spec is_id_start(char()) -> boolean().
 is_id_start(X)  %% ASCII optimizations
   when X =:= 65; X =:= 66; X =:= 67; X =:= 68; X =:= 69; X =:= 70; X =:= 71;
@@ -775,7 +775,7 @@ true
 false
 ```
 """.
--doc(#{since => ~"OTP @OTP-19858@"}).
+-doc(#{since => ~"OTP 29.0"}).
 -spec is_id_continue(char()) -> boolean().
 is_id_continue(X)
   when X =:= 48; X =:= 49; X =:= 50; X =:= 51; X =:= 52; X =:= 53; X =:= 54;
@@ -822,7 +822,7 @@ Returns the `Char` category.
 {punctuation,open}
 ```
 """.
--doc(#{since => ~"OTP @OTP-19858@"}).
+-doc(#{since => ~"OTP 29.0"}).
 -spec category(char()) -> category().
 category(Char) when ?IS_CP(Char) ->
     unicode_util:category(Char);
@@ -1234,6 +1234,8 @@ do_i_utf32_big_chk(<<U/utf32,R/binary>>) when U =< 255 ->
     case do_i_utf32_big_chk(R) of
 	{error,Trans,Rest} ->
 	    {error, [U|Trans], Rest};
+        {incomplete,Trans,Rest,N} ->
+            {incomplete, [U|Trans], Rest, N};
 	L when is_list(L) ->
 	    [U|L]
     end;
@@ -1252,6 +1254,8 @@ do_i_utf32_little_chk(<<U/utf32-little,R/binary>>) when U =< 255 ->
     case do_i_utf32_little_chk(R) of
 	{error,Trans,Rest} ->
 	    {error, [U|Trans], Rest};
+        {incomplete,Trans,Rest,N} ->
+            {incomplete, [U|Trans], Rest, N};
 	L when is_list(L) ->
 	    [U|L]
     end;

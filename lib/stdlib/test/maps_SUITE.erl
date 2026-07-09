@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1110,6 +1110,7 @@ error_info(_Config) ->
     error_info_lib:test_error_info(maps, L).
 
 doctests(_Config) ->
-    shell_docs:test(maps, []).
+    ct_doctest:module(maps, [{skipped_blocks, 0},
+                              {missing_tests, [{new, 0}]}]).
 
 id(I) -> I.

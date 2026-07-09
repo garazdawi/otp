@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 1996-2025. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,7 +52,9 @@
 #include "erl_msacc.h"
 #include "erl_proc_sig_queue.h"
 #include "erl_fun.h"
-#include "ryu.h"
+#ifdef ERTS_USE_BUILTIN_RYU
+#  include "ryu.h"
+#endif
 #include "jit/beam_asm.h"
 #include "erl_global_literals.h"
 #include "beam_load.h"
@@ -1872,6 +1874,10 @@ BIF_RETTYPE exit_signal_2(BIF_ALIST_2)
     return send_exit_signal_bif(BIF_P, BIF_ARG_1, BIF_ARG_2, NIL, 0);
 }
 
+BIF_RETTYPE exit_signal_3(BIF_ALIST_3)
+{
+    return send_exit_signal_bif(BIF_P, BIF_ARG_1, BIF_ARG_2, BIF_ARG_3, 0);
+}
 
 /**********************************************************************/
 /* this sets some process info- trapping exits or the error handler */
@@ -3111,6 +3117,10 @@ BIF_RETTYPE insert_element_3(BIF_ALIST_3)
 	BIF_ERROR(BIF_P, BADARG);
     }
 
+    if (arity + 1 > ERTS_MAX_TUPLE_SIZE) {
+        BIF_ERROR(BIF_P, BADARG);
+    }
+
     hp  = HAlloc(BIF_P, arity + 1 + 1);
     res = make_tuple(hp);
     *hp = make_arityval(arity + 1);
@@ -3410,11 +3420,15 @@ static int do_float_to_charbuf(Process *p, Eterm efloat, Eterm list,
     GET_DOUBLE(efloat, f);
 
     if (fmt_type == FMT_SHORT) {
+#ifdef ERTS_USE_BUILTIN_RYU
         const int index = d2s_buffered_n(f.fd, fbuf);
 
         /* Terminate the string. */
         fbuf[index] = '\0';
         return index;
+#else
+        return sys_double_to_chars_short(f.fd, fbuf, sizeof_fbuf);
+#endif
     } else if (fmt_type == FMT_FIXED) {
         return sys_double_to_chars_fast(f.fd, fbuf, sizeof_fbuf,
                 decimals, compact);
@@ -4253,9 +4267,12 @@ BIF_RETTYPE display_string_2(BIF_ALIST_2)
         written = 0;
         do {
             res = write(fd, str+written, len-written);
-            if (res < 0 && errno != ERRNO_BLOCK && errno != EINTR)
-                goto error;
-            written += res;
+            if (res < 0) {
+                if (errno != ERRNO_BLOCK && errno != EINTR)
+                    goto error;
+            } else {
+                written += res;
+            }
         } while (written < len);
 #endif
     }
@@ -5991,13 +6008,10 @@ BIF_RETTYPE dt_append_vm_tag_data_1(BIF_ALIST_1)
     if (p) {
         byte *q;
         Uint i;
-        p = erts_get_aligned_binary_bytes(DT_UTAG(BIF_P),
-                                          &size,
-                                          &temp_alloc);
         b = erts_new_binary(BIF_P, size + 1, &q);
         for(i = 0; i < size; i++) {
             q[i] = p[i];
-        } 
+        }
         erts_free_aligned_binary_bytes(temp_alloc);
         q[size] = '\0';
     } else {

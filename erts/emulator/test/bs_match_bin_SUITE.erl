@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1999-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@
          byte_split_binary/1,bit_split_binary/1,match_huge_bin/1,
          bs_match_string_edge_case/1,contexts/1,
          empty_binary/1,small_bitstring/1,
-         known_position/1]).
+         known_position/1,units/1]).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -36,7 +36,7 @@ suite() -> [{ct_hooks,[ts_install_cth]}].
 all() ->
     [byte_split_binary, bit_split_binary, match_huge_bin,
      bs_match_string_edge_case, contexts, empty_binary,
-     small_bitstring,known_position].
+     small_bitstring,known_position,units].
 
 groups() ->
     [].
@@ -338,6 +338,36 @@ known_position(_Config) ->
     <<"abcdefghi">> = BitString,
 
     ok.
+
+units(_Config) ->
+    %% GH-10937: It turned out that we didn't have any test for units
+    %% other than 1 and 8.
+    ok = unit_13(<<>>),
+    ok = unit_13(<<42:13>>),
+    ok = unit_13(<<-1:26>>),
+    error = unit_13("a"),
+    error = unit_13("ab"),
+
+    ok = unit_16(<<>>),
+    ok = unit_16(~"ab"),
+    error = unit_16(~"a"),
+    error = unit_16(~"abc"),
+    error = unit_16(<<7:3>>),
+
+    ok.
+
+unit_13(Bin) ->
+    case Bin of
+        <<_/binary-unit:13>> -> ok;
+        _ -> error
+    end.
+
+unit_16(Bin) ->
+    case Bin of
+        <<_/binary-unit:16>> -> ok;
+        _ -> error
+    end.
+
 
 %%%
 %%% Common utilities.

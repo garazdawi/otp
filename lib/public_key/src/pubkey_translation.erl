@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2008-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ decode(#'DSA-Sig-Value'{r = R, s = S}) ->
 decode(#'OTPExtension'{}=E) ->
     setelement(1, E, 'Extension');
 decode(#'SingleAttribute'{type=T,value=V}) ->
-    #'AttributeTypeAndValue'{type=T,value=V};
+    #'AttributeTypeAndValue'{type=T,value=decode(V)};
 decode({'OneAsymmetricKey', Vsn, KeyAlg, PrivKey, Attrs, PubKey} = Orig) ->   %% Defined In PKCS_FRAME
     case Vsn of
         v1 -> {'PrivateKeyInfo', Vsn, KeyAlg, PrivKey, Attrs, PubKey};
@@ -72,7 +72,7 @@ encode(#'SubjectPublicKeyInfo'{algorithm={'AlgorithmIdentifier', AlgId0, Params}
     Alg = #'SubjectPublicKeyInfo_algorithm'{algorithm=AlgId1,parameters=Params1},
     #'SubjectPublicKeyInfo'{algorithm=Alg,subjectPublicKey=Key};
 encode(#'AttributeTypeAndValue'{type=T,value=V}) ->
-    #'SingleAttribute'{type=T,value=V};
+    #'SingleAttribute'{type=T,value=encode(V)};
 encode(#'SingleAttribute'{type=T,value={correct,V}}) ->
     #'SingleAttribute'{type=T,value=V};
 encode({'PrivateKeyInfo', Vsn, KeyAlg, PrivKey, Attrs, PubKey}) ->

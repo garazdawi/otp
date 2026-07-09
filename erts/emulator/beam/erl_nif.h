@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 2009-2025. All Rights Reserved.
+ * Copyright Ericsson AB 2009-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,9 +61,11 @@
 ** 2.16: 24.0 enif_init_resource_type, enif_dynamic_resource_call
 ** 2.17: 26.0 enif_set_option, enif_get_string_length, enif_make_new_atom,
 **            enif_make_new_atom_len, ERL_NIF_UTF8
+** 2.18: 29.0 enif_term_size, enif_get_atom_cache_index,
+**            enif_max_atom_cache_index
 */
 #define ERL_NIF_MAJOR_VERSION 2
-#define ERL_NIF_MINOR_VERSION 17
+#define ERL_NIF_MINOR_VERSION 18
 
 /*
  * WHEN CHANGING INTERFACE VERSION, also replace erts version below with
@@ -378,7 +380,6 @@ extern void enif_ioq_destroy(ErlNifIOQueue *q);
 #    define ERL_NIF_API_FUNC_DECL(RET_TYPE, NAME, ARGS) ERL_NAPI_EXPORT extern RET_TYPE NAME ARGS
 #  endif
 #  include "erl_nif_api_funcs.h"
-#  undef ERL_NIF_API_FUNC_DECL
 #endif
 
 #if (defined(__WIN32__) || defined(_WIN32) || defined(_WIN32_))
@@ -447,10 +448,11 @@ ERL_NIF_INIT_EPILOGUE
 #endif
 
 #ifdef HAVE_USE_DTRACE
-ERL_NIF_TERM erl_nif_user_trace_s1(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-ERL_NIF_TERM erl_nif_user_trace_i4s4(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
-ERL_NIF_TERM erl_nif_user_trace_n(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_API_FUNC_DECL(ERL_NIF_TERM,erl_nif_user_trace_s1,(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]));
+ERL_NIF_API_FUNC_DECL(ERL_NIF_TERM,erl_nif_user_trace_i4s4,(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]));
+ERL_NIF_API_FUNC_DECL(ERL_NIF_TERM,erl_nif_user_trace_n,(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]));
 #endif
 
-#endif /* __ERL_NIF_H__ */
+#undef ERL_NIF_API_FUNC_DECL
 
+#endif /* __ERL_NIF_H__ */

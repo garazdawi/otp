@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2000-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2000-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -171,7 +171,7 @@ erts_filter(Undef) ->
 
 deprecated_not_in_obsolete(Config) when is_list(Config) ->
     Server = proplists:get_value(xref_server, Config),
-    {ok,DeprecatedFunctions} = xref:q(Server, "DF"),
+    {ok,DeprecatedFunctions} = xref:q(Server, "DF + US"),
 
     L = foldl(fun({M,F,A}=MFA, Acc) ->
                       case otp_internal:obsolete(M, F, A) of
@@ -193,7 +193,7 @@ deprecated_not_in_obsolete(Config) when is_list(Config) ->
 
 obsolete_but_not_deprecated(Config) when is_list(Config) ->
     Server = proplists:get_value(xref_server, Config),
-    {ok,NotDeprecated} = xref:q(Server, "X - DF"),
+    {ok,NotDeprecated} = xref:q(Server, "(X - DF) - US"),
 
     L = foldl(fun({M,F,A}=MFA, Acc) ->
                       case otp_internal:obsolete(M, F, A) of

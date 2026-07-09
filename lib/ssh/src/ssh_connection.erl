@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2008-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -50,7 +50,6 @@ these messages are handled by
 -include("ssh.hrl").
 -include("ssh_connect.hrl").
 -include("ssh_transport.hrl").
-
 %% API
 -export([session_channel/2, session_channel/4,
 	 exec/4, shell/2, subsystem/4, send/3, send/4, send/5, 
@@ -1292,36 +1291,49 @@ handle_msg(#ssh_msg_global_request{name = _Type,
     end;
 
 handle_msg(#ssh_msg_request_failure{},
-	   #connection{requests = [{_, From} | Rest]} = Connection, _, _SSH) ->
-    {[{channel_request_reply, From, {failure, <<>>}}],
-     Connection#connection{requests = Rest}};
-
-handle_msg(#ssh_msg_request_failure{},
-	   #connection{requests = [{_, From,_} | Rest]} = Connection, _, _SSH) ->
-    {[{channel_request_reply, From, {failure, <<>>}}],
-     Connection#connection{requests = Rest}};
+           #connection{requests = Requests} = Connection, _, _SSH) ->
+    handle_global_response({failure, <<>>}, Requests, Connection);
 
 handle_msg(#ssh_msg_request_success{data = Data},
-	   #connection{requests = [{_, From} | Rest]} = Connection, _, _SSH) ->
-    {[{channel_request_reply, From, {success, Data}}],
-     Connection#connection{requests = Rest}};
-
-handle_msg(#ssh_msg_request_success{data = Data},
-	   #connection{requests = [{_, From, Fun} | Rest]} = Connection0, _, _SSH) ->
-    Connection = Fun({success,Data}, Connection0),
-    {[{channel_request_reply, From, {success, Data}}],
-     Connection#connection{requests = Rest}};
-
-%% alive responses
-handle_msg(#ssh_msg_request_success{},
-	   #connection{requests = []} = Connection, _, _SSH) ->
-    {[], Connection};
-
-handle_msg(#ssh_msg_request_failure{},
-	   #connection{requests = []} = Connection, _, _SSH) ->
-    {[], Connection}.
+           #connection{requests = Requests} = Connection, _, _SSH) ->
+    handle_global_response({success, Data}, Requests, Connection).
 
 
+
+%%%----------------------------------------------------------------
+%%% Handle a global request response (success or failure).
+%%% Finds the first global request entry and delivers the reply.
+%%%
+handle_global_response(Reply, Requests, Connection0) ->
+    case take_global_request(Requests) of
+        {{_, From}, Rest} ->
+            {[{channel_request_reply, From, Reply}],
+             Connection0#connection{requests = Rest}};
+        {{_, From, Fun}, Rest} ->
+            Connection = Fun(Reply, Connection0),
+            {[{channel_request_reply, From, Reply}],
+             Connection#connection{requests = Rest}};
+        false ->
+            {[], Connection0}
+    end.
+
+
+%%%----------------------------------------------------------------
+%%% Find and remove the first global request entry (keyed by reference)
+%%% from the requests list, skipping channel entries (keyed by integer).
+%%% Returns {Entry, RemainingList} or false.
+%%%
+take_global_request([]) ->
+    false;
+take_global_request([{Ref, _} = E | Rest]) when is_reference(Ref) ->
+    {E, Rest};
+take_global_request([{Ref, _, _} = E | Rest]) when is_reference(Ref) ->
+    {E, Rest};
+take_global_request([H | T]) ->
+    case take_global_request(T) of
+        {E, Rest} -> {E, [H | Rest]};
+        false -> false
+    end.
 
 %%%----------------------------------------------------------------
 %%% Returns pending responses to be delivered to the peer when a
@@ -1497,7 +1509,8 @@ start_cli(#connection{options = Options,
         no_cli ->
             {error, cli_disabled};
         {CbModule, Args} ->
-            ssh_connection_sup:start_channel(server, ConnectionSup, self(), CbModule, ChannelId, Args, Exec, Options)
+            ssh_connection_sup:start_channel(server, ConnectionSup, self(),
+                                             CbModule, ChannelId, Args, Exec, Options)
     end.
 
 
@@ -1505,33 +1518,18 @@ start_subsystem(BinName, #connection{options = Options,
                                      connection_supervisor = ConnectionSup},
 	       #channel{local_id = ChannelId}, _ReplyMsg) ->
     Name = binary_to_list(BinName),
-    case check_subsystem(Name, Options) of
+    Subsystems = ?GET_OPT(subsystems, Options),
+    case proplists:get_value(Name, Subsystems, {none, []}) of
 	{Callback, Opts} when is_atom(Callback), Callback =/= none ->
-            ssh_connection_sup:start_channel(server, ConnectionSup, self(), Callback, ChannelId, Opts, undefined, Options);
+            %% Exec is not used by subsystems; undefined is filtered
+            %% out by channel_cb_init_args/1 so it won't be appended
+            %% to the callback's init args.
+            ssh_connection_sup:start_channel(server, ConnectionSup, self(),
+                                             Callback, ChannelId, Opts, undefined, Options);
         {none, _} ->
             {error, bad_subsystem};
 	{_, _} ->
 	    {error, legacy_option_not_supported}
-    end.
-
-
-%%% Helpers for starting cli/subsystems
-check_subsystem("sftp"= SsName, Options) ->
-    case ?GET_OPT(subsystems, Options) of
-	no_subsys -> 	% FIXME: Can 'no_subsys' ever be matched?
-	    {SsName, {Cb, Opts}} = ssh_sftpd:subsystem_spec([]),
-	    {Cb, Opts};
-	SubSystems ->
-	    proplists:get_value(SsName, SubSystems, {none, []})
-    end;
-
-check_subsystem(SsName, Options) ->
-    Subsystems = ?GET_OPT(subsystems, Options),
-    case proplists:get_value(SsName, Subsystems, {none, []}) of
-	Fun when is_function(Fun) ->
-	    {Fun, []};
-	{_, _} = Value ->
-	    Value
     end.
 
 %%%----------------------------------------------------------------
@@ -1634,7 +1632,10 @@ pty_default_dimensions(Dimension, TermData) ->
 	N when is_integer(N), N > 0 ->
 	    {N, 0};
 	_ ->
-            PixelDim = list_to_atom("pixel_" ++ atom_to_list(Dimension)),
+            PixelDim = case Dimension of
+                           width  -> pixel_width;
+                           height -> pixel_height
+                       end,
 	    case proplists:get_value(PixelDim, TermData, 0) of
 		N when is_integer(N), N > 0 ->
 		    {0, N};

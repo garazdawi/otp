@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -878,9 +878,11 @@ error_info(_Config) ->
          {exit, 1},
 
          {exit, [a, b]},
-         {exit_signal, [a, b]},
          {exit, [Pid, bye, [blipp]]},
          {exit, [garbage, bye, [priority]]},
+         {exit_signal, [a, b]},
+         {exit_signal, [Pid, bye, [blipp]]},
+         {exit_signal, [garbage, bye, [priority]]},
 
          {external_size, [a], [no_fail]},
          {external_size, [abc, xyz]},

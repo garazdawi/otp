@@ -2,7 +2,7 @@
 ##
 ## SPDX-License-Identifier: Apache-2.0
 ##
-## Copyright Ericsson AB 2009-2024. All Rights Reserved.
+## Copyright Ericsson AB 2009-2026. All Rights Reserved.
 ##
 ## Licensed under the Apache License, Version 2.0 (the "License");
 ## you may not use this file except in compliance with the License.
@@ -74,6 +74,7 @@ MODULES= \
 	gen_statem_SUITE \
 	id_transform_SUITE \
 	io_SUITE \
+	io_ansi_SUITE \
 	io_proto_SUITE \
 	json_SUITE \
 	lists_SUITE \
@@ -139,12 +140,17 @@ MODULES= \
 
 ERTS_MODULES= erts_test_utils
 SASL_MODULES= otp_vsns
-KERNEL_MODULES= rtnode
+KERNEL_MODULES= rtnode shell_test_lib
+KERNEL_HRL= shell_test_lib
+
+DOCTEST_MARKDOWN = ../doc/guides/uri_string_usage.md
+DOCTEST_NATIVE_RECORDS_MARKDOWN = $(ERL_TOP)/system/doc/reference_manual/ref_man_native_records.md
 
 ERL_FILES=	$(MODULES:%=%.erl) \
 		$(ERTS_MODULES:%=$(ERL_TOP)/erts/emulator/test/%.erl) \
 		$(SASL_MODULES:%=$(ERL_TOP)/lib/sasl/test/%.erl) \
-		$(KERNEL_MODULES:%=$(ERL_TOP)/lib/kernel/test/%.erl)
+		$(KERNEL_MODULES:%=$(ERL_TOP)/lib/kernel/test/%.erl) \
+		$(KERNEL_HRL:%=$(ERL_TOP)/lib/kernel/test/%.hrl)
 
 EXTRA_FILES= $(ERL_TOP)/otp_versions.table
 
@@ -204,5 +210,11 @@ release_tests_spec: make_emakefile
 	       "$(RELSYSDIR)/unicode_SUITE_data"
 	$(INSTALL_DIR) "$(RELSYSDIR)/stdlib_SUITE_data"
 	$(INSTALL_DATA) $(ERL_TOP)/make/otp_version_tickets "$(RELSYSDIR)/stdlib_SUITE_data"
+	$(INSTALL_DIR) "$(RELSYSDIR)/uri_string_SUITE_data"
+	$(INSTALL_DATA) $(DOCTEST_MARKDOWN) "$(RELSYSDIR)/uri_string_SUITE_data"
+	$(INSTALL_DIR) "$(RELSYSDIR)/records_SUITE_data"
+	$(INSTALL_DATA) $(DOCTEST_NATIVE_RECORDS_MARKDOWN) "$(RELSYSDIR)/records_SUITE_data"
+
+	cd ../examples && $(MAKE) $@
 
 release_docs_spec:

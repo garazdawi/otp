@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -35,8 +35,6 @@ a program to run on most platforms.
 > Types" section.
 """.
 
--compile(nowarn_deprecated_catch).
-
 %% Provides a common operating system interface.
 
 -export([type/0, version/0, cmd/1, cmd/2, find_executable/1, find_executable/2]).
@@ -52,6 +50,8 @@ a program to run on most platforms.
          perf_counter/1, set_signal/2, system_time/0,
          system_time/1, timestamp/0]).
 
+-unsafe([{cmd, '_', possibly}]).
+
 -doc """
 All characters needs to be valid characters on the specific OS using
 [`file:native_name_encoding()`](`file:native_name_encoding/0`) encoding. Null
@@ -63,8 +63,12 @@ Options for [`os:cmd/2`](`cmd/2`).
 
 - **`max_size`** - The maximum size of the data returned by the `os:cmd/2` call.
   See the [`os:cmd/2`](`cmd/2`) documentation for more details.
+
+  Since OTP 20.2.3
 - **`exception_on_failure`** - If set to true, `cmd/2` will throw an error exception if
   the command exits with a non-zero exit code.
+
+  Since OTP 28.0
 """.
 -type os_command_opts() :: #{ max_size => non_neg_integer() | infinity,
                               exception_on_failure => boolean() }.
@@ -552,6 +556,7 @@ The possible options are:
   [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
   ```
 
+  Since OTP 20.2.3
 - **`exception_on_failure`** - If set to true, `os:cmd/2` will throw an error
   exception if the command exits with a non-zero exit code. The exception reason
   looks like this: `{command_failed, ResultBeforeFailure, ExitCode}` where
@@ -566,6 +571,8 @@ The possible options are:
            [{os,cmd,2,[{file,"os.erl"},{line,579}]},
   ...
   ```
+
+  Since OTP 28.0
 
 The command shell can be set using the
 [kernel configuration parameter](kernel_app.md#os_cmd_shell), by default the
@@ -728,7 +735,7 @@ get_data(Port, MonRef, Eot, Sofar, Size, Max, ExitStatus) ->
                     get_data(Port, MonRef, Eot, [Sofar, Bytes],
                              Size + byte_size(Bytes), Max, ExitStatus);
                 {Last, Remain} ->
-                    catch port_close(Port),
+                    try port_close(Port) catch _:_ -> true end,
                     flush_until_down(Port, MonRef),
                     Result = [Sofar, Last],
                     case ExitStatus andalso eot(Remain, Eot, byte_size(Remain), Max) of
@@ -744,8 +751,8 @@ get_data(Port, MonRef, Eot, Sofar, Size, Max, ExitStatus) ->
             flush_exit(Port), 
             {Sofar, N};
         {'DOWN', MonRef, _, _, _} ->
-            %% We get 'DOWN' if someone does exit/2 on the port... we treat this
-            %% as if a SIGKILL was sent to the command
+            %% We get 'DOWN' if someone does exit_signal/2 on the port... we
+            %% treat this as if a SIGKILL was sent to the command
 	    flush_exit(Port),
 	    {Sofar, 128 + 9}
     end.

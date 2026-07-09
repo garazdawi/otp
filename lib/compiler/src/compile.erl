@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -156,7 +156,7 @@ See `m:erl_id_trans` for an example and an explanation of the function
 
 ## Recommendations for Language Implementors
 
-Except for Erlang, there are quite a few other languges that can run
+Except for Erlang, there are quite a few other languages that can run
 on the Erlang runtime system. Generally, such compilers produce a file
 or binary that is fed into the Erlang compiler. There are four ways
 to do that using documented functionality:
@@ -197,10 +197,13 @@ to do that using documented functionality:
 Our recommendation is to use either the abstract format or Erlang
 source code.
 
-## See Also
+### See Also
 
 `m:epp`, `m:erl_expand_records`, `m:erl_id_trans`, `m:erl_lint`, `m:beam_lib`
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {file, consult, 1}},
+          {nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}}]).
 
 %% High-level interface.
 -export([file/1,file/2,noenv_file/2,format_error/1]).
@@ -717,6 +720,30 @@ value are listed.
   expressions of the form `catch Expr` instead of the modern `try ... catch
   ... end`.
 
+- **`warn_obsolete_bool_op`** - Turns on warnings for use of the `and` and
+  `or` boolean operators.
+
+- **`nowarn_match_alias_pats`** - Turns off warnings for matches that
+    unify constructors, such as the following: `m({a,B} = {Y,Z}) -> . . .`
+
+- **`nowarn_latin1_binary`** - Turns off warnings for binary string segments
+  with characters encoded in Latin-1 rather than UTF-8, such as writing
+  `<<"Motörhead">>` instead of `<<"Motörhead"/utf8>>` or simply `~"Motörhead"`.
+
+- **`nowarn_truncated_character`** - Turns off warnings for truncated
+  characters in binary string segments due to using the default Latin-1
+  encoding, as when writing `<<"空手🙂">>` instead of `<<"空手🙂"/utf8>>` or
+  simply `~"空手🙂"`. Note that truncation causes the resulting string to have
+  seemingly random content; in this example the first version gets encoded as
+  `<<"zKB">>`.
+
+- **`nowarn_truncated_integer`** - Turns off warnings for truncated integers in
+  binary string segments when the integer is outside the specified range of the
+  segment, for example `<<256>>`, `<<150:7>>`, or `<<-130:8/signed>>`
+
+- **`nowarn_export_var_subexpr`** - Turns off warnings for exporting
+  variables out of subexpressions.
+
 - **`nowarn_removed`** - Turns off warnings for calls to functions that have
   been removed. Default is to emit warnings for every call to a function known
   by the compiler to have been recently removed from Erlang/OTP.
@@ -827,6 +854,39 @@ value are listed.
   is emitted when `behaviour_info(optional_callbacks)` in the
   behaviour module returns a badly formed list of functions. Use this
   option to turn off this kind of warning.
+
+- **`nowarn_novalue`** - Disable warnings for creating a
+  native record without giving values for all fields. Note that this
+  kind of warning is only emitted when the module name for the record
+  is explicitly given as the current module; when no module name is
+  given, not initializing all fields is a compilation error.
+
+- **`nowarn_undefined_field`** - Disable warnings for referencing
+  field names not present in the local native record definition.  This
+  warning is emitted when accessing, matching, or updating a native
+  record. It can also be emitted when creating a record if the module
+  name for the record is explicitly given as the current module.
+
+- **`nowarn_native_record_header`** - By default, a warning is emitted
+  when a native record is defined in a header file. You can replace a
+  native record definition in a header file with an `-import_record()`
+  directive. Use this option to turn off this kind of warning.
+
+- **`nowarn_unsafe_function`** - Turns off warnings for calls to unsafe
+  functions. Default is to emit warnings for every call to a function known by
+  the compiler to be unsafe. Notice that the compiler does not know about
+  attribute `-unsafe()`, but uses an assembled list of unsafe functions
+  in Erlang/OTP. To do a more general check, the Xref tool can be used. See also
+  [xref(3)](`m:xref#unsafe_function`) and the function `xref:m/1`, also
+  accessible through the function `\c:xm/1`.
+
+- **`{nowarn_unsafe_function, MFAs}`** - Turns off warnings for calls to
+  unsafe functions like `nowarn_unsafe_function` does, but only for the
+  mentioned functions. `MFAs` is a tuple `{Module,Name,Arity}` or a list of such
+  tuples.
+
+- **`warn_possibly_unsafe_function`** - Enables warnings for functions that
+  are unsafe when used in a certain manner.
 
 Other kinds of warnings are _opportunistic warnings_. They are generated when
 the compiler happens to notice potential issues during optimization and code
@@ -1128,10 +1188,13 @@ expand_opt(report, Os) ->
     [report_errors,report_warnings|Os];
 expand_opt(return, Os) ->
     [return_errors,return_warnings|Os];
-expand_opt(r26, Os) ->
-    [no_bsm_opt | expand_opt(r27, Os)];
+expand_opt(r29, Os) ->
+    %% Nothing... yet.
+    Os;
+expand_opt(r28, Os) ->
+    expand_opt(r29, Os);
 expand_opt(r27, Os) ->
-    [no_long_atoms, compressed_literals | Os];
+    [no_long_atoms, compressed_literals | expand_opt(r28, Os)];
 expand_opt(beam_debug_info, Os) ->
     [beam_debug_info, no_copt, no_bsm_opt, no_bool_opt,
      no_share_opt, no_recv_opt, no_ssa_opt, no_throw_opt | Os];
@@ -1212,19 +1275,19 @@ format_error_reason(Class, Reason, Stack) ->
     erl_error:format_exception(Class, Reason, Stack, Opts).
 
 %% The compile state record.
--record(compile, {filename=""      :: file:filename(),
-                  dir=""           :: file:filename(),
-                  base=""          :: file:filename(),
-                  ifile=""         :: file:filename(),
-                  ofile=""         :: file:filename(),
-                  module=[]        :: module() | [],
-                  abstract_code=[] :: abstract_code(), %Abstract code for debugger.
-                  options=[]       :: [option()],  %Options for compilation
-                  mod_options=[]   :: [option()], %Options for module_info
-                  encoding=none    :: none | epp:source_encoding(),
-                  errors=[]        :: errors(),
-                  warnings=[]      :: warnings(),
-                  extra_chunks=[]  :: [{binary(), binary()}]}).
+-record #compile{filename=""      :: file:filename(),
+                 dir=""           :: file:filename(),
+                 base=""          :: file:filename(),
+                 ifile=""         :: file:filename(),
+                 ofile=""         :: file:filename(),
+                 module=[]        :: module() | [],
+                 abstract_code=[] :: abstract_code(), %Abstract code for debugger.
+                 options=[]       :: [option()],  %Options for compilation
+                 mod_options=[]   :: [option()], %Options for module_info
+                 encoding=none    :: none | epp:source_encoding(),
+                 errors=[]        :: errors(),
+                 warnings=[]      :: warnings(),
+                 extra_chunks=[]  :: [{binary(), binary()}]}.
 
 internal({forms,Forms}, Opts0) ->
     {_,Ps} = passes(forms, Opts0),
@@ -1869,12 +1932,12 @@ remove_file(Code, St) ->
     _ = file:delete(St#compile.ofile),
     {ok,Code,St}.
 
--record(asm_module, {module,
-		     exports,
-		     labels,
-		     functions=[],
-		     attributes=[],
-                     anno=#{}}).
+-record #asm_module{module='',
+                    exports=none,
+                    labels=none,
+                    functions=[],
+                    attributes=[],
+                    anno=#{}}.
 
 preprocess_asm_forms(Forms) ->
     R0 = #asm_module{},
@@ -2465,6 +2528,7 @@ is_obsolete(r22) -> true;
 is_obsolete(r23) -> true;
 is_obsolete(r24) -> true;
 is_obsolete(r25) -> true;
+is_obsolete(r26) -> true;
 is_obsolete(no_badrecord) -> true;
 is_obsolete(no_bs_create_bin) -> true;
 is_obsolete(no_bs_match) -> true;

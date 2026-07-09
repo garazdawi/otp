@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2025. All Rights Reserved.
+# Copyright Ericsson AB 2025-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,12 +30,14 @@ DEPDIR=deps
 DEP_FILE=$(DEPDIR)/deps.mk
 $(shell mkdir -p $(dir $(DEP_FILE)) >/dev/null)
 
+DEP_FILTER_ERL_COMPILE_FLAGS=+deterministic
+
 DEP_REL_TOP?=../../
 
 deps: $(DEP_FILE)
 
 $(DEP_FILE): $(ERL_FILES) $(HRL_FILES) $(INTERNAL_HRL_FILES) $(EXTRA_DEP_DEPENDENCIES) $(ERL_TOP)/make/dep.mk Makefile
-	$(gen_verbose)erlc -M $(ERL_COMPILE_FLAGS) -o $(EBIN) $(filter-out $(DEP_SKIP_FILES), $(ERL_FILES)) \
+	$(gen_verbose)erlc -M $(filter-out $(DEP_FILTER_ERL_COMPILE_FLAGS), $(ERL_COMPILE_FLAGS)) -o $(EBIN) $(filter-out $(DEP_SKIP_FILES), $(ERL_FILES)) \
 	| perl -pe "s@ [a-zA-Z]?$(ERL_TOP_NATIVE)/(?:bootstrap/)?lib/([^/]+)@ $(DEP_REL_TOP)\1@g" 2> /dev/null \
 	> $(DEP_FILE)
 

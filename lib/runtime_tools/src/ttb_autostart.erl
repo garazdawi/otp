@@ -3,8 +3,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
+%% Copyright Ericsson AB 2013-2026. All Rights Reserved.
 %% Copyright Bartłomiej Puzoń 1996-2025 <bartlomiej.puzon@erlang-solutions.com>.
-%% Copyright Ericsson AB 2013-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,6 +32,8 @@
 %%%-------------------------------------------------------------------
 -module(ttb_autostart).
 -moduledoc false.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}}]).
 
 -behaviour(gen_server).
 

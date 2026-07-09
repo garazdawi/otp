@@ -23,7 +23,8 @@
 -module(inet_db).
 -moduledoc false.
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_possibly_unsafe_function, {file, consult, 1}},
+          {nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}}]).
 
 %% Store info about ip addresses, names, aliases host files resolver
 %% options.
@@ -285,13 +286,12 @@ add_rc(File) ->
 	Error -> Error
     end.
 
-%% Add an inetrc binary term must be a rc list
+%% Add an inetrc binary term that must be an rc list
 add_rc_bin(Bin) ->
-    case catch binary_to_term(Bin) of
-	List when is_list(List) ->
-	    add_rc_list(List);
-	_ ->
-	    {error, badarg}
+    try binary_to_term(Bin) of
+        List when is_list(List)     -> add_rc_list(List);
+        _                           -> {error, badarg}
+    catch error : _                 -> {error, badarg}
     end.
 
 add_rc_list(List) -> call({add_rc_list, List}).
@@ -318,7 +318,7 @@ valid_lookup() -> [dns, file, yp, nis, nisplus, native].
 %% Reconstruct an inetrc structure from inet_db
 get_rc() -> 
     get_rc([hosts, domain, nameservers, search, alt_nameservers,
-	    timeout, retry, servfail_retry_timeout, inet6, usevc,
+	    timeout, retry, servfail_retry_timeout, inet6, usevc, random,
 	    edns, udp_payload_size, dnssec_ok, resolv_conf, hosts_file,
 	    socks5_server,  socks5_port, socks5_methods, socks5_noproxy,
 	    udp, sctp, tcp, host, cache_size, cache_refresh, lookup], []).
@@ -359,6 +359,10 @@ get_rc([K | Ks], Ls) ->
 	usevc                  -> get_rc(usevc,
                                          res_usevc,
                                          false,
+                                         Ks, Ls);
+	random                 -> get_rc(random,
+                                         res_random,
+                                         true,
                                          Ks, Ls);
 	edns                   -> get_rc(edns,
                                          res_edns,
@@ -451,18 +455,15 @@ get_rc_hosts([], Ls) ->
 get_rc_hosts([{{_Fam, IP}, Names} | Hosts], Ls) ->
     get_rc_hosts(Hosts, [{host, IP, Names} | Ls]).
 
+%% Some odd features stuffed into this API
+%%
+res_option(next_id) ->
+    generate_next_id();
+res_option(random_port) ->
+    generate_random_port();
 %%
 %% Resolver options
 %%
-res_option(next_id)        ->
-    Cnt = ets:update_counter(inet_db, res_id, 1),
-    case Cnt band 16#ffff of
-	0 ->
-	    _ = ets:update_counter(inet_db, res_id, -Cnt),
-	    0;
-	Id ->
-	    Id
-    end;
 res_option(Option) ->
     case res_optname(Option) of
 	undefined ->
@@ -492,6 +493,7 @@ res_optname(servfail_retry_timeout) -> res_servfail_retry_timeout;
 res_optname(timeout) -> res_timeout;
 res_optname(inet6) -> res_inet6;
 res_optname(usevc) -> res_usevc;
+res_optname(random) -> res_random;
 res_optname(edns) -> res_edns;
 res_optname(udp_payload_size) -> res_udp_payload_size;
 res_optname(dnssec_ok) -> res_dnssec_ok;
@@ -527,6 +529,7 @@ res_check_option(servfail_retry_timeout, T) when is_integer(T), T >= 0 -> true;
 res_check_option(timeout, T) when is_integer(T), T > 0 -> true;
 res_check_option(inet6, Bool) when is_boolean(Bool) -> true;
 res_check_option(usevc, Bool) when is_boolean(Bool) -> true;
+res_check_option(random, Bool) when is_boolean(Bool) -> true;
 res_check_option(edns, V) when V =:= false; V =:= 0 -> true;
 res_check_option(udp_payload_size, S) when is_integer(S), S >= 512 -> true;
 res_check_option(dnssec_ok, D) when is_boolean(D) -> true;
@@ -892,13 +895,13 @@ take_socket_type(MRef) ->
 %% res_search     [Domain]        - list of domains for short names
 %% res_domain     Domain          - local domain for short names
 %% res_recurse    Bool            - recursive query 
-%% res_usevc      Bool            - use tcp only
 %% res_id         Integer         - NS query identifier
 %% res_retry      Integer         - Retry count for UDP query
 %% res_servfail_retry_timeout Integer - Timeout to next query after a failure
 %% res_timeout    Integer         - UDP query timeout before retry
 %% res_inet6      Bool            - address family inet6 for gethostbyname/1
 %% res_usevc      Bool            - use Virtual Circuit (TCP)
+%% res_random     Bool            - use random res_id and port number
 %% res_edns       false|Integer   - false or EDNS version
 %% res_udp_payload_size Integer   - size for EDNS, both query and reply
 %% res_dnssec_ok  Bool            - the DO bit in RFC6891 & RFC3225
@@ -972,6 +975,7 @@ reset_db(Db) ->
        {res_lookup, []},
        {res_recurse, true},
        {res_usevc, false},
+       {res_random, true},
        {res_id, 0},
        {res_retry, ?RES_RETRY},
        {res_servfail_retry_timeout, ?RES_SERVFAIL_RETRY_TO},
@@ -1661,6 +1665,7 @@ is_res_set(servfail_retry_timeout) -> true;
 is_res_set(retry) -> true;
 is_res_set(inet6) -> true;
 is_res_set(usevc) -> true;
+is_res_set(random) -> true;
 is_res_set(edns) -> true;
 is_res_set(udp_payload_size) -> true;
 is_res_set(dnssec_ok) -> true;
@@ -2088,4 +2093,42 @@ handle_take_socket_type(Db, MRef) ->
 	    {ok, Type};
 	[] -> % Already demonitor'ed
 	    error
+    end.
+
+%%----------------------------------------------------------------------
+%% Random DNS Transaction ID and origin port number
+%%----------------------------------------------------------------------
+
+generate_next_id() ->
+    case ets:lookup_element(inet_db, res_random, 2) of
+        true ->
+            case crypto_rand_range(1 bsl 16) of
+                Id when is_integer(Id), 0 =< Id, Id < 1 bsl 16  -> Id;
+                undefined ->
+                    generate_next_id_legacy()
+            end;
+        false ->
+            generate_next_id_legacy()
+    end.
+
+generate_next_id_legacy() ->
+    ets:update_counter(inet_db, res_id, {2, 1, 16#ffff, 0}).
+
+generate_random_port() ->
+    Min   = 1024,
+    Range = (1 bsl 16) - Min,
+    case crypto_rand_range(Range) of
+        V when is_integer(V), 0 =< V, V < Range                 -> Min + V;
+        undefined                                               -> 0
+    end.
+
+crypto_rand_range(Range) when is_integer(Range), 0 < Range ->
+    %% This is how crypto itself checks if it is loaded
+    case application:get_env(crypto, fips_mode) of
+        undefined                                               -> undefined;
+        {ok, Fips} when is_boolean(Fips) ->
+            try crypto:strong_rand_range(Range) of
+                N when is_integer(N, 0, Range-1)                -> N
+            catch error : low_entropy                           -> undefined
+            end
     end.

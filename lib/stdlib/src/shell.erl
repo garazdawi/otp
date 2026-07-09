@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,7 +22,9 @@
 -module(shell).
 -moduledoc({file, "../doc/src/shell.md"}).
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}},
+          {nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}},
+          nowarn_deprecated_catch]).
 
 -export([start/0, start/1, start/2, server/1, server/2, history/1, results/1]).
 -export([get_state/0, get_function/2]).
@@ -1229,7 +1231,8 @@ expand_records(UsedRecords, E0) ->
     RecordDefs = [{attribute,A,module,shell_default}] ++
                  [Def || {_Name,Def} <- UsedRecords],
     Forms0 = RecordDefs ++ [{function,A,foo,0,[{clause,A,[],[],[E]}]}],
-    Forms = erl_expand_records:module(Forms0, [strict_record_tests]),
+    Forms = erl_expand_records:module(Forms0, [strict_record_tests,
+                                               expand_inits]),
     {function,A,foo,0,[{clause,A,[],[],[NE]}]} = lists:last(Forms),
     prep_rec(NE).
 

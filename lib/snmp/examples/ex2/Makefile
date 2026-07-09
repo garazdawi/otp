@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2006-2025. All Rights Reserved.
+# Copyright Ericsson AB 2006-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ ERL_COMPILE_FLAGS += -I../include \
 # Release directory specification
 # ----------------------------------------------------
 RELSYSDIR         = $(RELEASE_PATH)/lib/snmp-$(VSN)
-EXAMPLE_RELSYSDIR = "$(RELSYSDIR)/examples"
+EXAMPLE_RELSYSDIR = "$(RELSYSDIR)/doc/examples"
 EX2_RELSYSDIR     = $(EXAMPLE_RELSYSDIR)/ex2
 
 # ----------------------------------------------------
@@ -126,9 +126,9 @@ dialyzer: $(DIA_PLT)
 include $(ERL_TOP)/make/otp_release_targets.mk
 
 release_spec: opt
+
+release_docs_spec:
 	$(INSTALL_DIR) $(EXAMPLE_RELSYSDIR)
 	$(INSTALL_DIR) $(EX2_RELSYSDIR)
 	$(INSTALL_DATA) $(ERL_FILES) $(EX2_RELSYSDIR)
 	$(INSTALL_DATA) $(TARGET_FILES) $(EX2_RELSYSDIR)
-
-release_docs_spec:

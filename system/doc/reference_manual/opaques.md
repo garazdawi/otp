@@ -70,12 +70,12 @@ end.
 recommendations:**
 
 - Don't examine the underlying type using pattern-matching, guards, or functions
-  that reveal the type, such as [`tuple_size/1`](`tuple_size/1`) . One exception
+  that reveal the type, such as [`tuple_size/1`](`tuple_size/1`). One exception
   is that `=:=` and `=/=` can be used between two opaques with the same name, or
   between an opaque and `any()`, as those comparisons do not reveal underlying
   types.
 - Use functions provided by the module for working with the type. For
-  example, `sets` module provides `sets:new/0`, `sets:add_element/2`,
+  example, the `sets` module provides `sets:new/0`, `sets:add_element/2`,
   `sets:is_element/2`, and so on.
 - [`sets:set(a)`](`t:sets:set/1`) is a subtype of `sets:set(a | b)` and not the
   other way around. Generally, you can rely on the property that `the_opaque(T)`
@@ -87,13 +87,13 @@ recommendations:**
   you must provide functions for constructing, querying, and deconstructing
   instances of your opaque type. For example, sets can be constructed with
   `sets:new/0`, `sets:from_list/1`, `sets:add_element/2`, queried with
-  `sets:is_element/2`, and deconstructed with`sets:to_list/1`.
+  `sets:is_element/2`, and deconstructed with `sets:to_list/1`.
 - Don't define an opaque with a type variable in parameter position. This breaks
   the normal and expected behavior that (for example) `my_type(a)` is a subtype
-  of `my_type(a | b)`
+  of `my_type(a | b)`.
 - Don't write case statements that can produce either an opaque or a non-opaque
   output.
-- Add [specs](typespec.md) to exported functions that use the opaque type
+- Add [specs](typespec.md) to exported functions that use the opaque type.
 
 > #### Change {: .info }
 >

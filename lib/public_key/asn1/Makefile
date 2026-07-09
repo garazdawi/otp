@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2008-2025. All Rights Reserved.
+# Copyright Ericsson AB 2008-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -59,6 +59,7 @@ ASN_MODULES = \
           ECPrivateKey \
 	  KEMAlgorithmInformation-2023 \
 	  X509-ML-DSA-2025 \
+	  X509-ML-KEM-2025 \
 	  SLH-DSA-Module-2024 \
           OCSP-2024-08 \
           OTP-PKIX \

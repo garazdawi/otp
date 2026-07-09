@@ -36,7 +36,11 @@
 %% Test cases
 -export([pkix_implicit/1,
          pkix_explicit/1,
-         pkix_ocsp/1
+         pkix_ocsp/1,
+         pkix_algorithm/1,
+         pkix_crmf/1,
+         pkix_cmp/1,
+         pkix_cms/1
          ]).
 
 %%--------------------------------------------------------------------
@@ -47,7 +51,11 @@ all() ->
     [
      pkix_implicit,
      pkix_explicit,
-     pkix_ocsp
+     pkix_ocsp,
+     pkix_algorithm,
+     pkix_crmf,
+     pkix_cmp,
+     pkix_cms
     ].
 
 %%--------------------------------------------------------------------
@@ -87,4 +95,16 @@ pkix_ocsp(Config) when is_list(Config) ->
     %% manual test: eqc:quickcheck(pkix:implicit_encode_decode()).
     %% proper:quickcheck(pkix:explicit_encode_decode()).
     true =  ct_property_test:quickcheck(pkix:ocsp_encode_decode(),
+                                        Config).
+pkix_algorithm(Config) when is_list(Config) ->
+    true =  ct_property_test:quickcheck(pkix:algorithm_encode_decode(),
+                                        Config).
+pkix_crmf(Config) when is_list(Config) ->
+    true =  ct_property_test:quickcheck(pkix:crmf_encode_decode(),
+                                        Config).
+pkix_cmp(Config) when is_list(Config) ->
+    true =  ct_property_test:quickcheck(pkix:cmp_encode_decode(),
+                                        Config).
+pkix_cms(Config) when is_list(Config) ->
+    true =  ct_property_test:quickcheck(pkix:cms_encode_decode(),
                                         Config).

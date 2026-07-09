@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2000-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2000-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -78,6 +78,7 @@ representations.
 - `from_list/1`
 - `intersection/1`
 - `intersection/2`
+- `is_disjoint/2`
 - `is_element/2`
 - `is_empty/1`
 - `is_equal/2`
@@ -110,7 +111,7 @@ representations.
 > true
 > ```
 
-## See Also
+### See Also
 
 `m:gb_sets`, `m:ordsets`
 """.
@@ -161,7 +162,10 @@ representations.
 -type set() :: set(_).
 
 -doc "As returned by `new/0`.".
--opaque set(Element) :: #set{segs :: segs(Element)} | #{Element => ?VALUE}.
+-opaque set(Element) :: set_v1(Element) | set_v2(Element).
+
+-type set_v1(Element) :: #set{segs :: segs(Element)}.
+-type set_v2(Element) :: #{Element => ?VALUE}.
 
 %%------------------------------------------------------------------------------
 
@@ -323,9 +327,9 @@ of one set is also a member of the other set; otherwise, returns `false`.
 ```erlang
 1> Empty = sets:new().
 2> S = sets:from_list([a,b]).
-3> sets:is_equal(S, S)
+3> sets:is_equal(S, S).
 true
-4> sets:is_equal(S, Empty)
+4> sets:is_equal(S, Empty).
 false
 5> OldSet = sets:from_list([a,b], [{version,1}]).
 6> sets:is_equal(S, OldSet).
@@ -465,8 +469,8 @@ del_element(E, #set{}=S0) ->
 %% update_bucket(Set, Slot, NewBucket) -> UpdatedSet.
 %%  Replace bucket in Slot by NewBucket
 -spec update_bucket(Set1, Slot, Bkt) -> Set2 when
-      Set1 :: set(Element),
-      Set2 :: set(Element),
+      Set1 :: set_v1(Element),
+      Set2 :: set_v1(Element),
       Slot :: non_neg_integer(),
       Bkt :: [Element].
 update_bucket(Set, Slot, NewBucket) ->
@@ -517,7 +521,7 @@ all sets, without duplicates.
 ```erlang
 1> S0 = sets:from_list([a,b,c,d]).
 2> S1 = sets:from_list([d,e,f]).
-3> S2 = sets:from_list([q,r])
+3> S2 = sets:from_list([q,r]).
 4> Sets = [S0, S1, S2].
 5> Union = sets:union(Sets).
 6> lists:sort(sets:to_list(Union)).
@@ -620,7 +624,7 @@ elements that are present in all sets.
 ```erlang
 1> S0 = sets:from_list([a,b,c,d]).
 2> S1 = sets:from_list([d,e,f]).
-3> S2 = sets:from_list([q,r])
+3> S2 = sets:from_list([q,r]).
 4> Sets = [S0, S1, S2].
 5> sets:to_list(sets:intersection([S0, S1, S2])).
 []
@@ -648,7 +652,7 @@ Returns `true` if `Set1` and `Set2` are disjoint; otherwise, returns
 
 Two sets are disjoint if they have no elements in common.
 
-This function is equivalent to `sets:intersection(Set1, Set2) =:= []`,
+This function is equivalent to `sets:is_empty(sets:intersection(Set1, Set2))`,
 but faster.
 
 ## Examples
@@ -656,7 +660,7 @@ but faster.
 ```erlang
 1> S0 = sets:from_list([a,b,c,d]).
 2> S1 = sets:from_list([d,e,f]).
-3> S2 = sets:from_list([q,r])
+3> S2 = sets:from_list([q,r]).
 4> sets:is_disjoint(S0, S1).
 false
 5> sets:is_disjoint(S1, S2).
@@ -907,13 +911,13 @@ value, with `true` being equivalent to `{true, Elem}`.
 
 ```erlang
 filtermap(Fun, Set1) ->
-    sets:from_list(lists:filtermap(Fun, Set1)).
+    sets:from_list(lists:filtermap(Fun, sets:to_list(Set1))).
 ```
 
 ## Examples
 
 ```erlang
-1> S = sets:from_list([2,4,5,6,8,9])
+1> S = sets:from_list([2,4,5,6,8,9]).
 2> F = fun(X) ->
            case X rem 2 of
                0 -> {true, X div 2};
@@ -946,7 +950,7 @@ filtermap(F, #set{}=D) when is_function(F, 1) ->
 %% get_slot(Hashdb, Key) -> Slot.
 %%  Get the slot.  First hash on the new range, if we hit a bucket
 %%  which has not been split use the unsplit buddy bucket.
--spec get_slot(set(E), E) -> non_neg_integer().
+-spec get_slot(set_v1(E), E) -> non_neg_integer().
 get_slot(T, Key) ->
     H = erlang:phash(Key, T#set.maxn),
     if
@@ -955,7 +959,7 @@ get_slot(T, Key) ->
     end.
 
 %% get_bucket(Hashdb, Slot) -> Bucket.
--spec get_bucket(set(), non_neg_integer()) -> term().
+-spec get_bucket(set_v1(_), non_neg_integer()) -> term().
 get_bucket(T, Slot) -> get_bucket_s(T#set.segs, Slot).
 
 %% fold_set(Fun, Acc, Dictionary) -> Dictionary.
@@ -1022,7 +1026,7 @@ put_bucket_s(Segs, Slot, Bkt) ->
     Seg = setelement(BktI, element(SegI, Segs), Bkt),
     setelement(SegI, Segs, Seg).
 
--spec maybe_expand(set(E)) -> set(E).
+-spec maybe_expand(set_v1(E)) -> set_v1(E).
 maybe_expand(T0) when T0#set.size + 1 > T0#set.exp_size ->
     T = maybe_expand_segs(T0),			%Do we need more segments.
     N = T#set.n + 1,				%Next slot to expand into
@@ -1040,14 +1044,14 @@ maybe_expand(T0) when T0#set.size + 1 > T0#set.exp_size ->
 	  segs = Segs2};
 maybe_expand(T) -> T#set{size = T#set.size + 1}.
 
--spec maybe_expand_segs(set(E)) -> set(E).
+-spec maybe_expand_segs(set_v1(E)) -> set_v1(E).
 maybe_expand_segs(T) when T#set.n =:= T#set.maxn ->
     T#set{maxn = 2 * T#set.maxn,
 	  bso  = 2 * T#set.bso,
 	  segs = expand_segs(T#set.segs, T#set.empty)};
 maybe_expand_segs(T) -> T.
 
--spec maybe_contract(set(E), non_neg_integer()) -> set(E).
+-spec maybe_contract(set_v1(E), non_neg_integer()) -> set(E).
 maybe_contract(T, Dc) when T#set.size - Dc < T#set.con_size,
 			   T#set.n > ?seg_size ->
     N = T#set.n,

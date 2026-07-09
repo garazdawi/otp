@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -126,6 +126,8 @@ OS messages are formatted as a tuple
 `syslogd(1M)`, `syslog.conf(4)` in the Solaris documentation.
 """.
 -behaviour(gen_server).
+
+-compile([{nowarn_unsafe_function, {os, cmd, 1}}]).
 
 %% API
 -export([start_link/1, start/0, stop/0]).

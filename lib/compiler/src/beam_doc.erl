@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2023-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -511,7 +511,7 @@ extract_moduledoc0({attribute, ModuleDocAnno, moduledoc, false}, State) ->
    extract_moduledoc0({attribute, ModuleDocAnno, moduledoc, hidden}, State);
 extract_moduledoc0({attribute, ModuleDocAnno, moduledoc, hidden}, State) ->
    State#docs{moduledoc = {ModuleDocAnno, create_module_doc(hidden)}};
-extract_moduledoc0({attribute, ModuleDocAnno, moduledoc, ModuleDoc}, State) when is_list(ModuleDoc) ->
+extract_moduledoc0({attribute, ModuleDocAnno, moduledoc, ModuleDoc}, State) when is_list(ModuleDoc); is_binary(ModuleDoc) ->
    Doc = unicode:characters_to_binary(string:trim(ModuleDoc)),
    State#docs{moduledoc = {set_file_anno(ModuleDocAnno, State), create_module_doc(Doc)}};
 extract_moduledoc0({attribute, ModuleDocAnno, moduledoc, Meta}, State) when is_map(Meta) ->
@@ -759,7 +759,9 @@ extract_documentation(AST, State) ->
    State1 = foldl(fun extract_documentation0/2, State, AST),
    State2 = purge_types_not_used_from_exported_functions(State1),
    State3 = purge_unreachable_types(State2),
-   warnings(AST, State3).
+   Ws = warnings(AST, State3),
+   digraph:delete(State3#docs.type_dependency),
+   Ws.
 
 %%
 %% purges types that are not used in exported functions.

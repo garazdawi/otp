@@ -60,6 +60,11 @@
          process_info_dict_lookup/1,
          process_info_label/1,
          suspend_process_pausing_proc_timer/1,
+         suspend_process_pausing_proc_timer_multi_suspend/1,
+         suspend_process_pausing_bif_timer/1,
+         suspend_process_pausing_bif_timer_multi_suspend/1,
+         suspend_process_pausing_bif_timer_mass/1,
+         suspend_process_bif_timer_on_suspended/1,
 	 bump_reductions/1, low_prio/1, binary_owner/1, yield/1, yield2/1,
 	 otp_4725/1, dist_unlink_ack_exit_leak/1, bad_register/1,
          garbage_collect/1, otp_6237/1,
@@ -193,7 +198,12 @@ groups() ->
        process_info_dict_lookup,
        process_info_label]},
      {suspend_process_bif, [],
-      [suspend_process_pausing_proc_timer]},
+      [suspend_process_pausing_proc_timer,
+       suspend_process_pausing_proc_timer_multi_suspend,
+       suspend_process_pausing_bif_timer,
+       suspend_process_pausing_bif_timer_multi_suspend,
+       suspend_process_pausing_bif_timer_mass,
+       suspend_process_bif_timer_on_suspended]},
      {otp_7738, [],
       [otp_7738_waiting, otp_7738_suspended,
        otp_7738_resume]},
@@ -1834,6 +1844,260 @@ suspend_process_pausing_proc_timer_aux(BeforeSuspend, AfterResume) ->
     true = erlang:resume_process(Pid),
     AfterResume(Pid),
     WaitForSync(),
+    ok.
+
+suspend_process_pausing_bif_timer(Config) ->
+    TcProc = self(),
+    Pid = erlang:spawn_link(
+        fun() ->
+        TcProc ! {sync, self(), start},
+        receive
+            {timeout, _, timer_msg_1} -> TcProc ! {sync, self(), received_message_1};
+            {timeout, _, timer_msg_2} -> exit(timer_2_before_1_receiver)
+            after 2_000 -> exit(timer_not_resumed_receiver)
+        end,
+        receive
+            {timeout, _, timer_msg_1} -> exit(timer_1_before_2_receiver);
+            {timeout, _, timer_msg_2} -> TcProc ! {sync, self(), received_message_2}
+            after 2_000 -> exit(timer_not_resumed_receiver_2)
+        end
+    end),
+
+    % Wait for the process to start
+    receive
+        {sync, Pid, start} -> ok
+        after 10_000 -> error(timeout)
+    end,
+
+    % Start the timers, but immediately suspend the process
+    _TimerRef = erlang:start_timer(1_000, Pid, timer_msg_1),
+    _TimerRef2 = erlang:start_timer(2_000, Pid, timer_msg_2),
+    true = erlang:suspend_process(Pid),
+    timer:sleep(5_000),
+    receive
+        {sync, Pid, received_message_1} -> exit(timer_1_not_paused);
+        {sync, Pid, received_message_2} -> exit(timer_2_not_paused)
+        after 2_000 -> ok
+    end,
+
+    % Resume the process and wait for the timer to fire
+    true = erlang:resume_process(Pid),
+    receive
+        {sync, Pid, received_message_1} -> ok;
+        {sync, Pid, received_message_2} -> exit(timer_2_before_1_spawner)
+        after 2_000 -> exit(timer_not_resumed_spawner)
+    end,
+    receive
+        {sync, Pid, received_message_2} -> ok;
+        {sync, Pid, received_message_1} -> exit(timer_1_before_2_spawner)
+        after 2_000 -> exit(timer_not_resumed_spawner_2)
+    end,
+    ok.
+
+% Same idea as the previous test, but with thousand of processes and timers
+% The goal is to check that race conditions do not cause timers to be unpaused
+bif_timer_receiver_aux(OwnerPid) ->
+    receive
+        {timeout, _, _} -> bif_timer_receiver_aux(OwnerPid);
+        no_more_timeouts -> receive
+            {timeout, _, N} -> OwnerPid ! {timeout, self(), N};
+            exit -> OwnerPid ! {success, self()}
+        end
+    end.
+
+bif_timer_sender_aux(ReceiverPid, N) ->
+    % This time should be long enough to for all the receivers to be awoken and then receive the exit signal before they receive it
+    _TimerRef = erlang:start_timer(3_000, ReceiverPid, N),
+    receive
+            exit -> ok
+    after 10 -> bif_timer_sender_aux(ReceiverPid, N + 1)
+    end.
+
+suspend_process_pausing_bif_timer_mass(Config) ->
+    NumProcesses = 1000,
+    Self = self(),
+    ReceiverPids = [erlang:spawn_link(fun() -> bif_timer_receiver_aux(Self) end) || _ <- lists:seq(1, NumProcesses)],
+    SenderPids = [erlang:spawn_link(fun () -> bif_timer_sender_aux(ReceiverPid, 0) end) || ReceiverPid <- ReceiverPids],
+    % Wait for all the spawned processes to get scheduled and do stuff
+    timer:sleep(2_000),
+    [erlang:suspend_process(Pid) || Pid <- ReceiverPids],
+    [Pid ! exit || Pid <- SenderPids],
+    [Pid ! no_more_timeouts || Pid <- ReceiverPids],
+    timer:sleep(5_000),
+    % Significantly less than the length of the timers created by sender_aux - initial sleep.
+    % The goal is to detect if the iteration of all receiver processes to wake them up takes so long that the timers can fire.
+    erlang:start_timer(900, Self, slow_wakeup),
+    [erlang:resume_process(Pid) || Pid <- ReceiverPids],
+    [Pid ! exit || Pid <- ReceiverPids],
+    [receive
+        {timeout, _, slow_wakeup} -> exit({slow_wakeup, Pid});
+        {success, Pid} -> ok;
+        {timeout, Pid, N} -> exit({timeout, Pid, N})
+    end || Pid <- ReceiverPids],
+    ok.
+
+suspend_process_pausing_proc_timer_multi_suspend(_Config) ->
+    TcProc = self(),
+    Child = erlang:spawn_link(
+        fun() ->
+            TcProc ! {sync, self()},
+            receive go -> ok
+            after 2_000 -> exit(timer_not_paused)
+            end,
+            TcProc ! {sync, self()},
+            receive _ -> error(unexpected)
+            after 2_000 -> ok
+            end,
+            TcProc ! {sync, self()}
+        end
+    ),
+
+    WaitForSync = fun () ->
+        receive {sync, Child} -> ok
+        after 10_000 -> error(timeout)
+        end
+    end,
+    EnsureWaiting = fun() ->
+        wait_until(fun () -> process_info(Child, status) == {status, waiting} end)
+    end,
+
+    WaitForSync(),
+    EnsureWaiting(),
+
+    Suspender = erlang:spawn_link(fun() ->
+        true = erlang:suspend_process(Child),
+        TcProc ! {suspended, self()},
+        receive do_resume -> true = erlang:resume_process(Child) end
+    end),
+    receive {suspended, Suspender} -> ok after 10_000 -> error(timeout) end,
+
+    true = erlang:suspend_process(Child),
+    timer:sleep(5_000),
+    true = erlang:resume_process(Child),
+    timer:sleep(1_000),
+    Child ! go,
+    Suspender ! do_resume,
+
+    WaitForSync(),
+    EnsureWaiting(),
+
+    Suspender2 = erlang:spawn_link(fun() ->
+        true = erlang:suspend_process(Child),
+        TcProc ! {suspended, self()},
+        receive do_resume -> true = erlang:resume_process(Child) end
+    end),
+    receive {suspended, Suspender2} -> ok after 10_000 -> error(timeout) end,
+
+    true = erlang:suspend_process(Child),
+    true = erlang:resume_process(Child),
+    Suspender2 ! do_resume,
+    WaitForSync(),
+    ok.
+
+suspend_process_pausing_bif_timer_multi_suspend(_Config) ->
+    TcProc = self(),
+    Pid = erlang:spawn_link(
+        fun() ->
+        TcProc ! {sync, self(), start},
+        receive
+            {timeout, _, timer_msg_1} -> TcProc ! {sync, self(), received_message_1};
+            {timeout, _, timer_msg_2} -> exit(timer_2_before_1_receiver)
+            after 4_000 -> exit(timer_not_resumed_receiver)
+        end,
+        receive
+            {timeout, _, timer_msg_1} -> exit(timer_1_before_2_receiver);
+            {timeout, _, timer_msg_2} -> TcProc ! {sync, self(), received_message_2}
+            after 4_000 -> exit(timer_not_resumed_receiver_2)
+        end
+    end),
+
+    receive
+        {sync, Pid, start} -> ok
+        after 10_000 -> error(timeout)
+    end,
+
+    _TimerRef = erlang:start_timer(1_000, Pid, timer_msg_1),
+    _TimerRef2 = erlang:start_timer(2_000, Pid, timer_msg_2),
+
+    Suspender = erlang:spawn_link(fun() ->
+        true = erlang:suspend_process(Pid),
+        TcProc ! {suspended, self()},
+        receive do_resume -> true = erlang:resume_process(Pid) end
+    end),
+    receive {suspended, Suspender} -> ok after 10_000 -> error(timeout) end,
+
+    true = erlang:suspend_process(Pid),
+    timer:sleep(5_000),
+    receive
+        {sync, Pid, received_message_1} -> exit(timer_1_not_paused);
+        {sync, Pid, received_message_2} -> exit(timer_2_not_paused)
+        after 2_000 -> ok
+    end,
+
+    true = erlang:resume_process(Pid),
+    timer:sleep(3_000),
+    receive
+        {sync, Pid, received_message_1} -> exit(timer_1_not_paused_after_first_resume);
+        {sync, Pid, received_message_2} -> exit(timer_2_not_paused_after_first_resume)
+        after 2_000 -> ok
+    end,
+
+    Suspender ! do_resume,
+    receive
+        {sync, Pid, received_message_1} -> ok;
+        {sync, Pid, received_message_2} -> exit(timer_2_before_1_spawner)
+        after 4_000 -> exit(timer_not_resumed_spawner)
+    end,
+    receive
+        {sync, Pid, received_message_2} -> ok;
+        {sync, Pid, received_message_1} -> exit(timer_1_before_2_spawner)
+        after 4_000 -> exit(timer_not_resumed_spawner_2)
+    end,
+    ok.
+
+suspend_process_bif_timer_on_suspended(_Config) ->
+    TcProc = self(),
+    Pid = erlang:spawn_link(
+        fun() ->
+        TcProc ! {sync, self(), start},
+        receive
+            msg_before -> TcProc ! {sync, self(), received_before}
+            after 4_000 -> exit(timer_not_resumed_receiver)
+        end,
+        receive
+            msg_during -> TcProc ! {sync, self(), received_during}
+            after 4_000 -> exit(timer_not_resumed_receiver_2)
+        end
+    end),
+
+    receive
+        {sync, Pid, start} -> ok
+        after 10_000 -> error(timeout)
+    end,
+    wait_until(fun () -> process_info(Pid, status) == {status, waiting} end),
+
+    _Ref1 = erlang:send_after(1_000, Pid, msg_before),
+    true = erlang:suspend_process(Pid),
+    _Ref2 = erlang:send_after(2_000, Pid, msg_during),
+
+    timer:sleep(5_000),
+    receive
+        {sync, Pid, received_before} -> exit(timer_before_not_paused);
+        {sync, Pid, received_during} -> exit(timer_during_not_paused)
+        after 2_000 -> ok
+    end,
+
+    true = erlang:resume_process(Pid),
+    receive
+        {sync, Pid, received_before} -> ok;
+        {sync, Pid, received_during} -> exit(during_before_before)
+        after 4_000 -> exit(timer_not_resumed_spawner)
+    end,
+    receive
+        {sync, Pid, received_during} -> ok;
+        {sync, Pid, received_before} -> exit(before_before_during)
+        after 4_000 -> exit(timer_not_resumed_spawner_2)
+    end,
     ok.
 
 %% Tests erlang:bump_reductions/1.

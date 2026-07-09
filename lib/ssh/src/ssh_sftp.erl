@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2005-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -172,6 +172,8 @@ start_channel(Cm, UserOptions0) when is_pid(Cm) ->
     PacketSize = proplists:get_value(packet_size, ChanOpts, ?XFER_PACKET_SIZE),
     case ssh_connection:session_channel(Cm, WindowSize, PacketSize, Timeout) of
 	{ok, ChannelId} ->
+            %% Exec is not used by SFTP channels; undefined is filtered
+            %% out by channel_cb_init_args/1.
             case ssh_connection_handler:start_channel(Cm, ?MODULE, ChannelId,
                                                       [Cm,ChannelId,SftpOpts], undefined) of
 		{ok, Pid} ->

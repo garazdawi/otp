@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2011-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,6 +23,8 @@
 %%
 -module(inet_tls_dist).
 -moduledoc false.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([childspecs/0]).
 -export([select/1, address/0, is_node_name/1,
@@ -718,7 +720,7 @@ check_ip(Socket) ->
                       end,
                 {ok, Ifaddrs} ?= inet:getifaddrs(),
                 {ok, Netmask} ?= find_netmask(IP, Ifaddrs),
-                {ok, {PeerIP, _}} ?= inet:sockname(Socket),
+                {ok, {PeerIP, _}} ?= inet:peername(Socket),
                 ok ?= if is_tuple(PeerIP) -> ok;
                          true -> {error, {no_ip_address, PeerIP}}
                       end,

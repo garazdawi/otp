@@ -2,9 +2,9 @@
 %% %CopyrightBegin%
 %%
 %% SPDX-License-Identifier: Apache-2.0
-%% 
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
-%% 
+%%
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -16,7 +16,7 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 %% A string library that works on grapheme clusters, with the exception
@@ -117,7 +117,7 @@ and operate on grapheme clusters. The
 lists as input are still available but should not be used, they will be
 deprecated in a future release.
 
-## Notes
+## Overlapping Functions
 
 Some of the general string functions can seem to overlap each other. The reason
 is that this string package is the combination of two earlier packages and all
@@ -154,6 +154,7 @@ functions of both packages have been retained.
 -import(lists,[member/2]).
 -compile({no_auto_import,[length/1]}).
 -compile({inline, [btoken/2, rev/1, append/2, stack/2, search_compile/1]}).
+-include("swar_ascii.hrl").
 -define(ASCII_LIST(CP1,CP2),
         is_integer(CP1), 0 =< CP1, CP1 < 256,
         is_integer(CP2), 0 =< CP2, CP2 < 256, CP1 =/= $\r).
@@ -1148,13 +1149,12 @@ length_1(Str, N) ->
         {error, Err} -> error({badarg, Err})
     end.
 
-length_b(<<CP2, CP3, CP4, CP5, CP6, CP7, CP8, CP9, Rest/binary>>,
-         CP1, N)
-  when CP1 =/= $\r,CP2 =/= $\r,CP3 =/= $\r,CP4 =/= $\r,
-       CP5 =/= $\r,CP6 =/= $\r,CP7 =/= $\r,CP8 =/= $\r,
-       ((CP1 bor CP2 bor CP3 bor CP4 bor CP5 bor CP6 bor CP7 bor CP8 bor CP9)
-            band bnot 127) =:= 0 ->
-    length_b(Rest, CP9, N+8);
+%% Binary fast path: 8 single-byte UTF-8 units per step.
+length_b(<<W:56, B, Rest/binary>>, CP1, N)
+  when CP1 =/= $\r, B =/= $\r,
+       CP1 < 128, B < 128,
+       ?are_all_ascii_len_swar(W) ->
+    length_b(Rest, B, N+8);
 length_b(<<CP2/utf8, Rest/binary>>, CP1, N)
   when ?ASCII_LIST(CP1,CP2) ->
     length_b(Rest, CP2, N+1);
@@ -1223,7 +1223,7 @@ reverse_b(Bin0, CP1, Acc) ->
         {error, Err} -> error({badarg, Err})
     end.
 
-slice_l0(<<CP1/utf8, Bin/binary>>, N) when N > 0 ->
+slice_l0(<<CP1/utf8, Bin/binary>>, N) when is_integer(N), N > 0 ->
     slice_lb(Bin, CP1, N);
 slice_l0(L, N) ->
     slice_l(L, N).
@@ -1240,8 +1240,12 @@ slice_l(CD, N) when is_integer(N), N > 0 ->
 slice_l(Cont, 0) ->
     Cont.
 
+slice_lb(<<W:56, B, Bin/binary>>, CP1, N)
+  when CP1 < 128, CP1 =/= $\r, B < 128, B =/= $\r, N > 8,
+       ?are_all_ascii_len_swar(W) ->
+    slice_lb(Bin, B, N-8);
 slice_lb(<<CP2/utf8, Bin/binary>>, CP1, N)
-  when ?ASCII_LIST(CP1,CP2), is_integer(N), N > 1 ->
+  when ?ASCII_LIST(CP1,CP2), N > 1 ->
     slice_lb(Bin, CP2, N-1);
 slice_lb(Bin, CP1, N) ->
     [_|Rest] = unicode_util:gc([CP1|Bin]),
@@ -1281,6 +1285,10 @@ slice_list(CD, N) when N > 0 ->
 slice_list(_, 0) ->
     [].
 
+slice_bin(<<W:56, B, Bin/binary>>, CP1, N)
+  when CP1 < 128, CP1 =/= $\r, B < 128, B =/= $\r, N > 8,
+       ?are_all_ascii_len_swar(W) ->
+    slice_bin(Bin, B, N-8);
 slice_bin(<<CP2/utf8, Bin/binary>>, CP1, N) when ?ASCII_LIST(CP1,CP2), N > 0 ->
     slice_bin(Bin, CP2, N-1);
 slice_bin(CD, CP1, N) when N > 0 ->

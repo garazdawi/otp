@@ -3,8 +3,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
 %%
+%% Copyright Ericsson AB 2025-2026. All Rights Reserved.
 %% Copyright 2019-2021 Radek Szymczyszyn
-%% Copyright Ericsson AB 2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -116,8 +116,7 @@ source({_M, Name, Path}, Dir, Suffix, Env, OkSet, ErrorFlag, Options0) ->
     try
 	%% Without these opts the entries returned by EDoc core (`edoc_extract:source1/5') won't have
 	%% all the necessary data to generate chunks.
-	RequiredChunkOpts = [return_entries, private, hidden],
-	%% But we also want to have the real user-defined `private' accessible.
+	RequiredChunkOpts = [return_entries],
 	Options = ([{show_private, proplists:get_bool(private, Options0)}]
 		   ++ RequiredChunkOpts
 		   ++ Options0),

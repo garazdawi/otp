@@ -3411,14 +3411,6 @@ lookup2(Config) when is_list(Config) ->
                  [r] = qlc:e(Q),
                  [r] = lookup_keys(Q)
          end, [{keypos,1}], [#r{}])">>,
-       {cres,
-        <<"etsc(fun(E) ->
-                Q = qlc:q([element(1, X) || X <- ets:table(E), 
-                                            record(X, r)]),
-                 [r] = qlc:e(Q),
-                 [r] = lookup_keys(Q)
-         end, [{keypos,1}], [#r{}])">>,
-        {warnings,[{{4,45},erl_lint,{obsolete_guard,{record,2}}}]}},
        <<"etsc(fun(E) ->
                 Q = qlc:q([element(1, X) || X <- ets:table(E), 
                                             erlang:is_record(X, r)]),
@@ -6835,7 +6827,7 @@ otp_6674(Config) when is_list(Config) ->
                 false = lookup_keys(Q)
          end, [{{1}}, {{2}}])">>,
 
-    <<"T = gb_trees:from_orddict([{foo,{1}}, {bar,{2}}]),
+    <<"T = gb_trees:from_orddict([{bar,{2}}, {foo,{1}}]),
        Q = qlc:q([{X,Y} || {_,X} <- gb_table:table(T), 
                        {Y} <- [{{1}},{{2}},{{1.0}},{{2.0}}],
                          (X =:= {1}) or (X == {2}), 
@@ -7279,14 +7271,14 @@ manpage(Config) when is_list(Config) ->
     [2,3,4] = qlc:eval(QH),
 
     %% ets(3)
-    MS = ets:fun2ms(fun({X,Y}) when (X > 1) or (X < 5) -> {Y} end),
+    MS = ets:fun2ms(fun({X,Y}) when X > 1 andalso X < 5 -> {Y} end),
     ETs = [
         [<<"Tab = ets:new(t, []),
             true = ets:insert(Tab,[{1,a},{2,b},{3,c},{4,d}]),
             MS = ">>, io_lib:format("~w", [MS]), <<",
             QH1 = ets:table(Tab, [{traverse, {select, MS}}]),
 
-            QH2 = qlc:q([{Y} || {X,Y} <- ets:table(Tab), (X > 1) or (X < 5)]),
+            QH2 = qlc:q([{Y} || {X,Y} <- ets:table(Tab), X > 1 andalso X < 5]),
 
             true = qlc:info(QH1) =:= qlc:info(QH2),
             true = ets:delete(Tab)">>]],
@@ -7299,7 +7291,7 @@ manpage(Config) when is_list(Config) ->
             MS = ">>, io_lib:format("~w", [MS]), <<",
             QH1 = dets:table(T, [{traverse, {select, MS}}]),
 
-            QH2 = qlc:q([{Y} || {X,Y} <- dets:table(t), (X > 1) or (X < 5)]),
+            QH2 = qlc:q([{Y} || {X,Y} <- dets:table(t), X > 1 andalso X < 5]),
 
             true = qlc:info(QH1) =:= qlc:info(QH2),
             ok = dets:close(T)">>]],
@@ -7700,7 +7692,7 @@ i(H, Option) ->
 has_format({format,_}) ->
     true;
 has_format([E | Es]) ->
-    has_format(E) or has_format(Es);
+    has_format(E) orelse has_format(Es);
 has_format(_) ->
     false.
 

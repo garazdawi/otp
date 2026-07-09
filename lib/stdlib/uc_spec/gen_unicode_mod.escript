@@ -6,7 +6,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2017-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2017-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 %%
 
 -mode(compile).
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -record(cp, {name, class, dec, comp, cs, cat}).
 -define(MOD, "unicode_util").
@@ -323,6 +325,7 @@ gen_header(Fd) ->
 -define(IS_CP(CP), is_integer(CP, 0, 16#10FFFF)).
 -define(IS_ASCII(CP), is_integer(CP, 0, 127)).
 -define(IS_LATIN1(CP), is_integer(CP, 0, 255)).
+-define(IS_HANGUL(CP), is_integer(CP, 16#AC00, 16#D7A3)).
 
 
 """),
@@ -467,7 +470,7 @@ gen_norm(Fd) ->
                 ),
 
     io:put_chars(Fd,
-                 "decompose(CP) when is_integer(CP), CP < 16#AC00, 16#D7A3 > CP ->\n"
+                 "decompose(CP) when is_integer(CP), not ?IS_HANGUL(CP) ->\n"
                  "    case unicode_table(CP) of\n"
                  "        {_,[],_,_} -> CP;\n"
                  "        {_,CPs,_,_} -> canonical_order(CPs)\n"
@@ -475,7 +478,7 @@ gen_norm(Fd) ->
                  "decompose(CP) ->\n"
                  "   canonical_order(decompose_1(CP)).\n"
                  "\n"
-                 "decompose_1(CP) when is_integer(CP, 16#AC00, 16#D7A3) ->\n"
+                 "decompose_1(CP) when ?IS_HANGUL(CP) ->\n"
                  "    Syll = CP-16#AC00,\n"
                  "    T = 28,\n"
                  "    N = 588,\n"
@@ -510,7 +513,7 @@ gen_norm(Fd) ->
                  "     [CP || {_, CP} <- lists:keysort(1,lists:reverse(Seq))] ++ canonical_order_1(Cont).\n\n"),
 
     io:put_chars(Fd,
-                 "decompose_compat(CP) when is_integer(CP), CP < 16#AC00, 16#D7A3 > CP ->\n"
+                 "decompose_compat(CP) when is_integer(CP), not ?IS_HANGUL(CP) ->\n"
                  "    case unicode_table(CP) of\n"
                  "        {_, [], [], _} -> CP;\n"
                  "        {_, _, {_,CPs}, _} -> canonical_order(CPs);\n"
@@ -519,7 +522,7 @@ gen_norm(Fd) ->
                  "decompose_compat(CP) ->\n"
                  "   canonical_order(decompose_compat_1(CP)).\n"
                  "\n"
-                 "decompose_compat_1(CP) when is_integer(CP, 16#AC00, 16#D7A3) ->\n"
+                 "decompose_compat_1(CP) when ?IS_HANGUL(CP) ->\n"
                  "    Syll = CP-16#AC00,\n"
                  "    T = 28,\n"
                  "    N = 588,\n"

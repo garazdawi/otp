@@ -21,6 +21,118 @@ limitations under the License.
 -->
 # Common Test Release Notes
 
+## Common_Test 1.31.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a crash in ct_netconfc that occurred when the remote server closed the SSH connection during NETCONF subsystem negotiation.
+
+  Own Id: OTP-20191 Aux Id: ERIERL-1333, [PR-11230]
+
+[PR-11230]: https://github.com/erlang/otp/pull/11230
+
+## Common_Test 1.31
+
+### Fixed Bugs and Malfunctions
+
+- Improved support for QuickCheck when writing property tests.
+
+  Own Id: OTP-20010 Aux Id: [PR-10783]
+
+[PR-10783]: https://github.com/erlang/otp/pull/10783
+
+### Improvements and New Features
+
+- The legacy `and` and `or` operators have been replaced with other language constructs.
+
+  Own Id: OTP-19744 Aux Id: [PR-10114], [PR-10554], [PR-10568], [PR-10579], [PR-10585], [PR-10598], [PR-10710], [PR-10718], [PR-10580], [PR-10730]
+
+- `'EXIT'` messages are now formatted in the same way as `badmatch` errors.
+
+  Own Id: OTP-19910 Aux Id: [PR-10277]
+
+- Error notifications now contain the name of the source file in which the error occurred.
+
+  Own Id: OTP-19925 Aux Id: [GH-10260], [PR-10269]
+
+- New in this release is `ct_doctest`, a module that allows the user to test documentation examples in Erlang module docs and documentation files.
+  
+  ct_doctest allows you to:
+  
+  * Test code examples using shell syntax and their returns
+  
+  * Test code examples that should fail
+  * Write example modules that are compiled and available in shell examples
+  
+  * Plugin other documentation parsing engines so that examples in, for example, `edoc`, `asciidoc`, and others can also be tested.
+  
+  See the documentation for more details.
+
+  Own Id: OTP-20034 Aux Id: [PR-10824], [PR-9315]
+
+- Added support for `-unsafe` attributes, which is used to mark functions as unsafe to use. 
+  
+  This is similar to but separate from deprecation, and the compiler will by default now generate warnings for calls to functions in Erlang/OTP that are known to be always unsafe.
+  
+  Furthermore, `m:xref` can now be used to find calls to functions in another application that lack a `-doc` attribute (`undocumented_function_calls`), calls to functions in another application marked `-doc false.` (`private_function_calls`), as well as calls to unsafe functions (`unsafe_function_calls`).
+
+  Own Id: OTP-20066 Aux Id: [PR-10839]
+
+[PR-10114]: https://github.com/erlang/otp/pull/10114
+[PR-10554]: https://github.com/erlang/otp/pull/10554
+[PR-10568]: https://github.com/erlang/otp/pull/10568
+[PR-10579]: https://github.com/erlang/otp/pull/10579
+[PR-10585]: https://github.com/erlang/otp/pull/10585
+[PR-10598]: https://github.com/erlang/otp/pull/10598
+[PR-10710]: https://github.com/erlang/otp/pull/10710
+[PR-10718]: https://github.com/erlang/otp/pull/10718
+[PR-10580]: https://github.com/erlang/otp/pull/10580
+[PR-10730]: https://github.com/erlang/otp/pull/10730
+[PR-10277]: https://github.com/erlang/otp/pull/10277
+[GH-10260]: https://github.com/erlang/otp/issues/10260
+[PR-10269]: https://github.com/erlang/otp/pull/10269
+[PR-10824]: https://github.com/erlang/otp/pull/10824
+[PR-9315]: https://github.com/erlang/otp/pull/9315
+[PR-10839]: https://github.com/erlang/otp/pull/10839
+
+## Common_Test 1.30.0.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a crash in ct_netconfc that occurred when the remote server closed the SSH connection during NETCONF subsystem negotiation.
+
+  Own Id: OTP-20191 Aux Id: ERIERL-1333, [PR-11230]
+
+[PR-11230]: https://github.com/erlang/otp/pull/11230
+
+## Common_Test 1.30
+
+### Fixed Bugs and Malfunctions
+
+- Added documentation about the behavior of `ct:comment/1` and `ct:comment/2` when executed from processes other than the process running test functions.
+
+  Own Id: OTP-19913 Aux Id: ERIERL-1264, [PR-10271]
+
+[PR-10271]: https://github.com/erlang/otp/pull/10271
+
+### Improvements and New Features
+
+- Updated jquery to 4.0.0
+
+  Own Id: OTP-19972 Aux Id: [PR-10665], [PR-10623], [PR-10624], [PR-10625]
+
+- The removal of the `m:slave` and `m:slave` modules have been postponed to Erlang/OTP 31.
+  
+  The partial removal of the archive feature has been postponed to Erlang/OTP 30.
+
+  Own Id: OTP-19989 Aux Id: [PR-10714]
+
+[PR-10665]: https://github.com/erlang/otp/pull/10665
+[PR-10623]: https://github.com/erlang/otp/pull/10623
+[PR-10624]: https://github.com/erlang/otp/pull/10624
+[PR-10625]: https://github.com/erlang/otp/pull/10625
+[PR-10714]: https://github.com/erlang/otp/pull/10714
+
 ## Common_Test 1.29.1
 
 ### Improvements and New Features
@@ -92,6 +204,16 @@ limitations under the License.
 [PR-9819]: https://github.com/erlang/otp/pull/9819
 [PR-8734]: https://github.com/erlang/otp/pull/8734
 [PR-9670]: https://github.com/erlang/otp/pull/9670
+
+## Common_Test 1.27.7.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a crash in ct_netconfc that occurred when the remote server closed the SSH connection during NETCONF subsystem negotiation.
+
+  Own Id: OTP-20191 Aux Id: ERIERL-1333, [PR-11230]
+
+[PR-11230]: https://github.com/erlang/otp/pull/11230
 
 ## Common_Test 1.27.7
 

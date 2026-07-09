@@ -88,7 +88,7 @@ The default initial heap size of 233 words is quite conservative to support
 Erlang systems with hundreds of thousands or even millions of processes. The
 garbage collector grows and shrinks the heap as needed.
 
-In a system that use comparatively few processes, performance _might_ be
+In a system that uses comparatively few processes, performance _might_ be
 improved by increasing the minimum heap size using either the `+h` option for
 [erl](`e:erts:erl_cmd.md`) or on a process-per-process basis using the
 `min_heap_size` option for [spawn_opt/4](`erlang:spawn_opt/4`).
@@ -291,7 +291,7 @@ BEAM code and persistent terms). The amount of virtual address space reserved
 for literals can be changed by using the
 [`+MIscs option`](`e:erts:erts_alloc.md#MIscs`) when starting the emulator.
 
-Here is an example how the reserved virtual address space for literals can be
+Here is an example of how the reserved virtual address space for literals can be
 raised to 2 GB (2048 MB):
 
 ```text
@@ -381,7 +381,7 @@ multi-CPU computer by running several Erlang scheduler threads
 
 To gain performance from a multi-core computer, your application _must have more
 than one runnable Erlang process_ most of the time. Otherwise, the Erlang
-emulator can still only run one Erlang process at the time.
+emulator can still only run one Erlang process at a time.
 
 Benchmarks that appear to be concurrent are often sequential.  For
 example, the [EStone

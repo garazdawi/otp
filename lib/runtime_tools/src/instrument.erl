@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1998-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ Erlang runtime system. Currently, only the allocation of memory can be studied.
 > differ greatly from one version to another. We make no compatibility
 > guarantees in this module.
 
-## See Also
+### See Also
 
 [erts_alloc(3)](`e:erts:erts_alloc.md`), [erl(1)](`e:erts:erl_cmd.md`)
 """.

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -61,10 +61,12 @@ A string describing the error is obtained with the following call:
 Module:format_error(ErrorDescriptor)
 ```
 
-## See Also
+### See Also
 
 `m:erl_parse`
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 %% An Erlang code preprocessor.
 
@@ -2147,7 +2149,12 @@ update_fun_name_1([Tok|Toks], L, FA, St) ->
 		    update_fun_name_1(Toks, L, FA, St)
 	    end;
 	left ->
-	    update_fun_name_1(Toks, L+1, FA, St);
+            case FA of
+                {Name,0} ->
+                    update_fun_name_1(Toks, L+1, {Name,1}, St);
+                {_,_} ->
+                    update_fun_name_1(Toks, L+1, FA, St)
+            end;
 	right when L =:= 1 ->
 	    FA;
 	right ->

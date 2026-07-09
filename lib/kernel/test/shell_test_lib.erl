@@ -2,9 +2,9 @@
 %% %CopyrightBegin%
 %%
 %% SPDX-License-Identifier: Apache-2.0
-%% 
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
-%% 
+%%
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -16,11 +16,13 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 
 -module(shell_test_lib).
+
+-compile([{nowarn_unsafe_function, {os, cmd, 1}}]).
 
 -include("shell_test_lib.hrl").
 -include_lib("common_test/include/ct.hrl").
@@ -82,6 +84,9 @@ stop_tmux(_Config) ->
     ok.
 
 %% Setup a TTY, or a ssh server and client but do not type anything in terminal (except password)
+-spec setup_tty([{peer, peer:config()} | {tc_path, file:name()} |
+                 {env, [{Key :: string(), Value :: string()}]} |
+                 {args, [string()]}]) -> term().
 setup_tty(Config) ->
     ClientName = maps:get(name,proplists:get_value(peer, Config, #{}),
                     peer:random_name(proplists:get_value(tc_path, Config))),
@@ -179,9 +184,10 @@ setup_tty(Config) ->
                 PrivDir = filename:join(proplists:get_value(priv_dir, Config), "nopubkey"),
                 file:make_dir(PrivDir),
                 SysDir = proplists:get_value(data_dir, Config),
-                {ok, _Sshd} = ssh:daemon(8989, [{system_dir, SysDir},
-                                    {user_dir, PrivDir},
-                                    {password, "bar"}])
+                {ok, _Sshd} = ssh:daemon(8989, [{shell, {shell, start, []}},
+                                                {system_dir, SysDir},
+                                                {user_dir, PrivDir},
+                                                {password, "bar"}])
             end),
             os:cmd(os:find_executable("tmux") ++ " new-window -n " ++ ClientName ++ " -d -- "++
                 "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null localhost -p 8989 -l foo"),
@@ -317,7 +323,7 @@ check_content(Term, Match, Opts) when is_map(Opts) ->
     check_content(Term, Match, Opts, 5).
 check_content(Term, Match, Opts, Attempt) ->
     OrigContent = case Term of
-                    #tmux{} -> get_content(Term);
+                    #tmux{} -> get_content(Term, maps:get(args, Opts, ""));
                     Fun when is_function(Fun,0) -> Fun()
                 end,
     Content = case maps:find(replace, Opts) of

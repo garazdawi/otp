@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -371,6 +371,7 @@ strip(Conf) when is_list(Conf) ->
     {Source3D1, BeamFile3D1} = make_beam(PrivDir, make_fun, make_fun),
     {Source4D1, BeamFile4D1} = make_beam(PrivDir, constant, constant),
     {Source5D1, BeamFile5D1} = make_beam(PrivDir, lines, lines),
+    {Source6D1, BeamFile6D1} = make_beam(PrivDir, native_record, native_record),
 
     NoOfTables = erlang:system_info(ets_count),
     P0 = pps(),
@@ -419,6 +420,19 @@ strip(Conf) when is_list(Conf) ->
     {module, lines} = code:load_abs(filename:rootname(BeamFile5D1)),
     Info = get_line_number_info(),
 
+    %% test that a native record can be created after stripping
+    {ok, {native_record,BeamFile6D1}} = beam_lib:strip(BeamFile6D1),
+    {module, native_record} = code:load_abs(filename:rootname(BeamFile6D1)),
+    #native_record:vec{x=0, y=0} = native_record:t(),
+    true = code:delete(native_record),
+    false = code:purge(native_record),
+
+    %% check that the "DbgB" chunk is still present after stipping
+    {Source7D1, BeamFile7D1} = make_beam(PrivDir, simple, member, [beam_debug_info]),
+    {ok, {simple,BeamFile7D1}} = beam_lib:strip(BeamFile7D1),
+    [_,_,{chunks,Chunks}] = beam_lib:info(BeamFile7D1),
+    true = lists:keymember("DbgB", 1, Chunks),
+
     true = (P0 == pps()),
     NoOfTables = erlang:system_info(ets_count),
 
@@ -427,6 +441,8 @@ strip(Conf) when is_list(Conf) ->
 		  Source3D1, BeamFile3D1,
 		  Source4D1, BeamFile4D1,
 		  Source5D1, BeamFile5D1,
+		  Source6D1, BeamFile6D1,
+		  Source7D1, BeamFile7D1,
                   BeamFileSofs]),
 
     false = code:purge(sofs),
@@ -915,12 +931,15 @@ chunk_info(File) ->
     Chunks.
 
 make_beam(Dir, Module, F) ->
+    make_beam(Dir, Module, F, []).
+
+make_beam(Dir, Module, F, Options) ->
     FileBase = filename:join(Dir, atom_to_list(Module)),
     Source = FileBase ++ ".erl",
     BeamFile = FileBase ++ ".beam",
     file:delete(BeamFile),
     simple_file(Source, Module, F),
-    {ok, _} = compile:file(Source, [{outdir,Dir}, debug_info, report]),
+    {ok, _} = compile:file(Source, [{outdir,Dir}, debug_info, report | Options]),
     {Source, BeamFile}.
 
 set_byte(_Backup, Binary, Pos, Byte) when is_binary(Binary) ->
@@ -1011,6 +1030,14 @@ simple_file(File, Module, literals) ->
 			"-export([t/0]). "
 			"t() -> "
 			"    {literal, tuple}. "]),
+    ok = file:write_file(File, B);
+simple_file(File, Module, native_record) ->
+    B = list_to_binary(["-module(", atom_to_list(Module), "). "
+			"-export([t/0]). "
+                        "-export_record([vec]). "
+                        "-record #vec{x=0,y=0}. "
+			"t() -> "
+			"    #vec{}. "]),
     ok = file:write_file(File, B);
 simple_file(File, Module, F) ->
     B = list_to_binary(["-module(", atom_to_list(Module), "). "

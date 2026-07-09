@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2003-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@
 %% %CopyrightEnd%
 %%
 -module(warnings_SUITE).
+-include_lib("stdlib/include/assert.hrl").
 
 %%-define(STANDALONE, true).
 
@@ -47,6 +48,9 @@
 	 bit_syntax/1,inlining/1,tuple_calls/1,
          recv_opt_info/1,opportunistic_warnings/1,
          eep49/1,inline_list_funcs/1]).
+
+%% Import SSA records.
+-import_record(beam_ssa, [b_set, b_literal, b_remote, b_local]).
 
 init_per_testcase(_Case, Config) ->
     Config.
@@ -602,29 +606,30 @@ bin_opt_info(Config) when is_list(Config) ->
                  split_binary(T, 4).
            ">>,
 
-    Ws = (catch run_test(Config, Code, [bin_opt_info])),
+    Ws = run_test(Config, Code, [bin_opt_info]),
 
     %% This is an inexact match since the pass reports exact instructions as
     %% part of the warnings, which may include annotations that vary from run
     %% to run.
     {warnings,
-     [{5,beam_ssa_bsm,{unsuitable_call,
-                       {{b_local,{b_literal,t1},1},
-                        {used_before_match,
-                         {b_set,_,_,{bif,byte_size},[_]}}}}},
+     [{5,beam_ssa_bsm,
+       {unsuitable_call,
+        {#b_local{name=#b_literal{val=t1},arity=1},
+         {used_before_match,
+          #b_set{op={bif,byte_size},args=[_]}}}}},
       {5,beam_ssa_bsm,{binary_created,_,_}},
       {11,beam_ssa_bsm,{binary_created,_,_}}, %% A =< B -> T
       {13,beam_ssa_bsm,context_reused},       %% A > B -> t2(T);
       {16,beam_ssa_bsm,context_reused}, %% when byte_size(T) < 4 ->
       {19,beam_ssa_bsm,{remote_call,
-                        {b_remote,
-                         {b_literal,erlang},
-                         {b_literal,split_binary},2}}},
+                        #b_remote{mod=#b_literal{val=erlang},
+                                  name=#b_literal{val=split_binary},
+                                  arity=2}}},
       {19,beam_ssa_bsm,{binary_created,_,_}}  %% split_binary(T, 4)
      ]} = Ws,
 
     %% For coverage: don't give the bin_opt_info option.
-    [] = (catch run_test(Config, Code, [])),
+    [] = run_test(Config, Code, []),
 
     %% Now try with abstract code and no location.
     %%
@@ -654,13 +659,13 @@ bin_opt_info(Config) when is_list(Config) ->
                                [],
                                [{call,0,{atom,0,t1},[{var,0,'T'}]}]},
                            {clause,0,[{bin,0,[]}],[],[{atom,0,ok}]}]}]}]}],
-    Wsf = (catch run_forms(Forms, [bin_opt_info])),
+    Wsf = run_forms(Forms, [bin_opt_info]),
 
     {warnings,
      [{none,beam_ssa_bsm,{unsuitable_call,
-                       {{b_local,{b_literal,t1},1},
-                        {used_before_match,
-                         {b_set,_,_,{bif,byte_size},[_]}}}}},
+                          {#b_local{name=#b_literal{val=t1},arity=1},
+                           {used_before_match,
+                            #b_set{op={bif,byte_size},args=[_]}}}}},
       {none,beam_ssa_bsm,{binary_created,_,_}}
      ]} = Wsf,
 
@@ -1149,7 +1154,8 @@ inlining(Config) ->
 tuple_calls(Config) ->
     %% Make sure that no spurious warnings are generated.
     Ts = [{inlining_1,
-           <<"-compile(tuple_calls).
+           <<"-compile([tuple_calls,
+                        {nowarn_unsafe_function,{erlang, list_to_atom, 1}}]).
               dispatch(X) ->
                 (list_to_atom(\"prefix_\" ++
                 atom_to_list(suffix))):doit(X).
@@ -1192,7 +1198,7 @@ recv_opt_info(Config) when is_list(Config) ->
                     end.
            ">>,
 
-    Ws = (catch run_test(Config, Code, [recv_opt_info])),
+    Ws = run_test(Config, Code, [recv_opt_info]),
 
     %% This is an inexact match since the pass reports exact instructions as
     %% part of the warnings, which may include annotations that vary from run
@@ -1212,7 +1218,7 @@ recv_opt_info(Config) when is_list(Config) ->
          {23,beam_ssa_recv,{used_receive_marker,_}}]} = Ws,
 
     %% For coverage: don't give the recv_opt_info option.
-    [] = (catch run_test(Config, Code, [])),
+    [] = run_test(Config, Code, []),
 
     %% Now try with abstract code and no location.
     %%
@@ -1233,7 +1239,7 @@ recv_opt_info(Config) when is_list(Config) ->
                                      [{var,0,'Msg'}]}]}]}]}]}
     ],
 
-    Wsf = (catch run_forms(Forms, [recv_opt_info])),
+    Wsf = run_forms(Forms, [recv_opt_info]),
     {warnings, [{none,beam_ssa_recv,matches_any_message}]} = Wsf,
 
     ok.
@@ -1393,12 +1399,13 @@ lines_only_1({Loc,Mod,Error}) ->
 do_run(Config, Tests) ->
     F = fun({N,P,Ws,E}, BadL) ->
                 io:format("### ~s\n", [N]),
-                case catch run_test(Config, P, Ws) of
-                    E -> 
-                        BadL;
-                    Bad -> 
+                try run_test(Config, P, Ws) of
+                    E ->
+                        BadL
+                catch
+                    error:Bad:Stack ->
                         io:format("~nTest ~p failed. Expected~n  ~p~n"
-                                  "but got~n  ~p~n", [N, E, Bad]),
+                                  "but got~n  ~p ~p~n", [N, E, Bad, Stack]),
 			fail()
                 end
         end,

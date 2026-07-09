@@ -117,7 +117,7 @@ compatible: when one is derived from the other. For nominal types `s()` and
 
 In both cases, `s()` and `t()` are compatible nominal types even though they
 have different names. Defining them in different modules does not affect
-compatiblity.
+compatibility.
 
 In summary, nominal type-checking rules are as follows:
 

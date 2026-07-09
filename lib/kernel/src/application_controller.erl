@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,7 +22,8 @@
 -module(application_controller).
 -moduledoc false.
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}},
+          nowarn_deprecated_catch]).
 
 %% External exports
 -export([start/1,
@@ -563,7 +564,7 @@ init(Init, Kernel) ->
 	    ReasonStr =
 		lists:flatten(io_lib:format("error in config file "
 					    "~tp (~w): ~ts",
-					    [File, Line, Str])),
+					    [File, Line, to_string(Str)])),
 	    Init ! {ack, self(), {error, to_string(ReasonStr)}};
         {error, {file_descriptor, FDString, Line, Str}} ->
 	    ReasonStr =
@@ -2071,8 +2072,8 @@ scan_file(Str) ->
 		Error ->
 		    Error
 	    end;
-	{done, Result, _} ->
-	    {error, {none, parse_file, tuple_to_list(Result)}};
+	{done, {error, {Line, Module, Description}, _}, _} ->
+	    {error, {Line, parse_file, {Module, Description}}};
 	{more, _} ->
 	    {error, {none, load_file, "no ending <dot> found"}}
     end.

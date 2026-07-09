@@ -115,6 +115,8 @@
          unsupported_sign_algo_client_auth/1,
          unsupported_sign_algo_cert_client_auth/0,
          unsupported_sign_algo_cert_client_auth/1,
+         certs_keys_signature_algs_selection/0,
+         certs_keys_signature_algs_selection/1,
          longer_chain/0,
          longer_chain/1,
          cross_signed_chain/0,
@@ -231,7 +233,8 @@ tls_1_3_tests() ->
      hello_retry_client_auth,
      hello_retry_client_auth_empty_cert_accepted,
      hello_retry_client_auth_empty_cert_rejected,
-     server_certificate_authorities_disabled
+     server_certificate_authorities_disabled,
+     certs_keys_signature_algs_selection
     ].
 
 pre_tls_1_3_rsa_tests() ->
@@ -1362,6 +1365,12 @@ unsupported_sign_algo_client_auth(Config) ->
                   {signature_algs, [ecdsa_sha1, rsa_pss_pss_sha256]},
                   {fail_if_no_peer_cert, true}|ServerOpts0],
     ssl_test_lib:basic_alert(ClientOpts, ServerOpts, Config, insufficient_security).
+%%--------------------------------------------------------------------
+certs_keys_signature_algs_selection() ->
+    [{doc,"TLS 1.3: Test certs_keys certificate selection based on signature_algorithms"}].
+
+certs_keys_signature_algs_selection(Config) ->
+    ssl_cert_tests:certs_keys_signature_algs_selection(Config).
 %%--------------------------------------------------------------------
 hello_retry_client_auth() ->
     [{doc, "TLS 1.3 (HelloRetryRequest): Test client authentication."}].

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@
 
 %% Handling of incoming data
 -export([get_tls_records/5,
-         init_connection_states/3,
          init_connection_states/4]).
 
 %% Encoding TLS records
@@ -69,20 +68,10 @@
 %% Handling of incoming data
 %%====================================================================
 %%--------------------------------------------------------------------
--spec init_connection_states(Role, Version, BeastMitigation) ->
-          ssl_record:connection_states() when
-      Role :: client | server,
-      Version :: tls_version(),
-      BeastMitigation :: one_n_minus_one | zero_n | disabled.
-
 %%
 %% Description: Creates a connection_states record with appropriate
 %% values for the initial SSL connection setup.
 %%--------------------------------------------------------------------
-init_connection_states(Role, Version, BeastMitigation) ->
-    MaxEarlyDataSize = ssl_config:get_max_early_data_size(),
-    init_connection_states(Role, Version, BeastMitigation, MaxEarlyDataSize).
-%%
 -spec init_connection_states(Role, Version, BeastMitigation,
                              MaxEarlyDataSize) ->
           ssl_record:connection_states() when
@@ -349,7 +338,7 @@ is_higher(_, _) ->
 
 
 %%--------------------------------------------------------------------
--spec supported_protocol_versions() -> [tls_version()].					 
+-spec supported_protocol_versions() -> [tls_version()].
 %%
 %% Description: Protocol versions supported
 %%--------------------------------------------------------------------
@@ -378,32 +367,31 @@ supported_protocol_versions([]) ->
 supported_protocol_versions([_|_] = Vsns) ->
     sufficient_support(Vsns).
 
-sufficient_crypto_support(Version) ->
-    sufficient_crypto_support(crypto:supports(), Version).
-
-sufficient_crypto_support(CryptoSupport, Version) when Version == 'tlsv1';
-                                                       Version == 'tlsv1.1' ->
-    Hashes =  proplists:get_value(hashs, CryptoSupport),
-    PKeys =  proplists:get_value(public_keys, CryptoSupport),
-    proplists:get_bool(sha, Hashes) 
+sufficient_crypto_support(Version) when Version == 'tlsv1';
+                                        Version == 'tlsv1.1' ->
+    Hashes = crypto:supports(hashs),
+    PKeys = crypto:supports(public_keys),
+    proplists:get_bool(sha, Hashes)
         andalso
-        proplists:get_bool(md5, Hashes) 
-        andalso 
-        proplists:get_bool(aes_cbc, proplists:get_value(ciphers, CryptoSupport)) 
+        proplists:get_bool(md5, Hashes)
         andalso
-          (proplists:get_bool(ecdsa, PKeys) orelse proplists:get_bool(rsa, PKeys) orelse proplists:get_bool(dss, PKeys)) 
+        proplists:get_bool(aes_cbc, crypto:supports(ciphers))
+        andalso
+          (proplists:get_bool(ecdsa, PKeys) orelse proplists:get_bool(rsa, PKeys) orelse
+           proplists:get_bool(dss, PKeys))
         andalso
           (proplists:get_bool(ecdh, PKeys) orelse proplists:get_bool(dh, PKeys));
 
-sufficient_crypto_support(CryptoSupport, 'tlsv1.2') ->
-    PKeys =  proplists:get_value(public_keys, CryptoSupport),
-    (proplists:get_bool(sha256, proplists:get_value(hashs, CryptoSupport)))
-        andalso 
-          (proplists:get_bool(aes_cbc, proplists:get_value(ciphers, CryptoSupport)))
+sufficient_crypto_support('tlsv1.2') ->
+    PKeys =  crypto:supports(public_keys),
+    (proplists:get_bool(sha256, crypto:supports(hashs)))
         andalso
-          (proplists:get_bool(ecdsa, PKeys) orelse proplists:get_bool(rsa, PKeys) orelse proplists:get_bool(dss, PKeys)) 
+          (proplists:get_bool(aes_cbc, crypto:supports(ciphers))
         andalso
-          (proplists:get_bool(ecdh, PKeys) orelse proplists:get_bool(dh, PKeys));
+          (proplists:get_bool(ecdsa, PKeys) orelse proplists:get_bool(rsa, PKeys) orelse
+           proplists:get_bool(dss, PKeys))
+        andalso
+          (proplists:get_bool(ecdh, PKeys) orelse proplists:get_bool(dh, PKeys)));
 
 %%  A TLS-compliant application MUST implement the TLS_AES_128_GCM_SHA256
 %%  [GCM] cipher suite and SHOULD implement the TLS_AES_256_GCM_SHA384
@@ -415,27 +403,20 @@ sufficient_crypto_support(CryptoSupport, 'tlsv1.2') ->
 %%  CertificateVerify and certificates), and ecdsa_secp256r1_sha256.  A
 %%  TLS-compliant application MUST support key exchange with secp256r1
 %%  (NIST P-256) and SHOULD support key exchange with X25519 [RFC7748].
-sufficient_crypto_support(CryptoSupport, 'tlsv1.3') ->
-    Fun = fun({Group, Algorithm}) ->
-                  is_algorithm_supported(CryptoSupport, Group, Algorithm)
-          end,
-   %% Minimum requirement check
-   L = [{ciphers, aes_gcm},                %% TLS_AES_*_GCM_*
-         {hashs, sha256},                   %% TLS_AES_128_GCM_SHA256
-         {rsa_opts, rsa_pkcs1_padding},     %% rsa_pkcs1_sha256
-         {rsa_opts, rsa_pkcs1_pss_padding}, %% rsa_pss_*
-         {public_keys, ecdh},
-         {public_keys, rsa},
-         {public_keys, ecdsa},
-         {curves, secp256r1}               %% key exchange with secp256r1
-        ],
-    lists:all(Fun, L);
-sufficient_crypto_support(CryptoSupport, Version) ->
-    sufficient_crypto_support(CryptoSupport, protocol_version(Version)).
+sufficient_crypto_support('tlsv1.3') ->
+    (are_algorithms_supported(crypto:supports(ciphers), [aes_gcm]) andalso
+     are_algorithms_supported(crypto:supports(public_keys), [ecdh, rsa, ecdsa]) andalso
+     are_algorithms_supported(crypto:supports(hashs), [sha256]) andalso
+     are_algorithms_supported(crypto:supports(curves), [secp256r1]) andalso
+     are_algorithms_supported(crypto:supports(rsa_opts),
+                              [rsa_pkcs1_padding, rsa_pkcs1_pss_padding]));
+sufficient_crypto_support(Version) ->
+    sufficient_crypto_support(protocol_version(Version)).
 
-
-is_algorithm_supported(CryptoSupport, Group, Algorithm) ->
-    proplists:get_bool(Algorithm, proplists:get_value(Group, CryptoSupport)).
+are_algorithms_supported(CryptoSupport, Algorithms) ->
+    lists:all(fun(Algorithm) ->
+                      proplists:get_bool(Algorithm, CryptoSupport)
+              end, Algorithms).
 
 -spec is_acceptable_version(tls_version()) -> boolean().
 is_acceptable_version(Version)
@@ -553,8 +534,8 @@ validate_tls_record_version(Versions, Q, MaxFragLen, Downgrade, Acc, Type, Versi
         false ->
             ?ALERT_REC(?FATAL, ?BAD_RECORD_MAC, {unsupported_version, Version})
     end;
-validate_tls_record_version(?TLS_1_3=Versions, Q, MaxFragLen, Downgrade, Acc, Type, ?TLS_1_2=Version, Length) ->
-    validate_tls_record_length(Versions, Q, MaxFragLen, Downgrade, Acc, Type, Version, Length);
+validate_tls_record_version(?TLS_1_3 = Version, Q, MaxFragLen, Downgrade, Acc, Type, ?TLS_1_2 = OuterVersion, Length) ->
+    validate_tls_record_length(Version, Q, MaxFragLen, Downgrade, Acc, Type, OuterVersion, Length);
 validate_tls_record_version(Version, Q, MaxFragLen, Downgrade, Acc, Type, Version, Length) ->
     %% Exact version match
     validate_tls_record_length(Version, Q, MaxFragLen, Downgrade, Acc, Type, Version, Length);
@@ -722,10 +703,11 @@ split_iovec([], _SplitSize, Acc) ->
 
 max_len([?TLS_1_3|_])->
     ?TLS13_MAX_CIPHER_TEXT_LENGTH;
+max_len(?TLS_1_3)->
+    ?TLS13_MAX_CIPHER_TEXT_LENGTH;
 max_len(_) ->
     ?MAX_CIPHER_TEXT_LENGTH.
 
 sufficient_support(Versions) ->
-    CryptoSupport = crypto:supports(),
-    [Ver ||  Ver <- Versions, sufficient_crypto_support(CryptoSupport, Ver)].
+    [Ver ||  Ver <- Versions, sufficient_crypto_support(Ver)].
 

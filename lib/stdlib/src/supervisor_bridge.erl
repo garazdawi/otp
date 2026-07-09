@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ The `m:sys` module can be used for debugging a supervisor bridge.
 Unless otherwise stated, all functions in this module fail if the specified
 supervisor bridge does not exist or if bad arguments are specified.
 
-## See Also
+### See Also
 
 `m:supervisor`, `m:sys`
 """.

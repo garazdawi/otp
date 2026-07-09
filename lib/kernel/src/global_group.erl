@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1998-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ global group as the local node.
   group at failover/takeover. Nothing prevents this to be done, but the
   application code must then handle the situation.
 
-## See Also
+### See Also
 
 `m:global`, [`erl`](`e:erts:erl_cmd.md`)
 """.

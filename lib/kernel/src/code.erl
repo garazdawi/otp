@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -345,7 +345,9 @@ common reasons.
 - **`sticky_directory`** - The object code resides in a sticky directory.
 """.
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}},
+          {nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}},
+          nowarn_deprecated_catch]).
 
 -include_lib("kernel/include/logger.hrl").
 -include("eep48.hrl").
@@ -422,17 +424,24 @@ common reasons.
 -type coverage_mode() :: 'none' | 'function' | 'function_counters' |
                          'line' | 'line_counters'.
 
--export_type([debug_line/0, debug_frame/0, debug_name/0, debug_source/0,
-              debug_value/0, debug_info/0]).
+-export_type([debug_line/0, debug_frame/0, debug_var/0, debug_name/0, debug_source/0,
+              debug_value/0, debug_atom_or_var/0, debug_call/0, debug_info/0]).
 
 -nominal debug_line() :: pos_integer().
 -nominal debug_frame() :: non_neg_integer() | 'entry' | 'none'.
--nominal debug_name() :: binary() | 1..255.
+-nominal debug_var() :: binary().
+-nominal debug_name() :: debug_var() | 1..255.
 -nominal debug_source() :: {'x',non_neg_integer()}
                          | {'y',non_neg_integer()}
                          | {value, _}.
 -nominal debug_value() :: {debug_name(), debug_source()}.
--nominal debug_info() :: [{debug_line(), {debug_frame(), [debug_value()]}}].
+-nominal debug_atom_or_var() :: atom() | debug_var().
+-nominal debug_call() :: MFA :: {debug_atom_or_var(), debug_atom_or_var(), arity()}
+                       | FA :: {atom(), arity()}
+                       | debug_var().
+-nominal debug_info() :: [{debug_line(), #{frame_size => debug_frame(),
+                                           vars => [debug_value()],
+                                           calls => [debug_call()]}}].
 
 -export([coverage_support/0,
          get_coverage/2,

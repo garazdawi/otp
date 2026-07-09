@@ -4535,7 +4535,7 @@ cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 int
 main (void)
 {
-isfinite(0);
+isfinite(0.0);
   ;
   return 0;
 }

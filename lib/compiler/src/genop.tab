@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 1998-2024. All Rights Reserved.
+# Copyright Ericsson AB 1998-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -484,7 +484,7 @@ BEAM_FORMAT_NUMBER=0
 
 # R12B
 130: -bs_context_to_binary/1
-131: bs_test_unit/3
+131: -bs_test_unit/3
 132: bs_match_string/4
 133: bs_init_writable/0
 134: -bs_append/8

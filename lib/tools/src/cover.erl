@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2001-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -104,6 +104,9 @@ lost. If the node comes back it will be added again. If the remote node was
 alive during the disconnected period, cover data from before and during this
 period will be included in the analysis.
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}},
+          {nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}}]).
 
 %%
 %% This module implements the Erlang coverage tool.
@@ -2165,7 +2168,7 @@ do_compile_beam2(Module,Beam,UserOptions,Forms0,MainFile,LocalOnly) ->
     case code:load_binary(Module, ?TAG, Binary) of
 	{module, Module} ->
 	    %% Store binary code so it can be loaded on remote nodes.
-	    ets:insert(?BINARY_TABLE, {Module, Binary}),
+        ets:insert(?BINARY_TABLE, {Module, (not LocalOnly) andalso Binary}),
 	    {ok, Module};
 	_Error ->
 	    do_clear(Module),
@@ -2440,7 +2443,7 @@ delete_all_counters() ->
 
 %% Collect data for all modules
 collect(Nodes) ->
-    Modules = [Module || {Module,_} <- ets:tab2list(?BINARY_TABLE)],
+    Modules = [Module || [Module] <- ets:match(?BINARY_TABLE, {'$1', '_'})],
     collect_modules(Modules, Nodes).
 
 %% Collect data for a list of modules
@@ -2537,8 +2540,8 @@ analyse_list(Modules, Analysis, Level, State) ->
 
 analyse_all(Analysis, Level, State) ->
     collect(State#main_state.nodes),
-    All = ets:tab2list(?BINARY_TABLE),
-    Fun = fun({Module,_}) ->
+    All = ets:match(?BINARY_TABLE, {'$1', '_'}),
+    Fun = fun([Module]) ->
 		  do_analyse(Module, Analysis, Level)
 	  end,
     {result, lists:flatten(pmap(Fun, All)), []}.

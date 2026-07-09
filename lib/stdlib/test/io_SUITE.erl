@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1999-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -37,7 +37,9 @@
          otp_15159/1, otp_15639/1, otp_15705/1, otp_15847/1, otp_15875/1,
          github_4801/1, chars_limit/1, error_info/1, otp_17525/1,
          unscan_format_without_maps_order/1, build_text_without_maps_order/1,
-         native_records/1, cover_fread/1]).
+         native_records/1, cover_fread/1,
+         format_w_empty_map/1, format_w_limited/1,
+         write_record_maps_order/1, write_record_latin1_encoding/1]).
 
 -export([pretty/2, trf/3, rfd/2]).
 
@@ -54,6 +56,7 @@
 -define(format(S, A), ok).
 -define(privdir(Conf), proplists:get_value(priv_dir, Conf)).
 -endif.
+-include_lib("stdlib/include/assert.hrl").
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -74,6 +77,8 @@ all() ->
      error_info, otp_17525, unscan_format_without_maps_order,
      build_text_without_maps_order,
      native_records,
+     format_w_empty_map, format_w_limited,
+     write_record_maps_order, write_record_latin1_encoding,
      cover_fread].
 
 %% Error cases for output.
@@ -83,18 +88,18 @@ error_1(Config) when is_list(Config) ->
     PrivDir = ?privdir(Config),
     File = filename:join(PrivDir, "slask"),
     {ok, F1} = file:open(File, [write]),
-    {'EXIT', _} = (catch io:format(muttru, "hej", [])),
-    {'EXIT', _} = (catch io:format(F1, pelle, "hej")),
-    {'EXIT', _} = (catch io:format(F1, 1, "hej")),
-    {'EXIT', _} = (catch io:format(F1, "~p~", [kaka])),
-    {'EXIT', _} = (catch io:format(F1, "~m~n", [kaka])),
+    ?assertError(_, io:format(muttru, "hej", [])),
+    ?assertError(_, io:format(F1, pelle, "hej")),
+    ?assertError(_, io:format(F1, 1, "hej")),
+    ?assertError(_, io:format(F1, "~p~", [kaka])),
+    ?assertError(_, io:format(F1, "~m~n", [kaka])),
 
     %% This causes the file process to die, and it is linked to us,
     %% so we can't catch the error this easily.
     %%    {'EXIT', _} = (catch io:put_chars(F1, 666)),
 
     file:close(F1),
-    {'EXIT', _} = (catch io:format(F1, "~p", ["hej"])),
+    ?assertError(_,io:format(F1, "~p", ["hej"])),
     ok.
 
 format_neg_zero(Config) when is_list(Config) ->
@@ -151,17 +156,20 @@ float_g(Config) when is_list(Config) ->
      "5.0e+4",
      "5.0e+5"] = float_g_1("~.2g", 5.0, -2, 5),
 
-    case catch fmt("~.1g", [0.5]) of
-	"0.5" ->
-	    ["5.0e-2",
-	     "0.5",
-	     "5.0e+0",
-	     "5.0e+1",
-	     "5.0e+2",
-	     "5.0e+3",
-	     "5.0e+4",
-	     "5.0e+5"] = float_g_1("~.1g", 5.0, -2, 5);
-	{'EXIT',_} -> ok
+    try
+        fmt("~.1g", [0.5])
+    of
+        "0.5" ->
+            ["5.0e-2",
+             "0.5",
+             "5.0e+0",
+             "5.0e+1",
+             "5.0e+2",
+             "5.0e+3",
+             "5.0e+4",
+             "5.0e+5"] = float_g_1("~.1g", 5.0, -2, 5)
+    catch
+        _:_ -> ok
     end,
 
     ["4.99999e-2",
@@ -218,7 +226,7 @@ float_w(Config) when is_list(Config) ->
     ok.
 
 calling_self(Config) when is_list(Config) ->
-    {'EXIT', {calling_self, _}} = (catch io:format(self(), "~p", [oops])),
+    ?assertError(calling_self, io:format(self(), "~p", [oops])),
     ok.
 
 %% OTP-5403. ~s formats I/O lists and a single binary.
@@ -759,6 +767,17 @@ otp_7421(Config) when is_list(Config) ->
          "    eee,\n"
          "    fff}">>,
        rp({aa,bb,c,dd,eee,fff}, 1, 80, -1, 4, none)),
+    ok.
+
+format_w_limited(_Config) ->
+
+    "[97]" = fmt("~4w", ["a"]),
+    "****" = fmt("~4w", ["aa"]),
+    "<<97>>" = fmt("~6w", [<<"a">>]),
+    "******" = fmt("~6w", [<<"aa">>]),
+    "[1,2,3,<<97>>]" = fmt("~14w", [[1,2,3,<<"a">>]]),
+    "**************" = fmt("~14w", [[1,2,3,<<"aa">>]]),
+
     ok.
 
 bt(Bin, R) ->
@@ -1454,14 +1473,22 @@ g_t_1(V, Sv) ->
             SvLow = step_lsd(Sv, -Times)
     end,
 
-    case catch list_to_float(SvLow) of
+    try
+        list_to_float(SvLow)
+    of
         V -> throw(low_is_v);
         _ -> ok
+    catch
+        _:_ -> ok
     end,
 
-    case catch list_to_float(SvHigh) of
+    try
+        list_to_float(SvHigh)
+    of
         V -> throw(high_is_v);
         _ -> ok
+    catch
+        _:_ -> ok
     end,
 
     %% Check that Sv has enough digits.
@@ -1633,9 +1660,12 @@ f2r({S,BE,M}) when 0 =< S, S =< 1,
                    0 =< M, M =< ?ALL_ONES ->
     Vr = {T,N} = f2r1(S, BE, M),
     <<F:64/float>> = <<S:1, BE:11, M:52>>,
-    case catch T/N of
-        {'EXIT', _} -> ok;
+    try
+        T/N
+    of
         TN -> true = F == TN
+    catch
+        _:_ -> ok
     end,
     Vr.
 
@@ -2168,7 +2198,7 @@ bad_printable_range(Config) when is_list(Config) ->
          after 6000 ->
                    timeout
          end,
-    catch port_close(P),
+    try port_close(P) catch _:_ -> ok end,
     flush_from_port(P),
     ok.
 
@@ -3025,8 +3055,8 @@ otp_15076(_Config) ->
     ok = bad_io_lib_format("~c", [a]),
     L = io_lib:scan_format("~c", [a]),
     {"~c", [a]} = io_lib:unscan_format(L),
-    {'EXIT', {badarg, _}} = (catch io_lib:build_text(L)),
-    {'EXIT', {badarg, _}} = (catch io_lib:build_text(L, [])),
+    ?assertError(badarg, io_lib:build_text(L)),
+    ?assertError(badarg, io_lib:build_text(L, [])),
     ok.
 
 otp_15639(_Config) ->
@@ -3393,6 +3423,26 @@ native_records(_Config) ->
 """ = p(#order{true = #order{true = "break aligned to the correct column"},
                aaaaaaaaaaaaaaaaaaaaa = "A very long string can be here and how is that handled",
                wwww = #order{}}, 10, 80, -1),
+    ok.
+
+%% There used to be a bug where an empty map would be printed as #{...} when using io_lib:bwrite.
+format_w_empty_map(_Config) ->
+    "[1,#{},2]" = fmt("~w", [[1, #{}, 2]]),
+    "{a,#{},b}" = fmt("~w", [{a, #{}, b}]),
+    "#{a => #{},b => #{}}" = fmt("~kw", [#{a => #{}, b => #{}}]).
+
+%% There used to be a bug where the map order operator within a record would be broken causing the format to crash.
+write_record_maps_order(_Config) ->
+    R = #vector{x = #{a => 1, b => 2}, y = 1},
+    "#io_SUITE:vector{x = #{a => 1,b => 2},y = 1}" = fmt("~kw",[R]),
+    ok.
+
+%% There used to be a bug where the latin1 encoding would be ignored for record modules and names.
+write_record_latin1_encoding(_Config) ->
+    ModName = list_to_atom([16#4e2d]),
+    RecName = list_to_atom([16#6587]),
+    R = records:create(ModName, RecName, [], #{is_exported => false}),
+    "#'\\x{4E2D}':'\\x{6587}'{}" = fmt("~w", [R]),
     ok.
 
 cover_fread(_Config) ->

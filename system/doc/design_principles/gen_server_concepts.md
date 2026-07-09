@@ -234,7 +234,7 @@ set in the supervisor.
 
 If it is necessary to clean up before termination, the shutdown strategy
 must be a time-out value and the `gen_server` must be set to trap exit signals
-in function `init`. When ordered to shutdown, the `gen_server` then calls
+in function `init`. When ordered to shut down, the `gen_server` then calls
 the callback function `terminate(shutdown, State)`:
 
 ```erlang
@@ -259,7 +259,7 @@ can be useful, for example:
 
 ```erlang
 ...
-export([stop/0]).
+-export([stop/0]).
 ...
 
 stop() ->

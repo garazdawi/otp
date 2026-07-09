@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2000-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2000-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -116,10 +116,10 @@ make_block([]) -> [].
 
 -type label() :: beam_asm:label().
 
--record(st, {lmap :: [{label(),label()}], %Translation tables for labels.
-	     entry :: beam_asm:label(),   %Number of entry label.
-	     lc :: non_neg_integer()      %Label counter
-	     }).
+-record #st{lmap :: [{label(),label()}], %Translation tables for labels.
+            entry :: beam_asm:label(),   %Number of entry label.
+            lc :: non_neg_integer()      %Label counter
+           }.
 
 clean_labels(Fs0) ->
     St0 = #st{lmap=[],entry=1,lc=1},

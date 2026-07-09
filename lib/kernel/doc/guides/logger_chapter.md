@@ -3,7 +3,7 @@
 
 SPDX-License-Identifier: Apache-2.0
 
-Copyright Ericsson AB 2023-2025. All Rights Reserved.
+Copyright Ericsson AB 2023-2026. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -397,9 +397,7 @@ The parameters that apply to Logger are described in section
 Examples are found in section
 [Configuration Examples](#configuration-examples).
 
-During runtime, Logger configuration is changed via API functions. See section
-[Configuration API Functions](`m:logger#configuration-api-functions`) in the `m:logger`
-manual page.
+During runtime, Logger configuration is changed via API functions. See the `m:logger` manual page.
 
 ### Primary Logger Configuration
 

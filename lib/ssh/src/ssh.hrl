@@ -31,12 +31,13 @@
 
 -define(SSH_DEFAULT_PORT, 22).
 -define(SSH_MAX_PACKET_SIZE, (256*1024)).
+%% Same limit as in openssh
+%% See: https://github.com/openssh/openssh-portable/blob/f433c09931665b1139dc9ef0951d3540242e4a38/sftp-server.c#L55
+-define(SFTP_MAX_READ_SIZE, (?SSH_MAX_PACKET_SIZE - 1024)).
 -define(REKEY_DATA_TIMOUT, 60000).
 -define(DEFAULT_PROFILE, default).
 
 -define(DEFAULT_TRANSPORT,  {tcp, gen_tcp, tcp_closed} ).
-
--define(DEFAULT_SHELL, {shell, start, []} ).
 
 -define(DEFAULT_TIMEOUT, 5000).
 
@@ -49,9 +50,52 @@
 -define(MLKEM768_INIT_SIZE, ?MLKEM768_PUBLICKEY_SIZE + ?X25519_PUBLICKEY_SIZE).   % NIST FIPS 203: 1184 + 32
 -define(MLKEM768_REPLY_SIZE, ?MLKEM768_CIPHERTEXT_SIZE + ?X25519_PUBLICKEY_SIZE). % NIST FIPS 203: 1088 + 32
 
+%% Pre-authentication message size limits
+%% Transport layer (RFC 4253 Section 11)
+
+%% OpenSSH uses 1024-byte C buffer (packet.c, commit d4a8b7e34);
+%% vsnprintf reserves 1 byte for null terminator, max wire length is
+%% 1023
+-define(MAX_DISCONNECT_DESC_SIZE, 1023).
+%% Practical limit (RFC 3066: subtags max 8 chars, no overall limit
+%% specified)
+-define(MAX_LANG_SIZE, 64).
+% RFC 4253 Section 6.1 (32768 byte payload)
+-define(MAX_IGNORE_DATA_SIZE, 32768).
+%% Limit for receiving debug messages from peers; intentionally larger
+%% than OpenSSH (1023 bytes, packet.c commit d4a8b7e34) to accommodate
+%% verbose diagnostics from various SSH implementations
+-define(MAX_DEBUG_MSG_SIZE, 4096).
+
+%% Key exchange (RFC 4253 Section 7-8, RFC 4419, RFC 5656, RFC 8270)
+
+%% RFC 4253 Section 6.1 (32768 byte payload, real-world: 500-2000 bytes)
+-define(MAX_KEXINIT_SIZE, 32768).
+% RFC 4253 Section 8 (8192-bit = 1024 bytes + mpint encoding overhead)
+-define(MAX_DH_MPINT_SIZE, 1032).
+%% RFC 5656 Section 4 (P-521 uncompressed: 133 bytes)
+-define(MAX_ECDH_POINT_SIZE, 256).
+
+%% Service request (RFC 4253 Section 10, RFC 8308)
+
+%% RFC 4251 Section 6 (SSH name limit)
+-define(MAX_SERVICE_NAME_SIZE, 64).
+% Practical limit (RFC 8308 defines no maximum)
+-define(MAX_EXT_INFO_SIZE, 8192).
+% Practical limit (typical: 200-400 bytes, allows future extensions)
+-define(MAX_EXT_VALUE_SIZE, 1024).
+
 %% Cryptographic limits
--define(MAX_HOST_KEY_SIZE, 4096).       % RSA-4096 + ASN.1/SSH encoding
--define(MAX_SIGNATURE_SIZE, 1536).      % RSA-8192 (1044) + margin for future algorithms
+
+%% Accommodates RSA-8192 keys (~1046 bytes, largest supported key type)
+%% and post-quantum algorithms (Dilithium5: 2592 bytes). Other key
+%% types are much smaller: DSA-1024 (~431 bytes), ECDSA P-521 (~172
+%% bytes), Ed25519 (~51 bytes)
+-define(MAX_HOST_KEY_SIZE, 4096).
+%% Accommodates RSA-8192 signatures (~1039 bytes) and post-quantum
+%% algorithms (Dilithium5: 4595 bytes). Provides consistent PQ
+%% readiness with MAX_HOST_KEY_SIZE.
+-define(MAX_SIGNATURE_SIZE, 5120).
 
 -define(SUPPORTED_AUTH_METHODS, "publickey,keyboard-interactive,password").
 
@@ -167,10 +211,13 @@ The `channel_callback` is the module that implements the `m:ssh_server_channel`
 [Creating a Subsystem](using_ssh.md#usersguide_creating_a_subsystem) in the
 User's Guide for more information and an example.
 
-If the subsystems option is not present, the value of
-`ssh_sftpd:subsystem_spec([])` is used. This enables the sftp subsystem by
-default. The option can be set to the empty list if you do not want the daemon
-to run any subsystems.
+If the subsystems option is not present, the default is an empty list
+and no subsystems are enabled.
+
+To enable the SFTP subsystem:
+```
+ssh:daemon(Port, [{subsystems, [ssh_sftpd:subsystem_spec([])]} | Options])
+```
 """.
 -doc(#{group => <<"Daemon Options">>}).
 -type subsystem_spec()        :: {Name::string(), mod_args()} .
@@ -273,9 +320,16 @@ to run any subsystems.
 
 -doc(#{group => <<"Common Options">>}).
 -type compression_alg()  :: 'none' |
-                            'zlib' |
-                            'zlib@openssh.com'
+                            'zlib@openssh.com' |
+                            legacy_compression_alg()
                             .
+
+-doc """
+Deprecated: the use of `zlib` compression in SSH will be
+removed in OTP 30.0. Use `none` or `zlib@openssh.com` instead.
+""".
+-doc(#{group => <<"Legacy Algorithms">>, deprecated => "use 'none' or 'zlib@openssh.com' instead"}).
+-type legacy_compression_alg() :: 'zlib'.
 
 -doc """
 List of algorithms to use in the algorithm negotiation. The default
@@ -303,7 +357,7 @@ compression in both directions. The kex (key exchange) is implicit but
 public_key is set explicitly.
 
 For background and more examples see the
-[User's Guide](configure_algos.md#introduction).
+[User's Guide](configure_algos.md#algorithm-negotiation-in-ssh).
 
 If an algorithm name occurs more than once in a list, the behaviour is
 undefined. The tags in the property lists are also assumed to occur at most one
@@ -364,7 +418,7 @@ The example specifies that:
   enforced
 
 For background and more examples see the
-[User's Guide](configure_algos.md#introduction).
+[User's Guide](configure_algos.md#algorithm-negotiation-in-ssh).
 """.
 -doc(#{group => <<"Common Options">>}).
 -type modify_algs_list()      :: list( {append,algs_list()} | {prepend,algs_list()} | {rm,algs_list()} ) .
@@ -799,6 +853,14 @@ risk.
 -type shell_daemon_option()     :: {shell, shell_spec()} .
 -doc(#{group => <<"Daemon Options">>}).
 -type shell_spec() :: mod_fun_args() | shell_fun() | disabled .
+-doc """
+The default is `disabled`.
+
+To enable the Erlang shell:
+```
+ssh:daemon(Port, [{shell, {shell, start, []}} | Options])
+```
+""".
 -doc(#{group => <<"Daemon Options">>,
        equiv => 'shell_fun/2'/0}).
 -type shell_fun() :: 'shell_fun/1'()  | 'shell_fun/2'() .
@@ -807,7 +869,7 @@ risk.
 -type 'shell_fun/1'() :: fun((User::string()) -> pid()) .
 -doc """
 Defines the read-eval-print loop used in a daemon when a shell is requested by
-the client. The default is to use the Erlang shell: `{shell, start, []}`
+the client.
 
 See the option [`exec-option`](`t:exec_daemon_option/0`) for a description of
 how the daemon executes shell-requests and exec-requests depending on the shell-
@@ -819,7 +881,23 @@ and exec-options.
 -doc(#{group => <<"Daemon Options">>}).
 -type exec_daemon_option()      :: {exec, exec_spec()} .
 -doc(#{group => <<"Daemon Options">>}).
--type exec_spec()               :: {direct, exec_fun()} | disabled | deprecated_exec_opt().
+-type exec_spec()               :: {direct, exec_fun()} | disabled | deprecated_exec_opt() | erlang_eval.
+-doc """
+The default is `disabled`.
+
+Value `erlang_eval` enables evaluation of Erlang terms via exec requests.
+This works when the shell option is either `disabled` (no shell) or
+`{shell, start, []}` (Erlang shell). It does not work with custom shells.
+
+To restore the behavior from OTP versions prior to OTP @OTP-19969@, configure:
+```
+ssh:daemon(Port, [{shell, {shell, start, []}},
+                  {exec, erlang_eval}
+                  | Options])
+```
+
+For new code, consider using `{direct, Fun}` for more controlled exec handling.
+""".
 -doc(#{group => <<"Daemon Options">>}).
 -type exec_fun()                :: 'exec_fun/1'() | 'exec_fun/2'() | 'exec_fun/3'().
 -doc(#{group => <<"Daemon Options">>}).
@@ -842,7 +920,7 @@ channel-type 0 and will in similar manner be piped to `stdout`. The exit-status
 code is set to 0 for success and 255 for errors. The exact results presented on
 the client side depends on the client and the client's operating system.
 
-In case of the `{direct, exec_fun()}` variant or no exec-option at all, all
+In case of the `{direct, exec_fun()}` variant or `erlang_eval`, all
 reads from `standard_input` will be from the received data-events of type 0.
 Those are sent by the client. Similarly all writes to `standard_output` will be
 sent as data-events to the client. An OS shell client like the command 'ssh'
@@ -852,9 +930,10 @@ The option cooperates with the daemon-option
 [`shell`](`t:shell_daemon_option/0`) in the following way:
 
 - **1\. If neither the [`exec-option`](`t:exec_daemon_option/0`) nor the
-  [`shell-option`](`t:shell_daemon_option/0`) is present:** - The default Erlang
-  evaluator is used both for exec and shell requests. The result is returned to
-  the client.
+  [`shell-option`](`t:shell_daemon_option/0`) is present:** - Both default to
+  `disabled`. No exec-requests or shell-requests are executed. This is the
+  default behavior since @OTP-19969@. To restore the previous
+  behavior, set `{shell, {shell, start, []}}` and `{exec, erlang_eval}`.
 
 - **2\. If the [`exec_spec`](`t:exec_daemon_option/0`)'s value is `disabled`
   (the [`shell-option`](`t:shell_daemon_option/0`) may or may not be
@@ -869,23 +948,23 @@ The option cooperates with the daemon-option
   the client. Shell-requests are not affected, they follow the
   [`shell_spec`](`t:shell_daemon_option/0`)'s value.
 
-- **4\. If the [`exec-option`](`t:exec_daemon_option/0`) is absent, and the
-  [`shell-option`](`t:shell_daemon_option/0`) is present with the default Erlang
-  shell as the [`shell_spec`](`t:shell_daemon_option/0`)'s value:** - The
-  default Erlang evaluator is used both for exec and shell requests. The result
-  is returned to the client.
+- **4\. If the [`exec_spec`](`t:exec_daemon_option/0`)'s value is
+  `erlang_eval`, and the [`shell-option`](`t:shell_daemon_option/0`) is
+  `disabled` or set to the default Erlang shell `{shell, start, []}`:** - The
+  default Erlang evaluator is used for exec requests. The result is returned to
+  the client. Shell-requests follow the
+  [`shell_spec`](`t:shell_daemon_option/0`)'s value.
 
-- **5\. If the [`exec-option`](`t:exec_daemon_option/0`) is absent, and the
-  [`shell-option`](`t:shell_daemon_option/0`) is present with a value that is
-  neither the default Erlang shell nor the value `disabled`:** - The
+- **5\. If the [`exec_spec`](`t:exec_daemon_option/0`)'s value is
+  `erlang_eval`, and the [`shell-option`](`t:shell_daemon_option/0`) is present
+  with a value that is neither the default Erlang shell nor `disabled`:** - The
   exec-request is not evaluated and an error message is returned to the client.
   Shell-requests are executed according to the value of the
   [`shell_spec`](`t:shell_daemon_option/0`).
 
-- **6\. If the [`exec-option`](`t:exec_daemon_option/0`) is absent, and the
-  [`shell_spec`](`t:shell_daemon_option/0`)'s value is `disabled`:** - Exec
-  requests are executed by the default shell, but shell-requests are not
-  executed.
+- **6\. If the [`exec-option`](`t:exec_daemon_option/0`) is absent (defaults to
+  `disabled`), and the [`shell_spec`](`t:shell_daemon_option/0`)'s value is
+  `disabled`:** - Neither exec-requests nor shell-requests are executed.
 
 If a custom CLI is installed (see the option
 [`ssh_cli`](`t:ssh_cli_daemon_option/0`)) the rules above are replaced by thoose
@@ -975,7 +1054,7 @@ supporting ext-info.
        equiv => pwdfun_4/0}).
 -type pwdfun_2() :: fun((User::string(), Password::string()|pubkey) -> boolean()) .
 -doc """
-- **`auth_method_kb_interactive_data`** - Sets the text strings that the daemon
+- **`auth_method_kb_interactive_data`{: #option-auth_method_kb_interactive_data }** - Sets the text strings that the daemon
   sends to the client for presentation to the user when using
   `keyboard-interactive` authentication.
 
@@ -1003,7 +1082,7 @@ supporting ext-info.
   doing public key authentication. It is disabled by default.
 
   The term "user" is used differently in OpenSSH and SSH in Erlang/OTP: see more
-  in the [User's Guide](terminology.md#the-term-user).
+  in the [User's Guide](terminology.md#the-term-user-in-openssh).
 
   If the option is enabled, and no [`pwdfun`](`m:ssh#option-pwdfun`) is present,
   the user name must present in the
@@ -1202,13 +1281,21 @@ in the User's Guide chapter.
   #hardening_daemon_options-minimal_remote_max_packet_size }** - The least
   maximum packet size that the daemon will accept in channel open requests from
   the client. The default value is 0.
+
+- **`max_auth_request_size`{:
+  #hardening_daemon_options-max_auth_request_size }** - The maximum size allowed
+  in bytes for the SSH_MSG_USERAUTH_REQUEST messages. The default value
+  is the maximum allowed packet size, 262144 bytes,
+  which is the same as no check being made,
+  since maximum allowed packet size check is performed earlier.
 """.
 -doc(#{group => <<"Daemon Options">>}).
 -type hardening_daemon_options() ::
         {max_sessions, pos_integer()}
       | {max_channels, pos_integer()}
       | {parallel_login, boolean()}
-      | {minimal_remote_max_packet_size, pos_integer()}.
+      | {minimal_remote_max_packet_size, pos_integer()}
+      | {max_auth_request_size, pos_integer()}.
 
 -doc """
 - **`connectfun`** - Provides a fun to implement your own logging when a user

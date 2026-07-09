@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2006-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2006-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -113,7 +113,7 @@ func(Config) when is_list(Config) ->
               -record(r3, {a = fun(_) -> #r1{} end(1), b}).
 
               t() ->
-                  fun(A) when record(A#r3.a, r1) -> 7 end(#r3{}).
+                  fun(A) when is_record(A#r3.a, r1) -> 7 end(#r3{}).
              ">>},
           {func_2,
            <<"-record(r1, {a,b}).
@@ -144,7 +144,7 @@ func(Config) when is_list(Config) ->
               -record(r3, {a = fun Id(_) -> #r1{} end(1), b}).
 
               t() ->
-                  fun Id(A) when record(A#r3.a, r1) -> 7 end(#r3{}).
+                  fun Id(A) when is_record(A#r3.a, r1) -> 7 end(#r3{}).
              ">>},
           {func_9,
            <<"-record(r1, {a,b}).
@@ -192,17 +192,17 @@ recs(Config) when is_list(Config) ->
                               2 end(2),
                   3 = fun(A) when (A#r2.a)#r1.a =:= 3 -> 3 end(#r2{a = #r1{a = 3}}),
                   ok = fun() ->
-                               F = fun(A) when record(A#r.a, r1) -> 4;
-                                      (A) when record(A#r1.a, r1) -> 5
+                               F = fun(A) when is_record(A#r.a, r1) -> 4;
+                                      (A) when is_record(A#r1.a, r1) -> 5
                                    end,
                                5 = F(#r1{a = #r1{}}),
                                4 = F(#r{a = #r1{}}),
                                ok
                        end(),
-                  3 = fun(A) when record(A#r1.a, r),
+                  3 = fun(A) when is_record(A#r1.a, r),
                                         (A#r1.a)#r.a > 3 -> 3
                       end(#r1{a = #r{a = 4}}),
-                  7 = fun(A) when record(A#r3.a, r1) -> 7 end(#r3{}),
+                  7 = fun(A) when is_record(A#r3.a, r1) -> 7 end(#r3{}),
                   [#r1{a = 2,b = 1}] =
                       fun() ->
                               [A || A <- [#r1{a = 1, b = 3},
@@ -231,7 +231,7 @@ recs(Config) when is_list(Config) ->
 
                   %% The test done twice (an effect of doing the test as soon as possible).
                   3 = fun(A) when A#r1.a > 3,
-                                  record(A, r1) -> 3
+                                  is_record(A, r1) -> 3
                       end(#r1{a = 5}),
 
                   ok = fun() ->
@@ -263,10 +263,6 @@ recs(Config) when is_list(Config) ->
                        end(),
 
                   %% No extra check added:
-                  a = fun(A) when record(A, r),
-                                  A#r.a =:= 1,
-                                  A#r.b =:= 2 ->a
-                      end(#r{a = 1, b = 2}),
                   a = fun(A) when erlang:is_record(A, r),
                                   A#r.a =:= 1,
                                   A#r.b =:= 2 -> a
@@ -1099,13 +1095,13 @@ otp_9147(Config) when is_list(Config) ->
 %% OTP-10302. Unicode characters scanner/parser.
 otp_10302(Config) when is_list(Config) ->
     Ts = [{uni_1,
-           <<"t() -> <<(<<\"abc\\x{aaa}\">>):3/binary>>.">>}
+           <<"t() -> <<(<<\"abc\\x{aaa}\"/utf8>>):3/binary>>.">>}
           ],
     compile(Config, Ts),
     ok = pp_expr(<<"$\\x{aaa}">>),
     ok = pp_expr(<<"\"1\\x{aaa}\"">>),
     ok = pp_expr(<<"<<<<\"hej\">>/binary>>">>),
-    ok = pp_expr(<<"<< <<\"1\\x{aaa}\">>/binary>>">>),
+    ok = pp_expr(<<"<< <<\"1\\x{aaa}\"/utf8>>/binary>>">>),
 
     U = [{encoding,unicode}],
 

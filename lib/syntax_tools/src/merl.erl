@@ -3,8 +3,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
 %%
+%% Copyright Ericsson AB 2015-2026. All Rights Reserved.
 %% Copyright 2010-2015 Richard Carlsson
-%% Copyright Ericsson AB 2015-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -368,6 +368,8 @@ Thus, the following pattern matches all possible clauses:
 ```
 """.
 
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
+
 -export([term/1, var/1, print/1, show/1]).
 
 -export([quote/1, quote/2, qquote/2, qquote/3]).
@@ -424,7 +426,7 @@ compile(Code, Options) when not is_list(Code)->
         _ -> compile([Code], Options)
     end;
 compile(Code, Options0) when is_list(Options0) ->
-    Forms = [erl_syntax:revert(F) || F <- Code],
+    Forms = erl_syntax:revert_forms(Code),
     Options = [verbose, report_errors, report_warnings, binary | Options0],
     compile:noenv_forms(Forms, Options).
 

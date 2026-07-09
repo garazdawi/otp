@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2019-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -187,7 +187,12 @@ init_per_group(Group, Config0) when Group == ecdsa;
 init_per_group(eddsa_1_3, Config0) ->
     ssl_cert_tests:eddsa_config(Config0);
 init_per_group(Group, Config) when Group == mldsa ->
-    ssl_cert_tests:mldsa_config(Config);
+    case ssl_test_lib:check_openssl_version("3.5", Config) of
+        true ->
+            ssl_cert_tests:mldsa_config(Config);
+        _ ->
+            {skip, {atom_to_list(Group) ++ " not supported by OpenSSL"}}
+    end;
 init_per_group(dsa, Config) ->
     ssl_cert_tests:openssl_dsa_config(Config);
 init_per_group(GroupName, Config) ->
@@ -206,14 +211,20 @@ init_per_group(GroupName, Config) ->
 end_per_group(GroupName, Config) ->
     ssl_test_lib:end_per_group(GroupName, Config).
 
-init_per_testcase(mlkem_groups, Config) ->
-    ssl_cert_tests:support_kems(Config);
-init_per_testcase(mlkem_hybrid_groups, Config) ->
-    ssl_cert_tests:support_kems(Config);
-init_per_testcase(_TestCase, Config) ->
+init_per_testcase(TestCase, Config) ->
     ssl_test_lib:ct_log_supported_protocol_versions(Config),
     ct:timetrap({seconds, 30}),
-    Config.
+    if TestCase == mlkem_hybrid_groups;
+       TestCase == mlkem_groups ->
+            case ssl_test_lib:check_openssl_version("3.5", Config) of
+                true ->
+                    ssl_cert_tests:support_kems(Config);
+                _ ->
+                    {skip, {atom_to_list(TestCase) ++ " not supported by OpenSSL"}}
+            end;
+       true ->
+            Config
+    end.
 
 end_per_testcase(_TestCase, Config) ->
     Config.

@@ -3,8 +3,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
 %%
+%% Copyright Ericsson AB 2009-2026. All Rights Reserved.
 %% Copyright 2001-2006 Richard Carlsson
-%% Copyright Ericsson AB 2009-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -41,6 +41,8 @@
 %% Note that this is written so that it is *not* depending on edoc.hrl!
 
 -module(edoc_layout).
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([module/2, overview/2, type/1]).
 

@@ -4,8 +4,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
+%% Copyright Ericsson AB 2009-2026. All Rights Reserved.
 %% Copyright 2004-2010 held by the authors. All Rights Reserved.
-%% Copyright Ericsson AB 2009-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -854,6 +854,9 @@ message_to_string({record_constr, [Name, Field, Type]}, I, _E) ->
 message_to_string({record_matching, [String, Name]}, I, _E) ->
   io_lib:format("The ~ts violates the"
 		" declared type for #~tw{}\n", [rec_type(String, I), Name]);
+message_to_string({record_update, [Arg, {M, N}]}, _I, _E) ->
+  io_lib:format("The record update cannot succeed because ~tw is not"
+    " a native record of type #~tw:~tw{}\n", [Arg, M, N]);
 message_to_string({record_match, [Pat, Type]}, I, _E) ->
   io_lib:format("Matching of ~ts tagged with a record name violates"
                 " the declared type of ~ts\n", [ps(Pat, I), t(Type, I)]);

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2004-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,10 +23,10 @@
 -module(httpc_response).
 -moduledoc false.
 
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
+
 -include_lib("inets/src/http_lib/http_internal.hrl").
 -include("httpc_internal.hrl").
-
--compile(nowarn_obsolete_bool_op).
 
 %% API
 %% Avoid warning for local function error/2 clashing with autoimported BIF.
@@ -285,7 +285,7 @@ parse_headers(<<?CR,?LF,?CR,?LF,Body/binary>>, Header, Headers,
     HTTPHeaders = [lists:reverse(Header) | Headers],
     Length = lists:foldl(fun(H, Acc) -> length(H) + Acc end,
 			   0, HTTPHeaders),
-    case ((Length =< MaxHeaderSize) or (MaxHeaderSize == nolimit)) of
+    case Length =< MaxHeaderSize orelse MaxHeaderSize == nolimit of
  	true ->   
 	    ResponseHeaderRcord = 
 		http_response:headers(HTTPHeaders, #http_response_h{}),
@@ -444,8 +444,28 @@ redirect(Response = {_, Headers, _}, Request) ->
                     NewURI = uri_string:normalize(
                                uri_string:recompose(URIMap)),
                     HostPort = http_request:normalize_host(TScheme, THost, TPort),
-                    NewHeaders =
+                    NewHeaders0 =
                         (Request#request.headers)#http_request_h{host = HostPort},
+                    %% RFC 9110 §15.4: strip Authorization, Proxy-Authorization,
+                    %% Cookie, Origin, and Referer on cross-origin redirects
+                    %% (different host or port).
+                    NewHeaders =
+                        case Request#request.address of
+                            {THost, TPort} ->
+                                NewHeaders0;
+                            _ ->
+                                CrossOriginOther = ["cookie", "origin"],
+                                OtherStripped = lists:filter(
+                                    fun({K, _}) ->
+                                        not lists:member(string:lowercase(K), CrossOriginOther)
+                                    end,
+                                    NewHeaders0#http_request_h.other),
+                                NewHeaders0#http_request_h{
+                                    authorization = undefined,
+                                    'proxy-authorization' = undefined,
+                                    referer = undefined,
+                                    other = OtherStripped}
+                        end,
                     NewRequest =
                         Request#request{redircount =
                                             Request#request.redircount+1,

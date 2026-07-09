@@ -82,7 +82,10 @@
          early_data_basic_auth/0,
          early_data_basic_auth/1,
          stateless_multiple_servers/0,
-         stateless_multiple_servers/1]).
+         stateless_multiple_servers/1,
+         ticket_server_restart/0,
+         ticket_server_restart/1
+        ]).
 
 -include("ssl_test_lib.hrl").
 -include_lib("ssl/src/tls_handshake.hrl").
@@ -123,7 +126,9 @@ session_tests() ->
      early_data_disabled_small_limit,
      early_data_enabled_small_limit,
      early_data_basic,
-     early_data_basic_auth].
+     early_data_basic_auth,
+     ticket_server_restart
+    ].
 
 anti_replay_tests() ->
     [
@@ -988,6 +993,11 @@ early_data_trial_decryption_failure(Config) when is_list(Config) ->
 
     ssl_test_lib:close(Client0),
 
+    Me = self(),
+    Fun = fun(AlertInfo) ->
+                  Me ! {alert_info, AlertInfo}
+          end,
+
     %% Use ticket
     _Client1 = ssl_test_lib:start_client_error([{node, ClientNode},
                                                {port, Port0}, {host, Hostname},
@@ -995,8 +1005,11 @@ early_data_trial_decryption_failure(Config) when is_list(Config) ->
                                                       verify_active_session_resumption,
                                                       [false, no_reply, no_tickets]}},
                                                {from, self()},
-                                                {options, [{use_ticket, Tickets1}|ClientOpts2]}]),
+                                                {options, [{use_ticket, Tickets1},
+                                                           {keep_secrets, {keylog_hs, Fun}}
+                                                          | ClientOpts2]}]),
     ssl_test_lib:check_server_alert(Server0, bad_record_mac),
+    receive_keylog_with_early_data_secret(),
     process_flag(trap_exit, false),
     application:unset_env(ssl, server_session_ticket_max_early_data),
     ssl_test_lib:close(Server0).
@@ -1053,15 +1066,22 @@ early_data_decryption_failure(Config) when is_list(Config) ->
 
     ssl_test_lib:close(Client0),
 
+    Me = self(),
+    Fun = fun(AlertInfo) ->
+                  Me ! {alert_info, AlertInfo}
+          end,
     %% Use ticket
     _Client1 = ssl_test_lib:start_client_error([{node, ClientNode},
                                                {port, Port0}, {host, Hostname},
                                                {mfa, {ssl_test_lib,  %% Short handshake
                                                       verify_active_session_resumption,
                                                       [false, no_reply, no_tickets]}},
-                                                {from, self()},
-                                                {options, [{use_ticket, Tickets1}|ClientOpts2]}]),
+                                               {from, self()},
+                                                {options, [{use_ticket, Tickets1},
+                                                           {keep_secrets, {keylog_hs, Fun}}
+                                                          | ClientOpts2]}]),
     ssl_test_lib:check_server_alert(Server0, unexpected_message),
+    receive_keylog_with_early_data_secret(),
     process_flag(trap_exit, false),
     application:unset_env(ssl, server_session_ticket_max_early_data),
     ssl_test_lib:close(Server0).
@@ -1403,6 +1423,84 @@ stateless_multiple_servers(Config) when is_list(Config) ->
     ssl_test_lib:close(Server1),
     ssl_test_lib:close(Client1).
 
+ticket_server_restart() ->
+    [{doc,"Test session resumption with session ticket server restart"}].
+ticket_server_restart(Config) when is_list(Config) ->
+    process_flag(trap_exit, true),
+    ClientOpts0 = ssl_test_lib:ssl_options(client_rsa_verify_opts, Config),
+    ServerOpts0 = ssl_test_lib:ssl_options(server_rsa_verify_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    ServerTicketMode = proplists:get_value(server_ticket_mode, Config),
+
+    %% Configure session tickets
+    ClientOpts = [{session_tickets, manual},
+                  {versions, ['tlsv1.2','tlsv1.3']}|ClientOpts0],
+    ServerOpts = [{session_tickets, ServerTicketMode},
+                  {versions, ['tlsv1.2','tlsv1.3']}|ServerOpts0],
+
+    Server0 =
+        ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+                                   {from, self()},
+                                   {mfa, {ssl_test_lib,
+                                          verify_active_session_resumption,
+                                          [false, wait_reply]}},
+                                   {options, ServerOpts}]),
+    Port0 = ssl_test_lib:inet_port(Server0),
+
+    %% Store ticket from first connection
+    Client0 = ssl_test_lib:start_client([{node, ClientNode},
+                                         {port, Port0}, {host, Hostname},
+                                         {mfa, {ssl_test_lib,  %% Full handshake
+                                                verify_active_session_resumption,
+                                                [false, wait_reply, {tickets, 1}]}},
+                                         {from, self()}, {options, ClientOpts}]),
+    [_] = ssl_test_lib:check_tickets(Client0),
+    ssl_test_lib:check_result(Server0, ok),
+
+    Server0 ! get_socket,
+    SSocket0 =
+        receive
+            {Server0, {socket, Socket0}} ->
+                Socket0
+        end,
+
+    Trackers = element(8, SSocket0),
+    Tracker = proplists:get_value(session_tickets_tracker, Trackers),
+    exit(Tracker, kill), %% Fake server session ticket handler crash
+
+    Server0 ! {listen, {mfa, {ssl_test_lib,
+                              verify_active_session_resumption,
+                              [false, wait_reply]}}},
+
+    %% So client will have to do full handshake
+    Client1 = ssl_test_lib:start_client([{node, ClientNode},
+                                         {port, Port0}, {host, Hostname},
+                                         {mfa, {ssl_test_lib,  %% Full handshake
+                                                verify_active_session_resumption,
+                                                [false, wait_reply, {tickets, 1}]}},
+                                         {from, self()}, {options, ClientOpts}]),
+    [Ticket1] = ssl_test_lib:check_tickets(Client1),
+    ssl_test_lib:check_result(Server0, ok),
+
+    Server0 ! {listen, {mfa, {ssl_test_lib,
+                              verify_active_session_resumption,
+                              [true, wait_reply]}}},
+
+    %% Use ticket
+    ClientOpts1 = [{use_ticket, [Ticket1]} | ClientOpts],
+    Client2 = ssl_test_lib:start_client([{node, ClientNode},
+                                         {port, Port0}, {host, Hostname},
+                                         {mfa, {ssl_test_lib,  %% Short handshake
+                                                verify_active_session_resumption,
+                                                [true, wait_reply, no_tickets]}},
+                                         {from, self()}, {options, ClientOpts1}]),
+    ssl_test_lib:check_result(Server0, ok, Client2, ok),
+
+    process_flag(trap_exit, false),
+    ssl_test_lib:close(Client1),
+    ssl_test_lib:close(Server0),
+    ssl_test_lib:close(Client2).
+
 %%--------------------------------------------------------------------
 %% Internal functions ------------------------------------------------
 %%--------------------------------------------------------------------
@@ -1467,3 +1565,19 @@ do_test_mixed(Config, COpts1, COpts2, SOpts1, SOpts2) when is_list(Config) ->
     process_flag(trap_exit, false),
     ssl_test_lib:close(Server1),
     ssl_test_lib:close(Client1).
+
+receive_keylog_with_early_data_secret() ->
+    receive
+        {alert_info, #{items := CKeyLog}} ->
+            case ssl_test_lib:keylog_prefixes(["CLIENT_EARLY_TRAFFIC_SECRET",
+                                               "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+                                               "SERVER_HANDSHAKE_TRAFFIC_SECRET",
+                                               "CLIENT_TRAFFIC_SECRET_0",
+                                               "SERVER_TRAFFIC_SECRET_0"
+                                              ], CKeyLog) of
+                true ->
+                    ok;
+                false ->
+                    ct:fail({client_received, CKeyLog})
+            end
+    end.

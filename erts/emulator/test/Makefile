@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 1997-2024. All Rights Reserved.
+# Copyright Ericsson AB 1997-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -147,6 +147,7 @@ MODULES= \
 	erts_test_destructor \
 	crypto_reference \
 	literal_area_collector_test \
+        erts_test_sync_tracer \
         ext_records
 
 NO_OPT= bs_bincomp \
@@ -238,9 +239,6 @@ targets: $(TARGET_FILES)
 # ----------------------------------------------------
 
 %_no_opt_SUITE.erl: %_SUITE.erl
-	sed -e 's;-module($(basename $<));-module($(basename $@));' $< > $@
-
-%_r26_SUITE.erl: %_SUITE.erl
 	sed -e 's;-module($(basename $<));-module($(basename $@));' $< > $@
 
 %_stripped_types_SUITE.erl: %_SUITE.erl

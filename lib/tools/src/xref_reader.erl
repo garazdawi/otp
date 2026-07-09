@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2000-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2000-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 -module(xref_reader).
 -moduledoc false.
 
--export([module/5]).
+-export([module/7]).
 
 -import(lists, [keysearch/3, member/2, reverse/1]).
 
@@ -35,6 +35,8 @@
 	 el=[],
 	 ex=[],
 	 x=[],
+         documented=[],
+         unsafe=[],
          df,
 	 builtins_too=false,
          is_abstr,            % abstract module?
@@ -47,14 +49,12 @@
 
 -include("xref.hrl").
 
-%% -> {ok, Module, {DefAt, LCallAt, XCallAt, LC, XC, X, Attrs, Depr, OL},
-%%         Unresolved}} | EXIT
-%% Attrs = {[], [], []} (no longer used)
-module(Module, Forms, CollectBuiltins, X, DF) ->
+module(Module, Forms, CollectBuiltins, X, Deprecated, Documented, Unsafe) ->
     Attrs = [{Attr,V} || {attribute,_Anno,Attr,V} <- Forms],
     IsAbstract = xref_utils:is_abstract_module(Attrs),
     S = #xrefr{module = Module, builtins_too = CollectBuiltins,
-               is_abstr = IsAbstract, x = X, df = DF},
+               is_abstr = IsAbstract, x = X, df = Deprecated,
+               documented = Documented, unsafe = Unsafe},
     forms(Forms, S).
 
 forms([F | Fs], S) ->
@@ -62,16 +62,18 @@ forms([F | Fs], S) ->
     forms(Fs, S1);
 forms([], S) ->
     #xrefr{module = M, def_at = DefAt,
-	   l_call_at = LCallAt, x_call_at = XCallAt,
-	   el = LC, ex = XC, x = X, df = Depr, on_load = OnLoad,
-	   unresolved = U} = S,
+           l_call_at = LCallAt, x_call_at = XCallAt,
+           el = LC, ex = XC, x = X, df = Deprecated, on_load = OnLoad,
+           unresolved = U,
+       documented = Documented, unsafe = Unsafe} = S,
     OL = case OnLoad of
              undefined -> [];
              F ->
                  [{M, F, 0}]
          end,
-    Attrs = {[], [], []},
-    {ok, M, {DefAt, LCallAt, XCallAt, LC, XC, X, Attrs, Depr, OL}, U}.
+    Data = {DefAt, LCallAt, XCallAt, LC, XC, X, Deprecated, OL,
+            Documented, Unsafe},
+    {ok, M, Data, U}.
 
 form({attribute, _, on_load, {F, 0}}, S) ->
     S#xrefr{on_load = F};

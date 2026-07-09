@@ -26,18 +26,22 @@ on:
       - '**/vendor.info'
 
 permissions:
-  contents: write   # Required to push commits
-  pull-requests: read
+  contents: read
 
 jobs:
   update-vendored-deps:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # Required to push commits
+      pull-requests: write
     if: >
       github.event_name == 'pull_request' &&
       contains(github.event.pull_request.title, 'update dependency') &&
       github.actor == 'renovate-bot'
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        # zizmor: ignore[artipacked]
+        # git push in renovate-vendored-deps.sh needs credentials
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.ref }}

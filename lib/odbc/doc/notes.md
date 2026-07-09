@@ -23,6 +23,40 @@ limitations under the License.
 
 This document describes the changes made to the odbc application.
 
+## ODBC 2.17
+
+### Fixed Bugs and Malfunctions
+
+- The `odbc` application is now deprecated and is planned to be removed in Erlang/OTP 30.
+  
+  The `m:ftp` and `m:ct_ftp` modules are now deprecated and are planned to be removed in Erlang/OTP 30.
+
+  Own Id: OTP-19980 Aux Id: [PR-10804]
+
+[PR-10804]: https://github.com/erlang/otp/pull/10804
+
+### Improvements and New Features
+
+- Added support for `-unsafe` attributes, which is used to mark functions as unsafe to use. 
+  
+  This is similar to but separate from deprecation, and the compiler will by default now generate warnings for calls to functions in Erlang/OTP that are known to be always unsafe.
+  
+  Furthermore, `m:xref` can now be used to find calls to functions in another application that lack a `-doc` attribute (`undocumented_function_calls`), calls to functions in another application marked `-doc false.` (`private_function_calls`), as well as calls to unsafe functions (`unsafe_function_calls`).
+
+  Own Id: OTP-20066 Aux Id: [PR-10839]
+
+[PR-10839]: https://github.com/erlang/otp/pull/10839
+
+## ODBC 2.16.1
+
+### Improvements and New Features
+
+- Corrected specs to eliminate Dialyzer warnings for applications.
+
+  Own Id: OTP-19992 Aux Id: [PR-10678]
+
+[PR-10678]: https://github.com/erlang/otp/pull/10678
+
 ## ODBC 2.16
 
 ### Fixed Bugs and Malfunctions

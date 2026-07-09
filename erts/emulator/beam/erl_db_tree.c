@@ -2857,7 +2857,7 @@ static int analyze_pattern(DbTableCommon *tb, Eterm pattern,
      */
     if ((mpi->mp = db_match_compile(matches, guards, bodies,
 				    num_heads, DCOMP_TABLE, NULL,
-                                    &freason)) 
+                                    &freason, NULL))
 	== NULL) {
 	if (buff != sbuff) { 
 	    erts_free(ERTS_ALC_T_DB_TMP, buff);
@@ -3505,9 +3505,7 @@ bool db_lookup_dbterm_tree_common(Process *p, DbTable *tbl, TreeDbTerm **root,
             int arity = arityval(*objp);
             Eterm *htop, *hend;
 
-            if (arity < tbl->common.keypos) {
-                return 0;
-            }
+            ASSERT(arity >= tbl->common.keypos);
             htop = HAlloc(p, arity + 1);
             hend = htop + arity + 1;
             sys_memcpy(htop, objp, sizeof(Eterm) * (arity + 1));

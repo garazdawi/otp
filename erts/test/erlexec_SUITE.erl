@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@
          init_per_testcase/2, end_per_testcase/2]).
 
 -export([args_file/1, evil_args_file/1, missing_args_file/1, env/1, args_file_env/1,
+         unicode_args_file/1,
          otp_7461/1, otp_7461_remote/1, argument_separation/1, argument_with_option/1,
          zdbbl_dist_buf_busy_limit/1, long_path_env/1, argument_too_large/1]).
 
@@ -43,7 +44,7 @@ suite() ->
      {timetrap, {minutes, 1}}].
 
 all() ->
-    [args_file, evil_args_file, missing_args_file, env, args_file_env,
+    [args_file, evil_args_file, missing_args_file, env, args_file_env, unicode_args_file,
      otp_7461, argument_separation, argument_with_option, zdbbl_dist_buf_busy_limit,
      long_path_env, argument_too_large].
 
@@ -319,6 +320,28 @@ missing_args_file(Config) when is_list(Config) ->
             ok;
         Error ->
             exit({unexpected_args_output, Output, Error})
+    end.
+
+unicode_args_file(Config) when is_list(Config) ->
+    %% Test that -args_file works with Unicode paths (e.g. Cyrillic).
+    %% This is a regression test for a bug where fopen() on Windows
+    %% could not open files with non-ASCII paths.
+    Encoding = proplists:get_value(encoding, io:getopts(), unicode),
+    case Encoding of
+	unicode ->
+            PrivDir = proplists:get_value(priv_dir, Config),
+            UnicodeDir = filename:join(PrivDir, "Артем"),
+            ok = file:make_dir(UnicodeDir),
+            AFN = filename:join(UnicodeDir, "args.txt"),
+            write_file(AFN, "-MiscArg1 +\\#100 -extra +XtraArg1"),
+            CmdLine = "-args_file " ++ AFN,
+            {Emu, Misc, Extra} = emu_args(CmdLine),
+            verify_args(["-#100"], Emu),
+            verify_args(["-MiscArg1"], Misc),
+            verify_args(["+XtraArg1"], Extra),
+            ok;
+        _ ->
+            {skip, "Host is not configured for unicode"}
     end.
 
 env(Config) when is_list(Config) ->

@@ -36,7 +36,7 @@ distributed in the sense that they, for example, use services on other nodes.
 
 Since a distributed application can move between nodes, some addressing
 mechanism is required to ensure that it can be addressed by other applications,
-regardless on which node it currently executes. This issue is not addressed
+regardless of which node it currently executes on. This issue is not addressed
 here, but the `m:global` or `m:pg` modules in Kernel can be used for this purpose.
 
 ## Specifying Distributed Applications

@@ -33,6 +33,7 @@
 -export([t_basedir_api/1, t_basedir_xdg/1, t_basedir_windows/1]).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -935,10 +936,10 @@ t_basedir_api(Config) when is_list(Config) ->
         _ -> os:unsetenv("APPDATA")
     end,
 
-    {'EXIT', _} = (catch filename:basedir(wrong_config, "My App")),
-    {'EXIT', _} = (catch filename:basedir(user_cache, {bad,name})),
-    {'EXIT', _} = (catch filename:basedir(user_cache, "My App", badopts)),
-    {'EXIT', _} = (catch filename:basedir(user_cache, "My App", [])),
+    ?assertError(_, filename:basedir(wrong_config, "My App")),
+    ?assertError(_, filename:basedir(user_cache, {bad,name})),
+    ?assertError(_, filename:basedir(user_cache, "My App", badopts)),
+    ?assertError(_, filename:basedir(user_cache, "My App", [])),
     ok.
 
 t_basedir_windows(Config) when is_list(Config) ->

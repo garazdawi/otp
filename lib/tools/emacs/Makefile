@@ -39,8 +39,6 @@ RELSYSDIR = $(RELEASE_PATH)/lib/tools-$(VSN)
 EMACS_FILES= \
 	erldoc \
 	erlang-skels \
-	erlang-skels-old \
-	erlang_appwiz \
 	erlang-start \
 	erlang-eunit \
 	erlang-edoc \

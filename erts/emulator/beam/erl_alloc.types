@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2003-2024. All Rights Reserved.
+# Copyright Ericsson AB 2003-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -319,6 +319,11 @@ type    SCHD_SIG_NTFY   SHORT_LIVED     PROCESSES       scheduled_signal_notify
 type	CODE_COVERAGE   STANDARD        SYSTEM          code_coverage
 
 type    PRIO_Q_INFO     STANDARD        PROCESSES       message_prio_queue_info
+
+type    ENO_MAP         LONG_LIVED      SYSTEM          errno_map
+type    ENO_ENTRY       LONG_LIVED      SYSTEM          errno_entry
+type    ENO_TAB         LONG_LIVED      SYSTEM          errno_table
+type    ENO_TAB_BKTS    LONG_LIVED      SYSTEM          errno_table_buckets
 
 #
 # Types used for special emulators

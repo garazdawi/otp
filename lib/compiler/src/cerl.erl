@@ -3,8 +3,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2013-2024. All Rights Reserved.
 %% Copyright 1999-2002 Richard Carlsson
+%% Copyright Ericsson AB 2013-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -61,6 +61,8 @@ function `type/1`.
 > list `[]`. This can be relied on when writing functions that operate on syntax
 > trees.
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([abstract/1, add_ann/2, alias_pat/1, alias_var/1,
          ann_abstract/2, ann_c_alias/3, ann_c_apply/3, ann_c_atom/2,
@@ -315,8 +317,8 @@ _See also: _`set_ann/2`.
 """.
 -spec get_ann(Node :: cerl()) -> [term()].
 
-get_ann(Node) ->
-    element(2, Node).
+get_ann(#_{anno=Anno}) ->
+    Anno.
 
 
 -doc """
@@ -326,8 +328,8 @@ _See also: _`add_ann/2`, `copy_ann/2`, `get_ann/1`.
 """.
 -spec set_ann(Node :: cerl(), Annotations :: [term()]) -> cerl().
 
-set_ann(Node, List) ->
-    setelement(2, Node, List).
+set_ann(Node, List) when is_record(Node) ->
+    Node#_{anno=List}.
 
 
 -doc """
@@ -1404,7 +1406,7 @@ _See also: _`ann_c_map/2`, `is_c_map/1`, `is_c_map_empty/1`, `is_c_map_pattern/1
 -spec c_map_pattern(Pairs :: [c_map_pair()]) -> c_map().
 
 c_map_pattern(Pairs) ->
-    #c_map{es=Pairs, is_pat=true}.
+    #c_map{es=Pairs, arg=#c_literal{val=#{}}, is_pat=true}.
 
 
 -type map_op() :: #c_literal{val::'assoc'} | #c_literal{val::'exact'}.
@@ -1517,7 +1519,7 @@ ann_c_map(As, M, Es) ->
 -spec ann_c_map_pattern(Annotations :: [term()], Pairs :: [c_map_pair()]) -> c_map().
 
 ann_c_map_pattern(As, Pairs) ->
-    #c_map{anno=As, es=Pairs, is_pat=true}.
+    #c_map{anno=As, arg=#c_literal{val=#{}}, es=Pairs, is_pat=true}.
 
 update_map_literal([#c_map_pair{op=#c_literal{val=assoc},key=Ck,val=Cv}|Es], M) ->
     %% M#{K => V}
@@ -1653,15 +1655,15 @@ Creates an abstract record constructor.
 _See also: _`ann_c_record/3`, `is_c_record/1`, `record_id/1`, `record_es/1`,
 `c_record_pair/2`, `update_c_record/4`.
 """.
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -spec c_record(Argument :: record_id(),
                Pairs :: [c_record_pair()]) -> #c_record{}.
 
 c_record(Id, Es) ->
-    #c_record{id=Id, es=Es}.
+    #c_record{id=Id, arg=#c_literal{val=ok}, es=Es}.
 
 -doc "_See also: _`c_record/2`.".
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -spec ann_c_record(Annotations :: [term()],
                    Argument :: c_var() | c_record() | c_literal(),
                    Id :: term(),
@@ -1675,7 +1677,7 @@ Returns the list of native record pair subtrees of an abstract record.
 
 _See also: _`c_record/2`.
 """.
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -spec record_es(Node :: c_record()) -> [c_record_pair()].
 
 record_es(#c_record{es = Es}) ->
@@ -1686,7 +1688,7 @@ Returns the identifier of of an abstract record.
 
 _See also: _`c_record/2`.
 """.
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -spec record_id(Node :: c_record()) -> record_id().
 
 record_id(#c_record{id = Id}) ->
@@ -1697,9 +1699,9 @@ Returns the argument subtree of an abstract record.
 
 _See also: _`c_record/2`.
 """.
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 
--spec record_arg(Node :: c_record()) -> c_record() | c_literal().
+-spec record_arg(Node :: c_record()) -> c_var() | c_literal().
 
 record_arg(#c_record{arg = M}) ->
     M.
@@ -1707,7 +1709,7 @@ record_arg(#c_record{arg = M}) ->
 -doc """
 _See also: _`c_record/2`.
 """.
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -spec update_c_record(Node :: c_record() | c_literal(),
                       Arg :: c_var() | c_literal(),
                       Id :: record_id(),
@@ -1721,7 +1723,7 @@ Returns `true` if `Node` is an abstract record, otherwise `false`.
 
 _See also: _`c_record/2`.
 """.
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -spec is_c_record(Node :: cerl()) -> boolean().
 
 is_c_record(#c_record{}) ->
@@ -1740,14 +1742,14 @@ expression or an abstract update expression (see `c_record/2`).
 The result represents "`Key = Value`".
 
 _See also: _`ann_c_record_pair/3`, `record_pair_key/1`, `record_pair_val/1`.
-""".  -doc(#{since => <<"OTP @OTP-19785@">>}).  -spec
+""".  -doc(#{since => <<"OTP 29.0">>}).  -spec
 c_record_pair(Key :: c_literal(), Value :: cerl()) -> c_record_pair().
 
 c_record_pair(K, V) ->
     #c_record_pair{key = K, val=V}.
 
 -doc "_See also: _`c_record/2`.".
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -spec ann_c_record_pair(Annotations :: [term()],
                         Key :: cerl(), Value :: cerl()) -> c_record_pair().
 
@@ -1759,7 +1761,7 @@ Returns the key subtree of an abstract record pair.
 
 _See also: _`c_record_pair/2`.
 """.
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 
 -spec record_pair_key(Node :: c_record_pair()) -> c_literal().
 
@@ -1770,7 +1772,7 @@ Returns the value subtree of an abstract record pair.
 
 _See also: _`c_record_pair/2`.
 """.
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 
 -spec record_pair_val(Node :: c_record_pair()) -> cerl().
 
@@ -1779,7 +1781,7 @@ record_pair_val(#c_record_pair{val=V}) -> V.
 -doc """
 _See also: _`c_record_pair/2`.
 """.
--doc(#{since => <<"OTP @OTP-19785@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -spec update_c_record_pair(Node :: c_record_pair(),
                            Key :: c_literal(),
                            Value :: cerl()) -> c_record_pair().

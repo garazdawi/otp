@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -56,7 +56,7 @@ The Erlang token scanner.
 This module contains functions for tokenizing (scanning) characters into Erlang
 tokens.
 
-## Error Information
+### Error Information
 
 `ErrorInfo` is the standard `ErrorInfo` structure that is returned from all I/O
 modules. The format is as follows:
@@ -71,16 +71,18 @@ A string describing the error is obtained with the following call:
 Module:format_error(ErrorDescriptor)
 ```
 
-## Notes
+### Notes
 
 The continuation of the first call to the re-entrant input functions must be
 `[]`. For a complete description of how the re-entrant input scheme works, see
 Armstrong, Virding and Williams: 'Concurrent Programming in Erlang', Chapter 13.
 
-## See Also
+### See Also
 
 `m:erl_anno`, `m:erl_parse`, `m:io`
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 %%% External exports
 

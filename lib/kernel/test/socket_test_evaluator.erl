@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %% 
-%% Copyright Ericsson AB 2018-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2026. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -678,7 +678,7 @@ force_evs_exit([#ev{name = Name,
                     pid  = Pid,
                     mref = MRef} | Evs], Reason) ->
     ?SEV_IPRINT("Force terminate evaluator ~p (~p)", [Name, Pid]),
-    (catch erlang:demonitor(MRef, [flush])),
+    try erlang:demonitor(MRef, [flush]) catch _:_ -> ignore end,
     exit(Pid, Reason),
     force_evs_exit(Evs, Reason).
 

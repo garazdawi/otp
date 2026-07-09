@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 2020-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -152,6 +152,11 @@ typedef struct {
     BeamType *entries;
 } BeamFile_TypeTable;
 
+
+#define BEAMFILE_DEBUG_INFO_ENTRY_FRAME_SIZE 0
+#define BEAMFILE_DEBUG_INFO_ENTRY_VAR_MAPPINGS 1
+#define BEAMFILE_DEBUG_INFO_ENTRY_CALLS 2
+
 #define BEAMFILE_FRAMESIZE_ENTRY (-2)
 #define BEAMFILE_FRAMESIZE_NONE (-1)
 
@@ -159,6 +164,7 @@ typedef struct {
     Uint32 location_index;
     Sint32 frame_size;
     Sint32 num_vars;
+    Sint32 num_calls_terms;
     Eterm *first;
 } BeamFile_DebugItem;
 

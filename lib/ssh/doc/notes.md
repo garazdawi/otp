@@ -3,7 +3,7 @@
 
 SPDX-License-Identifier: Apache-2.0
 
-Copyright Ericsson AB 2023-2025. All Rights Reserved.
+Copyright Ericsson AB 2023-2026. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,6 +20,309 @@ limitations under the License.
 %CopyrightEnd%
 -->
 # SSH Release Notes
+
+## Ssh 6.0.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a path-existence oracle in the SFTP server where `SSH_FXP_REALPATH` requests with `..` components could bypass the configured root directory isolation, allowing an authenticated client to determine whether arbitrary paths exist on the host filesystem.
+
+  Own Id: OTP-20183 Aux Id: [CVE-2026-53422], GHSA-h9pw-h5w4-h976, [PR-11294]
+
+- Fixed an infinite loop in the SFTP server triggered when receiving `SSH_MSG_CHANNEL_EXTENDED_DATA` on an SFTP channel, which caused the channel process to spin indefinitely on CPU without consuming its message queue.
+
+  Own Id: OTP-20186 Aux Id: [CVE-2026-54886], GHSA-7wp4-pc27-2vj9, [PR-11295]
+
+- Fixed mlkem768x25519 hybrid key exchange failing intermittently with "incorrect signature" when the X25519 shared secret had a leading zero byte. The shared secret is now encoded as a fixed-width 32-byte string per the specification.
+
+  Own Id: OTP-20196 Aux Id: [PR-11209]
+
+- Fixed a race condition where SSH keepalive responses could be matched to unrelated pending requests due to incorrect request queue ordering. Requests are now matched in the order they were sent.
+
+  Own Id: OTP-20198 Aux Id: [PR-11244]
+
+- The SFTP server now caps the read length in `SSH_FXP_READ` requests to 255 KiB (matching OpenSSH's `SFTP_MAX_READ_LENGTH`), preventing excessive memory allocation when clients request large reads.
+
+  Own Id: OTP-20200 Aux Id: [PR-11259]
+
+- Removed a server-side workaround (OTP-14827, introduced in OTP 20) that accepted SHA-1 user-auth signatures from clients identifying as OpenSSH 7.x when rsa-sha2-* was negotiated. The workaround addressed a distro-specific build issue in 2017 that no longer exists. Clients affected by this removal (extremely unlikely — requires a 10-year-old unpatched OpenSSH build) will see authentication failures and must upgrade.
+
+  Own Id: OTP-20206 Aux Id: [PR-11268]
+
+[CVE-2026-53422]: https://nvd.nist.gov/vuln/detail/2026-53422
+[PR-11294]: https://github.com/erlang/otp/pull/11294
+[CVE-2026-54886]: https://nvd.nist.gov/vuln/detail/2026-54886
+[PR-11295]: https://github.com/erlang/otp/pull/11295
+[PR-11209]: https://github.com/erlang/otp/pull/11209
+[PR-11244]: https://github.com/erlang/otp/pull/11244
+[PR-11259]: https://github.com/erlang/otp/pull/11259
+[PR-11268]: https://github.com/erlang/otp/pull/11268
+
+## Ssh 6.0.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a timing-based username enumeration vulnerability during password authentication with the user_passwords option. A dummy PBKDF2 computation is now performed for invalid usernames to match the response time of valid ones.
+
+  Own Id: OTP-20153 Aux Id: [CVE-2026-48859], GHSA-3w6p-vwhf-wvp4, [PR-11157]
+
+- Fixed SSH_FXP_READLINK handler in ssh_sftpd to strip the backend root prefix from symlink targets before returning them to the client, preventing disclosure of the server's absolute filesystem path when the root option is configured.
+
+  Own Id: OTP-20162 Aux Id: [CVE-2026-48855], GHSA-pv7g-pjrq-x2fh, [PR-11192]
+
+- Fixed a race condition where SSH keep-alive responses could consume pending channel open requests, causing channel setup to fail silently.
+
+  Own Id: OTP-20181 Aux Id: [PR-11205]
+
+[CVE-2026-48859]: https://nvd.nist.gov/vuln/detail/2026-48859
+[PR-11157]: https://github.com/erlang/otp/pull/11157
+[CVE-2026-48855]: https://nvd.nist.gov/vuln/detail/2026-48855
+[PR-11192]: https://github.com/erlang/otp/pull/11192
+[PR-11205]: https://github.com/erlang/otp/pull/11205
+
+## Ssh 6.0
+
+### Fixed Bugs and Malfunctions
+
+- Password-based authentication has been updated to follow current security
+  best practices. Key-based authentication remains recommended for production systems.
+
+  Own Id: OTP-19982 Aux Id: [PR-10571]
+
+- Added explicit size validation guards for pre-authentication SSH messages to improve defense-in-depth against DoS attacks. Messages now have per-field size limits based on RFC specifications:
+    - Transport layer messages (DISCONNECT, IGNORE, DEBUG)
+    - Key exchange messages (DH, ECDH, DH-GEX)
+    - Service request messages (SERVICE_REQUEST, SERVICE_ACCEPT, EXT_INFO)
+  
+  This change enhances the existing 256KB global packet size limit with granular per-message validation. Compliant implementations are not affected.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-19995 Aux Id: [PR-10739]
+
+- The SFTP subsystem `root` option now properly rejects relative paths at daemon startup. Previously, relative paths would cause unpredictable behavior as file operations resolved relative to the Erlang VM's current working directory. The option now requires an absolute path or empty string.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-20019 Aux Id: [PR-10820]
+
+- Dynamic atom creation has been replaced with static lookups in `ssh_transport` and `ssh_connection`, using a dedicated OID-to-algorithm mapping function in `ssh_message`.
+
+  Own Id: OTP-20127 Aux Id: [PR-11078]
+
+[PR-10571]: https://github.com/erlang/otp/pull/10571
+[PR-10739]: https://github.com/erlang/otp/pull/10739
+[PR-10820]: https://github.com/erlang/otp/pull/10820
+[PR-11078]: https://github.com/erlang/otp/pull/11078
+
+### Improvements and New Features
+
+- Using KEX strict extension names as specified in draft-ietf-sshm-strict-kex-00. Pre standard names are still supported.
+
+  Own Id: OTP-19709 Aux Id: [PR-10115]
+
+- Added an `alive` option to detect and terminate dead SSH connections. Functionally equivalent to OpenSSH's ClientAlive*/ServerAlive* settings.
+
+  Own Id: OTP-19750 Aux Id: [PR-9125], [PR-10372]
+
+- `ssh:stop_deamon` now uses `supervisor:stop` for shutting down daemons. With this change, the scenario when `ssh:stop_daemon` is called for a non-existing process results in calling process exiting. Previously an error tuple was returned (which was not documented).
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-19801 Aux Id: [PR-10253]
+
+- The default key exchange algorithm is now mlkem768x25519-sha256, a hybrid quantum-resistant algorithm combining ML-KEM-768 with X25519. This
+  provides protection against both classical and quantum computer attacks while maintaining backward compatibility through automatic fallback to
+  other algorithms when peers don't support it.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-19965 Aux Id: [PR-10656]
+
+- The SSH daemon now defaults to disabled for shell and exec services,
+  implementing the "secure by default" principle. This prevents authenticated
+  users from executing arbitrary Erlang code unless explicitly configured.
+  
+  Applications requiring shell or exec functionality must now explicitly enable:
+  ```erlang
+    %% Enable Erlang shell
+    ssh:daemon(Port, [{shell, {shell, start, []}} | Options])
+  
+    %% Enable Erlang term evaluation via exec
+    ssh:daemon(Port, [{exec, erlang_eval} | Options])
+  
+    %% Restore complete old behavior
+    ssh:daemon(Port, [{shell, {shell, start, []}},
+                      {exec, erlang_eval}
+                      | Options])
+  ```
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-19969 Aux Id: [PR-10970], [PR-11080], ERIERL-1319
+
+- Added SFTP resource limits
+  section to hardening guide covering `max_handles`, `max_path`, and `max_files` with deployment recommendations.
+
+  Own Id: OTP-20031 Aux Id: [PR-10838]
+
+- Added support for `-unsafe` attributes, which is used to mark functions as unsafe to use. 
+  
+  This is similar to but separate from deprecation, and the compiler will by default now generate warnings for calls to functions in Erlang/OTP that are known to be always unsafe.
+  
+  Furthermore, `m:xref` can now be used to find calls to functions in another application that lack a `-doc` attribute (`undocumented_function_calls`), calls to functions in another application marked `-doc false.` (`private_function_calls`), as well as calls to unsafe functions (`unsafe_function_calls`).
+
+  Own Id: OTP-20066 Aux Id: [PR-10839]
+
+- The SFTP subsystem is no longer enabled by default when starting an
+  SSH daemon. To enable it, add the subsystems option explicitly:
+  
+  ```erlang
+  ssh:daemon(Port, [{subsystems, [ssh_sftpd:subsystem_spec([])]} | Options])
+  ```
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-20078 Aux Id: [PR-10970]
+
+- The SSH hardening guide has been improved with a timeout overview table replacing the previous image, corrected terminology ("authenticated" instead of "authorized"), and new examples for loopback binding, public key user checking, and password lockout using ETS.
+
+  Own Id: OTP-20079 Aux Id: [PR-10970]
+
+- With this change usage of `zlib` compression algorithm in SSH is deprecated and scheduled for removal in OTP 30.0
+
+  Own Id: OTP-20099 Aux Id: [PR-11010]
+
+- Updated SSH documentation with current OTP 29 algorithm defaults,
+  including the new mlkem768x25519-sha256 post-quantum key exchange.
+  Fixed stale examples, typos, and improved document structure.
+
+  Own Id: OTP-20100 Aux Id: [PR-11012]
+
+[PR-10115]: https://github.com/erlang/otp/pull/10115
+[PR-9125]: https://github.com/erlang/otp/pull/9125
+[PR-10372]: https://github.com/erlang/otp/pull/10372
+[PR-10253]: https://github.com/erlang/otp/pull/10253
+[PR-10656]: https://github.com/erlang/otp/pull/10656
+[PR-10970]: https://github.com/erlang/otp/pull/10970
+[PR-11080]: https://github.com/erlang/otp/pull/11080
+[PR-10838]: https://github.com/erlang/otp/pull/10838
+[PR-10839]: https://github.com/erlang/otp/pull/10839
+[PR-10970]: https://github.com/erlang/otp/pull/10970
+[PR-10970]: https://github.com/erlang/otp/pull/10970
+[PR-11010]: https://github.com/erlang/otp/pull/11010
+[PR-11012]: https://github.com/erlang/otp/pull/11012
+
+## Ssh 5.5.2.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a path-existence oracle in the SFTP server where `SSH_FXP_REALPATH` requests with `..` components could bypass the configured root directory isolation, allowing an authenticated client to determine whether arbitrary paths exist on the host filesystem.
+
+  Own Id: OTP-20183 Aux Id: [CVE-2026-53422], GHSA-h9pw-h5w4-h976, [PR-11294]
+
+- Fixed an infinite loop in the SFTP server triggered when receiving `SSH_MSG_CHANNEL_EXTENDED_DATA` on an SFTP channel, which caused the channel process to spin indefinitely on CPU without consuming its message queue.
+
+  Own Id: OTP-20186 Aux Id: [CVE-2026-54886], GHSA-7wp4-pc27-2vj9, [PR-11295]
+
+- Fixed mlkem768x25519 hybrid key exchange failing intermittently with "incorrect signature" when the X25519 shared secret had a leading zero byte. The shared secret is now encoded as a fixed-width 32-byte string per the specification.
+
+  Own Id: OTP-20196 Aux Id: [PR-11209]
+
+- The SFTP server now caps the read length in `SSH_FXP_READ` requests to 255 KiB (matching OpenSSH's `SFTP_MAX_READ_LENGTH`), preventing excessive memory allocation when clients request large reads.
+
+  Own Id: OTP-20200 Aux Id: [PR-11259]
+
+- Removed a server-side workaround (OTP-14827, introduced in OTP 20) that accepted SHA-1 user-auth signatures from clients identifying as OpenSSH 7.x when rsa-sha2-* was negotiated. The workaround addressed a distro-specific build issue in 2017 that no longer exists. Clients affected by this removal (extremely unlikely — requires a 10-year-old unpatched OpenSSH build) will see authentication failures and must upgrade.
+
+  Own Id: OTP-20206 Aux Id: [PR-11268]
+
+[CVE-2026-53422]: https://nvd.nist.gov/vuln/detail/2026-53422
+[PR-11294]: https://github.com/erlang/otp/pull/11294
+[CVE-2026-54886]: https://nvd.nist.gov/vuln/detail/2026-54886
+[PR-11295]: https://github.com/erlang/otp/pull/11295
+[PR-11209]: https://github.com/erlang/otp/pull/11209
+[PR-11259]: https://github.com/erlang/otp/pull/11259
+[PR-11268]: https://github.com/erlang/otp/pull/11268
+
+## Ssh 5.5.2.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed SSH_FXP_READLINK handler in ssh_sftpd to strip the backend root prefix from symlink targets before returning them to the client, preventing disclosure of the server's absolute filesystem path when the root option is configured.
+
+  Own Id: OTP-20162 Aux Id: [CVE-2026-48855], GHSA-pv7g-pjrq-x2fh, [PR-11192]
+
+[CVE-2026-48855]: https://nvd.nist.gov/vuln/detail/2026-48855
+[PR-11192]: https://github.com/erlang/otp/pull/11192
+
+## Ssh 5.5.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a vulnerability in the SFTP server where file attributes could be modified outside the configured root directory. When using FSETSTAT on an open file handle, the operation used the path stored in the handle without verifying it was within the root directory, allowing attribute changes to files outside the chroot boundary.
+  
+  Thanks to John Downey.
+
+  Own Id: OTP-20081 Aux Id: [PR-11027], [CVE-2026-32147]
+
+[PR-11027]: https://github.com/erlang/otp/pull/11027
+[CVE-2026-32147]: https://nvd.nist.gov/vuln/detail/2026-32147
+
+## Ssh 5.5.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed path traversal vulnerability in SFTP server's root option allowing authenticated users to access sibling directories with matching name prefixes. The root option used string prefix matching instead of path component validation. With \{root, "/home/user1"\}, attackers could access /home/user10/ or /home/user123/. Thanks to Luigino Camastra, Aisle Research.
+
+  Own Id: OTP-20009 Aux Id: [PR-10811], [CVE-2026-23942]
+
+- Fixed excessive memory usage vulnerability in SSH compression allowing attackers to consume system resources through decompression bombs. The 'zlib' and 'zlib@openssh.com' algorithms lacked decompression size limits, allowing 256 KB packets to expand to 255 MB (1029:1 ratio). This could lead to crashes on systems with limited memory.
+  
+  The fix removes zlib from default compression algorithms and implements decompression size limits for both algorithms. Thanks to Igor Morgenstern at Aisle Research
+
+  Own Id: OTP-20011 Aux Id: [PR-10813], [CVE-2026-23943]
+
+[PR-10811]: https://github.com/erlang/otp/pull/10811
+[CVE-2026-23942]: https://nvd.nist.gov/vuln/detail/2026-23942
+[PR-10813]: https://github.com/erlang/otp/pull/10813
+[CVE-2026-23943]: https://nvd.nist.gov/vuln/detail/2026-23943
+
+## Ssh 5.5
+
+### Fixed Bugs and Malfunctions
+
+- The type specification for the `CbInitArgs` parameter in `ssh_client_channel:start/4` and `ssh_client_channel:start_link/4` has been relaxed from `[term()]` to `term()`. This eliminates false Dialyzer warnings when passing non-list arguments (such as maps or atoms) to these functions. This change is backward compatible as `term()` includes `[term()`].
+
+  Own Id: OTP-19976 Aux Id: [GH-10351], [PR-10673]
+
+[GH-10351]: https://github.com/erlang/otp/issues/10351
+[PR-10673]: https://github.com/erlang/otp/pull/10673
+
+### Improvements and New Features
+
+- Added support for the PQC key exchange (kex) algorithm mlkem768x25519-sha256, a hybrid quantum-resistant algorithm combining ML-KEM-768 with X25519.
+
+  Own Id: OTP-19824 Aux Id: [PR-10512], [PR-10655]
+
+[PR-10512]: https://github.com/erlang/otp/pull/10512
+[PR-10655]: https://github.com/erlang/otp/pull/10655
+
+## Ssh 5.4.1
+
+### Fixed Bugs and Malfunctions
+
+- Fix handling of the SSH "each side may guess" key-exchange mechanism as defined in RFC 4253, Section 7.
+
+  Own Id: OTP-19864 Aux Id: [GH-8676], [PR-10575]
+
+- Fix ssh_file:encode handling of OpenSSH V1 private keys generated by public_key module. Also correct type specifications for OpenSSH V1 keys in ssh_file encode and decode operations.
+
+  Own Id: OTP-19915 Aux Id: [PR-10539]
+
+[GH-8676]: https://github.com/erlang/otp/issues/8676
+[PR-10575]: https://github.com/erlang/otp/pull/10575
+[PR-10539]: https://github.com/erlang/otp/pull/10539
 
 ## Ssh 5.4
 
@@ -47,7 +350,7 @@ limitations under the License.
 
 ### Fixed Bugs and Malfunctions
 
-- Option max_handles can be configured for sshd running SFTP. The positive integer value limits amount of file handles opened for a connection (by default 4096 is used).
+- Option max_handles can be configured for sshd running SFTP. The positive integer value limits amount of file handles opened for a connection (by default 1000 is used).
 
   *** POTENTIAL INCOMPATIBILITY ***
 
@@ -165,6 +468,87 @@ limitations under the License.
 [PR-9214]: https://github.com/erlang/otp/pull/9214
 [PR-9298]: https://github.com/erlang/otp/pull/9298
 
+## Ssh 5.2.11.9
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a path-existence oracle in the SFTP server where `SSH_FXP_REALPATH` requests with `..` components could bypass the configured root directory isolation, allowing an authenticated client to determine whether arbitrary paths exist on the host filesystem.
+
+  Own Id: OTP-20183 Aux Id: [CVE-2026-53422], GHSA-h9pw-h5w4-h976, [PR-11294]
+
+- Fixed an infinite loop in the SFTP server triggered when receiving `SSH_MSG_CHANNEL_EXTENDED_DATA` on an SFTP channel, which caused the channel process to spin indefinitely on CPU without consuming its message queue.
+
+  Own Id: OTP-20186 Aux Id: [CVE-2026-54886], GHSA-7wp4-pc27-2vj9, [PR-11295]
+
+- The SFTP server now caps the read length in `SSH_FXP_READ` requests to 255 KiB (matching OpenSSH's `SFTP_MAX_READ_LENGTH`), preventing excessive memory allocation when clients request large reads.
+
+  Own Id: OTP-20200 Aux Id: [PR-11259]
+
+- Removed a server-side workaround (OTP-14827, introduced in OTP 20) that accepted SHA-1 user-auth signatures from clients identifying as OpenSSH 7.x when rsa-sha2-* was negotiated. The workaround addressed a distro-specific build issue in 2017 that no longer exists. Clients affected by this removal (extremely unlikely — requires a 10-year-old unpatched OpenSSH build) will see authentication failures and must upgrade.
+
+  Own Id: OTP-20206 Aux Id: [PR-11268]
+
+[CVE-2026-53422]: https://nvd.nist.gov/vuln/detail/2026-53422
+[PR-11294]: https://github.com/erlang/otp/pull/11294
+[CVE-2026-54886]: https://nvd.nist.gov/vuln/detail/2026-54886
+[PR-11295]: https://github.com/erlang/otp/pull/11295
+[PR-11259]: https://github.com/erlang/otp/pull/11259
+[PR-11268]: https://github.com/erlang/otp/pull/11268
+
+## Ssh 5.2.11.8
+
+### Fixed Bugs and Malfunctions
+
+- Fixed SSH_FXP_READLINK handler in ssh_sftpd to strip the backend root prefix from symlink targets before returning them to the client, preventing disclosure of the server's absolute filesystem path when the root option is configured.
+
+  Own Id: OTP-20162 Aux Id: [CVE-2026-48855], GHSA-pv7g-pjrq-x2fh, [PR-11192]
+
+[CVE-2026-48855]: https://nvd.nist.gov/vuln/detail/2026-48855
+[PR-11192]: https://github.com/erlang/otp/pull/11192
+
+## Ssh 5.2.11.7
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a vulnerability in the SFTP server where file attributes could be modified outside the configured root directory. When using FSETSTAT on an open file handle, the operation used the path stored in the handle without verifying it was within the root directory, allowing attribute changes to files outside the chroot boundary.
+  
+  Thanks to John Downey.
+
+  Own Id: OTP-20081 Aux Id: [PR-11027], [CVE-2026-32147]
+
+[PR-11027]: https://github.com/erlang/otp/pull/11027
+[CVE-2026-32147]: https://nvd.nist.gov/vuln/detail/2026-32147
+
+## Ssh 5.2.11.6
+
+### Fixed Bugs and Malfunctions
+
+- Fixed path traversal vulnerability in SFTP server's root option allowing authenticated users to access sibling directories with matching name prefixes. The root option used string prefix matching instead of path component validation. With \{root, "/home/user1"\}, attackers could access /home/user10/ or /home/user123/. Thanks to Luigino Camastra, Aisle Research.
+
+  Own Id: OTP-20009 Aux Id: [PR-10811], [CVE-2026-23942]
+
+- Fixed excessive memory usage vulnerability in SSH compression allowing attackers to consume system resources through decompression bombs. The 'zlib' and 'zlib@openssh.com' algorithms lacked decompression size limits, allowing 256 KB packets to expand to 255 MB (1029:1 ratio). This could lead to crashes on systems with limited memory.
+  
+  The fix removes zlib from default compression algorithms and implements decompression size limits for both algorithms. Thanks to Igor Morgenstern at Aisle Research
+
+  Own Id: OTP-20011 Aux Id: [PR-10813], [CVE-2026-23943]
+
+[PR-10811]: https://github.com/erlang/otp/pull/10811
+[CVE-2026-23942]: https://nvd.nist.gov/vuln/detail/2026-23942
+[PR-10813]: https://github.com/erlang/otp/pull/10813
+[CVE-2026-23943]: https://nvd.nist.gov/vuln/detail/2026-23943
+
+## Ssh 5.2.11.5
+
+### Fixed Bugs and Malfunctions
+
+- Fix handling of the SSH "each side may guess" key-exchange mechanism as defined in RFC 4253, Section 7.
+
+  Own Id: OTP-19864 Aux Id: [GH-8676], [PR-10575]
+
+[GH-8676]: https://github.com/erlang/otp/issues/8676
+[PR-10575]: https://github.com/erlang/otp/pull/10575
+
 ## Ssh 5.2.11.4
 
 ### Fixed Bugs and Malfunctions
@@ -179,7 +563,7 @@ limitations under the License.
 
 ### Fixed Bugs and Malfunctions
 
-- Option max_handles can be configured for sshd running SFTP. The positive integer value limits amount of file handles opened for a connection (by default 4096 is used).
+- Option max_handles can be configured for sshd running SFTP. The positive integer value limits amount of file handles opened for a connection (by default 1000 is used).
 
   *** POTENTIAL INCOMPATIBILITY ***
 
@@ -433,6 +817,29 @@ limitations under the License.
 [PR-7845]: https://github.com/erlang/otp/pull/7845
 [PR-8026]: https://github.com/erlang/otp/pull/8026
 
+## Ssh 5.1.4.15
+
+### Fixed Bugs and Malfunctions
+
+* Fixed a vulnerability in the SFTP server where file attributes could be modified outside the configured root directory. When using FSETSTAT on an open file handle, the operation used the path stored in the handle without verifying it was within the root directory, allowing attribute changes to files outside the chroot boundary.
+
+  Thanks to John Downey.
+
+  Own Id: OTP-20081 Aux Id: PR-11027, CVE-2026-32147
+
+## Ssh 5.1.4.14
+
+### Fixed Bugs and Malfunctions
+
+* Fixed path traversal vulnerability in SFTP server's root option allowing authenticated users to access sibling directories with matching name prefixes. The root option used string prefix matching instead of path component validation. With \{root, "/home/user1"\}, attackers could access /home/user10/ or /home/user123/. Thanks to Luigino Camastra, Aisle Research.
+
+  Own Id: OTP-20009 Aux Id: PR-10811, CVE-2026-23942
+* Fixed excessive memory usage vulnerability in SSH compression allowing attackers to consume system resources through decompression bombs. The 'zlib' and 'zlib@openssh.com' algorithms lacked decompression size limits, allowing 256 KB packets to expand to 255 MB (1029:1 ratio). This could lead to crashes on systems with limited memory.
+
+  The fix removes zlib from default compression algorithms and implements decompression size limits for both algorithms. Thanks to Igor Morgenstern at Aisle Research
+
+  Own Id: OTP-20011 Aux Id: PR-10813, CVE-2026-23943
+
 ## Ssh 5.1.4.13
 
 ### Fixed Bugs and Malfunctions
@@ -445,7 +852,7 @@ limitations under the License.
 
 ### Fixed Bugs and Malfunctions
 
-* Option max_handles can be configured for sshd running SFTP. The positive integer value limits amount of file handles opened for a connection (by default 4096 is used).
+* Option max_handles can be configured for sshd running SFTP. The positive integer value limits amount of file handles opened for a connection (by default 1000 is used).
 
   \*** POTENTIAL INCOMPATIBILITY ***
 

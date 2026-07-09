@@ -2,8 +2,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
 %%
+%% Copyright Ericsson AB 2009-2026. All Rights Reserved.
 %% Copyright 2004-2006 Mickaël Rémond, Richard Carlsson
-%% Copyright Ericsson AB 2009-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -234,6 +234,25 @@
 -define(_assertCmdStatus(N, Cmd), ?_test(?assertCmdStatus(N, Cmd))).
 -define(_assertCmd(Cmd), ?_test(?assertCmd(Cmd))).
 -define(_assertCmdOutput(T, Cmd), ?_test(?assertCmdOutput(T, Cmd))).
+
+%% Macros to assist in finding race / time dependant bugs
+%% in exercised code.
+
+-ifdef(NODEBUG).
+-define(randomDelay(Prob, MinSec, MaxSec),  ok).
+-else.
+-define(randomDelay(Prob, MinSec, MaxSec),
+        (fun() ->
+            case rand:uniform() < (Prob) of
+                true ->
+                    %% Convert seconds to milliseconds for timer:sleep
+                    Delay = (MinSec) + rand:uniform() * ((MaxSec) - (MinSec)),
+                    timer:sleep(round(Delay * 1000));
+                false ->
+                    ok
+            end
+        end)()).
+-endif.
 
 %% Macros to simplify debugging (in particular, they work even when the
 %% standard output is being redirected by EUnit while running tests)

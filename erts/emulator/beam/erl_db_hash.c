@@ -1524,8 +1524,8 @@ static int db_member_hash(DbTable *tbl, Eterm key, Eterm *ret)
     erts_rwmtx_t* lck;
 
     hval = MAKE_HASH(key);
-    ix = hash_to_ix(tb, hval);
     lck = RLOCK_HASH(tb, hval);
+    ix = hash_to_ix(tb, hval);
     b1 = BUCKET(tb, ix);
 
     while(b1 != 0) {
@@ -3305,7 +3305,7 @@ static int analyze_pattern(DbTableHash *tb, Eterm pattern,
      */
     if ((mpi->mp = db_match_compile(matches, guards, bodies,
 				    num_heads, DCOMP_TABLE, NULL,
-                                    &freason)) 
+                                    &freason, NULL))
 	== NULL) {
 	if (buff != sbuff) { 
 	    erts_free(ERTS_ALC_T_DB_TMP, buff);
@@ -3909,10 +3909,7 @@ db_lookup_dbterm_hash(Process *p, DbTable *tbl, Eterm key, Eterm obj,
         int arity = arityval(*objp);
         Eterm *htop, *hend;
 
-        if (arity < tb->common.keypos) {
-            WUNLOCK_HASH_LCK_CTR(lck_ctr);
-            return 0;
-        }
+        ASSERT(arity >= tb->common.keypos);
         htop = HAlloc(p, arity + 1);
         hend = htop + arity + 1;
         sys_memcpy(htop, objp, sizeof(Eterm) * (arity + 1));

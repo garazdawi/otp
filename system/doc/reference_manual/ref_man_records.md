@@ -139,7 +139,7 @@ old values.
 
 Since record expressions are expanded to tuple expressions, creating
 records and accessing record fields are allowed in guards. However,
-all subexpressions (for initializing fields), must be valid guard
+all subexpressions (for initializing fields) must be valid guard
 expressions as well.
 
 _Examples:_

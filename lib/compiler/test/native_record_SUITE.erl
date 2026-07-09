@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2025-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2025-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,12 +26,12 @@
 	 init_per_group/2,end_per_group/2,
          local_basic/1,local_updates/1,non_atomic_names/1,
          external_records/1,any_record/1,
-         matching/1,is_record_bif/1]).
+         matching/1,is_record_bif/1,type_opts/1]).
 
 %% Unexported records.
 -record #empty{}.
 -record #a{x, y}.
--record #c{x::integer, y=0::integer, z=[]}.
+-record #c{x::integer(), y=0::integer(), z=[]}.
 -record #d{f=3.1416, l=[a,b,c], t={a,b,c},
            m=#{a => 1}}.
 
@@ -45,10 +45,11 @@
 -record #Point{x=0,y=0,z=0}.
 
 %% Other exported records.
--export_record([b, exp_abc, exp_x]).
+-export_record([b, exp_abc, exp_x, exp_xyz]).
 -record #b{x=none, y=none, z=none}.
 -record #exp_abc{a=0, b=0}.
 -record #exp_x{x=0}.
+-record #exp_xyz{x, y, z}.
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -66,7 +67,8 @@ groups() ->
        any_record,
        external_records,
        matching,
-       is_record_bif
+       is_record_bif,
+       type_opts
       ]}].
 
 init_per_suite(Config) ->
@@ -109,27 +111,49 @@ local_basic(_Config) ->
     a = NameFun(ARec),
     b = NameFun(BRec),
 
-    %% Test errors when constructing or updating native records.
-    ?assertError({badfield,{{?MODULE,b},foobar}},
-                 #b{foobar = some_value}),
+    %% Test errors when creating native records.
+    ?assertError({badfield,{{?MODULE,exp_abc},z}}, #?MODULE:exp_abc{z=99}),
+    ?assertError({novalue,{{?MODULE,exp_xyz},x}}, #?MODULE:exp_xyz{}),
+    ?assertError({badrecord,{?MODULE,a}}, #?MODULE:a{}),
 
+    %% Test errors when updating native records.
     ?assertError({badrecord,not_a_record}, (not_a_record)#b{x=99}),
+    ?assertError({badrecord,not_a_record}, (not_a_record)#?MODULE:b{x=99}),
     ?assertError({badrecord,ARec}, ARec#b{x=99}),
     ?assertError({badfield,{{?MODULE,b},bad_field}},
                  BRec#b{bad_field = some_value}),
 
-    ?assertError({novalue,{{?MODULE,a},x}}, #a{}),
-    ?assertError({novalue,{{?MODULE,a},y}}, #a{x=1}),
-    ?assertError({novalue,{{?MODULE,a},x}}, #a{y=1}),
-
-    %% Test errors when accessing native records
+    %% Test errors when accessing native records.
     ?assertError({badfield,{{?MODULE,b},zoo}}, BRec#b.zoo),
     ?assertError({badfield,{{?MODULE,b},zoo}}, BRec#?MODULE:b.zoo),
+    ?assertError({badfield,{{?MODULE,b},zoo}}, BRec#_.zoo),
     ?assertError({badrecord,ARec}, ARec#b.x),
+    ?assertError({badrecord,ARec}, ARec#?MODULE:a.x),
     ?assertError({badrecord,ARec}, ARec#non_existing_module:rec.x),
+    ?assertError({badrecord,BRec}, BRec#?MODULE:c.zoo),
+
+    %% Test errors when accessing literal native records.
+    ?assertError({badrecord,not_a_record}, not_a_record#a.x),
+    ?assertError({badrecord,not_a_record}, not_a_record#_.x),
+    ?assertError({badrecord,not_a_record},
+                 not_a_record#non_existing_module:rec.x),
+    ?assertError({badrecord,not_a_record}, not_a_record#a.x),
+    ?assertError({badrecord,42}, (42)#non_existing_module:rec.x),
+    ?assertError({badrecord,{a,b,c}}, {a,b,c}#a.x),
 
     true = is_int_ax(ARec),
     false = is_int_ax(id(#a{x=a,y=b})),
+
+    false = is_int_ax_guard_2(#b{}),
+    false = is_int_ax_guard_2(#b{x=42}),
+
+    false = is_int_ax_guard_1(#b{}),
+    false = is_int_ax_guard_1(#b{x=42}),
+
+    if
+        is_integer(ARec#_.x) ->
+            ok
+    end,
 
     try id(throw(ARec)) of
         _ ->
@@ -280,14 +304,17 @@ external_records(_Config) ->
     #vector{x=10, y=1, z=5} = DefVector,
     #ext_records:vector{x=10, y=1, z=5} = DefVector,
     true = records:is_exported(DefVector),
+    10 = DefVector#vector.x,
 
     ExtLocal = ext_records:local([1,2,3], {a,b,c}),
     false = records:is_exported(ExtLocal),
 
     ?assertError({badrecord,{ext_records,local}}, #local{a=1, b=2}),
     ?assertError({badrecord,{ext_records,foreign}}, #ext_records:foreign{a=1, b=2}),
-
+    ?assertError({badrecord,{ext_records,non_existing}}, #ext_records:non_existing{}),
     ?assertError({badrecord,ExtLocal}, ExtLocal#local{a=42,b=99}),
+    ?assertError({badrecord,ExtLocal}, ExtLocal#local.c),
+    ?assertError({badrecord,ExtLocal}, ExtLocal#ext_records:non_existing{}),
 
     #local{} = ExtLocal,
     #ext_records:local{} = ExtLocal,
@@ -296,6 +323,23 @@ external_records(_Config) ->
         #local{x=X, y=Y} ->
             error({should_fail,X,Y});
         _ ->
+            ok
+    end,
+
+    if
+        is_integer(DefVector#ext_records:vector.x) ->
+            ok
+    end,
+
+    if
+        is_integer(ExtLocal#ext_records:vector.x) ->
+            error(should_fail);
+        true ->
+            ok
+    end,
+
+    if
+        is_integer(DefVector#_.x) ->
             ok
     end,
 
@@ -325,6 +369,8 @@ any_record(_Config) ->
                  update_any_xy(id(#exp_abc{}), 0, 0)),
     ?assertError({badfield,{{?MODULE,exp_x},y}},
                  update_any_xy(id(#exp_x{}), 0, 0)),
+    ?assertError({badrecord,not_a_record},
+                 update_any_xy(not_a_record, 1, 1)),
 
     {10,1} = get_any_xy(#ext_records:vector{}),
     {77,88} = get_any_xy(#ext_records:vector{x=77,y=88}),
@@ -447,11 +493,31 @@ is_record_bif(Config) ->
     false = is_record(Config, a),
     false = is_record(Config, ?MODULE, a),
 
+    case is_list(Config) of
+        true ->
+            false = is_record(Config, empty),
+            false = is_record(Config, ?MODULE, empty),
+            false = is_record(Config, a),
+            false = is_record(Config, ?MODULE, a)
+    end,
+
+    false = is_record(not_a_record(id(a)), ?MODULE, empty),
+    false = is_record(not_a_record(id(0)), ?MODULE, empty),
+
+    true = is_record(some_record(#a{x=0,y=1}), ?MODULE, a),
+    false = is_record(some_record(#a{x=0,y=1}), ?MODULE, empty),
+    true = is_record(some_record(#b{}), ?MODULE, b),
+    false = is_record(some_record(#b{}), ?MODULE, empty),
+    true = is_record(some_record(#empty{}), ?MODULE, empty),
+    false = is_record(some_record(#empty{}), ?MODULE, 'div'),
+
     BR = id(#b{}),
+    true = is_record(BR),
     true = is_record(BR, b),
     true = is_record(BR, ?MODULE, b),
 
     Local = ext_records:local(a, b),
+    true = is_record(Local),
     true = is_record(Local, local),
     true = is_record(Local, ext_records, local),
 
@@ -490,7 +556,247 @@ is_record_bif(Config) ->
     true = is_record(BR, id(?MODULE), id(b)),
     false = is_record(BR, id(empty)),
 
+    true = is_record(BR, ?MODULE, b),
+    false = is_record(BR, ?MODULE, empty),
+
     ok.
+
+not_a_record(A) when is_atom(A) -> a;
+not_a_record(I) when is_integer(I) -> 42.
+
+some_record(#a{}=R) -> R;
+some_record(#b{}=R) -> R;
+some_record(#_{}=R) -> R.
+
+-record #r_two{r=1,s=2}.
+-record #r_three{r=1,s=2,t=3}.
+
+type_opts(_Config) ->
+    type_opt_create(),
+    type_opt_update(),
+    type_opt_match(),
+    type_opt_nested(),
+    type_opt_redundant_tests(),
+    type_opt_meta(),
+    type_opt_will_succeed(),
+    type_opt_ccc(),
+    ok.
+
+type_opt_create() ->
+    1 = type_opt_create_get(#r_two{}),
+    tree = type_opt_create_get(#r_three{r=tree}),
+
+    ok.
+
+type_opt_create_get(R) ->
+    case R of
+        #r_two{r=I} when is_integer(I) ->
+            I;
+        #r_two{r=A} when is_atom(A) ->
+            A;
+        #r_three{r=I} when is_integer(I) ->
+            I;
+        #r_three{r=A} when is_atom(A) ->
+            A;
+        #r_three{} ->
+            r_three;
+        {X,Y} ->
+            X + Y
+    end.
+
+type_opt_update() ->
+    Two = id(#r_two{}),
+    Three = id(#r_three{}),
+
+    tree = type_opt_update_get(Two#r_two{r=tree}),
+    forest = type_opt_update_get(Three#r_three{r=forest}),
+
+    (id(#r_two{}))#r_two{r=ground},
+
+    ok.
+
+type_opt_update_get(R) ->
+    case R of
+        #r_two{r=I} when is_integer(I) ->
+            I;
+        #r_two{r=A} when is_atom(A) ->
+            A;
+        #r_three{r=I} when is_integer(I) ->
+            I;
+        #r_three{r=A} when is_atom(A) ->
+            A;
+        #r_three{} ->
+            r_three;
+        {X,Y} ->
+            X + Y
+    end.
+
+type_opt_match() ->
+    Two = id(#r_two{r=a,s=b}),
+    Three = id(#r_three{}),
+
+    case {Two,Three} of
+        {#r_two{r=A},#r_three{r=I}} when is_atom(A), is_integer(I) ->
+            a = type_opt_match_get(Two),
+            1 = type_opt_match_get(Three),
+
+            a = Two#r_two.r,
+            b = Two#r_two.s,
+
+            1 = Three#r_three.r,
+            2 = Three#r_three.s,
+            3 = Three#r_three.t,
+
+            b = Two#r_two.s,
+            3 = Three#r_three.t
+    end,
+
+    ok.
+
+type_opt_match_get(R) ->
+    case R of
+        #r_two{r=I} when is_integer(I) ->
+            I;
+        #r_two{r=A} when is_atom(A) ->
+            A;
+        #r_three{r=I} when is_integer(I) ->
+            I;
+        #r_three{r=A} when is_atom(A) ->
+            A;
+        #r_three{} ->
+            r_three;
+        {X,Y} ->
+            X + Y
+    end.
+
+-record #r_cons{hd, tl}.
+-record #r_nil{}.
+
+type_opt_nested() ->
+    0 = r_length(r_list([])),
+    3 = r_length(r_list([1,2,3])),
+    5 = r_length(r_list([1,2,3,4,5])),
+    10 = r_length(r_list(lists:seq(1, 10))),
+    100 = r_length(r_list(lists:seq(1, 100))),
+    ok.
+
+r_list([H|T]) ->
+    r_cons(H, r_list(T));
+r_list([]) ->
+    #r_nil{}.
+
+r_cons(Hd, Tl) ->
+    #r_cons{hd=Hd, tl=Tl}.
+
+r_length(RList) ->
+    r_length(RList, 0).
+
+r_length(#r_cons{tl=Tl}, Len) ->
+    r_length(Tl, Len + 1);
+r_length(#r_nil{}, Len) ->
+    Len.
+
+%% beam_validator would not properly update the type for a native
+%% record stored in two registers. Bug found while dogfooding.
+-import_record(ext_records, [b_blk]).
+type_opt_redundant_tests() ->
+    Blk = id(#b_blk{is=[],last=br}),
+    Blk = type_opt_redundant_tests(Blk),
+    ok.
+
+type_opt_redundant_tests(Blk0) ->
+    Blk1 = force_yreg(Blk0),
+    #b_blk{is=_Is} = Blk1,
+    _ = update_successors(Blk1),
+    Blk1.
+
+force_yreg(Blk) -> Blk.
+
+update_successors(Blk) -> Blk.
+
+%% beam_validator would not consider a record set to be a legal
+%% record. Bug found while dogfooding.
+-import_record(ext_records,
+               [c_alias, c_apply, c_binary, c_bitstr,
+                c_call, c_case, c_catch, c_clause, c_cons,
+                c_fun, c_let, c_letrec, c_literal,
+                c_map, c_map_pair,
+                c_record, c_record_pair,
+                c_module, c_opaque, c_primop,
+                c_receive,c_seq, c_try, c_tuple,
+                c_values, c_var]).
+
+type_opt_meta() ->
+    #c_var{anno=new_anno} = type_opt_meta(id(#c_var{name=42})),
+    ?assertError({case_clause,_}, type_opt_meta(id(#empty{}))),
+    ?assertError({case_clause,_}, type_opt_meta(id(other))),
+    ok.
+
+type_opt_meta(Node) ->
+    case
+        case Node of
+            #c_alias{} -> alias;
+            #c_apply{} -> apply;
+            #c_binary{} -> binary;
+            #c_bitstr{} -> bitstr;
+            #c_call{} -> call;
+            #c_case{} -> 'case';
+            #c_catch{} -> 'catch';
+            #c_clause{} -> clause;
+            #c_cons{} -> cons;
+            #c_fun{} -> 'fun';
+            #c_let{} -> 'let';
+            #c_letrec{} -> letrec;
+            #c_literal{} -> literal;
+            #c_map{} -> map;
+            #c_map_pair{} -> map_pair;
+            #c_module{} -> module;
+            #c_primop{} -> primop;
+            #c_receive{} -> 'receive';
+            #c_seq{} -> seq;
+            #c_record{} -> record;
+            #c_record_pair{} -> record_pair;
+            #c_try{} -> 'try';
+            #c_tuple{} -> tuple;
+            #c_values{} -> values;
+            #c_var{} -> var;
+            #c_opaque{} -> opaque
+        end of
+        var ->
+            %% The type of `Node` is now a set of records, which would
+            %% not be recognized as a record by beam_validator.
+            Node#_{anno=new_anno}
+    end.
+
+%% The live optimization pass would remove the conditional branch
+%% following an `is_record_accessible` instruction, but not the
+%% instructions itself. That would cause the `beam_ssa_codegen` pass
+%% to crash because `is_record_accessible` must always be followed by
+%% a conditional branch. Bug found while dogfooding.
+
+-import_record(ext_records, [b_set]).
+type_opt_will_succeed() ->
+    'maybe' = type_opt_will_succeed_1(#b_set{op=wait_timeout}),
+    'maybe' = type_opt_will_succeed_1(#b_set{op={bif,self}}),
+    ok.
+
+type_opt_will_succeed_1(#b_set{op=wait_timeout}) ->
+    'maybe';
+type_opt_will_succeed_1(#b_set{}) ->
+    'maybe'.
+
+%% cerl_clauses:match/2 did not handle native records, causing the
+%% sys_core_fold pass to crash. Bug found while dogfooding.
+
+type_opt_ccc() ->
+    ?assertError({case_clause,_}, type_opt_ccc(a, b)).
+
+type_opt_ccc(A, B) ->
+    E = {id(A), id(B)},
+    case E of
+        #b_set{} ->
+            ok
+    end.
 
 %%% Common utilities.
 

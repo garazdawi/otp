@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -361,7 +361,7 @@ available_cert_key_pairs(CertKeyGroups) ->
 %% Create the prioritized list of cert key pairs that
 %% are availble for use in the negotiated version
 available_cert_key_pairs(CertKeyGroups, ?TLS_1_3) ->
-    RevAlgos = [slhdsa, mldsa, rsa, rsa_pss_pss, ecdsa, eddsa],
+    RevAlgos = [rsa, rsa_pss_pss, ecdsa, eddsa, slhdsa, mldsa],
     cert_key_group_to_list(RevAlgos, CertKeyGroups, []);
 available_cert_key_pairs(CertKeyGroups, ?TLS_1_2) ->
      RevAlgos = [dsa, rsa, rsa_pss_pss, ecdsa],
@@ -601,32 +601,19 @@ verify_hostname(Hostname, Customize, Cert, UserState) ->
 verify_cert_extensions(Cert, #{cert_ext := CertExts} =  UserState, LogLevel) ->
     Id = public_key:pkix_subject_id(Cert),
     Extensions = maps:get(Id, CertExts, []),
-    verify_cert_extensions(Cert, UserState, Extensions,
-                           #{certificate_valid => false}, LogLevel).
+    verify_cert_extensions(Cert, UserState, Extensions, LogLevel).
 
-verify_cert_extensions(_Cert, UserState = #{stapling_state := #{configured := true},
-                                            path_len := 0}, [],
-                       _Context = #{certificate_valid := false}, LogLevel) ->
-    %% RFC6066 section 8
-    %% Servers that receive a client hello containing the "status_request"
-    %% extension MAY return a suitable certificate status response to the
-    %% client along with their certificate.
-    Desc = "Certificate Status - stapling response not provided by the server",
-    ssl_logger:log(notice, LogLevel, #{description => Desc,
-                                     reason => [{missing, stapling_response}]},
-                   ?LOCATION),
-    {valid, UserState};
-verify_cert_extensions(Cert, UserState, [], _, _) ->
+verify_cert_extensions(Cert, UserState, [], _) ->
     {valid, UserState#{issuer => Cert}};
 verify_cert_extensions(_, #{stapling_state := #{configured := false}},
-                       [#certificate_status{} | _], _, _) ->
+                       [#certificate_status{} | _], _) ->
     {fail, unexpected_certificate_status};
 verify_cert_extensions(Cert, #{stapling_state := StaplingState,
                                issuer := Issuer,
                                certdb := CertDbHandle,
                                certdb_ref := CertDbRef} = UserState,
                        [#certificate_status{response = OcspResponseDer} | Exts],
-                       Context, LogLevel) ->
+                       LogLevel) ->
     #{ocsp_nonce := Nonce} = StaplingState,
     IsTrustedResponderFun =
         fun(#cert{der = DerResponderCert, otp = OtpCert}) ->
@@ -658,14 +645,13 @@ verify_cert_extensions(Cert, #{stapling_state := StaplingState,
                         H(Rest);
                     H([]) -> ok end,
             HandleOcspDetails(Details),
-            verify_cert_extensions(Cert, UserState, Exts,
-                                   Context#{certificate_valid => true}, LogLevel);
+            verify_cert_extensions(Cert, UserState, Exts, LogLevel);
         {error, {bad_cert, _} = Reason} ->
             {fail, Reason}
     end;
-verify_cert_extensions(Cert, UserState, [_|Exts], Context, LogLevel) ->
+verify_cert_extensions(Cert, UserState, [_|Exts], LogLevel) ->
     %% Skip unknown extensions!
-    verify_cert_extensions(Cert, UserState, Exts, Context, LogLevel).
+    verify_cert_extensions(Cert, UserState, Exts, LogLevel).
 
 verify_sign_support(_, #{version := Version})
             when ?TLS_LT(Version, ?TLS_1_2) ->

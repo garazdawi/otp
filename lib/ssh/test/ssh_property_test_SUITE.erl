@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2004-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -74,12 +74,10 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok.
 
-%%% One group in this suite happens to support only QuickCheck, so skip it
-%%% if we run proper.
 init_per_group(client_server, Config) ->
     case proplists:get_value(property_test_tool,Config) of
-	proper -> Config;
-	X -> {skip, lists:concat([X," is not supported"])}
+        triq -> {skip, "triq does not support statem"};
+        _ -> Config
     end;
 init_per_group(_, Config) ->
     Config.

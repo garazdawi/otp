@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2004-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -51,10 +51,11 @@
       Level :: strong | weak,
       Result :: ok | {error, [{atom(), list()}]}.
 
-validate({Mod,Exp,Attr,Anno, Fs,Lc}, Level)
+validate({Mod,Exp,Attr,Anno,Fs,Lc}, Level)
   when is_atom(Mod), is_list(Exp), is_list(Attr), is_map(Anno), is_integer(Lc) ->
+    RecDefaults = record_defaults(Anno),
     Ft = build_function_table(Fs, #{}),
-    case validate_0(Fs, Mod, Level, Ft) of
+    case validate_0(Fs, Mod, RecDefaults, Level, Ft) of
         [] ->
             ok;
         Es0 ->
@@ -93,7 +94,15 @@ format_error(Error) ->
 
 %%%
 %%% Local functions follow.
-%%% 
+%%%
+
+record_defaults(#{records := Records}) ->
+    #{Name =>
+          #{F => {present, beam_types:make_type_from_value(Val)} ||
+            {F,Val} <- Fs} ||
+        {Name,_,Fs} <:- Records};
+record_defaults(#{}) ->
+    #{}.
 
 %%%
 %%% The validator follows.
@@ -114,17 +123,18 @@ format_error(Error) ->
 %%  format as used in the compiler and in .S files.
 
 
-validate_0([], _Module, _Level, _Ft) ->
+validate_0([], _Module, _RecDefaults, _Level, _Ft) ->
     [];
-validate_0([{function, Name, Arity, Entry, Code} | Fs], Module, Level, Ft) ->
+validate_0([{function, Name, Arity, Entry, Code} | Fs],
+           Module, RecDefaults, Level, Ft) ->
     MFA = {Module, Name, Arity},
-    try validate_1(Code, MFA, Entry, Level, Ft) of
+    try validate_1(Code, MFA, RecDefaults, Entry, Level, Ft) of
         _ ->
-            validate_0(Fs, Module, Level, Ft)
+            validate_0(Fs, Module, RecDefaults, Level, Ft)
     catch
         throw:Error ->
             %% Controlled error.
-            [Error | validate_0(Fs, Module, Level, Ft)];
+            [Error | validate_0(Fs, Module, RecDefaults, Level, Ft)];
         Class:Error:Stack ->
             %% Crash.
             io:fwrite("Function: ~w/~w\n", [Name,Arity]),
@@ -143,8 +153,8 @@ validate_0([{function, Name, Arity, Entry, Code} | Fs], Module, Level, Ft) ->
 %%   affect the type of another.
 -type validator_type() :: #t_abstract{} | fun((values()) -> type()) | type().
 
--record(value_ref, {id :: index()}).
--record(value, {op :: term(), args :: [argument()], type :: validator_type()}).
+-record #value_ref{id :: index()}.
+-record #value{op :: term(), args :: [argument()], type :: validator_type()}.
 
 -type argument() :: #value_ref{} | beam_literal().
 -type values() :: #{ #value_ref{} => #value{} }.
@@ -178,65 +188,85 @@ validate_0([{function, Name, Arity, Entry, Code} | Fs], Module, Level, Ft) ->
 -type y_regs() :: #{ {y, index()} => tag() | #value_ref{} }.
 
 %% Emulation state
--record(st,
-        {%% All known values.
-         vs=#{} :: values(),
-         %% Register states.
-         xs=#{} :: x_regs(),
-         ys=#{} :: y_regs(),
-         f=init_fregs(),
-         %% A set of all registers containing "fragile" terms. That is, terms
-         %% that don't exist on our process heap and would be destroyed by a
-         %% GC.
-         fragile=sets:new() :: sets:set(),
-         %% Number of Y registers.
-         %%
-         %% Note that this may be 0 if there's a frame without saved values,
-         %% such as on a body-recursive call.
-         numy=none :: none | {undecided,index()} | index(),
-         %% Available heap size.
-         h=0,
-         %% Available heap size for funs (aka lambdas).
-         hl=0,
-         %%Available heap size for floats.
-         hf=0,
-         %% List of hot catch/try tags
-         ct=[],
-         %% Current receive state:
-         %%
-         %%   * 'none'            - Not in a receive loop.
-         %%   * 'marked_position' - We've used a marker prior to loop_rec.
-         %%   * 'entered_loop'    - We're in a receive loop.
-         %%   * 'undecided'
-         recv_state=none :: none | undecided | marked_position | entered_loop,
-         %% Holds the current saved position for each `#t_bs_context{}`, in the
-         %% sense that the position is equal to that of their context. They are
-         %% invalidated whenever their context advances.
-         %%
-         %% These are used to update the unit of saved positions after
-         %% operations that test the incoming unit, such as bs_test_unit and
-         %% bs_get_binary2 with {atom,all}.
-         ms_positions=#{} :: #{ Ctx :: #value_ref{} => Pos :: #value_ref{} }
-        }).
+-record #st{
+   %% All known values.
+   vs=#{} :: values(),
+
+   %% Register states.
+   xs=#{} :: x_regs(),
+   ys=#{} :: y_regs(),
+   f :: non_neg_integer(),
+
+   %% A set of all registers containing "fragile" terms. That is, terms
+   %% that don't exist on our process heap and would be destroyed by a
+   %% GC.
+   fragile :: sets:set(),
+
+   %% Number of Y registers.
+   %%
+   %% Note that this may be 0 if there's a frame without saved values,
+   %% such as on a body-recursive call.
+   numy=none :: none | {undecided,index()} | index(),
+
+   %% Available heap size.
+   h=0,
+
+   %% Available heap size for funs (aka lambdas).
+   hl=0,
+
+   %%Available heap size for floats.
+   hf=0,
+
+   %% List of hot catch/try tags
+   ct=[],
+
+   %% Current receive state:
+   %%
+   %%   * 'none'            - Not in a receive loop.
+   %%   * 'marked_position' - We've used a marker prior to loop_rec.
+   %%   * 'entered_loop'    - We're in a receive loop.
+   %%   * 'undecided'
+   recv_state=none :: none | undecided | marked_position | entered_loop,
+
+   %% Holds the current saved position for each `#t_bs_context{}`, in the
+   %% sense that the position is equal to that of their context. They are
+   %% invalidated whenever their context advances.
+   %%
+   %% These are used to update the unit of saved positions after
+   %% operations that test the incoming unit, such as bs_test_unit and
+   %% bs_get_binary2 with {atom,all}.
+   ms_positions=#{} :: #{ Ctx :: #value_ref{} => Pos :: #value_ref{} }
+  }.
 
 -type label()        :: integer().
 -type state()        :: #st{} | 'none'.
 
 %% Validator state
--record(vst,
-        {%% Current state
-         current=none              :: state(),
-         %% Validation level
-         level                     :: strong | weak,
-         %% States at labels
-         branched=#{}              :: #{ label() => state() },
-         %% All defined labels
-         labels=sets:new()    :: sets:set(),
-         %% Information of other functions in the module
-         ft=#{}                    :: #{ label() => map() },
-         %% Counter for #value_ref{} creation
-         ref_ctr=0                 :: index()
-        }).
+-record #vst{
+   %% Current state
+   current=none              :: state(),
+
+   %% Validation level
+   level                     :: strong | weak,
+
+   %% States at labels
+   branched=#{}              :: #{ label() => state() },
+
+   %% All defined labels
+   labels                    :: sets:set(),
+
+   %% Information of other functions in the module
+   ft=#{}                    :: #{ label() => map() },
+
+   %% Counter for #value_ref{} creation
+   ref_ctr=0                 :: index(),
+
+   %% Module name of module being checked
+   module                    :: module(),
+
+   %% Types for default native records default values
+   rec_defaults              :: #{ atom() => type() }
+  }.
 
 build_function_table([{function,Name,Arity,Entry,Code0}|Fs], Acc) ->
     Code = dropwhile(fun({label,L}) when L =:= Entry ->
@@ -269,10 +299,10 @@ find_parameter_info(_, Acc) ->
 always_fails([{jump,_}|_]) -> true;
 always_fails(_) -> false.
 
-validate_1(Is, MFA0, Entry, Level, Ft) ->
+validate_1(Is, MFA0, RecDefaults, Entry, Level, Ft) ->
     {Offset, MFA, Header, Body} = extract_header(Is, MFA0, Entry, 1, []),
 
-    Vst0 = init_vst(MFA, Level, Ft),
+    Vst0 = init_vst(MFA, RecDefaults, Level, Ft),
 
     %% We validate the header after the body as the latter may jump to the
     %% former to raise 'function_clause' exceptions.
@@ -296,12 +326,14 @@ extract_header([{line,_}=I | Is], MFA, Entry, Offset, Acc) ->
 extract_header(_Is, MFA, _Entry, _Offset, _Acc) ->
     error({MFA, invalid_function_header}).
 
-init_vst({_, _, Arity}, Level, Ft) ->
+init_vst({Mod, _, Arity}, RecDefaults, Level, Ft) when is_atom(Mod) ->
     Vst = #vst{branched=#{},
-               current=#st{},
+               current=#st{f=init_fregs(),fragile=sets:new()},
                ft=Ft,
                labels=sets:new(),
-               level=Level},
+               level=Level,
+               module=Mod,
+               rec_defaults=RecDefaults},
     init_function_args(Arity - 1, Vst).
 
 init_function_args(-1, Vst) ->
@@ -472,6 +504,12 @@ vi({test,is_function2,{f,Lbl},[Src0,_Arity]}, Vst) ->
            end);
 vi({test,is_tuple,{f,Lbl},[Src]}, Vst) ->
     type_test(Lbl, #t_tuple{}, Src, Vst);
+vi({test,is_any_native_record,{f,Lbl},[Src]}, Vst) ->
+    type_test(Lbl, #t_record{}, Src, Vst);
+vi({test,is_native_record,{f,Lbl},[Src,{atom,Mod},{atom,Name}]}, Vst) ->
+    type_test(Lbl, #t_record{name={Mod,Name}}, Src, Vst);
+vi({test,is_record_accessible,{f,Lbl},[Src,_]}, Vst) ->
+    type_test(Lbl, #t_record{exported=yes}, Src, Vst);
 vi({test,is_integer,{f,Lbl},[Src]}, Vst) ->
     type_test(Lbl, #t_integer{}, Src, Vst);
 vi({test,is_nonempty_list,{f,Lbl},[Src]}, Vst) ->
@@ -918,20 +956,6 @@ vi({test,bs_test_tail2,{f,Fail},[Ctx0,_Size]}, Vst) ->
     assert_no_exception(Fail),
     assert_type(#t_bs_context{}, Ctx, Vst),
     branch(Fail, Vst);
-vi({test,bs_test_unit,{f,Fail},[Ctx0,Unit]}, Vst) ->
-    Ctx = unpack_typed_arg(Ctx0, Vst),
-    assert_type(#t_bs_context{}, Ctx, Vst),
-
-    Type = #t_bs_context{tail_unit=Unit},
-
-    branch(Fail, Vst,
-           fun(FailVst) ->
-                   update_type(fun subtract/2, Type, Ctx, FailVst)
-           end,
-           fun(SuccVst0) ->
-                   SuccVst = update_bs_unit(Ctx, Unit, SuccVst0),
-                   update_type(fun meet/2, Type, Ctx, SuccVst)
-           end);
 vi({test,bs_skip_utf8,{f,Fail},[Ctx,Live,_]}, Vst) ->
     validate_bs_skip(Fail, Ctx, 8, Live, Vst);
 vi({test,bs_skip_utf16,{f,Fail},[Ctx,Live,_]}, Vst) ->
@@ -1269,7 +1293,7 @@ init_try_catch_branch(Kind, Dst, Fail, Vst0) ->
     #vst{current=St0} = Vst,
     #st{ct=Tags}=St0,
     St = St0#st{ct=[Tag|Tags]},
- 
+
     Vst#vst{current=St}.
 
 verify_has_map_fields(Lbl, Src, List, Vst) ->
@@ -1415,18 +1439,6 @@ pmt_1([], _Vst, Acc) ->
     Acc.
 
 verify_put_record(Fail, Id, Src, Dst, Live, List, Vst0) ->
-    case Id of
-        {literal,{Mod,Name}} when is_atom(Mod), is_atom(Name) ->
-            %% Externally defined record.
-            ok;
-        {atom,Name} when is_atom(Name) ->
-            %% Locally defined record.
-            ok;
-        {atom,'_'} ->
-            ok;
-        _ ->
-            error({bad_record_id,Id})
-    end,
     assert_term(Src, Vst0),
     verify_live(Live, Vst0),
     verify_y_init(Vst0),
@@ -1443,15 +1455,47 @@ verify_put_record(Fail, Id, Src, Dst, Live, List, Vst0) ->
                                       end,
                       verify_keys(only_literals, EmptyHandling, Keys),
 
-                      Type = put_record_type(Src, List, Vst),
+                      Type = put_record_type(Src, Id, List, Vst),
                       create_term(Type, put_record, [Src], Dst, SuccVst, SuccVst0)
               end,
     branch(Fail, Vst, SuccFun).
 
-put_record_type(_Rec0, _List, _Vst) ->
-    %% TODO: We currently don't have any representation for records in the
-    %% type lattice.
-    any.
+put_record_type(Src, Id, Fs0, Vst) ->
+    Defs = case Src of
+               nil ->
+                   case Id of
+                       {atom,'_'} ->
+                           error(invalid_underscore_name);
+                       {atom,Tag0} ->
+                           map_get(Tag0, Vst#vst.rec_defaults);
+                       _ ->
+                           #{}
+                   end;
+               _ ->
+                   case meet(get_term_type(Src, Vst), #t_record{}) of
+                       #t_record{type=Defs0} -> Defs0;
+                       #t_union{} -> #{};
+                       _ -> error(not_a_native_record)
+                   end
+           end,
+
+    Fs = record_field_types(Fs0, Vst, Defs),
+
+    case Id of
+        {literal,{Mod,Tag}} when is_atom(Mod), is_atom(Tag) ->
+            #t_record{name={Mod,Tag},type=Fs};
+        {atom,'_'} ->
+            #t_record{name=nil,type=Fs};
+        {atom,Tag} when is_atom(Tag) ->
+            Mod = Vst#vst.module,
+            #t_record{name={Mod,Tag},type=Fs}
+    end.
+
+record_field_types([{atom,Key}, Value0 | Fs], Vst, Acc) ->
+    Value = get_term_type(Value0, Vst),
+    record_field_types(Fs, Vst, Acc#{Key => {present, Value}});
+record_field_types([], _Vst, Acc) ->
+    Acc.
 
 verify_get_record_elements(Fail, Src, List, Vst0) ->
     assert_no_exception(Fail),
@@ -1460,11 +1504,17 @@ verify_get_record_elements(Fail, Src, List, Vst0) ->
            fun(FailVst) ->
                    clobber_record_vals(List, Src, FailVst)
            end,
-           fun(SuccVst) ->
-                   Keys = extract_keys(List, SuccVst),
+           fun(SuccVst0) ->
+                   Keys = extract_keys(List, SuccVst0),
                    verify_keys(only_literals, forbid_empty, Keys),
-                   extract_vals(record_get, List, Src, SuccVst)
+                   SuccVst1 = update_native_record_type(List, Src, SuccVst0),
+                   extract_vals(record_get, List, Src, SuccVst1)
            end).
+
+update_native_record_type([_|_]=Updates, Src, Vst) ->
+    Es = #{Key => {present, any} || {atom,Key} <- Updates},
+    Type = #t_record{name=nil,type=Es},
+    update_type(fun meet/2, Type, Src, Vst).
 
 %% Check an update of a traditional tuple record.
 verify_update_record(Size, Src0, Dst, List0, Vst0) ->
@@ -1543,7 +1593,7 @@ assert_bs_unit({atom,Type}, 0) ->
         utf32 -> ok;
         _ -> error({zero_unit_invalid_for_type,Type})
     end;
-assert_bs_unit({atom,_Type}, Unit) when is_integer(Unit), 0 < Unit, Unit =< 256 ->
+assert_bs_unit({atom,_Type}, Unit) when is_integer(Unit, 1, 256) ->
     ok;
 assert_bs_unit(_, Unit) ->
     error({invalid,Unit}).
@@ -1745,7 +1795,7 @@ validate_failed_bs_match([], _Ctx, Vst) ->
 
 bs_integer_type(Bounds, Unit, Flags) ->
     case beam_bounds:bounds('*', Bounds, {Unit, Unit}) of
-        {_, MaxBits} when is_integer(MaxBits), MaxBits >= 1, MaxBits =< 64 ->
+        {_, MaxBits} when is_integer(MaxBits, 1, 64) ->
             case member(signed, Flags) of
                 true ->
                     Max = (1 bsl (MaxBits - 1)) - 1,
@@ -2219,11 +2269,11 @@ validate_select_tuple_arity(Fail, [], _, #vst{}=Vst) ->
 %% Validate debug information in `debug_line` instructions.
 %%
 
-validate_debug_line({entry,Args}, Live, Vst) ->
+validate_debug_line(#{frame_size:=entry, vars:=Args}, Live, Vst) ->
     do_validate_debug_line(none, Live, Vst),
     _ = [get_term_type(Reg, Vst) || {_Name,[Reg]} <:- Args],
     prune_x_regs(Live, Vst);
-validate_debug_line({Stk,Vars}, Live, Vst0) ->
+validate_debug_line(#{frame_size:=Stk, vars:=Vars}, Live, Vst0) ->
     do_validate_debug_line(Stk, Live, Vst0),
     Vst = prune_x_regs(Live, Vst0),
     _ = [validate_dbg_vars(Regs, Name, Vst) || {Name,Regs} <:- Vars],
@@ -2429,6 +2479,12 @@ infer_types_1(#value{op={bif,element},args=[{integer,Index}, Tuple]},
         false ->
             Vst
     end;
+infer_types_1(#value{op=get_record_element,args=[Src,{atom,F}]},
+              Val, eq_exact, Vst) ->
+    ValType = get_term_type(Val, Vst),
+    Es = #{F => {present,ValType}},
+    RecordType = #t_record{type=Es},
+    update_type(fun meet/2, RecordType, Src, Vst);
 infer_types_1(_, _, _, Vst) ->
     Vst.
 
@@ -2929,15 +2985,15 @@ get_raw_type(#value_ref{}=Ref, #vst{current=#st{vs=Vs}}) ->
 get_raw_type(Src, #vst{current=#st{}}) ->
     get_literal_type(Src).
 
-get_literal_type(nil) -> 
+get_literal_type(nil) ->
     beam_types:make_type_from_value([]);
-get_literal_type({atom,A}) when is_atom(A) -> 
+get_literal_type({atom,A}) when is_atom(A) ->
     beam_types:make_type_from_value(A);
-get_literal_type({float,F}) when is_float(F) -> 
+get_literal_type({float,F}) when is_float(F) ->
     beam_types:make_type_from_value(F);
-get_literal_type({integer,I}) when is_integer(I) -> 
+get_literal_type({integer,I}) when is_integer(I) ->
     beam_types:make_type_from_value(I);
-get_literal_type({literal,L}) -> 
+get_literal_type({literal,L}) ->
     beam_types:make_type_from_value(L);
 get_literal_type(T) ->
     error({not_literal,T}).
@@ -3080,7 +3136,7 @@ merge_states_1(StA, StB, Counter0) ->
     NumY = merge_stk(YsA, YsB, NumYA, NumYB),
     Ct = merge_ct(CtA, CtB),
 
-    St = #st{xs=Xs,ys=Ys,vs=Vs,fragile=Fragile,numy=NumY,
+    St = #st{xs=Xs,ys=Ys,f=init_fregs(),vs=Vs,fragile=Fragile,numy=NumY,
              h=min(HA, HB),ct=Ct,recv_state=RecvSt,
              ms_positions=MsPos},
 
@@ -3284,7 +3340,7 @@ verify_y_init_1(Y, Vst) ->
 
 verify_live(0, _Vst) ->
     ok;
-verify_live(Live, Vst) when is_integer(Live), 0 < Live, Live =< 1023 ->
+verify_live(Live, Vst) when is_integer(Live, 1, 1023) ->
     verify_live_1(Live - 1, Vst);
 verify_live(Live, _Vst) ->
     error({bad_number_of_live_regs,Live}).
@@ -3547,13 +3603,13 @@ check_limit({x,X}=Src) when is_integer(X) ->
     end;
 check_limit({y,Y}=Src) when is_integer(Y) ->
     if
-        0 =< Y, Y < 1024 -> ok;
+        is_integer(Y, 0, 1023) -> ok;
         1024 =< Y -> error(limit);
         Y < 0 -> error({bad_register, Src})
     end;
 check_limit({fr,Fr}=Src) when is_integer(Fr) ->
     if
-        0 =< Fr, Fr < 1023 -> ok;
+        is_integer(Fr, 0, 1022) -> ok;
         1023 =< Fr -> error(limit);
         Fr < 0 -> error({bad_register, Src})
     end.

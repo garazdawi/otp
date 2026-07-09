@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1998-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -74,12 +74,12 @@ all() ->
     %% This flag is set only for *one* host.
     case ?TEST_INET_BACKENDS() of
         true ->
-            [
-             {group, inet_backend_default},
-             {group, inet_backend_inet},
-             {group, inet_backend_socket},
-             {group, s_misc}
-            ];
+	    [
+	     {group, inet_backend_default},
+	     {group, inet_backend_inet},
+	     {group, inet_backend_socket},
+	     {group, s_misc}
+	    ];
         _ ->
             [
              {group, inet_backend_default},
@@ -256,10 +256,10 @@ init_per_group(inet_backend_inet = _GroupName, Config) ->
             {skip, "explicit inet-backend = socket"}
     end;
 init_per_group(inet_backend_socket = _GroupName, Config) ->
-    ?P("~w(~w) -> check explicit inet-backend when"
+    ?P("~w(~w) -> check (socket) supported and explicit inet-backend when"
        "~n   Config: ~p", [?FUNCTION_NAME, _GroupName, Config]),
-    case ?EXPLICIT_INET_BACKEND(Config) of
-        undefined ->
+    case {?IS_SOCKET_SUPPORTED(), ?EXPLICIT_INET_BACKEND(Config)} of
+        {true, undefined} ->
             case ?EXPLICIT_INET_BACKEND() of
                 true ->
                     %% The environment trumps us,
@@ -268,10 +268,16 @@ init_per_group(inet_backend_socket = _GroupName, Config) ->
                 false ->
                     [{socket_create_opts, [{inet_backend, socket}]} | Config]
             end;
-        inet ->
+        {false, undefined} ->
+	    ?P("'socket' not supported"),
+	    {skip, "'socket' not supporrted"};
+        {_, inet} ->
             {skip, "explicit inet-backend = inet"};
-        socket ->
-            [{socket_create_opts, [{inet_backend, socket}]} | Config]
+        {true, socket} ->
+            [{socket_create_opts, [{inet_backend, socket}]} | Config];
+        {false, socket} ->
+	    ?P("'socket' not supported"),
+	    {skip, "'socket' not supporrted"}
     end;
 init_per_group(t_local = _GroupName, Config) ->
     case ?IS_SOCKET_BACKEND(Config) of
@@ -692,7 +698,7 @@ do_shutdown_async(Config, Addr) ->
         is_port(L) ->
             do_shutdown_async2(Config, Addr, L);
         true ->
-            (catch gen_tcp:close(L)),
+            ?CATCH_AND_IGNORE( gen_tcp:close(L) ),
             exit({skip, "inet-only testcase"})
     end.
 
@@ -1442,8 +1448,13 @@ t_simple_local_sockaddr_in6_send_recv(Config) when is_list(Config) ->
 t_simple_link_local_sockaddr_in6_send_recv(Config) when is_list(Config) ->
     ?TC_TRY(?FUNCTION_NAME,
             fun() ->
-                    ?LIB:has_support_ipv6(),
-                    is_net_supported()
+                    ?HAS_SUPPORT_IPV6(),
+                    case ?IS_NET_SUPPORTED() of
+			true ->
+			    ok;
+			false ->
+			    {skip, "Net not supported"}
+		    end
             end,
             fun() ->
                     Domain = inet6,
@@ -1554,8 +1565,8 @@ do_simple_sockaddr_send_recv(SockAddr, _) ->
                       receive
                           {die, Self} ->
                               ?P("terminating"),
-                              (catch gen_tcp:close(ASock)),
-                              (catch gen_tcp:close(LSock)),
+                              ?CATCH_AND_IGNORE( gen_tcp:close(ASock) ),
+                              ?CATCH_AND_IGNORE( gen_tcp:close(LSock) ),
                               exit(normal)
                       end
               end,
@@ -1601,7 +1612,7 @@ do_simple_sockaddr_send_recv(SockAddr, _) ->
     end,
     
     ?P("cleanup"),
-    (catch gen_tcp:close(CSock)),
+    ?CATCH_AND_IGNORE( gen_tcp:close(CSock) ),
 
     ?P("done"),
     ok.
@@ -1944,11 +1955,22 @@ do_t_module_connect(Mod, Opts, Debug,
 
 is_socket_supported() ->
     try socket:info() of
-        _ -> ok
+	#{load_nif_result := ok} ->
+            ?P("~s -> we support 'socket'", [?FUNCTION_NAME]),
+            ok;
+	#{load_nif_result := LoadRes} ->
+	    ?P("~s -> 'socket' not supperted"
+	       "~n   (socket) nif load result: ~p", [?FUNCTION_NAME, LoadRes]),
+	    {skip, "esock not supported"};
+	_ ->
+            ?P("~s -> 'socket' not supperted", [?FUNCTION_NAME]),
+	    {skip, "esock not supported"}
     catch
         error : notsup ->
+            ?P("~s(error,notsup) -> 'socket' not supperted", [?FUNCTION_NAME]),
             {skip, "esock not supported"};
         error : undef ->
+            ?P("~s(error,undef) -> 'socket' not supperted", [?FUNCTION_NAME]),
             {skip, "esock not configured"}
     end.
 
@@ -2114,20 +2136,11 @@ is_not_windows() ->
             ok
     end.
 
-is_net_supported() ->
-    try net:info() of
-        #{} ->
-            ok
-    catch
-        error : notsup ->
-            not_supported(net)
-    end.
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-not_supported(What) ->
-    skip({not_supported, What}).
+%% not_supported(What) ->
+%%     skip({not_supported, What}).
 
 skip(Reason) ->
     throw({skip, Reason}).

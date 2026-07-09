@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -66,6 +66,8 @@ open(Port, Opts) ->
 	    port   = BPort,
 	    opts   = SockOpts}}
           when is_map(BAddr); % sockaddr_in()
+               BPort =:= -1, ?ip6(BAddr);
+               BPort =:= -1, BAddr =:= undefined;
                ?port(BPort), ?ip6(BAddr);
                ?port(BPort), BAddr =:= undefined ->
             %% ?DBG(['udp-options',

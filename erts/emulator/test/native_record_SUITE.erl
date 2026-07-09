@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2025-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2025-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -160,6 +160,7 @@ term_order(_Config) ->
     term_order_num_fields(),
     term_order_keys(),
     term_order_values(),
+    term_order_fields(),
 
     ok.
 
@@ -245,6 +246,29 @@ term_order_values() ->
                  fake_record(r, false, [{b,{10}}, {a,{5}}])),
     ok.
 
+%% Records that only differ in a non-first field.
+term_order_fields() ->
+    %% 2-field record, difference in second field.
+    true = is_lt(id(#bb{a=1, b=2}), id(#bb{a=1, b=3})),
+
+    %% 3-field record, difference in middle field.
+    true = is_lt(id(#b{x=1, y=1, z=1}), id(#b{x=1, y=2, z=1})),
+
+    %% 3-field record, difference in last field.
+    true = is_lt(id(#b{x=1, y=1, z=1}), id(#b{x=1, y=1, z=2})),
+
+    %% Multiple differing fields where the first sorted field is equal
+    %% (exercises the push-multiple path in the value comparator).
+    true = is_lt(id(#b{x=1, y=1, z=1}), id(#b{x=1, y=2, z=2})),
+
+    %% lists:sort/1 uses term order under the hood.
+    L0 = [id(#b{x=1, y=3, z=1}),
+          id(#b{x=1, y=1, z=1}),
+          id(#b{x=1, y=2, z=1})],
+    [#b{y=1}, #b{y=2}, #b{y=3}] = lists:sort(L0),
+
+    ok.
+
 is_gt(A, B) ->
     Res = id(A > B),
     Res = id(B < A),
@@ -319,6 +343,9 @@ external_term_format(_Config) ->
     erts_debug:set_internal_state(available_internal_state, false),
 
     _ = code:purge(ext_records),
+
+    #ext_records:local{} = Local,
+    #ext_records:vector{x=10,y=1,z=5} = Vector,
 
     [begin
          BadBin = fake_record_bin(?MODULE, fake, Exp, []),

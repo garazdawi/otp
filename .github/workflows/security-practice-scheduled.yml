@@ -26,6 +26,9 @@ on:
   schedule:
     - cron: 0 9 25 10 *
 
+permissions:
+  contents: read
+
 jobs:
   review-security-practices:
     if: github.event_name == 'schedule' && github.repository == 'erlang/otp'

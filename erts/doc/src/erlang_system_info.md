@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2023-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -95,6 +95,7 @@ order to make it easier to navigate.
   [`driver_version`](`m:erlang#system_info_driver_version`),
   [`dynamic_trace`](`m:erlang#system_info_dynamic_trace`),
   [`dynamic_trace_probes`](`m:erlang#system_info_dynamic_trace_probes`),
+  [`embedded_3pps`](`m:erlang#system_info_embedded_3pps`),
   [`emu_flavor`](`m:erlang#system_info_emu_flavor`),
   [`emu_type`](`m:erlang#system_info_emu_type`),
   [`info`](`m:erlang#system_info_info`),
@@ -831,6 +832,30 @@ Returns various information about the current system (emulator) as specified by 
   `dtrace` or `systemtap`).
   
   Since: OTP R15B01
+
+- `embedded_3pps`{: #system_info_embedded_3pps } - Returns a map with
+  information about third party products embedded in the source code of
+  the Erlang/OTP runtime system. Note that often only parts (in some cases
+  minuscule parts) of these third party products have been embedded in the
+  source code. Currently the returned map contains the following keys:
+
+  - `included` - The value of this key is a list of atoms where each atom
+    represents a third party product from which code has been embedded in
+    the source code and also has been included into the built runtime system.
+
+  - `excluded` - The value of this key is a list of atoms where each atom
+    represents a third party product from which code has been embedded in
+    the source code, but which has been completely excluded in the built
+    runtime system. The exclusion might be due to the functionality being
+    disabled, due to the functionality being implemented using other
+    primitives on the specific system, or due to the runtime system being
+    linked against the same or another third party product installed on the
+    system.
+
+  Note that the returned map may be extended with new key/value pairs at
+  any time.
+
+  Since: OTP 28.5
 
 - `emu_flavor`{: #system_info_emu_flavor } - Returns an atom describing the
   flavor of the runtime system. This will be either `emu` or `jit`. Possible

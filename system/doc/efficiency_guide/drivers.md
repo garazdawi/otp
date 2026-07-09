@@ -30,8 +30,8 @@ It is assumed that you have a good understanding of drivers.
 The runtime system always takes a lock before running any code in a driver.
 
 By default, that lock is at the driver level, that is, if several ports have
-been opened to the same driver, only code for one port at the same time can be
-running.
+been opened to the same driver, only code for one port can be running
+at the same time.
 
 A driver can be configured to have one lock for each port instead.
 

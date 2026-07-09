@@ -282,6 +282,15 @@ For more information about configuration parameters, see file
   rather each individual network operation during the connection setup and
   handshake.
 
+- **`log_missed_net_ticks = true | false`{: #log_missed_net_ticks }** - Controls
+  whether a warning is logged for each missed sub-tick on a distribution
+  connection. A sub-tick is missed when no data has been received from a
+  connected node during one tick interval. A warning is emitted on every
+  subsequent missed sub-tick until the node is declared down after
+  [`net_tickintensity`](kernel_app.md#net_tickintensity) consecutive missed
+  sub-ticks, at which point a final timeout warning is always logged regardless
+  of this setting. Defaults to `false`.
+
 - **`net_ticker_spawn_options = Opts`{: #net_ticker_spawn_options }** - Defines
   a list of extra spawn options for net ticker processes. There exist one such
   process for each connection to another node. A net ticker process is

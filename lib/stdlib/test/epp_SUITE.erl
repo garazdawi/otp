@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1998-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1854,7 +1854,15 @@ function_macro(Config) ->
 	     "b(?FUNCTION_ARITY, ?__) -> ok.\n"
 	     "c(?FF) -> ok.\n"
 	     "t() -> a(1, 2), b(3, 1, 2), c(c, 2), ok.\n">>,
-	   ok}
+	   ok},
+
+          {f_5,
+           <<"a([]) -> 1 = ?FUNCTION_ARITY.\n"
+             "b({}) -> 1 = ?FUNCTION_ARITY.\n"
+             "c([], []) -> 2 = ?FUNCTION_ARITY.\n"
+             "d([], _) -> 2 = ?FUNCTION_ARITY.\n"
+             "t() -> a([]), b({}), c([], []), d([], 42), ok.\n">>,
+           ok}
 	 ],
     [] = run(Config, Ts),
 

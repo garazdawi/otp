@@ -3,8 +3,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
 %%
+%% Copyright Ericsson AB 2015-2026. All Rights Reserved.
 %% Copyright 2012-2015 Richard Carlsson
-%% Copyright Ericsson AB 2015-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,6 +42,8 @@ at compile-time.
 Using `-include_lib("syntax_tools/include/merl.hrl").` enables this transform,
 unless the macro `MERL_NO_TRANSFORM` is defined first.
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([parse_transform/2]).
 

@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 2023-2025. All Rights Reserved.
+ * Copyright Ericsson AB 2023-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,6 +41,7 @@ enum class BeamTypeId : int {
     Port = BEAM_TYPE_PORT,
     Reference = BEAM_TYPE_REFERENCE,
     Tuple = BEAM_TYPE_TUPLE,
+    Record = BEAM_TYPE_RECORD,
 
     Any = BEAM_TYPE_ANY,
 
@@ -51,13 +52,15 @@ enum class BeamTypeId : int {
     /** @brief Types that can be boxed, including those that may also be
      * immediates (e.g. pids, integers). */
     MaybeBoxed = Bitstring | Float | Fun | Integer | Map | Pid | Port |
-                 Reference | Tuple,
+                 Reference | Tuple | Record,
+
     /** @brief Types that can be immediates, including those that may also be
      * boxed (e.g. pids, integers). */
     MaybeImmediate = Atom | Integer | Nil | Pid | Port,
 
     /** @brief Types that are _always_ boxed. */
     AlwaysBoxed = MaybeBoxed & ~(Cons | MaybeImmediate),
+
     /** @brief Types that are _always_ immediates. */
     AlwaysImmediate = MaybeImmediate & ~(Cons | MaybeBoxed),
 };

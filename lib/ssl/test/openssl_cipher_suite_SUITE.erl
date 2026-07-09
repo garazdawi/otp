@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2019-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -287,14 +287,14 @@ do_init_per_group(GroupName, Config) when GroupName == ecdh_anon;
                                        GroupName == ecdhe_rsa;
                                        GroupName == ecdhe_psk;
                                        GroupName ==  ecdhe_1_3_rsa_cert->
-    case proplists:get_bool(ecdh, proplists:get_value(public_keys, crypto:supports())) of
+    case proplists:get_bool(ecdh, crypto:supports(public_keys)) of
         true ->
             init_certs(GroupName, Config);
         false ->
             {skip, "Missing EC crypto support"}
     end;
 do_init_per_group(ecdhe_ecdsa = GroupName, Config) ->
-    PKAlg = proplists:get_value(public_keys, crypto:supports()),
+    PKAlg = crypto:supports(public_keys),
     case lists:member(ecdh, PKAlg) andalso lists:member(ecdsa, PKAlg) of
         true ->
             init_certs(GroupName, Config);
@@ -302,7 +302,7 @@ do_init_per_group(ecdhe_ecdsa = GroupName, Config) ->
             {skip, "Missing EC crypto support"}
     end;
 do_init_per_group(dhe_dss = GroupName, Config) ->
-    PKAlg = proplists:get_value(public_keys, crypto:supports()),
+    PKAlg = crypto:supports(public_keys),
     case lists:member(dss, PKAlg) andalso lists:member(dh, PKAlg)
         andalso (ssl_test_lib:openssl_dsa_suites() =/= []) of
         true ->
@@ -311,7 +311,7 @@ do_init_per_group(dhe_dss = GroupName, Config) ->
             {skip, "Missing DSS crypto support"}
     end;
 do_init_per_group(srp_dss = GroupName, Config) ->
-    PKAlg = proplists:get_value(public_keys, crypto:supports()),
+    PKAlg = crypto:supports(public_keys),
     case lists:member(dss, PKAlg) andalso lists:member(srp, PKAlg)
         andalso (ssl_test_lib:openssl_dsa_suites() =/= []) of
         true ->
@@ -321,7 +321,7 @@ do_init_per_group(srp_dss = GroupName, Config) ->
     end;
 do_init_per_group(GroupName, Config) when GroupName == srp_anon;
                                           GroupName == srp_rsa ->
-    PKAlg = proplists:get_value(public_keys, crypto:supports()),
+    PKAlg = crypto:supports(public_keys),
     case lists:member(srp, PKAlg) of
         true ->
             init_certs(GroupName, Config);
@@ -329,7 +329,7 @@ do_init_per_group(GroupName, Config) when GroupName == srp_anon;
             {skip, "Missing SRP crypto support"}
     end;
 do_init_per_group(dhe_psk = GroupName, Config) ->
-    PKAlg = proplists:get_value(public_keys, crypto:supports()),
+    PKAlg = crypto:supports(public_keys),
     case lists:member(dh, PKAlg) of
         true ->
             init_certs(GroupName, Config);
@@ -337,7 +337,7 @@ do_init_per_group(dhe_psk = GroupName, Config) ->
             {skip, "Missing SRP crypto support"}
     end;
 do_init_per_group(dhe_rsa = GroupName, Config) ->
-    PKAlg = proplists:get_value(public_keys, crypto:supports()),
+    PKAlg = crypto:supports(public_keys),
     case lists:member(dh, PKAlg) andalso lists:member(rsa, PKAlg) of
         true ->
             init_certs(GroupName, Config);
@@ -345,7 +345,7 @@ do_init_per_group(dhe_rsa = GroupName, Config) ->
             {skip, "Missing SRP crypto support"}
     end;
 do_init_per_group(rsa = GroupName, Config) ->
-    PKAlg = proplists:get_value(public_keys, crypto:supports()),
+    PKAlg = crypto:supports(public_keys),
     case lists:member(rsa, PKAlg) andalso ssl_test_lib:openssl_support_rsa_kex() of
         true ->
             init_certs(GroupName, Config);
@@ -353,7 +353,7 @@ do_init_per_group(rsa = GroupName, Config) ->
             {skip, "Missing RSA key exchange support"}
     end;
 do_init_per_group(dh_anon = GroupName, Config) ->
-    PKAlg = proplists:get_value(public_keys, crypto:supports()),
+    PKAlg = crypto:supports(public_keys),
     case lists:member(dh, PKAlg) of
         true ->
             init_certs(GroupName, Config);
@@ -379,7 +379,7 @@ init_per_testcase(TestCase, Config) when TestCase == psk_3des_ede_cbc;
                                          TestCase == dh_anon_3des_ede_cbc;
                                          TestCase == ecdh_anon_3des_ede_cbc;
                                          TestCase == ecdhe_ecdsa_3des_ede_cbc ->
-    SupCiphers = proplists:get_value(ciphers, crypto:supports()),
+    SupCiphers = crypto:supports(ciphers),
     case lists:member(des_ede3_cbc, SupCiphers) of
         true ->
             ct:timetrap(?DEFAULT_TIMEOUT),
@@ -431,7 +431,7 @@ init_per_testcase(aes_256_gcm_sha384, Config) ->
             ct:timetrap(?DEFAULT_TIMEOUT),
             Config;
         _ ->
-            {skip, "Missing AES_256_GCM crypto support"}
+            {skip, "Missing AES_256_GCM OpenSSL support"}
     end;
 init_per_testcase(aes_128_gcm_sha256, Config) ->
     case  supported_cipher(aes_128_gcm, "AES_128_GCM", sha256) of
@@ -439,7 +439,7 @@ init_per_testcase(aes_128_gcm_sha256, Config) ->
             ct:timetrap(?DEFAULT_TIMEOUT),
             Config;
         _ ->
-            {skip, "Missing AES_128_GCM crypto support"}
+            {skip, "Missing AES_128_GCM OpenSSL support"}
     end;
 
 init_per_testcase(chacha20_poly1305_sha256, Config) ->
@@ -448,7 +448,7 @@ init_per_testcase(chacha20_poly1305_sha256, Config) ->
             ct:timetrap(?DEFAULT_TIMEOUT),
             Config;
         _ ->
-            {skip, "Missing CHACHA20_POLY1305 crypto support"}
+            {skip, "Missing CHACHA20_POLY1305 OpenSSL support"}
     end;
 init_per_testcase(aes_128_ccm_sha256, Config) ->
     case supported_cipher(aes_128_ccm, "AES_128_CCM", sha256) of
@@ -456,7 +456,7 @@ init_per_testcase(aes_128_ccm_sha256, Config) ->
             ct:timetrap(?DEFAULT_TIMEOUT),
             Config;
         _ ->
-            {skip, "Missing AES_128_CCM crypto support"}
+            {skip, "Missing AES_128_CCM OpenSSL support"}
     end;
 
 init_per_testcase(aes_128_ccm_8_sha256, Config) ->
@@ -465,7 +465,7 @@ init_per_testcase(aes_128_ccm_8_sha256, Config) ->
             ct:timetrap(?DEFAULT_TIMEOUT),
             Config;
         _ ->
-            {skip, "Missing AES_128_CCM_8 crypto support"}
+            {skip, "Missing AES_128_CCM_8 OpenSSL support"}
     end;
 
 init_per_testcase(TestCase, Config) when TestCase == ecdhe_ecdsa_with_aes_128_ccm;
@@ -491,7 +491,7 @@ init_per_testcase(TestCase, Config) when TestCase == ecdhe_ecdsa_with_aes_256_cc
 
 init_per_testcase(TestCase, Config) ->
     Cipher = ssl_test_lib:test_cipher(TestCase, Config),
-    SupCiphers = proplists:get_value(ciphers, crypto:supports()),
+    SupCiphers = crypto:supports(ciphers),
     case lists:member(Cipher, SupCiphers) of
         true ->
             ct:timetrap(?DEFAULT_TIMEOUT),
@@ -519,55 +519,66 @@ init_certs(srp_anon, Config) ->
      proplists:delete(tls_config, Config)];
 init_certs(rsa_psk, Config) ->
     Ext = x509_test:extensions([{key_usage, [digitalSignature, keyEncipherment]}]),
-    {ClientOpts, ServerOpts} = ssl_test_lib:make_rsa_cert_chains([{server_chain,
-                                                                   [[ssl_test_lib:digest()],[ssl_test_lib:digest()],
-                                                                    [ssl_test_lib:digest(), {extensions, Ext}]]},
-                                                                  {client_chain, ssl_test_lib:default_cert_chain_conf()}],
-                                                                 Config, "_peer_keyEncipherment"),
+    {ClientOpts, ServerOpts} =
+        ssl_test_lib:make_rsa_cert_chains([{server_chain,
+                                            [[ssl_test_lib:digest()],[ssl_test_lib:digest()],
+                                             [ssl_test_lib:digest(), {extensions, Ext}]]},
+                                           {client_chain, ssl_test_lib:default_cert_chain_conf()}],
+                                          Config, "_peer_keyEncipherment"),
     PskSharedSecret = <<1,2,3,4,5,6,7,8,9,10,11,12,13,14,15>>,
-    [{tls_config, #{server_config => [{user_lookup_fun, {fun ssl_test_lib:user_lookup/3, PskSharedSecret}} | ServerOpts],
-                    client_config => [{psk_identity, "Test-User"},
-                                      {user_lookup_fun, {fun ssl_test_lib:user_lookup/3, PskSharedSecret}} | ClientOpts]}} |
+    [{tls_config, #{server_config =>
+                        [{user_lookup_fun,
+                          {fun ssl_test_lib:user_lookup/3, PskSharedSecret}} | ServerOpts],
+                    client_config =>
+                        [{psk_identity, "Test-User"},
+                         {user_lookup_fun,
+                          {fun ssl_test_lib:user_lookup/3, PskSharedSecret}} | ClientOpts]}} |
      proplists:delete(tls_config, Config)];
 init_certs(rsa, Config) ->
     Version = ssl_test_lib:n_version(proplists:get_value(version, Config)),
     SigAlgs = ssl_test_lib:sig_algs(rsa, Version),
     Ext = x509_test:extensions([{key_usage, [digitalSignature, keyEncipherment]}]),
-    {ClientOpts, ServerOpts} = ssl_test_lib:make_rsa_cert_chains([{server_chain,
-                                                                   [[ssl_test_lib:digest()],[ssl_test_lib:digest()],
-                                                                    [ssl_test_lib:digest(), {extensions, Ext}]]}
-                                                                 ],
-                                                                 Config, "_peer_keyEncipherment"),
+    {ClientOpts, ServerOpts} =
+        ssl_test_lib:make_rsa_cert_chains([{server_chain,
+                                            [[ssl_test_lib:digest()],[ssl_test_lib:digest()],
+                                             [ssl_test_lib:digest(), {extensions, Ext}]]}
+                                          ],
+                                          Config, "_peer_keyEncipherment"),
     [{tls_config, #{server_config => SigAlgs ++ ServerOpts,
                     client_config => SigAlgs ++ ClientOpts}} |
      proplists:delete(tls_config, Config)];
 init_certs(dhe_dss, Config) ->
     Version = ssl_test_lib:n_version(proplists:get_value(version, Config)),
     SigAlgs = ssl_test_lib:sig_algs(dsa, Version),
-    {ClientOpts, ServerOpts} = ssl_test_lib:make_dsa_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
-                                                                  {client_chain, ssl_test_lib:default_cert_chain_conf()}],
-                                                                 Config, ""),
+    {ClientOpts, ServerOpts} =
+        ssl_test_lib:make_dsa_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
+                                           {client_chain, ssl_test_lib:default_cert_chain_conf()}],
+                                          Config, ""),
     [{tls_config, #{server_config => SigAlgs ++ ServerOpts,
                     client_config => SigAlgs ++ClientOpts}} |
      proplists:delete(tls_config, Config)];
 init_certs(srp_dss, Config) ->
-    {ClientOpts, ServerOpts} = ssl_test_lib:make_dsa_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
-                                                                  {client_chain, ssl_test_lib:default_cert_chain_conf()}],
-                                                                 Config, ""),
-    [{tls_config, #{server_config => [{user_lookup_fun, {fun ssl_test_lib:user_lookup/3, undefined}} | ServerOpts],
+    {ClientOpts, ServerOpts} =
+        ssl_test_lib:make_dsa_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
+                                           {client_chain, ssl_test_lib:default_cert_chain_conf()}],
+                                          Config, ""),
+    [{tls_config, #{server_config =>
+                        [{user_lookup_fun, {fun ssl_test_lib:user_lookup/3, undefined}} | ServerOpts],
                     client_config => [{srp_identity, {"Test-User", "secret"}} | ClientOpts]}} |
        proplists:delete(tls_config, Config)];
 init_certs(GroupName, Config) when GroupName == dhe_rsa;
                                    GroupName == ecdhe_rsa ->
-    {ClientOpts, ServerOpts} = ssl_test_lib:make_rsa_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
-                                                                  {client_chain, ssl_test_lib:default_cert_chain_conf()}],
+    {ClientOpts, ServerOpts} =
+        ssl_test_lib:make_rsa_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
+                                           {client_chain, ssl_test_lib:default_cert_chain_conf()}],
                                                                  Config, ""),
     [{tls_config, #{server_config => ServerOpts,
                     client_config => ClientOpts}} |
      proplists:delete(tls_config, Config)];
 init_certs(ecdhe_1_3_rsa_cert, Config) ->
-    {ClientOpts, ServerOpts} = ssl_test_lib:make_rsa_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
-                                                                  {client_chain, ssl_test_lib:default_cert_chain_conf()}],
+    {ClientOpts, ServerOpts} =
+        ssl_test_lib:make_rsa_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
+                                           {client_chain, ssl_test_lib:default_cert_chain_conf()}],
                                                                  Config, ""),
     [{tls_config, #{server_config => ServerOpts,
                     client_config => ClientOpts}} |
@@ -576,8 +587,9 @@ init_certs(ecdhe_1_3_rsa_cert, Config) ->
 
 init_certs(GroupName, Config) when GroupName == dhe_ecdsa;
                                    GroupName == ecdhe_ecdsa ->
-    {ClientOpts, ServerOpts} = ssl_test_lib:make_ecc_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
-                                                                 {client_chain, ssl_test_lib:default_cert_chain_conf()}],
+    {ClientOpts, ServerOpts} =
+        ssl_test_lib:make_ecc_cert_chains([{server_chain, ssl_test_lib:default_cert_chain_conf()},
+                                           {client_chain, ssl_test_lib:default_cert_chain_conf()}],
                                                                  Config, ""),
     [{tls_config, #{server_config => ServerOpts,
                     client_config => ClientOpts}} |
@@ -586,12 +598,15 @@ init_certs(GroupName, Config) when GroupName == psk;
                                    GroupName == dhe_psk;
                                    GroupName == ecdhe_psk ->
     PskSharedSecret = <<1,2,3,4,5,6,7,8,9,10,11,12,13,14,15>>,
-    [{tls_config, #{server_config => [{user_lookup_fun, {fun ssl_test_lib:user_lookup/3, PskSharedSecret}}],
-                    client_config => [{psk_identity, "Test-User"},
-                                      {user_lookup_fun, {fun ssl_test_lib:user_lookup/3, PskSharedSecret}}]}} |
+    [{tls_config, #{server_config =>
+                        [{user_lookup_fun, {fun ssl_test_lib:user_lookup/3, PskSharedSecret}}],
+                    client_config =>
+                        [{psk_identity, "Test-User"},
+                         {user_lookup_fun, {fun ssl_test_lib:user_lookup/3, PskSharedSecret}}]}} |
      proplists:delete(tls_config, Config)];
 init_certs(srp, Config) ->
-      [{tls_config, #{server_config => [{user_lookup_fun, {fun ssl_test_lib:user_lookup/3, undefined}}],
+      [{tls_config, #{server_config =>
+                          [{user_lookup_fun, {fun ssl_test_lib:user_lookup/3, undefined}}],
                       client_config => [{srp_identity, {"Test-User", "secret"}}]}} |
        proplists:delete(tls_config, Config)];
 init_certs(_GroupName, Config) ->
@@ -942,10 +957,13 @@ cipher_suite_test(CipherSuite, Version, Config) ->
     end.
 
 test_ciphers(Kex, Cipher, Version) ->
-    Ciphers = ssl:filter_cipher_suites(ssl:cipher_suites(all, Version) ++ ssl:cipher_suites(anonymous, Version),
+    Ciphers = ssl:filter_cipher_suites(ssl:cipher_suites(all, Version) ++
+                                           ssl:cipher_suites(anonymous, Version),
                                        [{key_exchange,
-                                         fun(Kex0) when (Kex0 == Kex) andalso (Version =/= 'tlsv1.3') -> true;
-                                            (Kex0) when (Kex0 == any) andalso (Version == 'tlsv1.3') -> true;
+                                         fun(Kex0) when (Kex0 == Kex) andalso
+                                                        (Version =/= 'tlsv1.3') -> true;
+                                            (Kex0) when (Kex0 == any) andalso
+                                                        (Version == 'tlsv1.3') -> true;
                                             (_) -> false
                                          end},
                                         {cipher,
@@ -962,10 +980,11 @@ test_ciphers(Kex, Cipher, Version) ->
 
 
 supported_cipher(Cipher, CipherStr) ->
-    SupCrypto = proplists:get_value(ciphers, crypto:supports()),
-    SupOpenssl = [OCipher || OCipher <- ssl_test_lib:openssl_ciphers(),  string:find(OCipher, CipherStr) =/= nomatch],
+    SupCrypto = crypto:supports(ciphers),
+    SupOpenssl = [OCipher || OCipher <- ssl_test_lib:openssl_ciphers(),
+                             string:find(OCipher, CipherStr) =/= nomatch],
     lists:member(Cipher, SupCrypto) andalso SupOpenssl =/= [].
 
 supported_cipher(Cipher, CipherStr, Hash) ->
-    Hashes = proplists:get_value(hashs, crypto:supports()),
+    Hashes = crypto:supports(hashs),
     supported_cipher(Cipher, CipherStr) andalso lists:member(Hash, Hashes).

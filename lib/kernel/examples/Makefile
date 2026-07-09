@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 1999-2024. All Rights Reserved.
+# Copyright Ericsson AB 2015-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ docs:
 # ---------------------------------------------------- 
 include $(ERL_TOP)/make/otp_release_targets.mk
 
-RELSYSDIR = $(RELEASE_PATH)/lib/kernel-$(KERNEL_VSN)/examples
+RELSYSDIR = $(RELEASE_PATH)/lib/kernel-$(KERNEL_VSN)/doc/examples
 
 # Pack and install the complete directory structure from
 # here (CWD) and down, for all examples.
@@ -52,8 +52,8 @@ RELSYSDIR = $(RELEASE_PATH)/lib/kernel-$(KERNEL_VSN)/examples
 EXAMPLES  = uds_dist erl_uds_dist gen_tcp_dist socket_sctp
 
 release_spec:
+
+release_docs_spec:
 	$(INSTALL_DIR) "$(RELSYSDIR)"
 	tar cf - $(EXAMPLES) | \
 	(cd "$(RELSYSDIR)"; tar xf - ; chmod -R ug+w $(EXAMPLES) )
-
-release_docs_spec:

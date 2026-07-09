@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1999-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ Main API of the Megaco application
 Interface module for the Megaco application
 """.
 
--compile(nowarn_obsolete_bool_op).
+-compile([{nowarn_possibly_unsafe_function, {file, consult, 1}}]).
 
 %%-----------------------------------------------------------------
 %% Public interface
@@ -2203,7 +2203,7 @@ token_tag2string(Tag, pretty) ->
     token_tag2string(Tag, megaco_pretty_text_encoder);
 token_tag2string(Tag, compact) ->
     token_tag2string(Tag, megaco_compact_text_encoder);
-token_tag2string(Tag, Mod) when is_atom(Tag) and is_atom(Mod) ->
+token_tag2string(Tag, Mod) when is_atom(Tag), is_atom(Mod) ->
     Mod:token_tag2string(Tag).
 
 -doc """

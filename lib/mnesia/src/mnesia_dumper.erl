@@ -57,8 +57,6 @@
 
 -import(mnesia_lib, [fatal/2, dbg_out/2]).
 
--compile(nowarn_obsolete_bool_op).
-
 -define(REGULATOR_NAME, mnesia_dumper_load_regulator).
 -define(DumpToEtsMultiplier, 4).
 
@@ -732,7 +730,7 @@ insert_op(Tid, _, {op, restore_recreate, TabDef}, InPlace, InitBy) ->
     
     %% And create new ones..
     if
-	(InitBy == startup) or (Semantics == unknown) ->
+	InitBy == startup; Semantics == unknown ->
 	    ignore;
 	Semantics == ram_copies ->
 	    EtsProps = proplists:get_value(ets, StorageProps, []),

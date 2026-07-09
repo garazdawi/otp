@@ -31,7 +31,7 @@ all() -> [
           balance_case,
           delete_case, delete_any_case,
           difference_case,
-          from_ordset_case,
+          from_ordset_case, from_ordset_invalid_case,
           insert_case,
           is_member_case,
           iterator_case, iterator_from_case,
@@ -67,6 +67,9 @@ difference_case(Config) ->
 
 from_ordset_case(Config) ->
     do_proptest(prop_from_ordset, Config).
+
+from_ordset_invalid_case(Config) ->
+    do_proptest(prop_from_ordset_invalid, Config).
 
 insert_case(Config) ->
     do_proptest(prop_insert, Config).

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2010-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2010-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -111,22 +111,10 @@ is raised.
 at(_, _) ->
     erlang:nif_error(undef).
 
--doc """
-Converts `Subject` to a list of [`byte()`](`t:byte/0`)s, each
-representing the value of one byte.
-
-## Examples
-
-```erlang
-1> binary:bin_to_list(<<"erlang",0>>).
-[101,114,108,97,110,103,0]
-```
-
-""".
+-doc #{equiv => bin_to_list(Subject, {0, byte_size(Subject)}) }.
 -doc(#{since => <<"OTP R14B">>}).
 -spec bin_to_list(Subject) -> [byte()] when
       Subject :: binary().
-
 bin_to_list(Subject) ->
     try
         binary_to_list(Subject)
@@ -135,7 +123,32 @@ bin_to_list(Subject) ->
             error_with_info(Reason, [Subject])
     end.
 
--doc(#{equiv => bin_to_list(Subject, Pos, Len)}).
+-doc """
+Converts part of `Subject` to a list of `t:byte/0`s, each representing
+the value of one byte.
+
+`Pos` and `Len` denote which part of the `Subject` binary to convert.
+
+## Examples
+
+```erlang
+1> binary:bin_to_list(<<"erlang",0>>).
+[101,114,108,97,110,103,0]
+2> binary:bin_to_list(<<"erlang">>, 1, 3).
+"rla"
+3> binary:bin_to_list(<<"erlang">>, {1, 3}).
+"rla"
+%% or [114,108,97] in list notation.
+4> binary:bin_to_list(<<"erlang">>, 5, 3).
+** exception error: bad argument
+     in function  binary:bin_to_list/3
+        called as binary:bin_to_list(<<"erlang">>,5,3)
+        *** argument 3: out of range
+```
+
+If `Pos` and `Len` reference outside the binary in any way, a `badarg`
+exception is raised.
+""".
 -doc(#{since => <<"OTP R14B">>}).
 -spec bin_to_list(Subject, PosLen) -> [byte()] when
       Subject :: binary(),
@@ -151,34 +164,12 @@ bin_to_list(Subject, {Pos, Len}) ->
 bin_to_list(Subject, BadPosLen) ->
     badarg_with_info([Subject, BadPosLen]).
 
--doc """
-Converts part of `Subject` to a list of `t:byte/0`s, each representing
-the value of one byte.
-
-`Pos` and `Len` denote which part of the `Subject` binary to convert.
-
-## Examples
-
-```erlang
-1> binary:bin_to_list(<<"erlang">>, 1, 3).
-"rla"
-%% or [114,108,97] in list notation.
-2> binary:bin_to_list(<<"erlang">>, 5, 3).
-** exception error: bad argument
-     in function  binary:bin_to_list/3
-        called as binary:bin_to_list(<<"erlang">>,5,3)
-        *** argument 3: out of range
-```
-
-If `Pos` and `Len` reference outside the binary in any way, a `badarg`
-exception is raised.
-""".
+-doc(#{equiv => bin_to_list(Subject, {Pos, Len})}).
 -doc(#{since => <<"OTP R14B">>}).
 -spec bin_to_list(Subject, Pos, Len) -> [byte()] when
       Subject :: binary(),
       Pos :: non_neg_integer(),
       Len :: integer().
-
 bin_to_list(Subject, Pos, Len) when not is_binary(Subject);
                                     not is_integer(Pos);
                                     not is_integer(Len) ->

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
 #
-# Copyright Ericsson AB 2004-2025. All Rights Reserved.
+# Copyright Ericsson AB 2004-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -50,6 +50,10 @@ EBIN = ../ebin
 XMERL = ../../xmerl
 ERL_COMPILE_FLAGS += -pa $(XMERL) -I../include -I$(XMERL)/include -I${ERL_TOP}/lib
 ERL_COMPILE_FLAGS += +warn_unused_vars +warn_unused_import +warn_deprecated_guard +no_docs +nowarn_missing_spec_documented +warn_deprecated_catch -Werror
+
+ifeq ($(ERL_DETERMINISTIC),yes)
+	DEP_SKIP_FILES = edoc_parser.erl
+endif
 
 include files.mk
 

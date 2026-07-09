@@ -24,8 +24,6 @@
 -module(mnesia_recover).
 -moduledoc false.
 
--compile(nowarn_obsolete_bool_op).
-
 -behaviour(gen_server).
 
 -export([
@@ -497,7 +495,7 @@ load_decision_tab(Cont, InitBy) ->
 %% From now on all decisions are logged in the transaction log file
 convert_old() ->
     HasOldStuff = 
-	mnesia_lib:exists(mnesia_log:previous_decision_log_file()) or
+	mnesia_lib:exists(mnesia_log:previous_decision_log_file()) orelse
 	mnesia_lib:exists(mnesia_log:decision_log_file()),
     case HasOldStuff of
 	true ->
@@ -1176,7 +1174,7 @@ add_remote_decision(Node, NewD, State) ->
 	Outcome == unclear ->
 	    ignore;
 	true ->
-	    case lists:member(node(), NewD#decision.disc_nodes) or
+	    case lists:member(node(), NewD#decision.disc_nodes) orelse
 		 lists:member(node(), NewD#decision.ram_nodes) of
 		true ->
 		    tell_im_certain([Node], D);
@@ -1238,8 +1236,8 @@ send_decisions([]) ->
     ok.
 
 arrange([To | ToNodes], D, Acc, ForceSend) when is_record(D, decision) ->
-    NeedsAdd = (ForceSend or
-		lists:member(To, D#decision.disc_nodes) or
+    NeedsAdd = (ForceSend orelse
+		lists:member(To, D#decision.disc_nodes) orelse
 		lists:member(To, D#decision.ram_nodes)),
     case NeedsAdd of
 	true ->

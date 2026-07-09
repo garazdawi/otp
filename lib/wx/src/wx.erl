@@ -2,8 +2,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0 AND LicenseRef-scancode-wxwindows-free-doc-3
 %%
-%% Copyright Ericsson AB 2008-2025. All Rights Reserved.
 %% SPDX-FileCopyrightText: 2024 Erlang/OTP and its contributors
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -178,6 +178,8 @@ Global (classless) functions are located in the wx_misc module.
 
   See #wxMouseState\{\} defined in wx.hrl
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([parent_class/1, new/0, new/1, destroy/0,
 	 get_env/0, set_env/1, subscribe_events/0, debug/1,
@@ -577,9 +579,14 @@ Starts a Wx demo if examples directory exists and is compiled
 -spec demo() -> 'ok' | {'error', atom()}.
 demo() ->
     Priv = code:priv_dir(wx),
-    Demo = filename:join([filename:dirname(Priv),examples,demo]),
-    Mod  = list_to_atom("demo"), %% Fool xref tests
-    case file:set_cwd(Demo) of
+    DemoSrc = filename:join([filename:dirname(Priv),examples,demo]),
+    DemoDoc = filename:join([filename:dirname(Priv),doc,examples,demo]),
+    Mod  = list_to_existing_atom("demo"), %% Fool xref tests
+    DemoDir = case filelib:is_dir(DemoSrc) of
+                  true  -> DemoSrc;
+                  false -> DemoDoc
+              end,
+    case file:set_cwd(DemoDir) of
 	ok ->
 	    apply(Mod, start, []),
 	    ok;

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1999-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1701,18 +1701,6 @@ guard(Config) when is_list(Config) ->
     %% Well, these could be plain code...
     Ts = [{guard1,
            <<"-record(apa, {}).
-              t(A) when atom(A) ->
-                  atom;
-              t(A) when binary(A) ->
-                  binary;
-              t(A) when constant(A) ->
-                  constant;
-              t(A) when float(A) ->
-                  float;
-              t(A) when function(A) ->
-                  function;
-              t(A) when integer(A) ->
-                  integer;
               t(A) when is_atom(A) ->
                   is_atom;
               t(A) when is_binary(A) ->
@@ -1740,41 +1728,14 @@ guard(Config) when is_list(Config) ->
               t(A) when is_reference(A) ->
                   is_reference;
               t(A) when is_tuple(A) ->
-                  is_tuple;
-              t(A) when list(A) ->
-                  list;
-              t(A) when number(A) ->
-                  number;
-              t(A) when pid(A) ->
-                  pid;
-              t(A) when port(A) ->
-                  port;
-              t(A) when record(A, apa) ->
-                  record;
-              t(A) when reference(A) ->
-                  reference;
-              t(A) when tuple(A) ->
-                  tuple.
+                  is_tuple.
            ">>,
            [nowarn_obsolete_guard],
            {errors,
-	    [{{6,25},erl_lint,illegal_guard_expr},
-             {{18,25},erl_lint,illegal_guard_expr}],
+            [{{6,25},erl_lint,illegal_guard_expr}],
 	    []}},
           {guard2,
            <<"-record(apa,{}).
-              t1(A) when atom(A), atom(A) ->
-                  atom;
-              t1(A) when binary(A), binary(A) ->
-                  binary;
-              t1(A) when constant(A), constant(A) ->
-                  constant;
-              t1(A) when float(A), float(A) ->
-                  float;
-              t1(A) when function(A), function(A) ->
-                  function;
-              t1(A) when integer(A), integer(A) ->
-                  integer;
               t1(A) when is_atom(A), is_atom(A) ->
                   is_atom;
               t1(A) when is_binary(A), is_binary(A) ->
@@ -1802,40 +1763,14 @@ guard(Config) when is_list(Config) ->
               t1(A) when is_reference(A), is_reference(A) ->
                   is_reference;
               t1(A) when is_tuple(A), is_tuple(A) ->
-                  is_tuple;
-              t1(A) when list(A), list(A) ->
-                  list;
-              t1(A) when number(A), number(A) ->
-                  number;
-              t1(A) when pid(A), pid(A) ->
-                  pid;
-              t1(A) when port(A), port(A) ->
-                  port;
-              t1(A) when record(A, apa), record(A, apa) ->
-                  record;
-              t1(A) when reference(A), reference(A) ->
-                  reference;
-              t1(A) when tuple(A), tuple(A) ->
-                  tuple.
+                  is_tuple.
            ">>,
            [nowarn_obsolete_guard],
 	   {errors,[{{6,26},erl_lint,illegal_guard_expr},
-		    {{6,39},erl_lint,illegal_guard_expr},
-		    {{18,26},erl_lint,illegal_guard_expr},
-		    {{18,42},erl_lint,illegal_guard_expr}],
+                    {{6,42},erl_lint,illegal_guard_expr}],
 	    []}},
           {guard3,
            <<"-record(apa,{}).
-              t2(A) when atom(A); atom(A) ->
-                  atom;
-              t2(A) when binary(A); binary(A) ->
-                  binary;
-              t2(A) when float(A); float(A) ->
-                  float;
-              t2(A) when function(A); function(A) ->
-                  function;
-              t2(A) when integer(A); integer(A) ->
-                  integer;
               t2(A) when is_atom(A); is_atom(A) ->
                   is_atom;
               t2(A) when is_binary(A); is_binary(A) ->
@@ -1861,21 +1796,7 @@ guard(Config) when is_list(Config) ->
               t2(A) when is_reference(A); is_reference(A) ->
                   is_reference;
               t2(A) when is_tuple(A); is_tuple(A) ->
-                  is_tuple;
-              t2(A) when list(A); list(A) ->
-                  list;
-              t2(A) when number(A); number(A) ->
-                  number;
-              t2(A) when pid(A); pid(A) ->
-                  pid;
-              t2(A) when port(A); port(A) ->
-                  port;
-              t2(A) when record(A, apa); record(A, apa) ->
-                  record;
-              t2(A) when reference(A); reference(A) ->
-                  reference;
-              t2(A) when tuple(A); tuple(A) ->
-                  tuple.
+                  is_tuple.
            ">>,
            [nowarn_obsolete_guard],
 	   []},
@@ -1915,8 +1836,6 @@ guard(Config) when is_list(Config) ->
     [] = run(Config, Ts),
     Ts1 = [{guard5,
             <<"-record(apa, {}).
-               t3(A) when record(A, {apa}) ->
-                   foo;
                t3(A) when is_record(A, {apa}) ->
                    foo;
                t3(A) when erlang:is_record(A, {apa}) ->
@@ -1929,8 +1848,6 @@ guard(Config) when is_list(Config) ->
                    foo;
                t3(A) when erlang:is_record(A, apa, []) ->
                    foo;
-               t3(A) when record(A, apa) ->
-                   foo;
                t3(A) when is_record(A, apa) ->
                    foo;
                t3(A) when erlang:is_record(A, apa) ->
@@ -1942,8 +1859,7 @@ guard(Config) when is_list(Config) ->
 		     {{6,27},erl_lint,illegal_guard_expr},
 		     {{8,27},erl_lint,illegal_guard_expr},
 		     {{10,27},erl_lint,illegal_guard_expr},
-		     {{12,27},erl_lint,illegal_guard_expr},
-		     {{14,27},erl_lint,illegal_guard_expr}],
+                     {{12,27},erl_lint,illegal_guard_expr}],
 	     []}},
            {guard6,
             <<"-record(apa,{a=a,b=foo:bar()}).
@@ -1983,13 +1899,13 @@ guard(Config) when is_list(Config) ->
                      {{2,29},erl_lint,illegal_guard_expr}],
              []}},
            {guard10,
-            <<"is_port(_) -> false.
+            <<"port(_) -> false.
                t(P) when port(P) -> ok.
             ">>,
             [],
-            {error,
-	     [{{2,26},erl_lint,{obsolete_guard_overridden,port}}],
-	     [{{2,26},erl_lint,{obsolete_guard,{port,1}}}]}},
+            {errors,
+             [{{2,26},erl_lint,{illegal_guard_local_call,{port,1}}}],
+             []}},
            {guard11,
             <<"-record(bar, {a = mk_a()}).
                mk_a() -> 1.
@@ -2315,7 +2231,7 @@ otp_5917(Config) when is_list(Config) ->
     [] = run(Config, Ts),
     ok.
 
-%% OTP-6585. Check the deprecated guards list/1, pid/1, ....
+%% OTP-6585. Check that deprecated guards list/1, pid/1, etc. are no longer recognized
 otp_6585(Config) when is_list(Config) ->
     Ts = [{otp_6585_1,
           <<"-export([t/0]).
@@ -2324,15 +2240,18 @@ otp_6585(Config) when is_list(Config) ->
 
              f(A) when list(A) -> list;
              f(R) when record(R, r) -> rec;
-             f(P) when pid(P) -> pid.
+             f(P) when pid(P) -> pid;
+             f(A) when float(A) -> float.
 
              t() ->
                  f([]).
             ">>,
-           [warn_obsolete_guard],
-           {warnings,[{{5,24},erl_lint,{obsolete_guard,{list,1}}},
-                      {{6,24},erl_lint,{obsolete_guard,{record,2}}},
-                      {{7,24},erl_lint,{obsolete_guard,{pid,1}}}]}}],
+           [],
+           {error,[{{5,24},erl_lint,illegal_guard_expr},
+                   {{6,24},erl_lint,illegal_guard_expr},
+                   {{7,24},erl_lint,illegal_guard_expr},
+                   {{8,24},erl_lint,{illegal_type_test,{float,1}}}],
+            [{{3,15},erl_lint,{unused_record,r}}]}}],
     [] = run(Config, Ts),
     ok.
 
@@ -4162,8 +4081,14 @@ bin_syntax_errors(Config) ->
               t(X) ->
                 {<<X/binary-integer>>,<<X/signed-unsigned-integer>>,
                  <<X/little-big>>,<<X/unit:4-unit:8>>};
-              t(<<_:{A,B}>>) -> ok.
-
+              t(<<_:{A,B}>>) -> ok;
+              t(_) ->
+                {<<\"\\x{aa}\">>,
+                 <<\"\\x{aaa}\">>,
+                 <<0>>,<<-1>>,
+                 <<255>>,<<256>>,
+                 <<32767:15>>,<<32768:15>>,
+                 <<-32768:16/signed>>,<<-32769:16/signed>>}.
               l() ->
                   foo.
 	    ">>,
@@ -4184,8 +4109,14 @@ bin_syntax_errors(Config) ->
 	    [{{1,27},erl_lint,non_integer_bitsize},
              {{4,21},erl_lint,non_integer_bitsize},
              {{7,12},erl_lint,{bad_bitsize,"float"}},
-             {{13,21},erl_lint,non_integer_bitsize}]}}
-	 ],
+             {{13,21},erl_lint,non_integer_bitsize},
+             {{15,20},erl_lint,latin1_binary},
+             {{16,20},erl_lint,truncated_character},
+             {{17,26},erl_lint,{truncated_integer,-1,8,unsigned}},
+             {{18,28},erl_lint,{truncated_integer,256,8,unsigned}},
+             {{19,33},erl_lint,{truncated_integer,32768,15,unsigned}},
+             {{20,41},erl_lint,{truncated_integer,-32769,16,signed}}
+            ]}}],
     [] = run(Config, Ts),
     ok.
 
@@ -5759,7 +5690,8 @@ do_coverage() ->
     io:format("~p\n", [Res]),
     ok.
 
-native_records(Config) ->
+native_records(Conf) ->
+    DataDir = ?datadir,
     Ts = [{basic,
            ~"""
            -record #r{x=42::integer(), y::integer()}.
@@ -5879,7 +5811,7 @@ native_records(Config) ->
                     {{2,35},erl_lint,{redefine_field,r2,a}},
                     {{3,30},erl_lint,{redefine_field,r3,a}}],
             []}},
-          {undefined_native_record_field,
+          {undefined_field_1,
            <<"-record #r{a=a, c=c}.
                mk() -> #r{a = a, b = b}.
                pat(#r{a = A, b = B}) -> {A, B}.
@@ -5887,19 +5819,45 @@ native_records(Config) ->
                get1(S) -> S#r.b.
                get2(S, B) when B == S#r.b -> ok.">>,
            [],
-           {warnings,[{{2,34},erl_lint,{undefined_native_record_field,r,b}},
-                      {{3,30},erl_lint,{undefined_native_record_field,r,b}},
-                      {{4,33},erl_lint,{undefined_native_record_field,r,b}},
-                      {{5,31},erl_lint,{undefined_native_record_field,r,b}},
-                      {{6,41},erl_lint,{undefined_native_record_field,r,b}}]}},
-          {no_init,
+           {error,
+            [{{2,34},erl_lint,{undefined_field,r,b}}],
+            [{{3,30},erl_lint,{undefined_field,r,b}},
+             {{4,33},erl_lint,{undefined_field,r,b}},
+             {{5,31},erl_lint,{undefined_field,r,b}},
+             {{6,41},erl_lint,{undefined_field,r,b}}]}},
+          {undefined_field_2,
+           <<"-record #r{a=a, c=c}.
+               mk() -> #r{a = a, b = b}.
+               pat(#r{a = A, b = B}) -> {A, B}.
+               update(S) -> S#r{b = b}.
+               get1(S) -> S#r.b.
+               get2(S, B) when B == S#r.b -> ok.">>,
+           [nowarn_undefined_field],
+           {errors,
+            [{{2,34},erl_lint,{undefined_field,r,b}}],
+            []}},
+          {no_init_1,
            <<"-record #r{a, b, c = c}.
                 mk1() -> #r{}.
-                mk2() -> #r{a = a}.">>,
+                mk2() -> #r{a = a}.
+                mk3() -> #?MODULE:r{}.">>,
            [],
-           {warnings,[{{2,26},erl_lint,{no_init_native_record_field,r,a}},
-                      {{2,26},erl_lint,{no_init_native_record_field,r,b}},
-                      {{3,26},erl_lint,{no_init_native_record_field,r,b}}]}},
+           {error,
+            [{{2,26},erl_lint,{novalue,r,a}},
+             {{2,26},erl_lint,{novalue,r,b}},
+             {{3,26},erl_lint,{novalue,r,b}}],
+            [{{4,26},erl_lint,{novalue,{lint_test,r},a}},
+             {{4,26},erl_lint,{novalue,{lint_test,r},b}}]}},
+          {no_init_2,
+           <<"-record #r{a, b, c = c}.
+                mk1() -> #r{}.
+                mk2() -> #r{a = a}.
+                mk3() -> #?MODULE:r{}.">>,
+           [nowarn_novalue],
+           {errors,[{{2,26},erl_lint,{novalue,r,a}},
+                    {{2,26},erl_lint,{novalue,r,b}},
+                    {{3,26},erl_lint,{novalue,r,b}}],
+            []}},
           {undefined_record_1,
            <<"t() ->
                   X = no_record,
@@ -5984,9 +5942,60 @@ native_records(Config) ->
                     {{10,16},erl_lint,bad_export_record},
                     {{11,16},erl_lint,bad_export_record},
                     {{11,16},erl_lint,{undefined_native_record,a}}],
-            []}}
+            []}},
+          {bad_record_def,
+           <<"-record r0.
+              -record #r1.
+              -record #r2, {}.">>,
+           [],
+           {errors,[{{1,29},
+                     erl_parse,
+                     [98,97,100,32,"record",32,100,101,99,108,97,114,97,116,105,111,
+                      110]},
+                    {{2,23},
+                     erl_parse,
+                     [98,97,100,32,"record",32,100,101,99,108,97,114,97,116,105,111,
+                      110]},
+                    {{3,23},
+                     erl_parse,
+                     [98,97,100,32,"record",32,100,101,99,108,97,114,97,116,105,111,
+                      110]}],
+            []}
+          },
+          {illegal_type_restriction,
+           <<"-record #xy{x :: number(), y :: number()}.
+             -type xy() :: #xy{}.
+             -type int_xy() :: #xy{x :: integer(), y :: integer()}.
+
+             -spec mk_int_xy() -> #xy{x :: integer(), y :: integer()}.
+             mk_int_xy() -> #xy{x=0,y=1}.
+
+             -spec int_inc_xy(int_xy()) -> int_xy().
+             int_inc_xy(#xy{x=X,y=Y}) -> #xy{x=X+1, y=Y+1}.
+
+              -spec mk_xy() -> xy().
+              mk_xy() -> #xy{x=42.0,y=100.0}.">>,
+           [],
+           {errors,[{{3,36},erl_lint,native_record_field_types},
+                    {{5,39},erl_lint,native_record_field_types}],
+            []}
+          },
+          {native_record_header,
+           ~"""
+           -include("native_record_header.hrl").
+               id() -> ok.
+           """,
+           [{i,DataDir}, {keep_all_warnings,true}],
+           {warnings, [{{1,2},erl_lint,{native_record_header,a}}]}
+          },
+          {bad_import_record,
+           <<"-import_record([rec]).">>,
+           [],
+           {errors,[{{1,36},erl_parse,"bad "++["import_record"] ++" declaration"}],
+            []}
+          }
          ],
-    [] = run(Config, Ts),
+    [] = run(Conf, Ts),
     ok.
 
 %%%
@@ -6067,7 +6076,8 @@ run_test2(Conf, Test, Warnings0) ->
 
     case compile:file(File, [binary|Opts]) of
         {ok, _M, Code, Ws} when is_binary(Code) ->
-            warnings(File, Ws, Test);
+            KeepAllWarnings = proplists:get_bool(keep_all_warnings, Opts),
+            warnings(File, Ws, Test, KeepAllWarnings);
         {error, [{File,Es}], []} ->
             print_diagnostics(Es, Test),
 	    {errors, call_format_error(Es), []};
@@ -6081,8 +6091,9 @@ run_test2(Conf, Test, Warnings0) ->
 	    {errors2, Es1, Es2}
     end.
 
-warnings(File, Ws, Source) ->
-    case lists:append([W || {F, W} <- Ws, F =:= File]) of
+warnings(File, Ws, Source, KeepAllWarnings) ->
+    case lists:append([W || {F, W} <- Ws,
+                            KeepAllWarnings orelse F =:= File]) of
         [] ->
 	    [];
         L ->

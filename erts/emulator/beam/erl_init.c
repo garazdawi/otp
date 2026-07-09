@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 1997-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1997-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,6 +58,7 @@
 #include "erl_iolist.h"
 #include "erl_debugger.h"
 #include "erl_record.h"
+#include "erl_crash_dump.h"
 
 #include "jit/beam_asm.h"
 
@@ -1215,6 +1216,7 @@ early_init(int *argc, char **argv) /*
 						 -M flags. */
     aux_threads += erts_no_dirty_alloc_instances;
     /* Require allocators */
+    erts_errno_init();
 
     erts_init_check_io(argc, argv);
 
@@ -1265,6 +1267,8 @@ early_init(int *argc, char **argv) /*
 
 	erts_thr_late_init(&elid);
     }
+
+    erts_errno_late_init();
     erts_msacc_early_init();
 
 #ifdef ERTS_ENABLE_LOCK_CHECK
@@ -1307,6 +1311,10 @@ erl_start(int argc, char **argv)
     ErtsTimeWarpMode time_warp_mode;
     int node_tab_delete_delay = ERTS_NODE_TAB_DELAY_GC_DEFAULT;
     ErtsDbSpinCount db_spin_count = ERTS_DB_SPNCNT_NORMAL;
+
+    /* Must be set up as early as possible for crash dump encryption to work
+     * properly. */
+    erl_crash_dump_init();
 
     set_default_time_adj(&time_correction,
 			 &time_warp_mode);

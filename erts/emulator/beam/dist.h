@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 1996-2025. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
 
 #include "erl_process.h"
 #include "erl_node_tables.h"
-#include "zlib.h"
+#include "erl_zlib.h"
 
 #define DFLAG_PUBLISHED                ((Uint64)0x01)
 #define DFLAG_ATOM_CACHE               ((Uint64)0x02)
@@ -67,6 +67,7 @@
 #define DFLAG_ALIAS            (((Uint64)0x8) << 32)
 #define DFLAG_LOCAL_EXT        (((Uint64)0x10) << 32) /* internal */
 #define DFLAG_ALTACT_SIG       (((Uint64)0x20) << 32)
+#define DFLAG_NATIVE_RECORDS   (((Uint64)0x40) << 32)
 
 /*
  * In term_to_binary/2, we will use DFLAG_ATOM_CACHE to mean
@@ -105,7 +106,8 @@
                               | DFLAG_DIST_MONITOR_NAME         \
                               | DFLAG_SPAWN                     \
                               | DFLAG_ALTACT_SIG                \
-			      | DFLAG_ALIAS)
+                              | DFLAG_ALIAS                     \
+                              | DFLAG_NATIVE_RECORDS)
 
 /* Our preferred set of flags. Used for connection setup handshake */
 #define DFLAG_DIST_DEFAULT (DFLAG_DIST_MANDATORY | DFLAG_DIST_HOPEFULLY \

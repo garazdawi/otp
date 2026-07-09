@@ -218,7 +218,7 @@ This module was introduced in OTP 22.0, as experimental code.
 * In OTP 27.0, the Windows flavored
   ([completion handle](`t:completion_handle/0`))
   API features could be considered no longer experimental.
-* In OTP @OTP-19834@, (experimental) complete support for SCTP was added
+* In OTP 29.0, (experimental) complete support for SCTP was added
   (functionally feature compatible with inet).
   Not (yet) supported for FreeBSD.
 
@@ -250,6 +250,8 @@ server(Addr, Port) ->
 ```
 """.
 -moduledoc(#{since => "OTP 22.0"}).
+
+-unsafe([{open, '_', possibly}]).
 
 -compile({no_auto_import, [error/1, monitor/1]}).
 
@@ -286,6 +288,7 @@ server(Addr, Port) ->
          send/2, send/3, send/4,
          sendto/3, sendto/4, sendto/5,
          sendmsg/2, sendmsg/3, sendmsg/4,
+         sendmmsg/4,
          sendv/2, sendv/3, sendv/4, rest_iov/2,
 
          sendfile/2, sendfile/3, sendfile/4, sendfile/5,
@@ -293,6 +296,7 @@ server(Addr, Port) ->
          recv/1, recv/2, recv/3, recv/4,
          recvfrom/1, recvfrom/2, recvfrom/3, recvfrom/4,
          recvmsg/1, recvmsg/2, recvmsg/3, recvmsg/4, recvmsg/5,
+         recvmmsg/6,
 
          close/1,
          shutdown/2,
@@ -360,11 +364,16 @@ server(Addr, Port) ->
               %% Option values' types
               linger/0,
               timeval/0,
+              timespec/0,
               ip_mreq/0,
               ip_mreq_source/0,
               ip_msfilter/0,
               ip_pmtudisc/0,
               ip_tos/0,
+              iptos_value/0,
+              iptos_tos/0,
+              iptos_dscp/0,
+              iptos_native/0,
               ip_pktinfo/0,
 
               ipv6_mreq/0,
@@ -448,10 +457,11 @@ About the `use_registry` key, see `use_registry/1`
 and the `t:otp_socket_option/0` with the same name.
 """.
 -type info() ::
-        #{counters     := #{atom() := non_neg_integer()},
-          iov_max      := non_neg_integer(),
-          use_registry := boolean(),
-          io_backend   := #{name := atom()}}.
+        #{counters        := #{atom() := non_neg_integer()},
+          iov_max         := non_neg_integer(),
+          use_registry    := boolean(),
+          io_backend      := #{name := atom()},
+	  load_nif_result := undefined | ok | {error, term()}}.
 
 -doc "A `t:map/0` of `Name := Counter` associations.".
 -type socket_counters() :: #{read_byte        := non_neg_integer(),
@@ -608,6 +618,17 @@ microseconds.
           usec := integer()}.
 
 -doc """
+C: `struct timespec`
+
+Corresponds to the C `struct timespec`. The field `sec` holds seconds, and `nsec`
+nanoseconds.
+""".
+-type timespec() ::
+        #{sec  := integer(),
+          nsec := integer()}.
+
+
+-doc """
 C: `struct ip_mreq`
 
 Corresponds to the C `struct ip_mreq` for managing multicast groups.
@@ -651,13 +672,63 @@ Lowercase `t:atom/0` values corresponding to the C library constants
 -doc """
 C: `IPTOS_*` values.
 
-Lowercase `t:atom/0` values corresponding to the C library constants `IPTOS_*`.
-Some constant(s) may be unsupported by the platform.
+Note that since there are two different representations of TOS;
+according to RFC 1349 ("classic TOS") and RFC 2474 (DSCP),
+we have three different value representations for tos:
+`native` (the raw unencoded value of the TOS octet), `tos` (classic),
+and `dscp`.
+
+When sending or setting (the ip tos option), the user can choose
+between the three different (value) representations.
+When reading, the value is represented as a map with all three
+representations, since 'socket' does not know which one is expected.
+Its then up to the user pick the one they want.
+
+An integer `dscp` value is a DSCP field value that is not known
+from the IANA registry (see `t:iptos_dscp/0`).
 """.
--type ip_tos() :: lowdelay |
-                  throughput |
-                  reliability |
-                  mincost.
+-type ip_tos() :: #{native := iptos_native(),
+                    tos    := iptos_tos(),
+                    dscp   := iptos_dscp() | non_neg_integer()}.
+
+-type iptos_value() :: iptos_tos() | iptos_dscp() | iptos_native().
+%% According to RFC 1349
+-doc """
+Lowercase `t:atom/0` values corresponding to the C library constants `IPTOS_*`.
+The atoms are named like The C library names, but to avoid platform depencendy,
+the set of names and values follow RFC 1349, not the C library header files.
+
+An integer value is a field value that is not named in the RFC.
+""".
+-type iptos_tos()   :: #{precedence := iptos_tos_prec()  | non_neg_integer(),
+                         tos        := iptos_tos_value() | non_neg_integer()}.
+-type iptos_tos_prec() :: netcontrol | internetcontrol | critical_ecp |
+                          flashoverride | flash | immediate | priority |
+                          routine.
+-type iptos_tos_value() :: default |
+                           lowdelay |  throughput | reliability | mincost.
+
+-doc """
+These symbolic DSCP values are according to IANA's
+[Differentiated Services Field Codepoints registry]
+(https://www.iana.org/assignments/dscp-registry/dscp-registry.xhtml).
+""".
+-type iptos_dscp() ::
+        cs0 |
+        le |
+        cs1 |
+        af11 | af12 | af13 |
+        cs2 |
+        af21 | af22 | af23 |
+        cs3 |
+        af31 | af32 | af33 |
+        cs4 |
+        af41 | af42 | af43 |
+        cs5 |
+        voice_admit | nqb | ef |
+        cs6 |
+        cs7.
+-type iptos_native() :: non_neg_integer().
 
 -doc "C: `struct ip_pktinfo`".
 -type ip_pktinfo() ::
@@ -1190,6 +1261,15 @@ _Options for protocol level_ [_`socket`_:](`t:level/0`)
 
 - **`{socket, timestamp}`** - `Value = boolean()`
 
+  Enable or disable the `SO_TIMESTAMP` socket option. When enabled, the socket
+  will receive timestamps in control messages for received packets.
+
+- **`{socket, timestampns}`** - `Value = boolean()`
+
+  Enable or disable the `SO_TIMESTAMPNS` socket option. When enabled, the socket
+  will receive nanosecond-precision timestamps in control messages for received
+  packets.
+
 - **`{socket, type}`** - `Value =` `t:type/0`
 
   Only valid to _get_.
@@ -1290,9 +1370,10 @@ _Options for protocol level_ [_`ip`_:](`t:level/0`)
 
 - **`{ip, sendsrcaddr}`** - `Value = boolean()`
 
-- **`{ip, tos}`** - `Value =` [`ip_tos()` ](`t:ip_tos/0`)`| integer()`
+- **`{ip, tos}`** - `Value =` [`iptos_value()` ](`t:iptos_value/0`) | [`ip_tos()` ](`t:ip_tos/0`)
 
-  An `t:integer/0` value is according to the platform's header files.
+  When sending/setting the value is according to `t:iptos_value/0`.
+  When reading/getting the value is according to `t:ip_tos/0`.
 
 - **`{ip, transparent}`** - `Value = boolean()`
 
@@ -1456,6 +1537,7 @@ _Options for protocol level_ [_`udp`:_](`t:level/0`)
            sndlowat |
            sndtimeo |
            timestamp |
+           timestampns |
            type} |
         {Level :: ip,
          Opt ::
@@ -1715,7 +1797,7 @@ Corresponds to a C `struct msghdr`, see your platform documentation for
           flags := [msg_flag() | integer()]
          }.
 
--doc(#{since => ~"OTP @OTP-19834@"}).
+-doc(#{since => ~"OTP 29.0"}).
 -doc """
 Notifications can be received on a SCTP socket (type = seqpacket and
 protocol = sctp).
@@ -2029,12 +2111,14 @@ successfully decoded the data.
 -type cmsg_recv() ::
         #{level := socket,  type := timestamp,    data := binary(),
           value => timeval()}                                       |
+        #{level := socket,  type := timestampns,  data := binary(),
+          value => timespec()}                                      |
         #{level := socket,  type := rights,       data := binary()} |
         #{level := socket,  type := credentials,  data := binary()} |
         #{level := ip,      type := tos,          data := binary(),
-          value => ip_tos() | integer()}                            |
+          value => ip_tos()}                                        |
         #{level := ip,      type := recvtos,      data := binary(),
-          value := ip_tos() | integer()}                            |
+          value := ip_tos()}                                        |
         #{level := ip,      type := ttl,          data := binary(),
           value => integer()}                                       |
         #{level := ip,      type := recvttl,      data := binary(),
@@ -2073,7 +2157,7 @@ compatible what is defined in the platform's header files.
         #{level := socket,  type := rights,       data := native_value()} |
         #{level := socket,  type := credentials,  data := native_value()} |
         #{level := ip,      type := tos,          data => native_value(),
-          value => ip_tos() | integer()}                                  |
+          value => iptos_value()}                                         |
         #{level := ip,      type := ttl,          data => native_value(),
           value => integer()}                                             |
         #{level := ip,      type := hoplimit,     data => native_value(),
@@ -2174,8 +2258,8 @@ Information element designators for the  `i/1` and `i/2` functions.
 %% Interface term formats
 %%
 
--define(ASYNCH_DATA_TAG, (recv | recvfrom | recvmsg |
-                          send | sendv | sendto | sendmsg | sendfile)).
+-define(ASYNCH_DATA_TAG, (recv | recvfrom | recvmsg | recvmmsg |
+                          send | sendv | sendto | sendmsg | sendmmsg | sendfile)).
 -define(ASYNCH_TAG,      ((accept | connect) | ?ASYNCH_DATA_TAG)).
 
 %% -type asynch_data_tag() :: send | sendv | sendto | sendmsg |
@@ -2813,8 +2897,6 @@ fmt_service(#{port := Port} = SockAddr) ->
 %% info - Get miscellaneous information about a socket
 %% or about the socket library.
 %%
-%% Generates a list of various info about the socket, such as counter values.
-%%
 %% Do *not* call this function often.
 %%
 %% ===========================================================================
@@ -2833,25 +2915,36 @@ The function returns a map with each information item as a key-value pair.
 -spec info() -> info().
 %%
 info() ->
-    try
-        prim_socket:info()
+    try prim_socket:info() of
+	Info ->
+	    Info#{load_nif_result => load_nif_result()}
     catch error:undef:ST ->
             case ST of
                 %% We rewrite errors coming from prim_socket not existing
-                %% to enotsup.
+                %% to notsup.
                 [{prim_socket,info,[],_}|_] ->
                     erlang:raise(error,notsup,ST);
                 _ ->
                     erlang:raise(error,undef,ST)
-            end
+            end;
+	  _:_ ->
+	    #{load_nif_result => load_nif_result()}
     end.
+
+load_nif_result() ->
+    try prim_socket:p_get(load_nif_result)
+    catch
+	_:_ ->
+	    undefined
+    end.
+
 
 -doc(#{since => <<"OTP 22.1">>}).
 -doc """
 Get miscellaneous info about a socket.
 
 The function returns a map with each information item as a key-value pair
-reflecting the "current" state of the socket.
+reflecting the "current" state of the socket (such as counter values).
 
 > #### Note {: .info }
 >
@@ -3413,7 +3506,7 @@ bind(Socket, Addr) ->
 %% If the domain is inet6, the addresses can be either IPv4 or IPv6.
 %%
 
--doc(#{since => <<"OTP @OTP-19834@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -doc """
 Bind a list of socket addreses to a socket.
 
@@ -3911,7 +4004,7 @@ accept_result(LSockRef, AccRef, Result) ->
 %% peeloff - Branch off an association into a separate socket
 %%
 
--doc(#{since => <<"OTP @OTP-19834@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -doc """
 Branch off an association into a separate socket.
 
@@ -3932,7 +4025,7 @@ Equivalent to [`peeloff(Socket, AssocId, [])`](`peeloff/3`)
 peeloff(Sock, AssocId) ->
     peeloff(Sock, AssocId, []).
 
--doc(#{since => <<"OTP @OTP-19834@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -doc """
 Branch off an association into a separate socket.
 
@@ -4947,6 +5040,156 @@ sendmsg_deadline(SockRef, Msg, Flags, Deadline, HasWritten, IOV) ->
       SockRef, IOV, Handle, Deadline, HasWritten,
       sendmsg, fun sendmsg_deadline_cont/5,
       prim_socket:sendmsg(SockRef, Msg, Flags, Handle, IOV)).
+
+-doc(#{since => <<"OTP 29.0">>}).
+-doc """
+Send multiple messages on a socket.
+
+This function is equivalent to calling [`sendmsg/4`](`sendmsg/4`) multiple times,
+but uses the platform's `sendmmsg` syscall for better performance when sending
+multiple datagrams.
+
+> #### Note {: .info }
+>
+> This function is only available on Linux and BSD systems (not macOS/Darwin or Windows).
+> On unsupported platforms, it will return `{error, notsup}`.
+
+On success, returns either:
+- **`ok`** – when all messages were sent in full (or there were zero messages).
+- **`{ok, Rest}`** – when one or more messages had a partial write. `Rest` is a list with one
+  element per message that was not fully sent, in message order. Each element is the
+  remaining data for that message in the same form as [`sendmsg/4`](`sendmsg/4`)'s rest data
+  (`t:erlang:iovec/0`), so you can retry with `sendmsg` for each.
+
+On error returns `{error, Reason}`.
+""".
+-spec sendmmsg(Socket, Msgs, Flags, Timeout :: 'infinity') ->
+          'ok' |
+          {'ok', Rest} |
+          {'error', Reason}
+              when
+      Socket  :: socket(),
+      Msgs    :: [msg_send()],
+      Flags   :: [msg_flag() | integer()],
+      Rest    :: [erlang:iovec()],
+      Reason  :: posix() | 'closed' | invalid();
+
+             (Socket, Msgs, Flags, Timeout :: non_neg_integer()) ->
+          'ok' |
+          {'ok', Rest} |
+          {'error', Reason | 'timeout'}
+              when
+      Socket  :: socket(),
+      Msgs    :: [msg_send()],
+      Flags   :: [msg_flag() | integer()],
+      Rest    :: [erlang:iovec()],
+      Reason  :: posix() | 'closed' | invalid();
+
+             (Socket, Msgs, Flags, 'nowait' | Handle) ->
+                  'ok' |
+                  {'ok', Rest} |
+                  {'select_write', {SelectInfo, SentCount}} |
+                  {'select', SelectInfo} |
+                  {'completion', CompletionInfo} |
+                  {'error', Reason}
+                      when
+      Socket         :: socket(),
+      Msgs           :: [msg_send()],
+      Flags          :: [msg_flag() | integer()],
+      Handle         :: select_handle() | completion_handle(),
+      Rest           :: [erlang:iovec()],
+      SentCount      :: non_neg_integer(),
+      SelectInfo     :: select_info(),
+      CompletionInfo :: completion_info(),
+      Reason         :: posix() | 'closed' | invalid().
+
+sendmmsg(?socket(SockRef), Msgs, Flags, Timeout)
+  when is_reference(SockRef), is_list(Msgs), is_list(Flags) ->
+    try
+        case deadline(Timeout) of
+            invalid ->
+                erlang:error({invalid, {timeout, Timeout}});
+            nowait ->
+                Handle = make_ref(),
+                sendmmsg_nowait(SockRef, Msgs, Flags, Handle);
+            handle ->
+                Handle = Timeout,
+                sendmmsg_nowait(SockRef, Msgs, Flags, Handle);
+            Deadline ->
+                sendmmsg_deadline(SockRef, Msgs, Flags, Deadline)
+        end
+    catch
+        error:undef:ST ->
+            case ST of
+                [{prim_socket,sendmmsg,_,_}|_] ->
+                    {error, notsup};
+                _ ->
+                    erlang:raise(error, undef, ST)
+            end
+    end;
+sendmmsg(Socket, Msgs, Flags, Timeout) ->
+    error(badarg, [Socket, Msgs, Flags, Timeout]).
+
+%% Build rest iovecs from partials-only result list.
+%% C returns [{Index, Written}, ...] in message order; we slice the Index-th message's iov.
+sendmmsg_rest_from_result(Msgs, ResultList) ->
+    [iovec_rest(maps:get(iov, lists:nth(Index + 1, Msgs)), Written) ||
+        {Index, Written} <- ResultList].
+
+%% Skip first Written bytes from IOV; return rest as iovec (same as sendmsg rest).
+iovec_rest(IOV, Written) when Written =< 0 ->
+    IOV;
+iovec_rest([], _) ->
+    [];
+iovec_rest([Bin | Rest], Written) when byte_size(Bin) =< Written ->
+    iovec_rest(Rest, Written - byte_size(Bin));
+iovec_rest([Bin | Rest], Written) when byte_size(Bin) > Written ->
+    [binary:part(Bin, Written, byte_size(Bin) - Written) | Rest].
+
+sendmmsg_nowait(SockRef, Msgs, Flags, Handle) ->
+    case prim_socket:sendmmsg(SockRef, Msgs, Flags, Handle) of
+        {select_write = Tag, SentCount} ->
+            {Tag, {?SELECT_INFO(sendmmsg, Handle), SentCount}};
+        select = Tag ->
+            {Tag, ?SELECT_INFO(sendmmsg, Handle)};
+        completion = Tag ->
+            {Tag, ?COMPLETION_INFO(sendmmsg, Handle)};
+        ok ->
+            ok;
+        {ok, ResultList} ->
+            {ok, sendmmsg_rest_from_result(Msgs, ResultList)};
+        {error, _} = Error ->
+            Error
+    end.
+
+sendmmsg_deadline(SockRef, Msgs, Flags, Deadline) ->
+    Handle = make_ref(),
+    case prim_socket:sendmmsg(SockRef, Msgs, Flags, Handle) of
+        {select_write, _SentCount} ->
+            Now = erlang:monotonic_time(millisecond),
+            case Deadline - Now of
+                TimeLeft when TimeLeft > 0 ->
+                    receive
+                        ?socket_msg(_Socket, select, Handle) ->
+                            sendmmsg_deadline(SockRef, Msgs, Flags, Deadline);
+                        ?socket_msg(_Socket, abort, {Handle, Reason}) ->
+                            _ = cancel(SockRef, sendmmsg, Handle),
+                            {error, Reason}
+                    after TimeLeft ->
+                            _ = cancel(SockRef, sendmmsg, Handle),
+                            {error, timeout}
+                    end;
+                _ ->
+                    _ = cancel(SockRef, sendmmsg, Handle),
+                    {error, timeout}
+            end;
+        ok ->
+            ok;
+        {ok, ResultList} ->
+            {ok, sendmmsg_rest_from_result(Msgs, ResultList)};
+        {error, _} = Error ->
+            Error
+    end.
 
 sendmsg_deadline_cont(SockRef, Data, Cont, Deadline, HasWritten) ->
     SelectHandle = make_ref(),
@@ -6602,6 +6845,166 @@ recvmsg_deadline(SockRef, BufSz, CtrlSz, Flags, Deadline)  ->
             recvmsg_result(Result)
     end.
 
+-doc(#{since => <<"OTP 29.0">>}).
+-doc """
+Receive multiple messages on a socket.
+
+This function is equivalent to calling [`recvmsg/5`](`recvmsg/5`) multiple times,
+but uses the platform's `recvmmsg` syscall for better performance when receiving
+multiple datagrams.
+
+> #### Note {: .info }
+>
+> This function is only available on Linux and BSD systems (not macOS/Darwin or Windows).
+> On unsupported platforms, it will return `{error, notsup}`.
+
+Arguments:
+- `VLen` - Maximum number of messages to receive (must be >= 1).
+- `BufSz` - Buffer size for each message (0 uses default).
+- `CtrlSz` - Control message buffer size for each message (0 uses default).
+- `Flags` - Receive flags (same as `recvmsg/5`).
+- `Timeout` - Timeout or `nowait` or `infinity`.
+
+Returns a list of message maps, one per received message. The list length
+indicates how many messages were actually received.
+""".
+-spec recvmmsg(Socket, VLen, BufSz, CtrlSz, Flags, Timeout :: 'infinity') ->
+          {'ok', Msgs} |
+          {'error', Reason} when
+      Socket  :: socket(),
+      VLen    :: non_neg_integer(),
+      BufSz   :: non_neg_integer(),
+      CtrlSz  :: non_neg_integer(),
+      Flags   :: [msg_flag() | integer()],
+      Msgs    :: [msg_recv()],
+      Reason  :: posix() | 'closed' | invalid();
+
+             (Socket, VLen, BufSz, CtrlSz, Flags, Timeout :: non_neg_integer()) ->
+          {'ok', Msgs} |
+          {'error', Reason} when
+      Socket  :: socket(),
+      VLen    :: non_neg_integer(),
+      BufSz   :: non_neg_integer(),
+      CtrlSz  :: non_neg_integer(),
+      Flags   :: [msg_flag() | integer()],
+      Msgs    :: [msg_recv()],
+      Reason  :: posix() | 'closed' | invalid() | 'timeout';
+
+             (Socket, VLen, BufSz, CtrlSz, Flags, 'nowait' | Handle) ->
+          {'ok', Msgs} |
+          {'select', SelectInfo} |
+          {'select_read', {SelectInfo, Msgs}} |
+          {'completion', CompletionInfo} |
+          {'error', Reason} when
+      Socket         :: socket(),
+      VLen           :: non_neg_integer(),
+      BufSz          :: non_neg_integer(),
+      CtrlSz         :: non_neg_integer(),
+      Handle         :: select_handle() | completion_handle(),
+      Flags          :: [msg_flag() | integer()],
+      Msgs           :: [msg_recv()],
+      SelectInfo     :: select_info(),
+      CompletionInfo :: completion_info(),
+      Reason         :: posix() | 'closed' | invalid().
+
+recvmmsg(?socket(SockRef), VLen, BufSz, CtrlSz, Flags, Timeout)
+  when is_reference(SockRef),
+       is_integer(VLen), VLen >= 1,
+       is_integer(BufSz), BufSz >= 0,
+       is_integer(CtrlSz), CtrlSz >= 0,
+       is_list(Flags) ->
+    try
+        case deadline(Timeout) of
+            invalid ->
+                erlang:error({invalid, {timeout, Timeout}});
+            nowait ->
+                Handle = make_ref(),
+                recvmmsg_nowait(SockRef, VLen, BufSz, CtrlSz, Flags, Handle);
+            handle ->
+                Handle = Timeout,
+                recvmmsg_nowait(SockRef, VLen, BufSz, CtrlSz, Flags, Handle);
+            zero ->
+                case prim_socket:recvmmsg(SockRef, VLen, BufSz, CtrlSz, Flags, zero) of
+                    timeout ->
+                        {error, timeout};
+                    {ok, _} = Result ->
+                        Result;
+                    {error, _} = Result ->
+                        Result
+                end;
+            Deadline ->
+                recvmmsg_deadline(SockRef, VLen, BufSz, CtrlSz, Flags, Deadline)
+        end
+    catch
+        error:undef:ST ->
+            case ST of
+                [{prim_socket,recvmmsg,_,_}|_] ->
+                    {error, notsup};
+                _ ->
+                    erlang:raise(error, undef, ST)
+            end
+    end;
+recvmmsg(Socket, VLen, BufSz, CtrlSz, Flags, Timeout) ->
+    error(badarg, [Socket, VLen, BufSz, CtrlSz, Flags, Timeout]).
+
+recvmmsg_nowait(SockRef, VLen, BufSz, CtrlSz, Flags, Handle) ->
+    case prim_socket:recvmmsg(SockRef, VLen, BufSz, CtrlSz, Flags, Handle) of
+        {select_read = Tag, Msgs} ->
+            {Tag, {?SELECT_INFO(recvmmsg, Handle), Msgs}};
+        select = Tag ->
+            {Tag, ?SELECT_INFO(recvmmsg, Handle)};
+        completion = Tag ->
+            {Tag, ?COMPLETION_INFO(recvmmsg, Handle)};
+        {ok, Msgs} ->
+            {ok, Msgs};
+        {error, _} = Error ->
+            Error
+    end.
+
+recvmmsg_deadline(SockRef, VLen, BufSz, CtrlSz, Flags, Deadline) ->
+    Handle = make_ref(),
+    case prim_socket:recvmmsg(SockRef, VLen, BufSz, CtrlSz, Flags, Handle) of
+        {select_read, _Msgs} ->
+            _ = cancel(SockRef, recvmmsg, Handle),
+            Now = erlang:monotonic_time(millisecond),
+            case Deadline - Now of
+                TimeLeft when TimeLeft > 0 ->
+                    receive
+                        ?socket_msg(_Socket, select, Handle) ->
+                            recvmmsg_deadline(SockRef, VLen, BufSz, CtrlSz, Flags, Deadline);
+                        ?socket_msg(_Socket, abort, {Handle, Reason}) ->
+                            _ = cancel(SockRef, recvmmsg, Handle),
+                            {error, Reason}
+                    after TimeLeft ->
+                            _ = cancel(SockRef, recvmmsg, Handle),
+                            {error, timeout}
+                    end;
+                _ ->
+                    _ = cancel(SockRef, recvmmsg, Handle),
+                    {error, timeout}
+            end;
+
+        select = Tag ->
+            %% There is nothing just now, but we will be notified when there
+            %% is something to read (a select message).
+            Timeout = timeout(Deadline),
+            receive
+                ?socket_msg(?socket(SockRef), Tag, Handle) ->
+                    recvmmsg_deadline(
+                      SockRef, VLen, BufSz, CtrlSz, Flags, Deadline);
+                ?socket_msg(_Socket, abort, {Handle, Reason}) ->
+                    {error, Reason}
+            after Timeout ->
+                    _ = cancel(SockRef, recvmmsg, Handle),
+                    {error, timeout}
+            end;
+
+        {ok, Msgs} ->
+            {ok, Msgs};
+        {error, _} = Error ->
+            Error
+    end.
+
 recvmsg_result(Result) ->
     %% ?DBG([{result, Result}]),
     case Result of
@@ -7036,7 +7439,7 @@ sockname(Socket) ->
 %%
 %%
 
--doc(#{since => <<"OTP @OTP-19834@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -doc """
 Get the socket's address.
 
@@ -7097,7 +7500,7 @@ peername(Socket) ->
 %%
 %%
 
--doc(#{since => <<"OTP @OTP-19834@">>}).
+-doc(#{since => <<"OTP 29.0">>}).
 -doc """
 Return the remote (peer) address(s) of an association of a socket.
 

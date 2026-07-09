@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2006-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2006-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -566,20 +566,26 @@ unzip_traversal_exploit(Config) ->
 unzip_jar(Config) when is_list(Config) ->
     DataDir = get_value(data_dir, Config),
     PrivDir = get_value(priv_dir, Config),
+
     JarFile = filename:join(DataDir, "test.jar"),
+
+    %% Create a jar file programatically
+    _ = os:cmd("jar -cvfm " ++ JarFile ++ " " ++ filename:join(DataDir, "META-INF/MANIFEST.MF")
+                ++ " " ++ filename:join(DataDir, "test.txt")),
 
     %% create a temp directory
     Subdir = filename:join(PrivDir, "jartest"),
     ok = file:make_dir(Subdir),
 
-    FList = ["META-INF/MANIFEST.MF","test.txt"],
-
+    %% tests unzip
     {ok, RetList} = zip:unzip(JarFile, [{cwd, Subdir}]),
 
     %% Verify.
-    lists:foreach(fun(F)-> {ok,B} = file:read_file(filename:join(DataDir, F)),
-			   {ok,B} = file:read_file(filename:join(Subdir, F)) end,
-		  FList),
+    FList = [filename:join(DataDir, X) || X <- ["META-INF/MANIFEST.MF","test.txt"]],
+    lists:foreach(fun(F)->
+                          {ok,B} = file:read_file(filename:join(DataDir, F)),
+                          {ok,B} = file:read_file(filename:join(Subdir, F)) end,
+                  FList),
     lists:foreach(fun(F)->
                           case lists:last(F) =:= $/ of
                               true -> ok = file:del_dir(F);
@@ -1309,8 +1315,11 @@ mode(Config) ->
        zip:list_dir(Archive)),
 
     ok = file:make_dir(ExtractDir),
-    ?assertMatch(
-       {ok, ["dir/","dir/nested","exec"]}, unzip(Config, Archive, [{cwd,ExtractDir}])),
+    case unzip(Config, Archive, [{cwd,ExtractDir}]) of
+        {ok, ["dir/","dir/nested","exec"]} -> ok;
+        {ok, ["dir","dir/nested","exec"]} -> ok; %macOS, old unzip
+        UnzipError -> error({unexpected,UnzipError})
+    end,
 
     case un_z64(get_value(unzip, Config)) =/= unemzip of
         true ->

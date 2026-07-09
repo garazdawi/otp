@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2024-2025. All Rights Reserved.
+# Copyright Ericsson AB 2024-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -54,6 +54,7 @@
     "reference_manual/expressions.md": [],
     "reference_manual/macros.md": [],
     "reference_manual/ref_man_records.md": [],
+    "reference_manual/ref_man_native_records.md": [],
     "reference_manual/errors.md": [],
     "reference_manual/features.md": [],
     "reference_manual/ref_man_processes.md": [],
@@ -98,7 +99,8 @@
     "design_principles/distributed_applications.md": [],
     "design_principles/release_structure.md": [],
     "design_principles/release_handling.md": [],
-    "design_principles/appup_cookbook.md": []
+    "design_principles/appup_cookbook.md": [],
+    "design_principles/secure_coding.md": []
   ],
   main: "readme",
   api_reference: false,

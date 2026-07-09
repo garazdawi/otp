@@ -3,7 +3,7 @@
 
 SPDX-License-Identifier: Apache-2.0
 
-Copyright Ericsson AB 2023-2025. All Rights Reserved.
+Copyright Ericsson AB 2023-2026. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,6 +22,101 @@ limitations under the License.
 # Crypto Release Notes
 
 This document describes the changes made to the Crypto application.
+
+## Crypto 5.9.1
+
+### Fixed Bugs and Malfunctions
+
+- `crypto:compute_key/4` for `eddh` and [`crypto:generate_key/2,3`](`crypto:generate_key/3`) for `eddh`/`eddsa` now raise an `error:{notsup, Info, Description}` exception instead of returning the atom `notsup` when the underlying cryptolib lacks support.
+
+  Own Id: OTP-20215 Aux Id: [PR-11302]
+
+[PR-11302]: https://github.com/erlang/otp/pull/11302
+
+## Crypto 5.9
+
+### Fixed Bugs and Malfunctions
+
+- Fixed `crypto:hash_equals/2` and FIPS when crypto is statically linked to the beam (with `--enable-static-nifs` and `--disable-dynamic-ssl-lib`).
+
+  Own Id: OTP-20025 Aux Id: [PR-10817]
+
+[PR-10817]: https://github.com/erlang/otp/pull/10817
+
+### Improvements and New Features
+
+- The `rand:bytes/1` and `rand:bytes_s/2` functions have been optimized by implementing a new internal callback function that `crypto:rand_seed_alg/1` and `crypto:alg_seed_alg_s/1` have been updated to use.
+  
+  A new algorithm `crypto_prng1`, which also takes advantage of this new internal callback, has been added to `crypto:rand_seed_alg/2` and `crypto:rand_seed_alg_s/2`.  It is much faster then the existing `crypto_aes`, in particular for generating bytes.
+
+  Own Id: OTP-19882 Aux Id: OTP-19827, [PR-10453]
+
+- In interactive mode, application `crypto` is automatically loaded when the `m:crypto` module is loaded. This will ensure that the correct value of configuration parameter `fips_mode` is used to initialize OpenSSL if module `crypto` is called/loaded before the application `crypto` has been loaded. In embedded mode, module `crypto` will fail to load if the application has not been loaded.
+
+  Own Id: OTP-20035 Aux Id: [PR-10830]
+
+- OpenSSL engine support has been removed on Windows.
+
+  Own Id: OTP-20036 Aux Id: [PR-10836]
+
+- Added support for `-unsafe` attributes, which is used to mark functions as unsafe to use. 
+  
+  This is similar to but separate from deprecation, and the compiler will by default now generate warnings for calls to functions in Erlang/OTP that are known to be always unsafe.
+  
+  Furthermore, `m:xref` can now be used to find calls to functions in another application that lack a `-doc` attribute (`undocumented_function_calls`), calls to functions in another application marked `-doc false.` (`private_function_calls`), as well as calls to unsafe functions (`unsafe_function_calls`).
+
+  Own Id: OTP-20066 Aux Id: [PR-10839]
+
+- The runtime system now supports generating encrypted crash dumps. See the description of `--enable-encrypted-crash-dumps` in [Building and Installing Erlang/OTP](https://www.erlang.org/doc/system/install.html).
+
+  Own Id: OTP-20085 Aux Id: [PR-10993]
+
+[PR-10453]: https://github.com/erlang/otp/pull/10453
+[PR-10830]: https://github.com/erlang/otp/pull/10830
+[PR-10836]: https://github.com/erlang/otp/pull/10836
+[PR-10839]: https://github.com/erlang/otp/pull/10839
+[PR-10993]: https://github.com/erlang/otp/pull/10993
+
+## Crypto 5.8.3.1
+
+### Fixed Bugs and Malfunctions
+
+- `crypto:compute_key/4` for `eddh` and [`crypto:generate_key/2,3`](`crypto:generate_key/3`) for `eddh`/`eddsa` now raise an `error:{notsup, Info, Description}` exception instead of returning the atom `notsup` when the underlying cryptolib lacks support.
+
+  Own Id: OTP-20215 Aux Id: [PR-11302]
+
+[PR-11302]: https://github.com/erlang/otp/pull/11302
+
+## Crypto 5.8.3
+
+### Fixed Bugs and Malfunctions
+
+- Fix memory leak in `crypo:engine_load` if called with incorrect commands.
+
+  Own Id: OTP-20014 Aux Id: [PR-10798]
+
+[PR-10798]: https://github.com/erlang/otp/pull/10798
+
+## Crypto 5.8.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed `crypto:crypto_one_time_aead/4`, which could crash the runtime system if invoked in parallel with the same state.
+
+  Own Id: OTP-19973 Aux Id: [GH-10652], [PR-10668]
+
+[GH-10652]: https://github.com/erlang/otp/issues/10652
+[PR-10668]: https://github.com/erlang/otp/pull/10668
+
+## Crypto 5.8.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed static linking of OpenSSL 3.5+ on Windows.
+
+  Own Id: OTP-19993 Aux Id: [PR-10732]
+
+[PR-10732]: https://github.com/erlang/otp/pull/10732
 
 ## Crypto 5.8
 
@@ -159,6 +254,36 @@ This document describes the changes made to the Crypto application.
 [PR-9441]: https://github.com/erlang/otp/pull/9441
 [PR-9670]: https://github.com/erlang/otp/pull/9670
 
+## Crypto 5.5.3.3
+
+### Fixed Bugs and Malfunctions
+
+- `crypto:compute_key/4` for `eddh` and [`crypto:generate_key/2,3`](`crypto:generate_key/3`) for `eddh`/`eddsa` now raise an `error:{notsup, Info, Description}` exception instead of returning the atom `notsup` when the underlying cryptolib lacks support.
+
+  Own Id: OTP-20215 Aux Id: [PR-11302]
+
+[PR-11302]: https://github.com/erlang/otp/pull/11302
+
+## Crypto 5.5.3.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed bug that could cause runtime crash after ~2 billion calls to `crypto:mac_init` due to a double EVP_MAC_free.
+
+  Own Id: OTP-20041 Aux Id: [PR-10859]
+
+[PR-10859]: https://github.com/erlang/otp/pull/10859
+
+## Crypto 5.5.3.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed static linking of OpenSSL 3.5+ on Windows.
+
+  Own Id: OTP-19993 Aux Id: [PR-10732]
+
+[PR-10732]: https://github.com/erlang/otp/pull/10732
+
 ## Crypto 5.5.3
 
 ### Fixed Bugs and Malfunctions
@@ -264,6 +389,14 @@ This document describes the changes made to the Crypto application.
 [PR-7809]: https://github.com/erlang/otp/pull/7809
 [PR-8168]: https://github.com/erlang/otp/pull/8168
 [PR-8233]: https://github.com/erlang/otp/pull/8233
+
+## Crypto 5.4.2.4
+
+### Fixed Bugs and Malfunctions
+
+* Fixed static linking of OpenSSL 3.5+ on Windows.
+
+  Own Id: OTP-19993 Aux Id: PR-10732
 
 ## Crypto 5.4.2.3
 

@@ -47,9 +47,9 @@ static int fd_to_erl;		/* File descriptor to Erlang. */
 
 static int packet_loop();
 static void ensure_buf_big_enough();
-static int readn();
+static int readn(int fd, unsigned char *buf, int len);
 static void reply(char* buf, unsigned size);
-static void dump();
+static void dump(unsigned char* buf, int sz, int max);
 
 void
 run_tests(char* argv0, TestCase test_cases[], unsigned number)

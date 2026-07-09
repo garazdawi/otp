@@ -221,7 +221,7 @@ add_42_tail([], Acc) ->
     lists:reverse(Acc).
 ```
 
-In early version of Erlang the tail-recursive function would typically
+In early versions of Erlang the tail-recursive function would typically
 be more efficient. In modern versions of Erlang, there is usually not
 much difference in performance between a body-recursive list function and
 tail-recursive function that reverses the list at the end. Therefore,

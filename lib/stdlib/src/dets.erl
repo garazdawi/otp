@@ -83,12 +83,13 @@ All Dets functions return `{error, Reason}` if an error occurs (`first/1` and
 formed arguments are specified, all functions exit the process with a `badarg`
 message.
 
-## See Also
+### See Also
 
 `m:ets`, `m:mnesia`, `m:qlc`
 """.
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}},
+          nowarn_deprecated_catch]).
 
 %% Disk based linear hashing lookup dictionary.
 

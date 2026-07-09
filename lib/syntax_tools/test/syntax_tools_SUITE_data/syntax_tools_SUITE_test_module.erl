@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2014-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2014-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -44,6 +44,7 @@
 -type some_type() :: map().
 -type some_other_type() :: {'a', #{ list() => term()} }.
 
+-export_record([a, b]).
 -record #a{x, y}.
 -record #b{x=none, y=none, z=none}.
 
@@ -645,13 +646,24 @@ eep78() ->
     ok.
 
 native_record() ->
+    %% Creation.
     ARec = #a{x=1, y=2},
-    #a{x=1} = ARec,
+    ARec = #?MODULE:a{x=1, y=2},
 
+    %% Update.
     R0 = #b{},
     R0 = R0#b{},
     R1 = R0#b{x=foo},
-    #b{x=foo, y=none, z=none} = R1,
-    % foo = R1#_.x,
-    foo = R1#b.x.
+    R1 = R0#?MODULE:b{x=foo},
+    R1 = R0#_{x=foo},
 
+    %% Pattern matching.
+    #a{x=1} = ARec,
+    #?MODULE:a{x=1, y=2} = ARec,
+    #_{x=1, y=2} = ARec,
+
+    %% Field access.
+    #b{x=foo, y=none, z=none} = R1,
+    foo = R1#b.x,
+    foo = R1#?MODULE:b.x,
+    foo = R1#_.x.

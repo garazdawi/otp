@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2016-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2016-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -459,7 +459,7 @@ handle_event(_, _, State, Data) ->
 > - In OTP 27.0 [`Module:format_status/2`](`c:format_status/2`)
 >   was deprecated.
 
-## See Also
+### See Also
 
 `m:gen_event`, `m:gen_fsm`, `m:gen_server`, `m:proc_lib`, `m:supervisor`,
 `m:sys`.
@@ -2351,7 +2351,7 @@ for the `gen_statem` process.  If the `gen_statem` process is started with
 - **[`{error, timeout}`](`t:start_ret/0`)** -
   [`Module:init/1`](`c:init/1`) did not return within
   the [start time-out](`t:start_opt/0`).  The `gen_statem` process
-  has been killed with [`exit(_, kill)`](`erlang:exit/2`).
+  has been killed with [`exit_signal(_, kill)`](`erlang:exit_signal/2`).
 
 - **[`{error, Reason}`](`t:start_ret/0`)**
   + Either [`Module:init/1`](`c:init/1`) returned

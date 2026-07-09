@@ -3,8 +3,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
+%% Copyright Ericsson AB 2010-2026. All Rights Reserved.
 %% Copyright 1999-2004 Richard Carlsson
-%% Copyright Ericsson AB 2010-2025. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,6 +29,8 @@
 
 -module(rec_env).
 -moduledoc false.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([bind/3, bind_list/3, bind_recursive/4, delete/2, empty/0,
 	 get/2, is_defined/2, is_empty/1, keys/1, lookup/2, new_key/1,

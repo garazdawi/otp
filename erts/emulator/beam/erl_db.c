@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 1996-2025. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -251,7 +251,7 @@ static void table_dec_refc(DbTable *tb, erts_aint_t min_val)
 static ERTS_INLINE DbTable* btid2tab(Binary* btid)
 {
     erts_atomic_t *tbref = erts_binary_to_magic_indirection(btid);
-    return (DbTable *) erts_atomic_read_nob(tbref);
+    return (DbTable *) erts_atomic_read_acqb(tbref);
 }
 
 static int
@@ -334,7 +334,7 @@ tid_clear(Process *c_p, DbTable *tb)
     DbTable *rtb;
     Binary *btid = tb->common.btid;
     erts_atomic_t *tbref = erts_binary_to_magic_indirection(btid);
-    rtb = (DbTable *) erts_atomic_xchg_nob(tbref, (erts_aint_t) NULL);
+    rtb = (DbTable *) erts_atomic_xchg_relb(tbref, (erts_aint_t) NULL);
     ASSERT(!rtb || tb == rtb);
     if (rtb) {
         table_dec_refc(tb, 1);
@@ -1391,13 +1391,8 @@ static BIF_RETTYPE do_update_element(Process *p, DbTable *tb,
     }
 
     if (!tb->common.meth->db_lookup_dbterm(p, tb, key, default_obj, &handle)) {
-        if (is_value(default_obj)) {
-            p->fvalue = EXI_DEFAULT;
-            cret = DB_ERROR_UNSPEC;
-        }
-        else {
-            cret = DB_ERROR_BADKEY;
-        }
+        ASSERT(is_non_value(default_obj));
+        cret = DB_ERROR_BADKEY;
 	goto bail_out;
     }
 
@@ -1485,9 +1480,11 @@ BIF_RETTYPE ets_update_element_4(BIF_ALIST_4)
 
     DB_BIF_GET_TABLE(tb, DB_WRITE, LCK_WRITE_REC, BIF_ets_update_element_4);
 
-    if (is_not_tuple(BIF_ARG_4)) {
+    if (is_not_tuple(BIF_ARG_4)
+	|| arityval(*tuple_val(BIF_ARG_4)) < tb->common.keypos) {
         db_unlock(tb, LCK_WRITE_REC);
-        BIF_ERROR(BIF_P, BADARG);
+        BIF_P->fvalue = EXI_DEFAULT;
+        BIF_ERROR(BIF_P, BADARG | EXF_HAS_EXT_INFO);
     }
 
     return do_update_element(BIF_P, tb, BIF_ARG_2, BIF_ARG_3, BIF_ARG_4);
@@ -1533,7 +1530,8 @@ do_update_counter(Process *p, DbTable* tb,
     }
 
     if (!tb->common.meth->db_lookup_dbterm(p, tb, arg2, arg4, &handle)) {
-        p->fvalue = is_value(arg4) ? EXI_DEFAULT : EXI_BAD_KEY;
+        ASSERT(is_non_value(arg4));
+        p->fvalue = EXI_BAD_KEY;
 	cret = DB_ERROR_BADPARAM;
 	goto bail_out; /* key not found */
     }
@@ -1720,9 +1718,11 @@ BIF_RETTYPE ets_update_counter_4(BIF_ALIST_4)
 
     DB_BIF_GET_TABLE(tb, DB_WRITE, LCK_WRITE_REC, BIF_ets_update_counter_4);
 
-    if (is_not_tuple(BIF_ARG_4)) {
+    if (is_not_tuple(BIF_ARG_4)
+	|| arityval(*tuple_val(BIF_ARG_4)) < tb->common.keypos) {
         db_unlock(tb, LCK_WRITE_REC);
-        BIF_ERROR(BIF_P, BADARG);
+        BIF_P->fvalue = EXI_DEFAULT;
+        BIF_ERROR(BIF_P, BADARG | EXF_HAS_EXT_INFO);
     }
 
     return do_update_counter(BIF_P, tb, BIF_ARG_2, BIF_ARG_3, BIF_ARG_4);
@@ -5150,6 +5150,8 @@ static void fix_table_locked(Process* p, DbTable* tb)
     DbFixation *fix;
     int use_locks = !DB_LOCK_FREE(tb);
 
+    ERTS_LC_ASSERT(DB_LOCK_FREE(tb) || erts_lc_rwmtx_is_rlocked(&tb->common.rwlock));
+
     if (use_locks)
         erts_mtx_lock(&tb->common.fixlock);
 
@@ -5194,6 +5196,8 @@ static void unfix_table_locked(Process* p,  DbTable* tb,
 {
     DbFixation* fix;
     int use_locks = !DB_LOCK_FREE(tb);
+
+    ERTS_LC_ASSERT(DB_LOCK_FREE(tb) || erts_lc_rwmtx_is_rlocked(&tb->common.rwlock));
 
     if (use_locks)
         erts_mtx_lock(&tb->common.fixlock);

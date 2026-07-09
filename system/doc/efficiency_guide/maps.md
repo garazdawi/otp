@@ -45,7 +45,7 @@ The advantages of records compared to maps are:
 
 - If the name of a record field is misspelled, there will be a compilation
   error. If a map key is misspelled, the compiler will give no warning and
-  program will fail in some way when it is run.
+  the program will fail in some way when it is run.
 - Records will use slightly less memory than maps, and performance is expected
   to be _slightly_ better than maps in most circumstances.
 
@@ -67,7 +67,7 @@ module.
   it.
 - Always update the map using the `:=` operator (that is, requiring that an
   element with that key already exists). The `:=` operator is slightly more
-  efficient, and it helps catching mispellings of keys.
+  efficient, and it helps catch misspellings of keys.
 - Whenever possible, match multiple map elements at once.
 - Whenever possible, update multiple map elements at once.
 - Avoid default values and the `maps:get/3` function. If there are default
@@ -297,12 +297,12 @@ efficient than using the `=>` operator for a small map.
 
 Here follows some notes about most of the functions in the `maps` module. For
 each function, the implementation language (C or Erlang) is stated. The reason
-we mention the language is that it gives an hint about how efficient the
+we mention the language is that it gives a hint about how efficient the
 function is:
 
 - If a function is implemented in C, it is pretty much impossible to implement
   the same functionality more efficiently in Erlang.
-- However, it might be possible to beat the `maps` modules functions implemented
+- However, it might be possible to beat the `maps` module's functions implemented
   in Erlang, because they are generally implemented in a way that attempts to
   make the performance reasonable for all possible inputs.
 
@@ -433,12 +433,12 @@ that will call `maps:update/3` to update only the values that have changed.
 
 `maps:merge/2` is implemented in C. For [small maps](maps.md#terminology), the
 key tuple may be shared with any of the argument maps if that argument map
-contains all the keys. Literal key tuples are prefered if possible.
+contains all the keys. Literal key tuples are preferred if possible.
 
 > #### Change {: .info }
 >
 > The sharing of key tuples by `maps:merge/2` was introduced in OTP 26.0. Older
-> versions always contructed a new key tuple on the callers heap.
+> versions always constructed a new key tuple on the caller's heap.
 
 ### maps:merge_with/3
 

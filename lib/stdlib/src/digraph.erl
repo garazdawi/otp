@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -70,7 +70,7 @@ directed graphs is used here.
 - A _simple cycle_{: #simple_cycle } is a path that is both a cycle and simple.
 - An _acyclic digraph_{: #acyclic_digraph } is a digraph without cycles.
 
-## See Also
+### See Also
 
 `m:digraph_utils`, `m:ets`
 """.
@@ -328,7 +328,7 @@ vertices(G) ->
 Returns a list of all vertices of graph `G` with
 [in-degree](`m:graph#in_degree`) zero.
 """.
--doc(#{ since => ~"OTP @OTP-19922@"}).
+-doc(#{ since => ~"OTP 29.0"}).
 -spec source_vertices(graph()) -> [vertex()].
 
 source_vertices(G) ->
@@ -338,7 +338,7 @@ source_vertices(G) ->
 Returns a list of all vertices of graph `G` with
 [out-degree](`m:graph#in_degree`) zero.
 """.
--doc(#{ since => ~"OTP @OTP-19922@"}).
+-doc(#{ since => ~"OTP 29.0"}).
 -spec sink_vertices(graph()) -> [vertex()].
 
 sink_vertices(G) ->

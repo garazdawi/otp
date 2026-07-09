@@ -45,6 +45,11 @@ macros described here and in the User's Guide:
 
 -include("public_key_internal.hrl").
 
+-compile([{nowarn_unsafe_function, {crypto, private_decrypt, 4}},
+          {nowarn_unsafe_function, {crypto, public_decrypt, 4}},
+          {nowarn_unsafe_function, {crypto, private_encrypt, 4}},
+          {nowarn_unsafe_function, {crypto, public_encrypt, 4}}]).
+
 -export([pem_decode/1, pem_encode/1, 
 	 der_decode/2, der_encode/2,
 	 pem_entry_decode/1,
@@ -91,6 +96,16 @@ macros described here and in the User's Guide:
 	]).
 %% Tracing
 -export([handle_trace/3]).
+
+-unsafe([{encrypt_private, 2},
+         {encrypt_private, 3, possibly},
+         {decrypt_private, 2},
+         {decrypt_private, 3, possibly},
+
+         {encrypt_public, 2},
+         {encrypt_public, 3, possibly},
+         {decrypt_public, 2},
+         {decrypt_public, 3, possibly}]).
 
 %%----------------
 %% Moved to ssh
@@ -164,6 +179,7 @@ macros described here and in the User's Guide:
                                  ecdsa_public_key() |
                                  eddsa_public_key() |
                                  mldsa_public_key() |
+                                 ml_kem_public_key() |
                                  slh_dsa_public_key().
 -doc(#{title => <<"Keys">>}).
 -doc "Supported private keys".
@@ -173,6 +189,7 @@ macros described here and in the User's Guide:
                                  ecdsa_private_key() |
                                  eddsa_private_key() |
                                  mldsa_private_key() |
+                                 ml_kem_private_key() |
                                  slh_dsa_private_key() |
                                  #{algorithm := slh_dsa | mldsa | eddsa | rsa_pss_pss |
                                    ecdsa | rsa | dsa,
@@ -222,6 +239,12 @@ ML-DSA public key
 """.
 -type mldsa_public_key()       :: #'ML-DSAPublicKey'{}.
 
+-doc(#{title => <<"Keys">>}).
+-doc """
+ML-KEM public key
+""".
+-type ml_kem_public_key()       :: #'ML-KEMPublicKey'{}.
+
 -doc """
 SLH-DSA public key
 """.
@@ -248,6 +271,12 @@ ASN.1 defined private key format for the EDDSA algorithm, possible oids: ?'id-Ed
 ML-DSA private key
 """.
 -type mldsa_private_key()       :: #'ML-DSAPrivateKey'{}.
+
+-doc(#{title => <<"Keys">>}).
+-doc """
+ML-KEM private key
+""".
+-type ml_kem_private_key()       :: #'ML-KEMPrivateKey'{}.
 
 -doc """
 SLH-DSA private key
@@ -323,7 +352,9 @@ The value of the issuer part of a certificate.
 -doc """
 The reason that a certifcate gets rejected by the certificate path validation.
 """.
--type bad_cert_reason()      :: cert_expired | invalid_issuer | invalid_signature | name_not_permitted |
+-type bad_cert_reason()      :: cert_expired | invalid_issuer | invalid_signature |
+                                distinguished_name_not_permitted |
+                                name_not_permitted |
                                 missing_basic_constraint | invalid_key_usage | duplicate_cert_in_path |
                                 {key_usage_mismatch, term()} |
                                 {'policy_requirement_not_met', term()} | {'invalid_policy_mapping', term()} |
@@ -444,6 +475,8 @@ pem_entry_decode({'SubjectPublicKeyInfo', Der, _}) ->
             {#'ECPoint'{point = Key0}, ECCParams};
         'ML-DSAPublicKey' ->
             mldsa_pub_key(AlgId, Key0);
+        'ML-KEMPublicKey' ->
+            ml_kem_pub_key(AlgId, Key0);
         'SLH-DSAPublicKey' ->
             slh_dsa_pub_key(AlgId, Key0)
     end;
@@ -523,6 +556,11 @@ pem_entry_encode('SubjectPublicKeyInfo',
 pem_entry_encode('SubjectPublicKeyInfo',
 		 #'ML-DSAPublicKey'{algorithm = Algorithm, key = Key}) ->
     AlgOid = pubkey_cert_records:mldsa_algo_to_oid(Algorithm),
+    Spki = subject_public_key_info(#'AlgorithmIdentifier'{algorithm = AlgOid}, Key),
+    pem_entry_encode('SubjectPublicKeyInfo', Spki);
+pem_entry_encode('SubjectPublicKeyInfo',
+                 #'ML-KEMPublicKey'{algorithm = Algorithm, key = Key}) ->
+    AlgOid = pubkey_cert_records:ml_kem_algo_to_oid(Algorithm),
     Spki = subject_public_key_info(#'AlgorithmIdentifier'{algorithm = AlgOid}, Key),
     pem_entry_encode('SubjectPublicKeyInfo', Spki);
 pem_entry_encode('SubjectPublicKeyInfo',
@@ -692,6 +730,9 @@ get_asn1_module('ECPrivateKey') -> 'ECPrivateKey';
 get_asn1_module('ML-DSA-44-PrivateKey') -> 'X509-ML-DSA-2025';
 get_asn1_module('ML-DSA-65-PrivateKey') -> 'X509-ML-DSA-2025';
 get_asn1_module('ML-DSA-87-PrivateKey') -> 'X509-ML-DSA-2025';
+get_asn1_module('ML-KEM-512-PrivateKey') -> 'X509-ML-KEM-2025';
+get_asn1_module('ML-KEM-768-PrivateKey') -> 'X509-ML-KEM-2025';
+get_asn1_module('ML-KEM-1024-PrivateKey') -> 'X509-ML-KEM-2025';
 get_asn1_module('SLH-DSA-PrivateKey') -> 'SLH-DSA-Module-2024';
 %% Certification Request Syntax Specification RFC 2986
 get_asn1_module('CertificationRequest') -> 'PKCS-10';
@@ -805,6 +846,13 @@ der_priv_key_decode(#'PrivateKeyInfo'{version = v1,
                                                                   Alg == ?'id-ml-dsa-65';
                                                                   Alg == ?'id-ml-dsa-87' ->
     mldsa_priv_key_dec(Alg, PrivKey);
+der_priv_key_decode(#'PrivateKeyInfo'{version = v1,
+                                      privateKeyAlgorithm =
+                                          #'PrivateKeyAlgorithmIdentifier'{algorithm = Alg},
+                                      privateKey = PrivKey}) when Alg == ?'id-alg-ml-kem-512';
+                                                                  Alg == ?'id-alg-ml-kem-768';
+                                                                  Alg == ?'id-alg-ml-kem-1024' ->
+    ml_kem_priv_key_dec(Alg, PrivKey);
 der_priv_key_decode(#'PrivateKeyInfo'{version = v1,
                                       privateKeyAlgorithm =
                                           #'PrivateKeyAlgorithmIdentifier'{algorithm = Alg},
@@ -927,6 +975,13 @@ der_encode('PrivateKeyInfo', #'ECPrivateKey'{parameters = Parameters} = PrivKey)
 der_encode('PrivateKeyInfo', #'ML-DSAPrivateKey'{algorithm = Algorithm} = Key) ->
     Alg = #'PrivateKeyAlgorithmIdentifier'{algorithm = pubkey_cert_records:mldsa_algo_to_oid(Algorithm)},
     PrivKey = mldsa_priv_key_enc(Key),
+    der_encode('OneAsymmetricKey',
+               #'OneAsymmetricKey'{version = v1,
+                                   privateKeyAlgorithm = Alg,
+                                   privateKey = PrivKey});
+der_encode('PrivateKeyInfo', #'ML-KEMPrivateKey'{algorithm = Algorithm} = Key) ->
+    Alg = #'PrivateKeyAlgorithmIdentifier'{algorithm = pubkey_cert_records:ml_kem_algo_to_oid(Algorithm)},
+    PrivKey = ml_kem_priv_key_enc(Key),
     der_encode('OneAsymmetricKey',
                #'OneAsymmetricKey'{version = v1,
                                    privateKeyAlgorithm = Alg,
@@ -1095,9 +1150,11 @@ the plain format this function directly calls
 %%--------------------------------------------------------------------
 pkix_encode(Asn1Type, Term, plain) when is_atom(Asn1Type) ->
     der_encode(Asn1Type, Term);
+pkix_encode('OTPSubjectPublicKeyInfo', Term0, otp) ->
+    SubjectPublicKeyInfo = pubkey_cert_records:encode_supportedPublicKey(Term0),
+    der_encode('SubjectPublicKeyInfo', SubjectPublicKeyInfo);
 pkix_encode(Type, Term0, otp)
-  when Type =:= 'OTPCertificate'; Type =:= 'OTPTBSCertificate';
-       Type =:= 'OTPSubjectPublicKeyInfo' ->
+  when Type =:= 'OTPCertificate'; Type =:= 'OTPTBSCertificate' ->
     Term = pubkey_cert_records:transform(Term0, encode),
     try
 	{ok, Encoded} = 'OTP-PKIX':encode(Type, Term),
@@ -1527,9 +1584,9 @@ pkix_hash_type(?'id-sha384') ->
     sha384;
 pkix_hash_type(?'id-sha256') ->
     sha256;
-pkix_hash_type('id-sha224') ->
+pkix_hash_type(?'id-sha224') ->
     sha224;
-pkix_hash_type('id-md5') ->
+pkix_hash_type(?'id-md5') ->
     md5.
 
 %%--------------------------------------------------------------------
@@ -2013,7 +2070,11 @@ Explanations of reasons for a bad certificate:
 - **invalid_signature** - Certificate was not signed by its issuer certificate
   in the chain.
 
-- **name_not_permitted** - Invalid Subject Alternative Name extension.
+- **distinguished_name_not_permitted** - Subject Name does not adhere to name constraints
+  which is mandatory in RFC 5280.
+
+- **name_not_permitted** - Subject Alternative Name does not adhere to name constraints,
+  which is optional in RFC 5280.
 
 - **missing_basic_constraint** - Certificate, required to have the basic
   constraints extension, does not have a basic constraints extension.
@@ -2267,26 +2328,8 @@ pkix_verify_hostname(Cert = #'OTPCertificate'{tbsCertificate = TbsCert}, Referen
     %% PresentedIDs example: [{dNSName,"ewstest.ericsson.com"}, {dNSName,"www.ericsson.com"}]}
     case PresentedIDs of
 	[] ->
-	    %% Fallback to CN-ids [rfc6125, ch6]
-	    case TbsCert#'OTPTBSCertificate'.subject of
-		{rdnSequence,RDNseq} ->
-		    PresentedCNs =
-			[{cn, to_string(V)}
-			 || ATVs <- RDNseq, % RDNseq is list-of-lists
-			    #'AttributeTypeAndValue'{type = ?'id-at-commonName',
-						     value = {_T,V}} <- ATVs
-						% _T = kind of string (teletexString etc)
-			],
-		    %% Example of PresentedCNs:  [{cn,"www.ericsson.se"}]
-		    %% match ReferenceIDs to PresentedCNs
-		    verify_hostname_match_loop(verify_hostname_fqdns(ReferenceIDs, FqdnFun),
-					       PresentedCNs,
-					       MatchFun, FailCB, Cert);
-		
-		_ ->
-		    false
-	    end;
-	_ ->
+          false;
+        _ ->
 	    %% match ReferenceIDs to PresentedIDs
 	    case verify_hostname_match_loop(ReferenceIDs, PresentedIDs,
 					    MatchFun, FailCB, Cert) of
@@ -3107,6 +3150,47 @@ mldsa_algo_to_type(mldsa65) ->
 mldsa_algo_to_type(mldsa87) ->
     'ML-DSA-87-PrivateKey'.
 
+ml_kem_pub_key(AlgOid, PubKey) ->
+    #'ML-KEMPublicKey'{algorithm = pubkey_cert_records:oid_to_ml_kem_algo(AlgOid),
+                       key = PubKey}.
+
+ml_kem_priv_key_dec(AlgOid, DERKey) ->
+    Alg = pubkey_cert_records:oid_to_ml_kem_algo(AlgOid),
+    ml_kem_priv_key_dec(ml_kem_algo_to_type(Alg), DERKey,
+                        #'ML-KEMPrivateKey'{algorithm = Alg}).
+
+ml_kem_priv_key_dec(Type, DERKey, PrivKey) ->
+    case der_decode(Type, DERKey) of
+        {seed, Seed} ->
+            PrivKey#'ML-KEMPrivateKey'{seed = Seed};
+        {expandedkey, ExpandedKey} ->
+            PrivKey#'ML-KEMPrivateKey'{expandedkey = ExpandedKey};
+        {both, {_, Seed, ExpandedKey}} ->
+            PrivKey#'ML-KEMPrivateKey'{seed = Seed,
+                                       expandedkey = ExpandedKey}
+    end.
+
+ml_kem_priv_key_enc(#'ML-KEMPrivateKey'{algorithm = Alg,
+                                        seed = Seed,
+                                        expandedkey = <<>>}) ->
+    der_encode(ml_kem_algo_to_type(Alg), {seed, Seed});
+ml_kem_priv_key_enc(#'ML-KEMPrivateKey'{algorithm = Alg,
+                                        seed = <<>>,
+                                        expandedkey = ExpandedKey}) ->
+    der_encode(ml_kem_algo_to_type(Alg), {expandedkey, ExpandedKey});
+ml_kem_priv_key_enc(#'ML-KEMPrivateKey'{algorithm = Alg,
+                                        seed = Seed,
+                                        expandedkey = ExpandedKey}) ->
+    Type = ml_kem_algo_to_type(Alg),
+    der_encode(Type, {both, {Type, Seed, ExpandedKey}}).
+
+ml_kem_algo_to_type(mlkem512) ->
+    'ML-KEM-512-PrivateKey';
+ml_kem_algo_to_type(mlkem768) ->
+    'ML-KEM-768-PrivateKey';
+ml_kem_algo_to_type(mlkem1024) ->
+    'ML-KEM-1024-PrivateKey'.
+
 slh_dsa_pub_key(AlgOid, PubKey) ->
     #'SLH-DSAPublicKey'{algorithm = pubkey_cert_records:oid_to_slh_dsa_algo(AlgOid),
                         key = PubKey}.
@@ -3203,10 +3287,6 @@ verify_hostname_fqdns(L, FqdnFun) ->
 verify_hostname_match_default(Ref, Pres) ->
     verify_hostname_match_default0(to_lower_ascii(Ref), to_lower_ascii(Pres)).
 
-verify_hostname_match_default0(FQDN=[_|_], {cn,FQDN}) -> 
-    not lists:member($*, FQDN);
-verify_hostname_match_default0(FQDN=[_|_], {cn,Name=[_|_]}) -> 
-    verify_hostname_match_wildcard(FQDN, Name);
 verify_hostname_match_default0({dns_id,R}, {dNSName,P}) ->
     R==P;
 verify_hostname_match_default0({uri_id,R}, {uniformResourceIdentifier,P}) ->

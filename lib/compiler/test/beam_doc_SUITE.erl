@@ -2,7 +2,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2023-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,7 +19,8 @@
 %% %CopyrightEnd%
 
 -module(beam_doc_SUITE).
--export([all/0, groups/0, init_per_group/2, end_per_group/2, singleton_moduledoc/1, singleton_doc/1,
+-export([all/0, groups/0, init_per_group/2, end_per_group/2,
+         singleton_moduledoc/1, singleton_doc/1, binary_doc/1,
          docmodule_with_doc_attributes/1, hide_moduledoc/1, docformat/1,
          singleton_docformat/1, singleton_meta/1, source_path/1, behaviours/1, slogan/1,
          types_and_opaques/1, callback/1, hide_moduledoc2/1,
@@ -52,6 +53,7 @@ end_per_group(_, _Config) ->
 documentation_generation_tests() ->
     [singleton_moduledoc,
      singleton_doc,
+     binary_doc,
      docmodule_with_doc_attributes,
      hide_moduledoc,
      hide_moduledoc2,
@@ -98,6 +100,22 @@ singleton_doc(Conf) ->
     {ok, {docs_v1, 1,_, Mime, none, _,
           [{{function, foo,1},_, [<<"foo(ok)">>], FooDoc, _},
            {{function, main,0},_, [<<"main()">>], Doc, _}]}} = code:get_doc(ModName),
+    ok.
+
+binary_doc(Conf) ->
+    ModuleName = "binary_doc",
+    {ok, ModName} = default_compile_file(Conf, ModuleName),
+
+    ModuleDoc = #{<<"en">> => <<"This is a binary moduledoc docstring">>},
+    TypeDoc = #{<<"en">> => <<"This is a binary type docstring">>},
+    CallbackDoc = #{<<"en">> => <<"This is a binary callback docstring">>},
+    FooDoc = #{<<"en">> => <<"This is a binary function docstring">>},
+
+    {ok, {docs_v1, _,_, _, ModuleDoc, _,
+                [{{type,type,0},_,[<<"type()">>],TypeDoc, _},
+                 {{callback,callback,0},_,[<<"callback()">>], CallbackDoc, _},
+                 {{function,foo,0},_,[<<"foo()">>], FooDoc, _}]}}
+           = code:get_doc(ModName),
     ok.
 
 docmodule_with_doc_attributes(Conf) ->

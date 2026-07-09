@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2003-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@
 %%
 
 -module(crashdump_viewer_SUITE).
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -include_lib("observer/src/crashdump_viewer.hrl").
 
@@ -44,6 +46,12 @@
 init_per_testcase(start_stop, Config) ->
     catch crashdump_viewer:stop(),
     try
+        case os:getenv("ERL_CRASH_DUMP_PUBLIC_KEY") of
+             false ->
+                ok;
+             _ ->
+                exit("Crashdump viewer does not support encrypted crash dumps")
+        end,
 	case os:type() of
 	    {unix,darwin} ->
 		exit("Can not test on MacOSX");

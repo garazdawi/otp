@@ -87,12 +87,10 @@
 -define(FINISHED, 20).
 -define(MAX_UNIT24, 8388607).
 
-%% Usually the biggest handshake message will be the message conveying the
-%% certificate chain. This size should be sufficient for usual certificate
-%% chains, certificates without special extensions have a typical size of
-%%  1-2kB. By dividing the old default value by 2 we still have a slightly
-%% bigger margin than OpenSSL
--define(DEFAULT_MAX_HANDSHAKE_SIZE, ((256*1024) div 2)).
+%% As of OTP-29 when PQC-algorithm SLH-DSA is supported by default
+%% handshakes need to allowed to be bigger by default to handle
+%% normal SLH-DSA keys.
+-define(DEFAULT_MAX_HANDSHAKE_SIZE, 256*1024).
 
 -record(random, {
 	  gmt_unix_time, % uint32
@@ -151,6 +149,8 @@
 -define(KEY_EXCHANGE_DHE_PSK, 3).
 -define(KEY_EXCHANGE_RSA_PSK, 4).
 -define(KEY_EXCHANGE_SRP, 5).
+
+-define(MIN_DH_PRIM_BYTE_SIZE, 256).
 
 -record(server_rsa_params, {
 	  rsa_modulus,  %%  opaque RSA_modulus<1..2^16-1>

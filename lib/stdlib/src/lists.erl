@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -342,7 +342,7 @@ starting at `N+1` and continuing to the end of the list.
 """.
 -spec nthtail(N, List) -> Tail when
       N :: non_neg_integer(),
-      List :: [T,...],
+      List :: [T],
       Tail :: [T],
       T :: term().
 
@@ -682,9 +682,9 @@ case the whole list is returned.
 ## Examples
 
 ```erlang
-1> lists:sublist([1,2,3,4,5], 2)
+1> lists:sublist([1,2,3,4,5], 2).
 [1,2]
-2> lists:sublist([1,2,3,4,5], 99)
+2> lists:sublist([1,2,3,4,5], 99).
 [1,2,3,4,5]
 ```
 """.
@@ -1894,7 +1894,7 @@ sort(Fun, [X, Y | T]) ->
 -doc """
 Returns a sorted list formed by merging `List1` and `List2` based on `Fun`.
 
-Both `List1` and`List2` must be sorted according to the
+Both `List1` and `List2` must be sorted according to the
 [ordering function](`m:lists#ordering_function`) `Fun` before evaluating this
 function.
 
@@ -2667,14 +2667,13 @@ Summing the elements in a list and double them at the same time:
       B :: term().
 
 mapfoldl(F, Accu, List) when is_function(F, 2) ->
-    mapfoldl_1(F, Accu, List).
+    mapfoldl_1(F, List, [], Accu).
 
-mapfoldl_1(F, Accu0, [Hd | Tail]) ->
-    {R, Accu1} = F(Hd, Accu0),
-    {Rs, Accu2} = mapfoldl_1(F, Accu1, Tail),
-    {[R | Rs], Accu2};
-mapfoldl_1(_F, Accu, []) ->
-    {[], Accu}.
+mapfoldl_1(F, [Hd | Tail], MapAcc, FoldAcc0) ->
+    {M, FoldAcc1} = F(Hd, FoldAcc0),
+    mapfoldl_1(F, Tail, [M | MapAcc], FoldAcc1);
+mapfoldl_1(_F, [], MapAcc, FoldAcc) ->
+    {reverse(MapAcc), FoldAcc}.
 
 -doc """
 Combines the operations of `map/2` and `foldr/3` into one pass.
@@ -2682,7 +2681,7 @@ Combines the operations of `map/2` and `foldr/3` into one pass.
 > #### Note {: .info }
 >
 > Unless the order in which the elements are accumulated is important,
-> prefer [`mapfoldl/3`](`mapfoldl/3`) as it is slighly more efficient.
+> prefer [`mapfoldl/3`](`mapfoldl/3`) as it is slightly more efficient.
 
 ## Examples
 
@@ -2706,14 +2705,13 @@ same time:
       B :: term().
 
 mapfoldr(F, Accu, List) when is_function(F, 2) ->
-    mapfoldr_1(F, Accu, List).
+    mapfoldr_1(F, reverse(List), [], Accu).
 
-mapfoldr_1(F, Accu0, [Hd|Tail]) ->
-    {Rs, Accu1} = mapfoldr_1(F, Accu0, Tail),
-    {R, Accu2} = F(Hd, Accu1),
-    {[R | Rs], Accu2};
-mapfoldr_1(_F, Accu, []) ->
-    {[], Accu}.
+mapfoldr_1(F, [Hd | Tail], MapAcc, FoldAcc0) ->
+    {M, FoldAcc1} = F(Hd, FoldAcc0),
+    mapfoldr_1(F, Tail, [M | MapAcc], FoldAcc1);
+mapfoldr_1(_F, [], MapAcc, FoldAcc) ->
+    {MapAcc, FoldAcc}.
 
 -doc """
 Takes elements `Elem` from `List1` while `Pred(Elem)` returns `true`,

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2008-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -349,6 +349,7 @@ renegotiation_otp_is_server(Config) ->
                             [{system_dir, setup_local_hostdir(Config)},
                              {user_dir, UserDir},
                              {user_passwords, [{?USER,?PASSWD}]},
+                             {subsystems, [ssh_sftpd:subsystem_spec([])]},
                              {failfun, fun ssh_test_lib:failfun/2},
                              {modify_algorithms, [{append, [{public_key,PublicKeyAlgs}]}]},
                              {connectfun,

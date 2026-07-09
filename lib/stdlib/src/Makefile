@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 1996-2024. All Rights Reserved.
+# Copyright Ericsson AB 1996-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -97,6 +97,7 @@ MODULES= \
 	gen_server \
 	gen_statem \
 	io \
+	io_ansi \
 	io_lib \
 	io_lib_format \
 	io_lib_fread \
@@ -127,7 +128,6 @@ MODULES= \
 	shell_default \
 	shell_docs \
 	shell_docs_markdown \
-	shell_docs_test \
 	slave \
 	sofs \
 	string \
@@ -150,7 +150,7 @@ HRL_FILES= \
 	../include/qlc.hrl \
 	../include/zip.hrl
 
-INTERNAL_HRL_FILES= dets.hrl erl_tar.hrl otp_internal.hrl json.hrl
+INTERNAL_HRL_FILES= dets.hrl erl_tar.hrl otp_internal.hrl json.hrl swar_ascii.hrl
 
 ERL_FILES= $(MODULES:%=%.erl)
 
@@ -183,6 +183,7 @@ ERL_COMPILE_FLAGS += -I../include -I../../kernel/include
 
 ifeq ($(ERL_DETERMINISTIC),yes)
 	DETERMINISM_FLAG = +deterministic
+	DEP_SKIP_FILES = erl_parse.erl
 else
 	DETERMINISM_FLAG =
 endif

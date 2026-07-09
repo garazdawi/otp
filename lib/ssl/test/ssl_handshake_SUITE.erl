@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2008-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -100,7 +100,7 @@ init_per_testcase(TC, Config0) when
 		    ct:timetrap({seconds, 5}),
 		    Config;
 		false ->
-		    {skip, "Crypto did not support sha512"}  
+		    {skip, "Crypto did not support sha512"}
 	    end
     catch _:_ ->
 	    {skip, "Crypto did not start"}
@@ -129,7 +129,6 @@ decode_hello_handshake(_Config) ->
 		    16#00, 16#23,
 		    16#00, 16#00, 16#33, 16#74, 16#00, 16#07, 16#06, 16#73,
 		    16#70, 16#64, 16#79, 16#2f, 16#32>>,
-	
     Version = ?SSL_3_0,
     DefOpts = ssl_config:update_options([{verify, verify_none}], client, #{}),
     {Records, _Buffer} = tls_handshake:get_tls_handshakes(Version, HelloPacket, <<>>, DefOpts),
@@ -138,14 +137,15 @@ decode_hello_handshake(_Config) ->
     Extensions = Hello#server_hello.extensions,
     #{renegotiation_info := #renegotiation_info{renegotiated_connection = <<0>>}} = Extensions.
 
-decode_single_hello_extension_correctly(_Config) -> 
+decode_single_hello_extension_correctly(_Config) ->
     Renegotiation = <<?UINT16(?RENEGOTIATION_EXT), ?UINT16(1), 0>>,
     Extensions = ssl_handshake:decode_extensions(Renegotiation, ?TLS_1_2, undefined),
     #{renegotiation_info := #renegotiation_info{renegotiated_connection = <<0>>}} = Extensions.
 
 decode_supported_elliptic_curves_hello_extension_correctly(_Config) ->
     % List of supported and unsupported curves (RFC4492:S5.1.1)
-    ClientEllipticCurves = [0, tls_v1:oid_to_enum(?sect233k1), 37, tls_v1:oid_to_enum(?sect193r2), 16#badc],
+    ClientEllipticCurves = [0, tls_v1:oid_to_enum(?sect233k1), 37,
+                            tls_v1:oid_to_enum(?sect193r2), 16#badc],
     % Construct extension binary - modified version of ssl_handshake:encode_hello_extensions([#elliptic_curves{}], _)
     EllipticCurveList = << <<X:16>> || X <- ClientEllipticCurves>>,
     ListLen = byte_size(EllipticCurveList),
@@ -153,12 +153,13 @@ decode_supported_elliptic_curves_hello_extension_correctly(_Config) ->
     Extension = <<?UINT16(?ELLIPTIC_CURVES_EXT), ?UINT16(Len), ?UINT16(ListLen), EllipticCurveList/binary>>,
     % after decoding we should see only valid curves
     Extensions = ssl_handshake:decode_hello_extensions(Extension, ?TLS_1_1, ?TLS_1_1, client),
-    #{elliptic_curves := #elliptic_curves{elliptic_curve_list = [?sect233k1, ?sect193r2]}} = Extensions. 
+    #{elliptic_curves := #elliptic_curves{elliptic_curve_list = [?sect233k1, ?sect193r2]}} = Extensions.
 
 decode_unknown_hello_extension_correctly(_Config) ->
     FourByteUnknown = <<16#CA,16#FE, ?UINT16(4), 3, 0, 1, 2>>,
     Renegotiation = <<?UINT16(?RENEGOTIATION_EXT), ?UINT16(1), 0>>,
-    Extensions = ssl_handshake:decode_hello_extensions(<<FourByteUnknown/binary, Renegotiation/binary>>, ?TLS_1_1, ?TLS_1_1, client),
+    Extensions = ssl_handshake:decode_hello_extensions(<<FourByteUnknown/binary,
+                                                         Renegotiation/binary>>, ?TLS_1_1, ?TLS_1_1, client),
     #{renegotiation_info := #renegotiation_info{renegotiated_connection = <<0>>}} = Extensions.
 
 
@@ -195,10 +196,16 @@ ignore_hassign_extension_pre_tls_1_2(Config) ->
     CertFile = proplists:get_value(certfile, Opts),
     [{_, Cert, _}] = ssl_test_lib:pem_to_der(CertFile),
     HashSigns = #hash_sign_algos{hash_sign_algos = [{sha512, rsa}, {sha, dsa}, {sha256, rsa}]},
-    {sha512, rsa} = ssl_handshake:select_hashsign({HashSigns, undefined}, Cert, ecdhe_rsa, tls_v1:default_signature_algs([?TLS_1_2]), ?TLS_1_2),
+    {sha512, rsa} =
+        ssl_handshake:select_hashsign({HashSigns, undefined}, Cert,
+                                      ecdhe_rsa, tls_v1:default_signature_algs([?TLS_1_2]), ?TLS_1_2),
     %%% Ignore
-    {md5sha, rsa} = ssl_handshake:select_hashsign({HashSigns, undefined}, Cert, ecdhe_rsa, tls_v1:default_signature_algs([?TLS_1_1]), ?TLS_1_1),
-    {md5sha, rsa} = ssl_handshake:select_hashsign({HashSigns, undefined}, Cert, ecdhe_rsa, tls_v1:default_signature_algs([?SSL_3_0]), ?SSL_3_0).
+    {md5sha, rsa} =
+        ssl_handshake:select_hashsign({HashSigns, undefined}, Cert,
+                                      ecdhe_rsa, tls_v1:default_signature_algs([?TLS_1_1]), ?TLS_1_1),
+    {md5sha, rsa} =
+        ssl_handshake:select_hashsign({HashSigns, undefined}, Cert,
+                                      ecdhe_rsa, tls_v1:default_signature_algs([?SSL_3_0]), ?SSL_3_0).
 
 signature_algorithms(Config) ->
     Opts = proplists:get_value(server_opts, Config),
@@ -293,6 +300,5 @@ drop_unassigned_signature_algorithms(_Config) ->
 %%--------------------------------------------------------------------
 
 is_supported(Hash) ->
-    Algos = crypto:supports(),
-    Hashs = proplists:get_value(hashs, Algos), 
+    Hashs = crypto:supports(hashs),
     lists:member(Hash, Hashs).

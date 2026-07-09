@@ -27,6 +27,99 @@ as all enhancements and bugfixes for every release of Mnesia. Each release of
 Mnesia thus constitutes one section in this document. The title of each section
 is the version number of Mnesia.
 
+## Mnesia 4.26.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed docs of `mnesia:write/3` to clarify when a transaction can terminate.
+
+  Own Id: OTP-20149 Aux Id: [GH-11104], [PR-11145]
+
+[GH-11104]: https://github.com/erlang/otp/issues/11104
+[PR-11145]: https://github.com/erlang/otp/pull/11145
+
+## Mnesia 4.26
+
+### Improvements and New Features
+
+- `mnesia` now has new functions `select_reverse/1-6` supporting iteration over tables in reverse order.
+
+  Own Id: OTP-19611 Aux Id: [GH-8993], [PR-9475]
+
+- The `mnesia_registry` module has been removed.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-19807 Aux Id: [PR-7315]
+
+- Added support for `-unsafe` attributes, which is used to mark functions as unsafe to use. 
+  
+  This is similar to but separate from deprecation, and the compiler will by default now generate warnings for calls to functions in Erlang/OTP that are known to be always unsafe.
+  
+  Furthermore, `m:xref` can now be used to find calls to functions in another application that lack a `-doc` attribute (`undocumented_function_calls`), calls to functions in another application marked `-doc false.` (`private_function_calls`), as well as calls to unsafe functions (`unsafe_function_calls`).
+
+  Own Id: OTP-20066 Aux Id: [PR-10839]
+
+[GH-8993]: https://github.com/erlang/otp/issues/8993
+[PR-9475]: https://github.com/erlang/otp/pull/9475
+[PR-7315]: https://github.com/erlang/otp/pull/7315
+[PR-10839]: https://github.com/erlang/otp/pull/10839
+
+## Mnesia 4.25.3.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed docs of `mnesia:write/3` to clarify when a transaction can terminate.
+
+  Own Id: OTP-20149 Aux Id: [GH-11104], [PR-11145]
+
+[GH-11104]: https://github.com/erlang/otp/issues/11104
+[PR-11145]: https://github.com/erlang/otp/pull/11145
+
+## Mnesia 4.25.3
+
+### Fixed Bugs and Malfunctions
+
+- Added documentation for `user_properties`  and functions `read_table_property/2`, `write_table_property/2`, `delete_table_property`.
+  Enhanced documentation for `frag_properties`.
+
+  Own Id: OTP-20038 Aux Id: [GH-10812], [PR-10881]
+
+- Fixed a bug where stacktrace was not returned from `mnesia:transaction/1` when transaction aborts with an error exception.
+
+  Own Id: OTP-20094 Aux Id: [GH-10967], [PR-11002]
+
+[GH-10812]: https://github.com/erlang/otp/issues/10812
+[PR-10881]: https://github.com/erlang/otp/pull/10881
+[GH-10967]: https://github.com/erlang/otp/issues/10967
+[PR-11002]: https://github.com/erlang/otp/pull/11002
+
+## Mnesia 4.25.2
+
+### Improvements and New Features
+
+- Release applications, tests, and documentation are now placed in their respective directories. Source SBOM with more packages.
+  
+  A `make release` application places only the necessary code in the release folder. The main change is that the documentation and examples are not part of the release folder anymore.
+  
+  `make release_docs` places the documentation in the released code under the `doc` folder.
+  
+  `make release_tests` places the tests in their own directory. It used to be the case that some source code was mixed with the tests, and this should not happen anymore.
+  
+  The Software Bill of Materials places the examples folders as if they are part of the `SPDX-otp-<app>-doc` packge, instead of placing examples as if they were running source code.
+  
+  Overall, this change cleans up many things that were not quite correct by definition, and everything should still continue to work as expected. To test a release, one can still run `./Install -minimal \`pwd\`` and add the release to the `PATH`. After that, one can run tests as usual, going into the released tests directory, entering `test_server` and running the emulator.
+  
+  Improves the source Software-Bill-of-Materials
+  
+  - The improvements adds new SPDX relations for `asmjit` and `zlib` to be `optional_components_of` the Erlang/OTP project.
+  - The `autoconf` scripts in `make` and `erts` have now been categorised as `build_tool_of` the Erlang/OTP project.
+  - All remaining `configure`, `configure.ac`, `config.h.in`, `Makefile.in`, `Makefile.src`, `EMakefile`, and `GNUMakefile` are now part of a specific SPDX package with relation `build_tool_of` the Erlang/OTP project.
+
+  Own Id: OTP-19886 Aux Id: [PR-10434]
+
+[PR-10434]: https://github.com/erlang/otp/pull/10434
+
 ## Mnesia 4.25.1
 
 ### Fixed Bugs and Malfunctions
@@ -103,6 +196,28 @@ is the version number of Mnesia.
 
 [PR-9079]: https://github.com/erlang/otp/pull/9079
 [PR-9670]: https://github.com/erlang/otp/pull/9670
+
+## Mnesia 4.23.5.3
+
+### Fixed Bugs and Malfunctions
+
+- Fixed docs of `mnesia:write/3` to clarify when a transaction can terminate.
+
+  Own Id: OTP-20149 Aux Id: [GH-11104], [PR-11145]
+
+[GH-11104]: https://github.com/erlang/otp/issues/11104
+[PR-11145]: https://github.com/erlang/otp/pull/11145
+
+## Mnesia 4.23.5.2
+
+### Fixed Bugs and Malfunctions
+
+- Fixed a bug where stacktrace was not returned from `mnesia:transaction/1` when transaction aborts with an error exception.
+
+  Own Id: OTP-20094 Aux Id: [GH-10967], [PR-11002]
+
+[GH-10967]: https://github.com/erlang/otp/issues/10967
+[PR-11002]: https://github.com/erlang/otp/pull/11002
 
 ## Mnesia 4.23.5.1
 

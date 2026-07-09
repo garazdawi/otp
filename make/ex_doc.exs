@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2024-2025. All Rights Reserved.
+# Copyright Ericsson AB 2024-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -179,6 +179,13 @@ annotations = Access.get(local_config, :annotations_for_docs, fn _ -> [] end)
 
 current_datetime = System.os_time() |> DateTime.from_unix!(:native)
 
+## Check if we should treat warnings as errors
+warnings_as_errors =
+  case System.get_env("EX_DOC_WARNINGS_AS_ERRORS") do
+    value when value in ["true", "default"] -> true
+    "false" -> false
+  end
+
 ## Check ExDoc version
 version_str =
   case System.get_env("EX_DOC_VERSION") do
@@ -245,7 +252,7 @@ config =
     before_closing_body_tag: fn
       :html ->
         """
-          <script defer src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+          <script defer src="https://cdn.jsdelivr.net/npm/mermaid@11.14.0/dist/mermaid.min.js"></script>
           <script>
           let initialized = false;
 
@@ -290,7 +297,8 @@ config =
 
       _ ->
         ""
-    end
+    end,
+    warnings_as_errors: warnings_as_errors
   ] ++ search_config
 
 Keyword.merge(

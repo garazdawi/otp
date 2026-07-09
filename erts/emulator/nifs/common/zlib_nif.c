@@ -3,8 +3,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
+ * Copyright Ericsson AB 2017-2026. All Rights Reserved.
  * Copyright Ericsson 2017-2024. All Rights Reserved.
- * Copyright Ericsson AB 2017-2025. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,8 @@
 #define STATIC_ERLANG_NIF 1
 
 #include <stdio.h>
-#include <zlib.h>
+
+#include "erl_zlib.h"
 
 #include "erl_nif.h"
 #include "config.h"

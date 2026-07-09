@@ -49,7 +49,7 @@ naive_reverse([]) ->
 As the `++` operator copies its left-hand side operand, the growing
 result is copied repeatedly, leading to quadratic complexity.
 
-On the other hand, using `++` in loop like this is perfectly fine:
+On the other hand, using `++` in a loop like this is perfectly fine:
 
 **OK**
 
@@ -64,7 +64,7 @@ naive_but_ok_reverse([], Acc) ->
 ```
 
 Each list element is copied only once. The growing result `Acc` is the right-hand
-side operand, which it is _not_ copied.
+side operand, which is _not_ copied.
 
 Experienced Erlang programmers would probably write as follows:
 
@@ -167,14 +167,14 @@ the copied term can be many times larger than the original term. For example:
 ```erlang
 init2() ->
     SharedSubTerms = lists:foldl(fun(_, A) -> [A|A] end, [0], lists:seq(1, 15)),
-    #state{data=Shared}.
+    #state{data=SharedSubTerms}.
 ```
 
 In the process that calls `init2/0`, the size of the `data` field in the `state`
 record will be 32 heap words. When the record is copied to the newly created
 process, sharing will be lost and the size of the copied `data` field will be
 131070 heap words. More details about
-[loss off sharing](eff_guide_processes.md#loss-of-sharing) are found in a later
+[loss of sharing](eff_guide_processes.md#loss-of-sharing) are found in a later
 section.
 
 To avoid the problem, outside of the fun extract only the fields of the record

@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 2018-2024. All Rights Reserved.
+ * Copyright Ericsson AB 2018-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -288,6 +288,18 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(addr_unreachable);         \
     GLOBAL_ATOM_DEF(add_membership);           \
     GLOBAL_ATOM_DEF(add_source_membership);    \
+    GLOBAL_ATOM_DEF(af11);                     \
+    GLOBAL_ATOM_DEF(af12);                     \
+    GLOBAL_ATOM_DEF(af13);                     \
+    GLOBAL_ATOM_DEF(af21);                     \
+    GLOBAL_ATOM_DEF(af22);                     \
+    GLOBAL_ATOM_DEF(af23);                     \
+    GLOBAL_ATOM_DEF(af31);                     \
+    GLOBAL_ATOM_DEF(af32);                     \
+    GLOBAL_ATOM_DEF(af33);                     \
+    GLOBAL_ATOM_DEF(af41);                     \
+    GLOBAL_ATOM_DEF(af42);                     \
+    GLOBAL_ATOM_DEF(af43);                     \
     GLOBAL_ATOM_DEF(alen);                     \
     GLOBAL_ATOM_DEF(allmulti);                 \
     GLOBAL_ATOM_DEF(already);                  \
@@ -356,6 +368,15 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(cork);                     \
     GLOBAL_ATOM_DEF(counters);                 \
     GLOBAL_ATOM_DEF(credentials);              \
+    GLOBAL_ATOM_DEF(cs0);                      \
+    GLOBAL_ATOM_DEF(cs1);                      \
+    GLOBAL_ATOM_DEF(cs2);                      \
+    GLOBAL_ATOM_DEF(cs3);                      \
+    GLOBAL_ATOM_DEF(cs4);                      \
+    GLOBAL_ATOM_DEF(cs5);                      \
+    GLOBAL_ATOM_DEF(cs6);                      \
+    GLOBAL_ATOM_DEF(cs7);                      \
+    GLOBAL_ATOM_DEF(critical_ecp);             \
     GLOBAL_ATOM_DEF(ctrl);                     \
     GLOBAL_ATOM_DEF(ctrunc);                   \
     GLOBAL_ATOM_DEF(cum_tsn);                  \
@@ -383,6 +404,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(drop_source_membership);   \
     GLOBAL_ATOM_DEF(dstaddrv4);                \
     GLOBAL_ATOM_DEF(dstaddrv6);                \
+    GLOBAL_ATOM_DEF(dscp);                     \
     GLOBAL_ATOM_DEF(dstopts);                  \
     GLOBAL_ATOM_DEF(dup);		       \
     GLOBAL_ATOM_DEF(dup_acks_in);              \
@@ -390,6 +412,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(dynamic);                  \
     GLOBAL_ATOM_DEF(echo);                     \
     GLOBAL_ATOM_DEF(eether);                   \
+    GLOBAL_ATOM_DEF(ef);                       \
     GLOBAL_ATOM_DEF(efile);                    \
     GLOBAL_ATOM_DEF(egp);                      \
     GLOBAL_ATOM_DEF(empty);                    \
@@ -417,6 +440,8 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(fin_wait_1);               \
     GLOBAL_ATOM_DEF(fin_wait_2);               \
     GLOBAL_ATOM_DEF(flags);                    \
+    GLOBAL_ATOM_DEF(flash);                    \
+    GLOBAL_ATOM_DEF(flashoverride);            \
     GLOBAL_ATOM_DEF(flowinfo);                 \
     GLOBAL_ATOM_DEF(fragment_interleave);      \
     GLOBAL_ATOM_DEF(freebind);                 \
@@ -439,6 +464,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(ieee1394);                 \
     GLOBAL_ATOM_DEF(ifindex);                  \
     GLOBAL_ATOM_DEF(igmp);                     \
+    GLOBAL_ATOM_DEF(immediate);                \
     GLOBAL_ATOM_DEF(implink);                  \
     GLOBAL_ATOM_DEF(inbound_streams);          \
     GLOBAL_ATOM_DEF(incoming_ssn);             \
@@ -450,8 +476,9 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(info);                     \
     GLOBAL_ATOM_DEF(init);                     \
     GLOBAL_ATOM_DEF(initmsg);                  \
-    GLOBAL_ATOM_DEF(invalid);                  \
     GLOBAL_ATOM_DEF(integer_range);            \
+    GLOBAL_ATOM_DEF(internetcontrol);          \
+    GLOBAL_ATOM_DEF(invalid);                  \
     GLOBAL_ATOM_DEF(iov);                      \
     GLOBAL_ATOM_DEF(ip);                       \
     GLOBAL_ATOM_DEF(ipcomp_level);             \
@@ -471,6 +498,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(key_number);               \
     GLOBAL_ATOM_DEF(knowsepoch);	       \
     GLOBAL_ATOM_DEF(last_ack);                 \
+    GLOBAL_ATOM_DEF(le);                       \
     GLOBAL_ATOM_DEF(leave_group);              \
     GLOBAL_ATOM_DEF(length);                   \
     GLOBAL_ATOM_DEF(level);                    \
@@ -520,6 +548,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(multicast_ttl);            \
     GLOBAL_ATOM_DEF(name);                     \
     GLOBAL_ATOM_DEF(native);                   \
+    GLOBAL_ATOM_DEF(netcontrol);               \
     GLOBAL_ATOM_DEF(netns);                    \
     GLOBAL_ATOM_DEF(netrom);                   \
     GLOBAL_ATOM_DEF(nlen);                     \
@@ -535,6 +564,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(notrailers);               \
     GLOBAL_ATOM_DEF(not_bound);                \
     GLOBAL_ATOM_DEF(not_found);                \
+    GLOBAL_ATOM_DEF(nqb);                      \
     GLOBAL_ATOM_DEF(num_general_errors);       \
     GLOBAL_ATOM_DEF(not_owner);                \
     GLOBAL_ATOM_DEF(num_ostreams);             \
@@ -579,6 +609,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(ppid);                     \
     GLOBAL_ATOM_DEF(ppp);                      \
     GLOBAL_ATOM_DEF(ppromisc);		       \
+    GLOBAL_ATOM_DEF(precedence);               \
     GLOBAL_ATOM_DEF(primary_addr);             \
     GLOBAL_ATOM_DEF(prim_file);                \
     GLOBAL_ATOM_DEF(prinfo);                   \
@@ -609,6 +640,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(recvfrom);                 \
     GLOBAL_ATOM_DEF(recvhoplimit);             \
     GLOBAL_ATOM_DEF(recvif);                   \
+    GLOBAL_ATOM_DEF(recvmmsg);                 \
     GLOBAL_ATOM_DEF(recvmsg);                  \
     GLOBAL_ATOM_DEF(recvopts);                 \
     GLOBAL_ATOM_DEF(recvorigdstaddr);          \
@@ -630,6 +662,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(rights);                   \
     GLOBAL_ATOM_DEF(rm);                       \
     GLOBAL_ATOM_DEF(router_alert);             \
+    GLOBAL_ATOM_DEF(routine);                  \
     GLOBAL_ATOM_DEF(rthdr);                    \
     GLOBAL_ATOM_DEF(rtoinfo);                  \
     GLOBAL_ATOM_DEF(rtt);                      \
@@ -653,6 +686,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(sendfile_pkg_max);         \
     GLOBAL_ATOM_DEF(sendfile_tries);           \
     GLOBAL_ATOM_DEF(sendfile_waits);           \
+    GLOBAL_ATOM_DEF(sendmmsg);                 \
     GLOBAL_ATOM_DEF(sendmsg);                  \
     GLOBAL_ATOM_DEF(sendsrcaddr);              \
     GLOBAL_ATOM_DEF(sendto);                   \
@@ -703,6 +737,7 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(tcp);                      \
     GLOBAL_ATOM_DEF(throughput);               \
     GLOBAL_ATOM_DEF(timestamp);                \
+    GLOBAL_ATOM_DEF(timestampns);              \
     GLOBAL_ATOM_DEF(tos);                      \
     GLOBAL_ATOM_DEF(transparent);              \
     GLOBAL_ATOM_DEF(timeout);                  \
@@ -727,12 +762,14 @@ ress-of-packed-member]
     GLOBAL_ATOM_DEF(unspec);                   \
     GLOBAL_ATOM_DEF(up);                       \
     GLOBAL_ATOM_DEF(usec);                     \
+    GLOBAL_ATOM_DEF(nsec);                     \
     GLOBAL_ATOM_DEF(user);                     \
     GLOBAL_ATOM_DEF(user_timeout);             \
     GLOBAL_ATOM_DEF(use_ext_recvinfo);         \
     GLOBAL_ATOM_DEF(use_min_mtu);              \
     GLOBAL_ATOM_DEF(use_registry);             \
     GLOBAL_ATOM_DEF(value);                    \
+    GLOBAL_ATOM_DEF(voice_admit);              \
     GLOBAL_ATOM_DEF(void);                     \
     GLOBAL_ATOM_DEF(v6only);                   \
     GLOBAL_ATOM_DEF(write_byte);               \

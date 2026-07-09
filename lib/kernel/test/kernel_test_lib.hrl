@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2020-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2020-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -60,6 +60,9 @@
 -define(WHICH_INET_BACKEND(C),    ?LIB:which_inet_backend(C)).
 -define(IS_SOCKET_BACKEND(C),     ?LIB:is_socket_backend(C)).
 
+-define(IS_NET_SUPPORTED(),       ?LIB:is_net_supported()).
+-define(IS_SOCKET_SUPPORTED(),    ?LIB:is_socket_supported()).
+
 -define(ENSURE_NOT_DOG_SLOW(C, L), ?LIB:ensure_not_dog_slow((C), (L))).
 
 -define(HAS_SUPPORT_IPV4(),      ?LIB:has_support_ipv4()).
@@ -102,5 +105,10 @@
 
 -define(MQ(),                    ?LIB:mq(self())).
 -define(MQ(P),                   ?LIB:mq((P))).
+
+-define(CATCH_AND_IGNORE(_X_),
+	try _X_ catch _:_ -> ignore end).
+-define(CATCH_AND_RETURN(_X_),
+	try _X_ catch __C__:__E__ -> {error, {catched, __C__, __E__}} end).
 
 -endif. % -ifdef(kernel_test_lib_hrl).

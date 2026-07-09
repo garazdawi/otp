@@ -115,7 +115,7 @@ Simple JSON value encodeable with `json:encode/1`.
     | list(encode_value())
     | encode_map(encode_value()).
 
--type encode_map(Value) :: #{binary() | atom() | integer() => Value}.
+-type encode_map(Value) :: #{binary() | atom() | integer() | float() => Value}.
 
 -doc """
 Generates JSON corresponding to `Term`.
@@ -133,6 +133,9 @@ Supports basic data mapping:
 | `#{binary() => _}`     | Object   |
 | `#{atom() => _}`       | Object   |
 | `#{integer() => _}`    | Object   |
+| `#{float() => _}`      | Object   |
+
+Map keys are encoded as JSON object names, which are strings.
 
 This is equivalent to `encode(Term, fun json:encode_value/2)`.
 
@@ -250,7 +253,8 @@ list_loop([Elem | Rest], Encode) -> [$,, Encode(Elem, Encode) | list_loop(Rest, 
 -doc """
 Default encoder for maps as JSON objects used by `json:encode/1`.
 
-Accepts maps with atom, binary, integer, or float keys.
+Accepts Erlang maps with atom, binary, integer, or float keys.
+The keys are encoded as JSON object names.
 """.
 -doc(#{since => <<"OTP 27.0">>}).
 -spec encode_map(encode_map(dynamic()), encoder()) -> iodata().
@@ -263,7 +267,8 @@ do_encode_map(Map, Encode) when is_function(Encode, 2) ->
 -doc """
 Encoder for maps as JSON objects.
 
-Accepts maps with atom, binary, integer, or float keys.
+Accepts Erlang maps with atom, binary, integer, or float keys.
+The keys are encoded as JSON object names.
 Verifies that no duplicate keys will be produced in the
 resulting JSON object.
 
@@ -279,7 +284,8 @@ encode_map_checked(Map, Encode) ->
 -doc """
 Encoder for lists of key-value pairs as JSON objects.
 
-Accepts lists with atom, binary, integer, or float keys.
+Accepts key-value lists with atom, binary, integer, or float keys.
+The keys are encoded as JSON object names.
 """.
 -doc(#{since => <<"OTP 27.0">>}).
 -spec encode_key_value_list([{term(), term()}], encoder()) -> iodata().
@@ -289,7 +295,8 @@ encode_key_value_list(List, Encode) when is_function(Encode, 2) ->
 -doc """
 Encoder for lists of key-value pairs as JSON objects.
 
-Accepts lists with atom, binary, integer, or float keys.
+Accepts key-value lists with atom, binary, integer, or float keys.
+The keys are encoded as JSON object names.
 Verifies that no duplicate keys will be produced in the
 resulting JSON object.
 
@@ -361,15 +368,15 @@ escape_binary(Bin) -> escape_binary_ascii(Bin, [$"], Bin, 0, 0).
 
 escape_binary_ascii(Binary, Acc, Orig, Skip, Len) ->
     case Binary of
-        <<B1, B2, B3, B4, B5, B6, B7, B8, Rest/binary>> when ?are_all_ascii_plain(B1, B2, B3, B4, B5, B6, B7, B8) ->
-            escape_binary_ascii(Rest, Acc, Orig, Skip, Len + 8);
+        <<W:56, Rest/binary>> when ?are_all_ascii_plain_swar(W) ->
+            escape_binary_ascii(Rest, Acc, Orig, Skip, Len + 7);
         Other ->
             escape_binary(Other, Acc, Orig, Skip, Len)
     end.
 
 escape_binary(<<Byte, Rest/binary>>, Acc, Orig, Skip, Len) when ?is_ascii_plain(Byte) ->
-    %% we got here because there were either less than 8 bytes left
-    %% or we have an escape in the next 8 bytes,
+    %% we got here because there were either less than 7 bytes left
+    %% or we have an escape in the next 7 bytes,
     %% escape_binary_ascii would fail and dispatch here anyway
     escape_binary(Rest, Acc, Orig, Skip, Len + 1);
 escape_binary(<<Byte, Rest/binary>>, Acc, Orig, Skip0, Len) when ?is_ascii_escape(Byte) ->
@@ -410,8 +417,8 @@ escape_all(Bin) -> escape_all_ascii(Bin, [$"], Bin, 0, 0).
 
 escape_all_ascii(Binary, Acc, Orig, Skip, Len) ->
     case Binary of
-        <<B1, B2, B3, B4, B5, B6, B7, B8, Rest/binary>> when ?are_all_ascii_plain(B1, B2, B3, B4, B5, B6, B7, B8) ->
-            escape_all_ascii(Rest, Acc, Orig, Skip, Len + 8);
+        <<W:56, Rest/binary>> when ?are_all_ascii_plain_swar(W) ->
+            escape_all_ascii(Rest, Acc, Orig, Skip, Len + 7);
         Other ->
             escape_all(Other, Acc, Orig, Skip, Len)
     end.
@@ -702,7 +709,8 @@ format_tail([], _, _, _, _) ->
 -doc """
 Format function for lists of key-value pairs as JSON objects.
 
-Accepts lists with atom, binary, integer, or float keys.
+Accepts key-value lists with atom, binary, integer, or float keys.
+The keys are encoded as JSON object names.
 """.
 -doc(#{since => <<"OTP 27.2">>}).
 
@@ -722,7 +730,8 @@ format_key_value_list(KVList, UserEnc, #{level := Level} = State) ->
 -doc """
 Format function for lists of key-value pairs as JSON objects.
 
-Accepts lists with atom, binary, integer, or float keys.
+Accepts key-value lists with atom, binary, integer, or float keys.
+The keys are encoded as JSON object names.
 Verifies that no duplicate keys will be produced in the
 resulting JSON object.
 
@@ -860,6 +869,7 @@ Supports basic data mapping:
 | Boolean  | `true \| false`        |
 | Null     | `null`                 |
 | String   | `binary()`             |
+| Array    | `list()`               |
 | Object   | `#{binary() => _}`     |
 
 ## Errors
@@ -1175,8 +1185,8 @@ string(Binary, Original, Skip, Acc, Stack, Decode) ->
 
 string_ascii(Binary, Original, Skip, Acc, Stack, Decode, Len) ->
     case Binary of
-        <<B1, B2, B3, B4, B5, B6, B7, B8, Rest/binary>> when ?are_all_ascii_plain(B1, B2, B3, B4, B5, B6, B7, B8) ->
-            string_ascii(Rest, Original, Skip, Acc, Stack, Decode, Len + 8);
+        <<W:56, Rest/binary>> when ?are_all_ascii_plain_swar(W) ->
+            string_ascii(Rest, Original, Skip, Acc, Stack, Decode, Len + 7);
         Other ->
             string(Other, Original, Skip, Acc, Stack, Decode, Len)
     end.
@@ -1218,8 +1228,8 @@ string_utf8(_, Orig, Skip, Acc, Stack, Decode, Len, _State0) ->
 
 string_ascii(Binary, Original, Skip, Acc, Stack, Decode, Start, Len, SAcc) ->
     case Binary of
-        <<B1, B2, B3, B4, B5, B6, B7, B8, Rest/binary>> when ?are_all_ascii_plain(B1, B2, B3, B4, B5, B6, B7, B8) ->
-            string_ascii(Rest, Original, Skip, Acc, Stack, Decode, Start, Len + 8, SAcc);
+        <<W:56, Rest/binary>> when ?are_all_ascii_plain_swar(W) ->
+            string_ascii(Rest, Original, Skip, Acc, Stack, Decode, Start, Len + 7, SAcc);
         Other ->
             string(Other, Original, Skip, Acc, Stack, Decode, Start, Len, SAcc)
     end.

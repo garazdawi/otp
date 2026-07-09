@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2005-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -49,6 +49,8 @@
 -record(tftp_msg_ack,     {block_no}).
 -record(tftp_msg_error,   {code, text, details}).
 -record(tftp_msg_oack,    {options}).
+
+-record(tftp_decode_error, {reply}).
 
 -record(config, {parent_pid   = self(),
 		 udp_socket,

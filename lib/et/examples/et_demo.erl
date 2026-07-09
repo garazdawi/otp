@@ -25,8 +25,6 @@
 
 -module(et_demo).
 
--compile(nowarn_obsolete_bool_op).
-
 -export([
          sim_trans/0, sim_trans/1,
          live_trans/0, live_trans/1,
@@ -199,9 +197,9 @@ plain_process_info(E) when is_record(E, event) ->
 
 %plain_process_info_nolink
 plain_process_info_nolink(E) when is_record(E, event) ->
-    (E#event.label /= link) and
-    (E#event.label /= unlink) and
-    (E#event.label /= getting_linked) and
+    E#event.label /= link andalso
+    E#event.label /= unlink andalso
+    E#event.label /= getting_linked andalso
     plain_process_info(E). 
 %plain_process_info_nolink
 

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2006-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2006-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@
          cstream/1, cstream_with_dict/1,
          dstream/1, dstream_with_dict/1,
          parameters/1, dict_api/1,
-         doc_tests/1
+         doctests/1
         ]).
 
 -export([generate_dict/0]).
@@ -54,7 +54,7 @@ groups() ->
         cstream_with_dict,
         dstream_with_dict,
         dict_api,
-        doc_tests ]} ].
+        doctests ]} ].
 
 init_per_suite(Config) ->
     Config.
@@ -93,6 +93,16 @@ end_per_suite(_Config) ->
     ok.
 
 bulk(_Config) ->
+
+    %% Empty frame content.
+    EmptyCompressed = zstd:compress(<<>>),
+    ?assertEqual(<<>>, iob(zstd:decompress(EmptyCompressed))),
+
+    EmptyCompressed = zstd:compress([]),
+    ?assertEqual(<<>>, iob(zstd:decompress(EmptyCompressed))),
+
+    EmptyCompressed = zstd:compress([<<>>,[<<>>]]),
+    ?assertEqual(<<>>, iob(zstd:decompress(EmptyCompressed))),
 
     Data = ~"abc",
     Compressed = zstd:compress(Data),
@@ -211,7 +221,7 @@ cstream(_Config) ->
     %% are confirmed to work.
     {ok, FCtx} = zstd:context(decompress),
     {continue, F1} = zstd:stream(CCtx, ~"hello"),
-    {continue, F2} = zstd:flush(CCtx, <<>>),
+    {continue, F2} = zstd:flush(CCtx),
     ?assertEqual(~"hello", iob(zstd:decompress([F1, F2], FCtx))),
     {continue, F3} = zstd:stream(CCtx, ~"world"),
     {done, F4} = zstd:finish(CCtx, <<>>),
@@ -457,7 +467,7 @@ dict_api(Config) ->
     ok.
 
 
-doc_tests(Config) ->
+doctests(Config) ->
     case erlang:system_info(emu_type) of
         debug ->
             %% As return values from decompress are split into an iovec with
@@ -465,16 +475,20 @@ doc_tests(Config) ->
             {skip, "Don't run in debug emulator"};
         _ ->
             {ok, Dict} = file:read_file(proplists:get_value(dict, Config)),
-            DictBinding = erl_eval:add_binding('Dict', Dict, erl_eval:new_bindings()),
+            DictBinding = #{'Dict' => Dict},
             File = filename:join(proplists:get_value(priv_dir, Config), "example"),
             ok = file:write_file(File, ~"lorem ipsum"),
-            shell_docs:test(
+            Bindings =
+                [{moduledoc, #{'File' => File}},
+                 {{function, get_dict_id, 1}, DictBinding},
+                 {{function, dict, 3}, DictBinding}],
+            ct_doctest:module(
               zstd,
-              [
-               {module_doc, erl_eval:add_binding('File', File, erl_eval:new_bindings())},
-               {{function, get_dict_id, 1}, DictBinding},
-               {{function, dict, 3}, DictBinding}
-              ]
+              Bindings,
+              [{skipped_blocks, 0},
+               {missing_tests,
+                [{close, 1},
+                 {context, 2}]}]
              )
     end.
 

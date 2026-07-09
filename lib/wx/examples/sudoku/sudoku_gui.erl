@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2009-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2009-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@
 %%% Created :  9 Jan 2008 by  <dgud@erix.ericsson.se>
 %%%-------------------------------------------------------------------
 -module(sudoku_gui).
+
+-compile([{nowarn_possibly_unsafe_function, {file, consult, 1}}]).
 
 -export([init/1, handle_info/2, handle_call/3, handle_cast/2, handle_event/2,
 	 terminate/2, code_change/3]).

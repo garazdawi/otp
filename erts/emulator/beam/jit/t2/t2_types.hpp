@@ -58,12 +58,19 @@ namespace erts_t2 {
     constexpr int T2_TUPLE_SET_LIMIT = 12;     /* ?TUPLE_SET_LIMIT */
 
     /* The bit width of the type union. beam_types.h defines BEAM_TYPE_ANY as
-     * all bits below 1<<12 set. We keep the whole union in a 16-bit field. */
-    static_assert(BEAM_TYPE_ANY == ((1 << 12) - 1),
-                  "T2 lattice assumes a 12-bit BEAM type union; keep "
+     * all bits below 1<<13 set. We keep the whole union in a 16-bit field.
+     *
+     * BEAM_TYPES_VERSION 4 added BEAM_TYPE_RECORD (1<<12), a subtype of tuple.
+     * It is transparent to this lattice: T2 carries the union as an opaque
+     * bitset (meet/join are bitwise AND/OR), reads range/unit metadata that
+     * RECORD does not extend, and never refines an incoming value against
+     * BEAM_TYPE_TUPLE (its one tuple use only *types* a freshly built
+     * put_tuple2 result). So the extra bit needs no lattice change here. */
+    static_assert(BEAM_TYPE_ANY == ((1 << 13) - 1),
+                  "T2 lattice assumes a 13-bit BEAM type union; keep "
                   "t2_types.hpp in sync with beam_types.h");
-    static_assert(BEAM_TYPES_VERSION == 3,
-                  "T2 lattice ported against BEAM_TYPES_VERSION 3");
+    static_assert(BEAM_TYPES_VERSION == 4,
+                  "T2 lattice ported against BEAM_TYPES_VERSION 4");
 
     /*
      * A lattice element. `Top` (any) is type_union == BEAM_TYPE_ANY with no

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2005-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,6 +28,9 @@ This module provides an expand_fun for the erlang shell
 [`io:setopts/1,2`](`io:setopts/1`).
 """.
 -moduledoc(#{since => "OTP 26.0"}).
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
+
 %% a default expand function for edlin, expanding modules, functions
 %% filepaths, variable binding, record names, function parameter values,
 %% record fields and map keys and record field values.

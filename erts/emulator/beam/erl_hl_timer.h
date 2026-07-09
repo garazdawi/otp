@@ -24,6 +24,7 @@
 #define ERL_HL_TIMER_H__
 
 typedef struct ErtsBifTimer_ ErtsBifTimers;
+typedef struct ErtsPausedBifTimers_ ErtsPausedBifTimers;
 typedef struct ErtsHLTimerService_ ErtsHLTimerService;
 
 #include "sys.h"
@@ -56,7 +57,10 @@ int erts_set_proc_timer_term(Process *, Eterm);
 void erts_set_proc_timer_uword(Process *, UWord);
 void erts_cancel_proc_timer(Process *);
 void erts_pause_proc_timer(Process *);
-int erts_resume_paused_proc_timer(Process *);
+void erts_resume_paused_proc_timer(Process *);
+void erts_pause_bif_timers(Process *, ErtsProcLocks);
+void erts_resume_paused_bif_timers(Process *);
+void erts_destroy_paused_bif_timers(Process *c_p);
 void erts_set_port_timer(Port *, Sint64);
 void erts_cancel_port_timer(Port *);
 Sint64 erts_read_port_timer(Port *);

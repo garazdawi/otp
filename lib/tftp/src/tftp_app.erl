@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2002-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -51,9 +51,9 @@ stop(_State) ->
 %%====================================================================
 
 get_configuration() ->
-    case (catch application:get_env(tftp, services)) of
+    case application:get_env(tftp, services) of
 	{ok, Services} ->
 	    Services;
-	_ ->
+	undefined ->
 	    []
     end.

@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// Copyright Ericsson AB 2020-2025. All Rights Reserved.
+// Copyright Ericsson AB 2020-2026. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -1181,9 +1181,15 @@ gen.bs_match(Fail, Ctx, N, List) {
                 op->a[2].type = TAG_u;
                 op->a[2].val = unit; /* Unit */
                 op->a[3] = Fail;
+            } else if (size == 0 && unit == 8) {
+                $NewBeamOp(S, op);
+                $BeamOpNameArity(op, i_bs_test_unit8, 2);
+
+                op->a[0] = Fail;
+                op->a[1] = Ctx;
             } else if (size == 0 && unit != 1) {
                 $NewBeamOp(S, op);
-                $BeamOpNameArity(op, bs_test_unit, 3);
+                $BeamOpNameArity(op, i_bs_test_unit, 3);
 
                 op->a[0] = Fail;
                 op->a[1] = Ctx;

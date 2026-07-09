@@ -22,6 +22,7 @@
 -module(gen_server_SUITE).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("stdlib/include/assert.hrl").
 -include_lib("kernel/include/inet.hrl").
 
 -export([init_per_testcase/2, end_per_testcase/2]).
@@ -194,7 +195,7 @@ start(Config) when is_list(Config) ->
     ok = gen_server:call(Pid0, started_p),
     ok = gen_server:call(Pid0, stop),
     busy_wait_for_process(Pid0,600),
-    {'EXIT', {noproc,_}} = (catch gen_server:call(Pid0, started_p, 1)),
+    ?assertExit({noproc, _}, gen_server:call(Pid0, started_p, 1)),
 
     %% anonymous with timeout
     io:format("try init timeout~n", []),
@@ -254,7 +255,7 @@ start(Config) when is_list(Config) ->
 
     busy_wait_for_process(Pid2,600),
 
-    {'EXIT', {noproc,_}} = (catch gen_server:call(Pid2, started_p, 10)),
+    ?assertExit({noproc, _}, gen_server:call(Pid2, started_p, 10)),
 
     %% local register linked
     {ok, Pid3} =
@@ -298,7 +299,7 @@ start(Config) when is_list(Config) ->
 			 gen_server_SUITE, [], []),
     ok = gen_server:call({global, my_test_name}, stop),
     busy_wait_for_process(Pid4,600),
-    {'EXIT', {noproc,_}} = (catch gen_server:call(Pid4, started_p, 10)),
+    ?assertExit({noproc, _}, gen_server:call(Pid4, started_p, 10)),
 
     %% global register linked
     {ok, Pid5} =
@@ -343,7 +344,7 @@ start(Config) when is_list(Config) ->
 			 gen_server_SUITE, [], []),
     ok = gen_server:call({via, dummy_via, my_test_name}, stop),
     busy_wait_for_process(Pid6,600),
-    {'EXIT', {noproc,_}} = (catch gen_server:call(Pid6, started_p, 10)),
+    ?assertExit({noproc, _}, gen_server:call(Pid6, started_p, 10)),
 
     %% via register linked
     dummy_via:reset(),
@@ -470,7 +471,7 @@ stop1(_Config) ->
     {ok, Pid} = gen_server:start(?MODULE, [], []),
     ok = gen_server:stop(Pid),
     false = erlang:is_process_alive(Pid),
-    {'EXIT',noproc} = (catch gen_server:stop(Pid)),
+    ?assertExit(noproc, gen_server:stop(Pid)),
     ok.
 
 %% Anonymous, other reason
@@ -483,7 +484,7 @@ stop2(_Config) ->
 %% Anonymous, invalid timeout
 stop3(_Config) ->
     {ok,Pid} = gen_server:start(?MODULE, [], []),
-    {'EXIT',_} = (catch gen_server:stop(Pid, other_reason, invalid_timeout)),
+    ?assertError(_, gen_server:stop(Pid, other_reason, invalid_timeout)),
     true = erlang:is_process_alive(Pid),
     ok = gen_server:stop(Pid),
     false = erlang:is_process_alive(Pid),
@@ -494,7 +495,7 @@ stop4(_Config) ->
     {ok,Pid} = gen_server:start({local,to_stop},?MODULE, [], []),
     ok = gen_server:stop(to_stop),
     false = erlang:is_process_alive(Pid),
-    {'EXIT',noproc} = (catch gen_server:stop(to_stop)),
+    ?assertExit(noproc, gen_server:stop(to_stop)),
     ok.
 
 %% Registered name and local node
@@ -502,7 +503,7 @@ stop5(_Config) ->
     {ok,Pid} = gen_server:start({local,to_stop},?MODULE, [], []),
     ok = gen_server:stop({to_stop,node()}),
     false = erlang:is_process_alive(Pid),
-    {'EXIT',noproc} = (catch gen_server:stop({to_stop,node()})),
+    ?assertExit(noproc, gen_server:stop({to_stop,node()})),
     ok.
 
 %% Globally registered name
@@ -510,7 +511,7 @@ stop6(_Config) ->
     {ok, Pid} = gen_server:start({global, to_stop}, ?MODULE, [], []),
     ok = gen_server:stop({global,to_stop}),
     false = erlang:is_process_alive(Pid),
-    {'EXIT',noproc} = (catch gen_server:stop({global,to_stop})),
+    ?assertExit(noproc, gen_server:stop({global,to_stop})),
     ok.
 
 %% 'via' registered name
@@ -520,7 +521,7 @@ stop7(_Config) ->
 				 ?MODULE, [], []),
     ok = gen_server:stop({via, dummy_via, to_stop}),
     false = erlang:is_process_alive(Pid),
-    {'EXIT',noproc} = (catch gen_server:stop({via, dummy_via, to_stop})),
+    ?assertExit(noproc, gen_server:stop({via, dummy_via, to_stop})),
     ok.
 
 %% Anonymous on remote node
@@ -531,9 +532,9 @@ stop8(_Config) ->
     {ok, Pid} = rpc:call(Node,gen_server,start,[?MODULE,[],[]]),
     ok = gen_server:stop(Pid),
     false = rpc:call(Node,erlang,is_process_alive,[Pid]),
-    {'EXIT',noproc} = (catch gen_server:stop(Pid)),
+    ?assertExit(noproc, gen_server:stop(Pid)),
     peer:stop(Peer),
-    {'EXIT',{{nodedown,Node},_}} = (catch gen_server:stop(Pid)),
+    ?assertExit({{nodedown,Node}, _}, gen_server:stop(Pid)),
     ok.
 
 %% Registered name on remote node
@@ -545,9 +546,9 @@ stop9(_Config) ->
     ok = gen_server:stop({to_stop,Node}),
     undefined = rpc:call(Node,erlang,whereis,[to_stop]),
     false = rpc:call(Node,erlang,is_process_alive,[Pid]),
-    {'EXIT',noproc} = (catch gen_server:stop({to_stop,Node})),
+    ?assertExit(noproc, gen_server:stop({to_stop,Node})),
     peer:stop(Peer),
-    {'EXIT',{{nodedown,Node},_}} = (catch gen_server:stop({to_stop,Node})),
+    ?assertExit({{nodedown, Node}, _}, gen_server:stop({to_stop,Node})),
     ok.
 
 %% Globally registered name on remote node
@@ -559,9 +560,9 @@ stop10(_Config) ->
     ok = global:sync(),
     ok = gen_server:stop({global,to_stop}),
     false = rpc:call(Node,erlang,is_process_alive,[Pid]),
-    {'EXIT',noproc} = (catch gen_server:stop({global,to_stop})),
+    ?assertExit(noproc, gen_server:stop({global,to_stop})),
     peer:stop(Peer),
-    {'EXIT',noproc} = (catch gen_server:stop({global,to_stop})),
+    ?assertExit(noproc, gen_server:stop({global,to_stop})),
     ok.
 
 crash(Config) when is_list(Config) ->
@@ -571,26 +572,22 @@ crash(Config) when is_list(Config) ->
 
     %% This crash should not generate a crash report.
     {ok,Pid0} = gen_server:start_link(?MODULE, [], []),
-    {'EXIT',{{shutdown,reason},_}} =
- 	(catch gen_server:call(Pid0, shutdown_reason)),
+    ?assertExit({{shutdown, reason}, _}, gen_server:call(Pid0, shutdown_reason)),
     receive {'EXIT',Pid0,{shutdown,reason}} -> ok end,
 
     %% This crash should not generate a crash report.
     {ok,Pid1} = gen_server:start_link(?MODULE, {state,state1}, []),
-    {'EXIT',{{shutdown,stop_reason},_}} =
-	(catch gen_server:call(Pid1, stop_shutdown_reason)),
+    ?assertExit({{shutdown, stop_reason}, _}, gen_server:call(Pid1, stop_shutdown_reason)),
     receive {'EXIT',Pid1,{shutdown,stop_reason}} -> ok end,
 
     %% This crash should not generate a crash report.
     {ok,Pid2} = gen_server:start_link(?MODULE, [], []),
-    {'EXIT',{shutdown,_}} =
- 	(catch gen_server:call(Pid2, exit_shutdown)),
+    ?assertExit({shutdown, _}, gen_server:call(Pid2, exit_shutdown)),
     receive {'EXIT',Pid2,shutdown} -> ok end,
 
     %% This crash should not generate a crash report.
     {ok,Pid3} = gen_server:start_link(?MODULE, {state,state3}, []),
-    {'EXIT',{shutdown,_}} =
-	(catch gen_server:call(Pid3, stop_shutdown)),
+    ?assertExit({shutdown, _}, gen_server:call(Pid3, stop_shutdown)),
     receive {'EXIT',Pid3,shutdown} -> ok end,
 
     process_flag(trap_exit, false),
@@ -598,7 +595,7 @@ crash(Config) when is_list(Config) ->
     %% This crash should generate a crash report and a report
     %% from gen_server.
     {ok,Pid4} = gen_server:start(?MODULE, {state,state4}, []),
-    {'EXIT',{crashed,_}} = (catch gen_server:call(Pid4, crash)),
+    ?assertExit({crashed, _}, gen_server:call(Pid4, crash)),
     ClientPid = self(),
     receive
 	{error,_GroupLeader4,{Pid4,
@@ -706,12 +703,10 @@ call(Config) when is_list(Config) ->
 
     %% timeout call.
     delayed = gen_server:call(my_test_name, {delayed_answer,1}, 30),
-    {'EXIT',{timeout,_}} =
-	(catch gen_server:call(my_test_name, {delayed_answer,30}, 1)),
+    ?assertExit({timeout, _}, gen_server:call(my_test_name, {delayed_answer,30}, 1)),
 
     %% bad return value in the gen_server loop from handle_call.
-    {'EXIT',{{bad_return_value, badreturn},_}} =
-	(catch gen_server:call(my_test_name, badreturn)),
+    ?assertExit({{bad_return_value, badreturn}, _}, gen_server:call(my_test_name, badreturn)),
 
     process_flag(trap_exit, OldFl),
     ok.
@@ -771,9 +766,8 @@ send_request(Config) when is_list(Config) ->
     {error, {noconnection, _}} = Async({my_test_name, foo@node}, started_p),
 
     {error, {noproc,_}} = Async({global, non_existing}, started_p),
-    catch exit(whereis(dummy_via), foo),
-    {'EXIT', {badarg,_}} =
-        (catch gen_server:send_request({via, dummy_via, non_existing}, started_p)),
+    try exit(whereis(dummy_via), foo) catch _:_ -> ok end,
+    ?assertError(badarg, gen_server:send_request({via, dummy_via, non_existing}, started_p)),
 
     %% Remote nodes
     Via = dummy_via:reset(),
@@ -794,7 +788,7 @@ send_request(Config) when is_list(Config) ->
     {error, {noproc, _}} = Async({remote, Remote}, started_p),
 
     %% Cleanup
-    catch exit(Via, foo2),
+    try exit(Via, foo2) catch _:_ -> ok end,
     receive {'EXIT', Via, foo2} -> ok end,
     process_flag(trap_exit, OldFl),
     ok.
@@ -1167,11 +1161,16 @@ call_remote1(Config) when is_list(Config) ->
     Node = proplists:get_value(node,Config),
     {ok, Pid} = rpc:call(Node, gen_server, start,
 			 [{global, N}, ?MODULE, [], []]),
-    ok = (catch gen_server:call({global, N}, started_p, infinity)),
+    ok = gen_server:call({global, N}, started_p, infinity),
     exit(Pid, boom),
-    {'EXIT', {Reason, _}} = (catch gen_server:call({global, N},
-						   started_p, infinity)),
-    true = (Reason == noproc) orelse (Reason == boom),
+    try
+        gen_server:call({global, N}, started_p, infinity)
+    of
+        _ -> error(unexpected_success)
+    catch
+        exit:{noproc, _} -> ok;
+        exit:{boom, _} -> ok
+    end,
     ok.
 
 call_remote2(Config) when is_list(Config) ->
@@ -1180,11 +1179,16 @@ call_remote2(Config) when is_list(Config) ->
 
     {ok, Pid} = rpc:call(Node, gen_server, start,
 			 [{global, N}, ?MODULE, [], []]),
-    ok = (catch gen_server:call(Pid, started_p, infinity)),
+    ok = gen_server:call(Pid, started_p, infinity),
     exit(Pid, boom),
-    {'EXIT', {Reason, _}} = (catch gen_server:call(Pid,
-						   started_p, infinity)),
-    true = (Reason == noproc) orelse (Reason == boom),
+    try
+        gen_server:call(Pid, started_p, infinity)
+    of
+        _ -> error(unexpected_success)
+    catch
+        exit:{noproc, _} -> ok;
+        exit:{boom, _} -> ok
+    end,
     ok.
 
 call_remote3(Config) when is_list(Config) ->
@@ -1192,11 +1196,16 @@ call_remote3(Config) when is_list(Config) ->
 
     {ok, Pid} = rpc:call(Node, gen_server, start,
 			 [{local, piller}, ?MODULE, [], []]),
-    ok = (catch gen_server:call({piller, Node}, started_p, infinity)),
+    ok = gen_server:call({piller, Node}, started_p, infinity),
     exit(Pid, boom),
-    {'EXIT', {Reason, _}} = (catch gen_server:call({piller, Node},
-						   started_p, infinity)),
-    true = (Reason == noproc) orelse (Reason == boom),
+    try
+        gen_server:call({piller, Node}, started_p, infinity)
+    of
+        _ -> error(unexpected_success)
+    catch
+        exit:{noproc, _} -> ok;
+        exit:{boom, _} -> ok
+    end,
     ok.
 
 %% --------------------------------------
@@ -1209,9 +1218,7 @@ call_remote_n1(Config) when is_list(Config) ->
     {ok, _Pid} = rpc:call(Node, gen_server, start,
 			  [{global, N}, ?MODULE, [], []]),
     peer:stop(proplists:get_value(peer,Config)),
-    {'EXIT', {noproc, _}} =
-	(catch gen_server:call({global, N}, started_p, infinity)),
-
+    ?assertExit({noproc, _}, gen_server:call({global, N}, started_p, infinity)),
     ok.
 
 call_remote_n2(Config) when is_list(Config) ->
@@ -1221,9 +1228,7 @@ call_remote_n2(Config) when is_list(Config) ->
     {ok, Pid} = rpc:call(Node, gen_server, start,
 			 [{global, N}, ?MODULE, [], []]),
     peer:stop(proplists:get_value(peer,Config)),
-    {'EXIT', {{nodedown, Node}, _}} = (catch gen_server:call(Pid,
-							     started_p, infinity)),
-
+    ?assertExit({{nodedown, Node}, _}, gen_server:call(Pid, started_p, infinity)),
     ok.
 
 call_remote_n3(Config) when is_list(Config) ->
@@ -1232,9 +1237,7 @@ call_remote_n3(Config) when is_list(Config) ->
     {ok, _Pid} = rpc:call(Node, gen_server, start,
 			  [{local, piller}, ?MODULE, [], []]),
     peer:stop(proplists:get_value(peer,Config)),
-    {'EXIT', {{nodedown, Node}, _}} = (catch gen_server:call({piller, Node},
-							     started_p, infinity)),
-
+    ?assertExit({{nodedown, Node}, _}, gen_server:call({piller, Node}, started_p, infinity)),
     ok.
 
 %% --------------------------------------
@@ -1242,8 +1245,8 @@ call_remote_n3(Config) when is_list(Config) ->
 %% --------------------------------------
 
 calling_self(Config) when is_list(Config) ->
-    {'EXIT', {calling_self, _}} = (catch gen_server:call(self(), oops)),
-    {'EXIT', {calling_self, _}} = (catch gen_server:call(self(), oops, infinity)),
+    ?assertExit({calling_self, _}, gen_server:call(self(), oops)),
+    ?assertExit({calling_self, _}, gen_server:call(self(), oops, infinity)),
     ok.
 
 %% --------------------------------------
@@ -1407,7 +1410,7 @@ handle_event_timeout(Config) when is_list(Config) ->
 				  Interrupt <- [false, true]]),
     ok = gen_server:call(Pid, stop),
     busy_wait_for_process(Pid, T + (T bsr 1)),
-    {'EXIT', {noproc, _}} = (catch gen_server:call(Pid, started_p, 1)),
+    ?assertExit({noproc, _}, gen_server:call(Pid, started_p, 1)),
 
     process_flag(trap_exit, OldFl),
     ok.
@@ -1462,7 +1465,7 @@ handle_event_timeout_infinity(Config) when is_list(Config) ->
                   {continue_hibernate, infinity, self(), absolute}]]),
     ok = gen_server:call(Pid, stop),
     busy_wait_for_process(Pid, T + (T bsr 1)),
-    {'EXIT', {noproc, _}} = (catch gen_server:call(Pid, started_p, 1)),
+    ?assertExit({noproc, _}, gen_server:call(Pid, started_p, 1)),
 
     process_flag(trap_exit, OldFl),
     ok.
@@ -1503,7 +1506,7 @@ handle_event_timeout_zero(Config) when is_list(Config) ->
 			       {continue_hibernate_zero, self()}]]),
     ok = gen_server:call(Pid, stop),
     busy_wait_for_process(Pid, T + (T bsr 1)),
-    {'EXIT', {noproc, _}} = (catch gen_server:call(Pid, started_p, 1)),
+    ?assertExit({noproc, _}, gen_server:call(Pid, started_p, 1)),
 
     process_flag(trap_exit, OldFl),
     ok.
@@ -1539,7 +1542,7 @@ handle_event_timeout_plain(Config) when is_list(Config) ->
 
     ok = gen_server:call(Pid, stop),
     busy_wait_for_process(Pid, T + (T bsr 1)),
-    {'EXIT', {noproc, _}} = (catch gen_server:call(Pid, started_p, 1)),
+    ?assertExit({noproc, _}, gen_server:call(Pid, started_p, 1)),
 
     process_flag(trap_exit, OldFl),
     ok.
@@ -2361,7 +2364,7 @@ error_format_status(Module) when is_atom(Module) ->
 
     State = "called format_status",
     {ok, Pid} = gen_server:start_link(Module, {state, State}, []),
-    {'EXIT',{crashed,_}} = (catch gen_server:call(Pid, crash)),
+    ?assertExit({crashed,_}, gen_server:call(Pid, crash)),
     receive
 	{'EXIT', Pid, crashed} ->
 	    ok
@@ -2551,7 +2554,7 @@ format_all_status(Config) when is_list(Config) ->
     end,
 
     {ok, Pid2} = gen_server:start_link(format_status_server, {state, State}, []),
-    catch gen_server:call(Pid2, crash),
+    try gen_server:call(Pid2, crash) catch _:_ -> ok end,
     receive {'EXIT', Pid2, crashed} -> ok end,
     receive
 	{error,_GroupLeader2,
@@ -2607,9 +2610,10 @@ replace_state(Config) when is_list(Config) ->
     NState2 = sys:get_state(Pid, 5000),
     %% verify no change in state if replace function crashes
     Replace3 = fun(_) -> throw(fail) end,
-    {'EXIT',{{callback_failed,
-	      {gen_server,system_replace_state},{throw,fail}},_}} =
-	(catch sys:replace_state(Pid, Replace3)),
+    ?assertError({callback_failed,
+                  {gen_server, system_replace_state},
+                  {throw, fail}},
+                 sys:replace_state(Pid, Replace3)),
     NState2 = sys:get_state(Pid, 5000),
     %% verify state replaced if process sys suspended
     ok = sys:suspend(Pid),
@@ -2684,7 +2688,7 @@ undef_init(_Config) ->
         gen_server:start(oc_init_server, [], []),
     process_flag(trap_exit, true),
     {error, {undef, [{oc_init_server, init, [_], _}|_]}} =
-        (catch gen_server:start_link(oc_init_server, [], [])),
+        gen_server:start_link(oc_init_server, [], []),
     receive
         Msg ->
             ct:fail({unexpected_msg, Msg})
@@ -3544,7 +3548,8 @@ format_status(normal, [_PDict, _State]) ->
 %% Utils...
 
 wait_until(Fun) ->
-    case catch Fun() of
+    Res = try Fun() catch _:_ -> false end,
+    case Res of
         true ->
             ok;
         _ ->

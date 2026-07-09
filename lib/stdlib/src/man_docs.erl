@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2024-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2024-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@
 %%
 -module(man_docs).
 -moduledoc false.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -include_lib("kernel/include/eep48.hrl").
 
@@ -64,7 +66,7 @@ module_to_manpage(Module, Path, #docs_v1{module_doc = #{~"en" := ModuleDoc}, doc
 %% Formats markdown as a roff man page.
 -spec markdown_to_manpage(binary(), file:filename(), string()) -> binary().
 markdown_to_manpage(Markdown, Path, Section) ->
-        markdown_to_manpage1(shell_docs_markdown:parse_md(Markdown), Path, Section).
+        markdown_to_manpage1(shell_docs_markdown:parse_md(Markdown, #{ allow_html => false }), Path, Section).
 markdown_to_manpage1(MarkdownChunks, Path, Section) ->
     Path1 = filename:absname(Path),
     App = get_app(Path1),
@@ -159,6 +161,8 @@ format_one({h5,_,Hs}) ->
     format_one({h3,[],Hs});
 format_one({p,_,Ps}) ->
     format_p(Ps);
+format_one({br,_,_}) ->
+    ~".br\n";
 format_one({pre,_,Ps}) ->
     format_pre(Ps);
 format_one({ol,_,Ol}) ->

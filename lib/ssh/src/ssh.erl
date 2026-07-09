@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2004-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ server-side process. Those process pairs could handle for example file transfers
 (sftp) or remote command execution (shell, exec and/or cli). If a custom shell
 is implemented, the user of the client could execute the special commands
 remotely. Note that the user is not necessarily a human but probably a system
-interfacing the SSH app.
+interfacing the SSH application.
 
 A server-side subssystem (channel) server is requested by the client with
 `ssh_connection:subsystem/4`.

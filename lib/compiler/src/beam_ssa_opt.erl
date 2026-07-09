@@ -38,6 +38,9 @@
 
 -module(beam_ssa_opt).
 -moduledoc false.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
+
 -export([module/2]).
 
 -include("beam_ssa_opt.hrl").
@@ -45,7 +48,7 @@
 -import(lists, [all/2,append/1,droplast/1,duplicate/2,flatten/1,foldl/3,
                 keyfind/3,last/1,mapfoldl/3,member/2,
                 partition/2,reverse/1,reverse/2,
-                splitwith/2,sort/1,takewhile/2,unzip/1]).
+                splitwith/2,search/2,sort/1,takewhile/2,unzip/1]).
 
 -define(MAX_REPETITIONS, 16).
 
@@ -269,6 +272,7 @@ module_passes(Opts) ->
 %% are repeated as required.
 repeated_passes(Opts) ->
     Ps = [?PASS(ssa_opt_live),
+          ?PASS(ssa_opt_sw),
           ?PASS(ssa_opt_is_between),
           ?PASS(ssa_opt_ne),
           ?PASS(ssa_opt_bs_create_bin),
@@ -298,7 +302,6 @@ epilogue_module_passes(Opts) ->
 early_epilogue_passes(Opts) ->
     Ps = [?PASS(ssa_opt_type_finish),
           ?PASS(ssa_opt_float),
-          ?PASS(ssa_opt_sw),
           ?PASS(ssa_opt_no_reuse),
           ?PASS(ssa_opt_deoptimize_update_tuple)],
     passes_1(Ps, Opts).
@@ -319,11 +322,12 @@ late_epilogue_passes(Opts) ->
           ?PASS(ssa_opt_get_tuple_element),
           ?PASS(ssa_opt_tail_literals),
           ?PASS(ssa_opt_trim_unreachable),
-          ?PASS(ssa_opt_unfold_literals),
-          ?PASS(ssa_opt_ranges)] ++
+          ?PASS(ssa_opt_unfold_literals)] ++
         %% A1-1b: the scan-loop rewrite is off by default; enable with the
         %% `scan_loop` option. It runs last so no later pass can reorder
         %% the inserted bs_scan ahead of the byte match it must precede.
+        %% (upstream removed ssa_opt_ranges; the rewrite is off by default
+        %% and no longer relies on it in the default pipeline.)
         case proplists:get_bool(scan_loop, Opts) of
             true -> [?PASS(ssa_opt_scan_loop_rewrite)];
             false -> []
@@ -845,48 +849,49 @@ fdb_fs([#b_function{ args=Args,bs=Bs }=F | Fs], Exports, FuncDb0) ->
     Exported = gb_sets:is_element({Name, Arity}, Exports),
     ArgTypes = duplicate(length(Args), #{}),
 
-    FuncDb1 = case FuncDb0 of
-                  %% We may have an entry already if someone's called us.
-                  #{ Id := Info } ->
-                      FuncDb0#{ Id := Info#func_info{ exported=Exported,
-                                                      arg_types=ArgTypes }};
-                  #{} ->
-                      FuncDb0#{ Id => #func_info{ exported=Exported,
-                                                  arg_types=ArgTypes }}
-              end,
-
     RPO = beam_ssa:rpo(Bs),
-    FuncDb = beam_ssa:fold_blocks(fun(_L, #b_blk{is=Is}, FuncDb) ->
-                                       fdb_is(Is, Id, FuncDb)
-                               end, RPO, FuncDb1, Bs),
+    Callees0 = beam_ssa:fold_blocks(fun(_L, #b_blk{is=Is}, Acc) ->
+                                            fdb_is(Is, Acc)
+                                    end, RPO, [], Bs),
+    Callees = ordsets:from_list(Callees0),
+
+    CallerVertex0 = maps:get(Id, FuncDb0, #func_info{}),
+    CallerVertex = CallerVertex0#func_info{exported=Exported,
+                                           arg_types=ArgTypes,
+                                           out=Callees},
+    FuncDb = FuncDb0#{Id => CallerVertex},
 
     fdb_fs(Fs, Exports, FuncDb);
-fdb_fs([], _Exports, FuncDb) ->
-    FuncDb.
+fdb_fs([], _Exports, FuncDb0) ->
+    S0 = [{Caller,Callees} || Caller := #func_info{out=Callees} <:- FuncDb0],
+    S1 = sofs:family(S0),
+    S2 = sofs:family_to_relation(S1),
+    S3 = sofs:converse(S2),
+    S4 = sofs:relation_to_family(S3),
+    S = sofs:to_external(S4),
+    fdb_update_callees(S, FuncDb0).
 
 fdb_is([#b_set{op=call,
                args=[#b_local{}=Callee | _]} | Is],
-       Caller, FuncDb) ->
-    fdb_is(Is, Caller, fdb_update(Caller, Callee, FuncDb));
+       Acc) ->
+    fdb_is(Is, [Callee|Acc]);
 fdb_is([#b_set{op=make_fun,args=[#b_local{}=Callee | _]} | Is],
-       Caller, FuncDb) ->
+       Acc) ->
     %% The make_fun instruction's type depends on the return type of the
     %% function in question, so we treat this as a function call.
-    fdb_is(Is, Caller, fdb_update(Caller, Callee, FuncDb));
-fdb_is([_ | Is], Caller, FuncDb) ->
-    fdb_is(Is, Caller, FuncDb);
-fdb_is([], _Caller, FuncDb) ->
+    fdb_is(Is, [Callee|Acc]);
+fdb_is([_ | Is], Acc) ->
+    fdb_is(Is, Acc);
+fdb_is([], Acc) ->
+    Acc.
+
+fdb_update_callees([{Callee,CalledBy}|Calls], FuncDb0) ->
+    CalleeVertex = map_get(Callee, FuncDb0),
+    FuncDb = FuncDb0#{Callee := CalleeVertex#func_info{in=CalledBy}},
+    fdb_update_callees(Calls, FuncDb);
+fdb_update_callees([], FuncDb) ->
     FuncDb.
 
-fdb_update(Caller, Callee, FuncDb) ->
-    CallerVertex = maps:get(Caller, FuncDb, #func_info{}),
-    CalleeVertex = maps:get(Callee, FuncDb, #func_info{}),
-
-    Calls = ordsets:add_element(Callee, CallerVertex#func_info.out),
-    CalledBy = ordsets:add_element(Caller, CalleeVertex#func_info.in),
-
-    FuncDb#{ Caller => CallerVertex#func_info{out=Calls},
-             Callee => CalleeVertex#func_info{in=CalledBy} }.
 
 %% Returns the post-order of all local calls in this module. That is,
 %% called functions will be ordered before the functions calling them.
@@ -944,9 +949,6 @@ ssa_opt_merge_blocks({#opt_st{ssa=Blocks0}=St, FuncDb}) ->
     RPO = beam_ssa:rpo(Blocks0),
     Blocks = beam_ssa:merge_blocks(RPO, Blocks0),
     {St#opt_st{ssa=Blocks}, FuncDb}.
-
-ssa_opt_ranges({#opt_st{ssa=Blocks}=St, FuncDb}) ->
-    {St#opt_st{ssa=beam_ssa_type:opt_ranges(Blocks)}, FuncDb}.
 
 %%%
 %%% Merges updates that cannot fail, for example two consecutive updates of the
@@ -1038,8 +1040,7 @@ merge_tuple_update_1([], Tuple) ->
 %%%
 
 ssa_opt_split_blocks({#opt_st{ssa=Blocks0,cnt=Count0}=St, FuncDb}) ->
-    P = fun(#b_set{op={bif,is_integer},args=[_,_,_]}) -> true;
-           (#b_set{op={bif,element}}) -> true;
+    P = fun(#b_set{op={bif,element}}) -> true;
            (#b_set{op=call}) -> true;
            (#b_set{op=bs_init_writable}) -> true;
            (#b_set{op=make_fun}) -> true;
@@ -1054,42 +1055,46 @@ ssa_opt_split_blocks({#opt_st{ssa=Blocks0,cnt=Count0}=St, FuncDb}) ->
 %%% When the range is constant, rewrite it into 3 BIFs: is_integer/1 and two
 %%% =<'s to enable later optimization.
 %%%
-ssa_opt_is_between({#opt_st{ssa=Blocks0,cnt=Count0}=St, FuncDb}) ->
-    {Blocks1, Count1} = ssa_opt_is_between_1(Blocks0, Count0),
-    {St#opt_st{ssa=Blocks1,cnt=Count1}, FuncDb}.
+ssa_opt_is_between({#opt_st{ssa=Linear0,cnt=Count0}=St, FuncDb}) ->
+    {Linear1, Count1} = ssa_opt_is_between_1(Linear0, Count0),
+    {St#opt_st{ssa=Linear1,cnt=Count1}, FuncDb}.
 
-ssa_opt_is_between_1([{L,#b_blk{}=B}=Blk0|Ls0], Count0) ->
-    case B of
-        #b_blk{is=[#b_set{op={bif,is_integer},dst=Bool1,
-                          args=[_,#b_literal{val=Min},
-                                #b_literal{val=Max}]}],
-               last=#b_br{bool=Bool1}}=Blk when is_integer(Min),
-                                                is_integer(Max),
-                                                Min =< Max ->
-            {Blk1, Count1} = is_between_rewrite(Count0, L, Blk),
-            {Ls1, Count2} = ssa_opt_is_between_1(Ls0, Count1),
-            {Blk1++Ls1, Count2};
-        #b_blk{} ->
-            {Ls1, Count1} = ssa_opt_is_between_1(Ls0, Count0),
-            {[Blk0|Ls1], Count1}
+ssa_opt_is_between_1([{L,#b_blk{is=[_|_]=Is0,
+                                last=#b_br{bool=#b_var{},
+                                          fail=Fail}}=Blk0}=B|Bs0],
+                     Count0) when Fail =/= ?EXCEPTION_BLOCK ->
+    case {reverse(Is0),Blk0} of
+        {[#b_set{op={bif,is_integer},dst=Bool1,
+                 args=[_,_,_]}=IsInt | Prefix],
+         #b_blk{last=#b_br{bool=Bool1}}} ->
+            {Bs1, Count1} = is_between_rewrite(Count0, L, Prefix,
+                                               IsInt, Blk0),
+            {Bs2, Count2} = ssa_opt_is_between_1(Bs0, Count1),
+            {Bs1++Bs2, Count2};
+        {_, _} ->
+            {Bs1, Count1} = ssa_opt_is_between_1(Bs0, Count0),
+            {[B|Bs1], Count1}
     end;
+ssa_opt_is_between_1([B|Bs0], Count0) ->
+    {Bs1, Count1} = ssa_opt_is_between_1(Bs0, Count0),
+    {[B|Bs1], Count1};
 ssa_opt_is_between_1([], Count0) ->
     {[], Count0}.
 
-is_between_rewrite(Count0, L, Blk0) ->
+is_between_rewrite(Count0, L, Prefix, IsInt, Blk0) ->
     LowerL = Count0,
     UpperL = Count0 + 1,
     LowerBool = #b_var{name=Count0},
     UpperBool = #b_var{name=Count0 + 1},
     Count = Count0 + 2,
-    #b_blk{is=[#b_set{dst=Bool1,args=[Term,LB,UB]}|_],
-           last=#b_br{fail=Fail}=Br0} = Blk0,
-    Blk1 = Blk0#b_blk{is=[#b_set{op={bif,is_integer},dst=Bool1,
-                                 args=[Term]}],
-                      last=#b_br{bool=Bool1,succ=LowerL,fail=Fail}},
+    #b_set{args=[Term,LB,UB]} = IsInt,
+    #b_blk{last=#b_br{}=Br0} = Blk0,
+    I = IsInt#b_set{args=[Term]},
+    Is = reverse(Prefix, [I]),
+    Blk1 = Blk0#b_blk{is=Is,last=Br0#b_br{succ=LowerL}},
     BlkLower = #b_blk{is=[#b_set{op={bif,'=<'},dst=LowerBool,
                                  args=[LB,Term]}],
-                      last=#b_br{bool=LowerBool,succ=UpperL,fail=Fail}},
+                      last=Br0#b_br{bool=LowerBool,succ=UpperL}},
     BlkUpper = #b_blk{is=[#b_set{op={bif,'=<'},dst=UpperBool,
                                  args=[Term,UB]}],
                       last=Br0#b_br{bool=UpperBool}},
@@ -1345,7 +1350,7 @@ are_all_literals(Args) ->
 ssa_opt_element({#opt_st{ssa=Blocks}=St, FuncDb}) ->
     %% Collect the information about element instructions in this
     %% function.
-    GetEls = collect_element_calls(beam_ssa:linearize(Blocks)),
+    GetEls = collect_element_calls(beam_ssa:linearize_only(Blocks)),
 
     %% Collect the element instructions into chains. The
     %% element calls in each chain are ordered in reverse
@@ -1869,12 +1874,12 @@ are_map_keys_literals([]) ->
 %%%
 
 -type fr_status() :: 'original' | 'copy'.
--record(fs,
-        {regs=#{} :: #{beam_ssa:b_var() := {beam_ssa:b_var(),fr_status()}},
-         non_guards :: gb_sets:set(beam_ssa:label()),
-         bs :: beam_ssa:block_map(),
-         preds :: #{beam_ssa:label() => [beam_ssa:label()]}
-        }).
+-record #fs{
+   regs=#{} :: #{beam_ssa:b_var() := {beam_ssa:b_var(),fr_status()}},
+   non_guards :: gb_sets:set(beam_ssa:label()),
+   bs :: beam_ssa:block_map(),
+   preds :: #{beam_ssa:label() => [beam_ssa:label()]}
+  }.
 
 ssa_opt_float({#opt_st{ssa=Linear0,cnt=Count0}=St, FuncDb}) ->
     NonGuards = non_guards(Linear0),
@@ -2121,7 +2126,7 @@ ssa_opt_live({#opt_st{ssa=Linear0}=St, FuncDb}) ->
     RevLinear = reverse(Linear0),
     Blocks0 = maps:from_list(RevLinear),
     Blocks = live_opt(RevLinear, #{}, Blocks0),
-    Linear = beam_ssa:linearize(Blocks),
+    Linear = beam_ssa:linearize_only(Blocks),
     {St#opt_st{ssa=Linear}, FuncDb}.
 
 live_opt([{L,Blk0}|Bs], LiveMap0, Blocks) ->
@@ -2250,7 +2255,7 @@ ssa_opt_try({#opt_st{ssa=SSA0,cnt=Count0}=St, FuncDb}) ->
     {St#opt_st{ssa=SSA,cnt=Count}, FuncDb}.
 
 opt_try(Blocks, Count0) when is_map(Blocks) ->
-    {Count, Linear} = opt_try(beam_ssa:linearize(Blocks), Count0),
+    {Count, Linear} = opt_try(beam_ssa:linearize_only(Blocks), Count0),
     {Count, maps:from_list(Linear)};
 opt_try(Linear, Count0) when is_list(Linear) ->
     {Count, Shrunk} = shrink_try(Linear, Count0, []),
@@ -3342,7 +3347,7 @@ do_ssa_opt_sink(Defs, #opt_st{ssa=Linear}=St) when is_map(Defs) ->
                            move_defs(V, From, To, A)
                    end, Blocks0, DefLocs),
 
-    St#opt_st{ssa=beam_ssa:linearize(Blocks)}.
+    St#opt_st{ssa=beam_ssa:linearize_only(Blocks)}.
 
 def_blocks([{L,#b_blk{is=Is}}|Bs]) ->
     def_blocks_is(Is, L, def_blocks(Bs));
@@ -4239,7 +4244,7 @@ is_bs_match_is([], _Safe) -> no.
 is_viable_match(#b_set{op=bs_match,args=Args}) ->
     case Args of
         [#b_literal{val=binary},Ctx,_,#b_literal{val=all},#b_literal{val=U}]
-          when is_integer(U), 1 =< U, U =< 256 ->
+          when is_integer(U, 1, 256) ->
             {yes,{Ctx,0,U}};
         [#b_literal{val=binary},Ctx,_,#b_literal{val=Size},#b_literal{val=U}]
           when is_integer(Size) ->
@@ -4274,7 +4279,8 @@ build_bs_ensure_match(L, {_,Size,Unit}, Count0, Blocks0) ->
     Suffix = [BsMatch|Suffix1],
     BsMatchBlk = BsMatchBlk0#b_blk{is=Suffix},
 
-    #b_set{args=[_,Ctx|_]} = keyfind(bs_match, #b_set.op, MatchIs),
+    IsMatch = fun(#b_set{op=Op}) -> Op =:= bs_match end,
+    {value, #b_set{args=[_,Ctx|_]}} = search(IsMatch, MatchIs),
     Is = Prefix ++ [#b_set{op=bs_ensure,
                            dst=NewCtx,
                            args=[Ctx,#b_literal{val=Size},#b_literal{val=Unit}]},

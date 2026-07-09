@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1999-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -97,14 +97,16 @@
 -endif.
 
 -define(MAX_FUNC_ARGS, 255).
--define(IS_FUNC_ARITY(A), is_integer(A) andalso 0 =< A andalso A =< ?MAX_FUNC_ARGS).
+-define(IS_FUNC_ARITY(A), is_integer(A, 0, ?MAX_FUNC_ARGS)).
 
 %% Variable value info.
--record(sub, {v=[],                                 %Variable substitutions
-              s=sets:new() :: sets:set(), %Variables in scope
-              t=#{} :: map(),                       %Types
-              in_guard=false,                       %In guard or not.
-              top=true}).                           %Not inside a term.
+-record #sub{
+   v=[],                                 %Variable substitutions
+   s :: sets:set(),                      %Variables in scope
+   t=#{} :: map(),                       %Types
+   in_guard=false,                       %In guard or not.
+   top=true                              %Not inside a term.
+  }.
 -type sub() :: #sub{}.
 
 -spec module(cerl:c_module(), [compile:option()]) ->
@@ -850,15 +852,17 @@ simplify_call(#c_call{anno=Anno0}, maps, get, [Key0, Map, Default]) ->
                       args=[#c_tuple{es=[#c_literal{val=badmap},
                                          Fail]}]},
 
+    EmptyMap = #c_literal{val=#{}},
     Cs = [#c_clause{anno=Anno,
-                    pats=[#c_map{es=[#c_map_pair{op=#c_literal{val=exact},
+                    pats=[#c_map{arg=EmptyMap,
+                                 es=[#c_map_pair{op=#c_literal{val=exact},
                                                  key=Key,
                                                  val=Value}],
                                  is_pat=true}],
                     guard=#c_literal{val=true},
                     body=Value},
           #c_clause{anno=Anno,
-                    pats=[#c_map{es=[],is_pat=true}],
+                    pats=[#c_map{arg=EmptyMap,es=[],is_pat=true}],
                     guard=#c_literal{val=true},
                     body=Default},
           #c_clause{anno=Anno,
@@ -2241,7 +2245,7 @@ opt_lc_body_1(Apply, #c_var{name=Name}, Fun0) ->
     maybe
         %% Look for a letrec body that constructs a list
         %% with a single element.
-        #c_apply{op=#c_var{name=Name},args=[Arg|_]} ?= Apply,
+        #c_apply{op=#c_var{name=Name},args=[Arg]} ?= Apply,
         true ?= cerl:is_c_list(Arg) andalso cerl:list_length(Arg) =:= 1,
 
         %% Now we know that the letrec body is suitable. Try to
@@ -2261,11 +2265,11 @@ opt_lc_definition(#c_fun{body=Case}=Fun, Name) ->
     maybe
         %% Match the case used in a list comprehension generator.
         #c_case{clauses=Cs0} ?= Case,
-        [#c_clause{pats=[#c_cons{tl=Tail}|_],body=C1Body0}=C1,
-         #c_clause{pats=[#c_cons{tl=Tail}|_],guard=#c_literal{val=true},
+        [#c_clause{pats=[#c_cons{tl=Tail}],body=C1Body0}=C1,
+         #c_clause{pats=[#c_cons{tl=Tail}],guard=#c_literal{val=true},
                    body=#c_apply{op=#c_var{name=Name},
                                  args=[Tail|_]}}=C2,
-         #c_clause{pats=[#c_literal{val=[]}|_],body=Iterate}|_] ?= Cs0,
+         #c_clause{pats=[#c_literal{val=[]}],body=Iterate}|_] ?= Cs0,
 
         %% Replace self-recursion with the body of the clause matching
         %% the empty list.

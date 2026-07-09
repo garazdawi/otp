@@ -3,7 +3,7 @@
 
 SPDX-License-Identifier: Apache-2.0
 
-Copyright Ericsson AB 2023-2025. All Rights Reserved.
+Copyright Ericsson AB 2023-2026. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -833,6 +833,11 @@ following capability flags are defined:
   [`ALTACT_SIG_SEND`](erl_dist_protocol.md#ALTACT_SIG_SEND) control messages.
   Introduced in OTP 28.
 
+- **`-define(DFLAG_NATIVE_RECORDS, (1 bsl 38)).`{: #DFLAG_NATIVE_RECORDS }** -
+  The node supports native record terms encoded with the
+  [`RECORD_EXT`](erl_ext_dist.md#record_ext) tag.
+  Introduced in OTP 29.
+
 There is also function `dist_util:strict_order_flags/0` returning all flags
 (bitwise or:ed together) corresponding to features that require strict ordering
 of data over distribution channels.
@@ -925,7 +930,7 @@ distributed operation it encodes:
 
 - **`EXIT2`** - `{8, FromPid, ToPid, Reason}`
 
-  This signal is sent by a call to the erlang:exit/2 bif
+  This signal is sent by a call to the erlang:exit_signal/2 bif
 
 - **`SEND_TT`** - `{12, Unused, ToPid, TraceToken}`
 

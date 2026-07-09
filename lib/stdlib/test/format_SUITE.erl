@@ -28,6 +28,7 @@
 -export([init_per_testcase/2, end_per_testcase/2]).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 init_per_testcase(_Case, Config) ->
     Config.
@@ -60,6 +61,6 @@ end_per_group(_GroupName, Config) ->
 
 %% OTP-2400. Bad args can hang.
 hang_1(Config) when is_list(Config) ->
-    _ = (catch io:format(a, "", [])),
-    _ = (catch io:format({}, "", [])),
+    ?assertError(_, io:format(a, "", [])),
+    ?assertError(_, io:format({}, "", [])),
     ok.

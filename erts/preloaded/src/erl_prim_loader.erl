@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -64,10 +64,12 @@ The `erl_prim_loader` module interprets the following command-line flags:
 - **`-setcookie Cookie`** - Specifies the cookie of the Erlang runtime system.
   This flag is mandatory if flag `-loader inet` is present.
 
-## See Also
+### See Also
 
 `m:init`, `m:erl_boot_server`
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}}]).
 
 %% If the macro DEBUG is defined during compilation, 
 %% debug printouts are done through erlang:display/1.

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2004-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -46,10 +46,10 @@
 suite() ->
     [{ct_hooks,[ts_install_cth]}].
 
-all() -> [{group, proper}].
+all() -> [{group, property}].
 
 groups() ->
-    [{proper, [], [test_phash2_no_diff,
+    [{property, [], [test_phash2_no_diff,
                    test_phash2_no_diff_long,
                    test_phash2_no_diff_between_versions]}].
 
@@ -61,10 +61,9 @@ init_per_suite(Config) ->
 end_per_suite(Config) ->
     Config.
 
-%%% Only proper is supported
-init_per_group(proper, Config) ->
+init_per_group(property, Config) ->
     case proplists:get_value(property_test_tool,Config) of
-	proper -> Config;
+	Tool when Tool =:= proper; Tool =:= eqc -> Config;
 	X -> {skip, lists:concat([X," is not supported"])}
     end;
 init_per_group(_, Config) ->

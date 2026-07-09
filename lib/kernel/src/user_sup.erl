@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@
 %%
 -module(user_sup).
 -moduledoc false.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 %% ---------------------------------------------
 %% This is a supervisor bridge hiding the process
@@ -84,14 +86,13 @@ relay1(Pid) ->
 
 
 %%-----------------------------------------------------------------
-%% Sleep a while in order to let user write all (some) buffered 
-%% information before termination.
+%% Wait for user_drv to flush buffered output before termination.
 %%-----------------------------------------------------------------
 
 -spec terminate(term(), pid()) -> 'ok'.
 
 terminate(_Reason, UserPid) ->
-    receive after 1000 -> ok end,
+    _ = user_drv:flush(),
     exit(UserPid, kill),
     ok.
 

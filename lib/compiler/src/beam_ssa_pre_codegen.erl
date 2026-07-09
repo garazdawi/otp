@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2018-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -102,16 +102,16 @@ functions([], _Ps) -> [].
 -type ssa_register() :: beam_ssa_codegen:ssa_register().
 
 -define(TC(Body), tc(fun() -> Body end, ?FILE, ?LINE)).
--record(st, {ssa :: beam_ssa:block_map(),
-             args :: [b_var()],
-             cnt :: beam_ssa:label(),
-             frames=[] :: [beam_ssa:label()],
-             intervals=[] :: [{b_var(),[range()]}],
-             res=[] :: [{b_var(),reservation()}] | #{b_var():=reservation()},
-             regs=#{} :: #{b_var():=ssa_register()},
-             extra_annos=[] :: [{atom(),term()}],
-             location :: term()
-            }).
+-record #st{ssa :: beam_ssa:block_map(),
+            args :: [b_var()],
+            cnt :: beam_ssa:label(),
+            frames=[] :: [beam_ssa:label()],
+            intervals=[] :: [{b_var(),[range()]}],
+            res=[] :: [{b_var(),reservation()}] | #{b_var():=reservation()},
+            regs=#{} :: #{b_var():=ssa_register()},
+            extra_annos=[] :: [{atom(),term()}],
+            location :: term()
+           }.
 -define(PASS(N), {N,fun N/1}).
 
 passes(Opts) ->
@@ -423,63 +423,37 @@ bs_restores_is([#b_set{anno=#{ensured := _},
     %% instruction, so there will never be a restore to this
     %% position.
     Start = bs_subst_ctx(NewPos, CtxChain),
-    case Args of
-        [#b_literal{val=skip},_FromPos,_Type,_Flags,#b_literal{val=all},_] ->
+    case is_skip_all(Args) of
+        true ->
             %% This instruction will be optimized away. (The unit test
             %% part of it has been take care of by the preceding
             %% bs_ensure instruction.) All positions will be
             %% unchanged.
             SPos = FPos = SPos0,
             bs_restores_is(Is, CtxChain, SPos, FPos, Rs);
-        [_,FromPos|_] ->
+        false ->
+            [_,FromPos|_] = Args,
             SPos = SPos0#{Start := NewPos},
             FPos = SPos0#{Start := FromPos},
             bs_restores_is(Is, CtxChain, SPos, FPos, Rs)
     end;
-bs_restores_is([#b_set{op=bs_match,dst=NewPos,args=Args}=I|Is],
+bs_restores_is([#b_set{op=bs_match,dst=NewPos,args=Args}|Is],
                CtxChain, SPos0, _FPos, Rs0) ->
+    false = is_skip_all(Args),                  %Assertion.
     Start = bs_subst_ctx(NewPos, CtxChain),
     [_,FromPos|_] = Args,
     case SPos0 of
         #{Start:=FromPos} ->
             %% Same position, no restore needed.
-            SPos = case bs_match_type(I) of
-                       plain ->
-                            %% Update position to new position.
-                            SPos0#{Start:=NewPos};
-                        _ ->
-                            %% Position will not change (test_unit
-                            %% instruction or no instruction at
-                            %% all).
-                            SPos0
-                   end,
+            SPos = SPos0#{Start:=NewPos},
             FPos = SPos0,
             bs_restores_is(Is, CtxChain, SPos, FPos, Rs0);
         #{Start:=_} ->
-            %% Different positions, might need a restore instruction.
-            case bs_match_type(I) of
-                none ->
-                    %% This is a tail test that will be optimized away.
-                    %% There's no need to do a restore, and all
-                    %% positions are unchanged.
-                    FPos = SPos0,
-                    bs_restores_is(Is, CtxChain, SPos0, FPos, Rs0);
-                test_unit ->
-                    %% This match instruction will be replaced by
-                    %% a test_unit instruction. We will need a
-                    %% restore. The new position will be the position
-                    %% restored to (NOT NewPos).
-                    SPos = SPos0#{Start:=FromPos},
-                    FPos = SPos,
-                    Rs = Rs0#{NewPos=>{Start,FromPos}},
-                    bs_restores_is(Is, CtxChain, SPos, FPos, Rs);
-                plain ->
-                    %% Match or skip. Position will be changed.
-                    SPos = SPos0#{Start:=NewPos},
-                    FPos = SPos0#{Start:=FromPos},
-                    Rs = Rs0#{NewPos=>{Start,FromPos}},
-                    bs_restores_is(Is, CtxChain, SPos, FPos, Rs)
-            end
+            %% Match or skip. Position will be changed.
+            SPos = SPos0#{Start := NewPos},
+            FPos = SPos0#{Start := FromPos},
+            Rs = Rs0#{NewPos => {Start,FromPos}},
+            bs_restores_is(Is, CtxChain, SPos, FPos, Rs)
     end;
 bs_restores_is([#b_set{op=bs_scan,dst=NewPos,args=[_FromCtx|_]}|Is],
                CtxChain, SPos0, _FPos, Rs) ->
@@ -539,15 +513,8 @@ bs_restores_is([], _CtxChain, SPos, _FPos, Rs) ->
     FPos = SPos,
     {SPos, FPos, Rs}.
 
-bs_match_type(#b_set{args=[#b_literal{val=skip},_Ctx,
-                             #b_literal{val=binary},_Flags,
-                             #b_literal{val=all},#b_literal{val=U}]}) ->
-    case U of
-        1 -> none;
-        _ -> test_unit
-    end;
-bs_match_type(_) ->
-    plain.
+is_skip_all([#b_literal{val=skip},_,_,_,#b_literal{val=all},_]) -> true;
+is_skip_all(_) -> false.
 
 %% Call instructions leave the match position in an undefined state,
 %% requiring us to invalidate each affected argument.
@@ -994,8 +961,11 @@ sanitize_alias(Alias, Values) ->
     sanitize_alias_1(maps:keys(Alias), Values, Alias).
 
 sanitize_alias_1([Old|Vs], Values, Alias0) ->
+    %% FIXME? Note that the expression that creates a key for map
+    %% match is executed in guard context.
+    OldKey = #b_var{name=Old},
     Alias = case Values of
-                #{#b_var{name=Old} := #b_var{name=New}} ->
+                #{OldKey := #b_var{name=New}} ->
                     Alias0#{New => map_get(Old, Alias0)};
                 #{} ->
                     Alias0
@@ -1266,7 +1236,7 @@ find_fc_errors([], Acc) ->
 %%% `setelement/3`calls as in the original source code.
 
 expand_update_tuple(#st{ssa=Blocks0,cnt=Count0}=St) ->
-    Linear0 = beam_ssa:linearize(Blocks0),
+    Linear0 = beam_ssa:linearize_only(Blocks0),
     {Linear, Count} = expand_update_tuple_1(Linear0, Count0, []),
     Blocks = maps:from_list(Linear),
     St#st{ssa=Blocks,cnt=Count}.
@@ -2040,9 +2010,10 @@ find_rm_act([]) ->
 %%% Find out which variables need to be stored in Y registers.
 %%%
 
--record(dk, {d :: ordsets:ordset(b_var()),
-             k :: sets:set(b_var())
-            }).
+-record #dk{
+   d :: ordsets:ordset(b_var()),
+   k :: sets:set(b_var())
+  }.
 
 %% find_yregs(St0) -> St.
 %%  Find all variables that must be stored in Y registers. Annotate
@@ -3024,7 +2995,6 @@ use_zreg(recv_marker_bind) -> yes;
 use_zreg(recv_marker_clear) -> yes;
 use_zreg(remove_message) -> yes;
 use_zreg(require_stack) -> yes;
-use_zreg(set_tuple_element) -> yes;
 use_zreg(succeeded) -> yes;
 use_zreg(wait_timeout) -> yes;
 %% There's no way we can combine these into a test instruction, so we must
@@ -3345,24 +3315,24 @@ res_xregs_prune(Xs, _Used, _Res) -> Xs.
 %%% Register allocation using linear scan.
 %%%
 
--record(i,
-        {sort=1 :: instr_number(),
-         reg=none :: i_reg(),
-         pool=x :: pool_id(),
-         var=#b_var{} :: b_var(),
-         rs=[] :: [range()]
-        }).
+-record #i{
+   sort=1   :: instr_number(),
+   reg=none :: i_reg(),
+   pool=x   :: pool_id(),
+   var      :: b_var(),
+   rs=[]    :: [range()]
+  }.
 
--record(l,
-        {cur=#i{} :: interval(),
-         unhandled_res=[] :: [interval()],
-         unhandled_any=[] :: [interval()],
-         active=[] :: [interval()],
-         inactive=[] :: [interval()],
-         free=#{} :: #{var_name()=>pool(),
-                       {'next',pool_id()}:=reg_num()},
-         regs=[] :: [{b_var(),ssa_register()}]
-        }).
+-record #l{
+   cur :: interval(),
+   unhandled_res=[] :: [interval()],
+   unhandled_any=[] :: [interval()],
+   active=[] :: [interval()],
+   inactive=[] :: [interval()],
+   free=#{} :: #{var_name()=>pool(),
+                 {'next',pool_id()}:=reg_num()},
+   regs=[] :: [{b_var(),ssa_register()}]
+  }.
 
 -type interval() :: #i{}.
 -type i_reg() :: ssa_register() | {'prefer',xreg()} | 'none'.
@@ -3382,7 +3352,8 @@ linear_scan(#st{intervals=Intervals0,res=Res}=St0) ->
                          end
                  end,
     {UnhandledRes,Unhandled} = partition(IsReserved, Intervals),
-    L = #l{unhandled_res=UnhandledRes,
+    L = #l{cur=#i{var=#b_var{name=any}},
+           unhandled_res=UnhandledRes,
            unhandled_any=Unhandled,free=Free},
     #l{regs=Regs} = do_linear(L),
     St#st{regs=maps:from_list(Regs)}.

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2005-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,7 +42,8 @@
          init/1, pattern/1, strict/1, update/1,
 	 otp_5915/1, otp_7931/1, otp_5990/1,
 	 otp_7078/1, maps/1, zlc/1,
-         side_effects/1]).
+         side_effects/1,
+         update_anon_native_record/1]).
 
 init_per_testcase(_Case, Config) ->
     Config.
@@ -57,7 +58,8 @@ suite() ->
 all() -> 
     [attributes, expr, guard, init,
      pattern, strict, update, maps,
-     side_effects, zlc, {group, tickets}].
+     side_effects, zlc, {group, tickets},
+     update_anon_native_record].
 
 groups() -> 
     [{tickets, [],
@@ -329,7 +331,7 @@ pattern(Config) when is_list(Config) ->
              11;
          t(L) when is_list(L) ->
              12;
-         t({L}) when list(L) ->
+         t({L}) when is_list(L) ->
              13;
          t({a,b}) ->
              14;
@@ -345,21 +347,21 @@ pattern(Config) when is_list(Config) ->
              21;
          t(#r.a) ->
              22;
-         t(A) when is_record(A, r), record(element(2, A), r) ->
+         t(A) when is_record(A, r), is_record(element(2, A), r) ->
              23;
          t(A) when is_record(A, r) ->
              1;
          t(I) when is_integer(I) ->
              3;
-         t({I}) when integer(I) ->
+         t({I}) when is_integer(I) ->
              4;
-         t({F}) when float(F) ->
+         t({F}) when is_float(F) ->
              7;
          t({A} = B) when A < B ->
              19;
          t(F) when is_float(F) ->
              6;
-         t(T) when tuple(T) ->
+         t(T) when is_tuple(T) ->
              16.
       ">>
       ],
@@ -487,17 +489,17 @@ otp_5915(Config) when is_list(Config) ->
                          2 end(2),
              3 = fun(A) when (A#r2.a)#r1.a =:= 3 -> 3 end(#r2{a = #r1{a = 3}}),
              ok = fun() ->
-                          F = fun(A) when record(A#r.a, r1) -> 4;
-                                 (A) when record(A#r1.a, r1) -> 5
+                          F = fun(A) when is_record(A#r.a, r1) -> 4;
+                                 (A) when is_record(A#r1.a, r1) -> 5
                               end,
                           5 = F(#r1{a = #r1{}}),
                           4 = F(#r{a = #r1{}}),
                           ok
                   end(),
-             3 = fun(A) when record(A#r1.a, r),
+             3 = fun(A) when is_record(A#r1.a, r),
                                    (A#r1.a)#r.a > 3 -> 3
                  end(#r1{a = #r{a = 4}}),
-             7 = fun(A) when record(A#r3.a, r1) -> 7 end(#r3{}),
+             7 = fun(A) when is_record(A#r3.a, r1) -> 7 end(#r3{}),
              [#r1{a = 2,b = 1}] = 
                  fun() ->
                          [A || A <- [#r1{a = 1, b = 3}, 
@@ -525,7 +527,7 @@ otp_5915(Config) when is_list(Config) ->
                  end(#r1{a = 2}),
 
              3 = fun(A) when A#r1.a > 3, 
-                             record(A, r1) -> 3
+                             is_record(A, r1) -> 3
                  end(#r1{a = 5}),
 
              ok = fun() ->
@@ -556,10 +558,6 @@ otp_5915(Config) when is_list(Config) ->
                           ok
                   end(),
 
-             a = fun(A) when record(A, r),
-                             A#r.a =:= 1,
-                             A#r.b =:= 2 ->a
-                 end(#r{a = 1, b = 2}),
              a = fun(A) when erlang:is_record(A, r),
                              A#r.a =:= 1,
                              A#r.b =:= 2 -> a
@@ -721,11 +719,11 @@ otp_5990(Config) when is_list(Config) ->
          -record('OrdSet', {orddata = {},
                             ordtype = {}}).
 
-         to_sets(S) when tuple(S#'OrdSet'.ordtype) ->
+         to_sets(S) when is_tuple(S#'OrdSet'.ordtype) ->
              ok.
 
          lc(S) ->
-             [X || X <- [S], tuple(X#'OrdSet'.ordtype)].
+             [X || X <- [S], is_tuple(X#'OrdSet'.ordtype)].
 
          t() ->
              S = #'OrdSet'{},
@@ -768,6 +766,23 @@ otp_7078(Config) when is_list(Config) ->
       ],
     run(Config, Ts, [strict_record_tests]),
     ok.
+
+update_anon_native_record(Config) when is_list(Config) ->
+
+    Ts = [
+          ~"""
+           -record #nr{x = 0, y = 0}.
+           -record(tup, {a,b}).
+
+           t() ->
+             R0 = #nr{},
+             T0 = #tup{},
+             R0#_{x = (T0#tup.a)},
+             ok.
+           """],
+    run(Config, Ts),
+    ok.
+
 
 id(I) -> I.
 

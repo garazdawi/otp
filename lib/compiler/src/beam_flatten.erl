@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1999-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -59,7 +59,6 @@ norm({set,[D],[S],fconv})         -> {fconv,S,D};
 norm({set,[D],[S1,S2],put_list})  -> {put_list,S1,S2,D};
 norm({set,[D],Els,put_tuple2})    -> {put_tuple2,D,{list,Els}};
 norm({set,[D],[S],{get_tuple_element,I}}) -> {get_tuple_element,S,I,D};
-norm({set,[],[S,D],{set_tuple_element,I}}) -> {set_tuple_element,S,D,I};
 norm({set,[D],[S],get_hd})        -> {get_hd,S,D};
 norm({set,[D],[S],get_tl})        -> {get_tl,S,D};
 norm({set,[D],[S|Puts],{alloc,R,{put_map,Op,F}}}) ->
@@ -79,8 +78,7 @@ norm_allocate({nozero,Ns,Nh,Inits}, Regs) ->
 
 norm_debug_line({debug_line,Location,Index,Live,Info}) ->
     Kind = case Info of
-               {entry,_} -> entry;
-               {_,_} -> line
+               #{frame_size := entry} -> entry;
+               _ -> line
            end,
     {debug_line,{atom,Kind},Location,Index,Live,Info}.
-

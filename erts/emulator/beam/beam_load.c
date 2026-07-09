@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 1996-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -206,11 +206,14 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
          * highest used op code to the op code for the `swap`
          * instruction introduced in OTP 23.
          *
-         * OTP 27 artificially sets the highest op code to `make_fun3`
-         * introduced in OTP 24.
+         * Newer releases sets the highest op code like this:
          *
-         * OTP 28 artificially sets the highest op code to `bs_create_bin`
-         * introduced in OTP 25.
+         * Release  Highest op code (introduced in)
+         * -------  --------------- ---------------
+         * OTP 27   make_fun3       (OTP 24)
+         * OTP 28   bs_create_bin   (OTP 25)
+         * OTP 29   update_record   (OTP 26)
+         * OTP 30   executable_line (OTP 27)
          *
          * Old BEAM files produced by OTP R12 and earlier may be
          * incompatible with the current runtime system. We used to
@@ -607,6 +610,9 @@ static int load_code(LoaderState* stp)
                  * the instruction is obsolete.
                  */
                 if (num_specific == 0 && gen_opc[tmp_op->op].transform == 0) {
+                    beamopallocator_free_op(&stp->op_allocator,
+                                            stp->genop);
+                    stp->genop = NULL;
                     BeamLoadError0(stp, PLEASE_RECOMPILE);
                 }
 
@@ -643,6 +649,9 @@ static int load_code(LoaderState* stp)
                         }
                     }
                 default:
+                    beamopallocator_free_op(&stp->op_allocator,
+                                            stp->genop);
+                    stp->genop = NULL;
                     BeamLoadError0(stp, "no specific operation found");
                 }
             }

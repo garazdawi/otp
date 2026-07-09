@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -4153,7 +4153,16 @@ do_large_file(Name) ->
             ok;
         {eof, 4} ->
             %% Cannot read such large files on 32-bit
-            ok
+            ok;
+        {{error,enomem}, 8} ->
+            case memsize() of
+                MemSize when MemSize < 12_000_000_000 ->
+                    %% Expected memory fail.
+                    ok;
+                _ ->
+                    %% Memory should be sufficient.
+                    error(enomem)
+            end
     end,
     ok = ?FILE_MODULE:close(F2),
 

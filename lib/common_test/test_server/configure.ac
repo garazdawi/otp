@@ -353,7 +353,7 @@ AC_CHECK_LIB(resolv, res_gethostbyname,[AC_DEFINE(HAVE_RES_GETHOSTBYNAME,1)])
 #--------------------------------------------------------------------
 
 AC_MSG_CHECKING([for isfinite])
-AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <math.h>]], [[isfinite(0);]])],[have_isfinite=yes],[have_isfinite=no])
+AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <math.h>]], [[isfinite(0.0);]])],[have_isfinite=yes],[have_isfinite=no])
 
 if test $have_isfinite = yes; then
     AC_DEFINE(HAVE_ISFINITE,1)

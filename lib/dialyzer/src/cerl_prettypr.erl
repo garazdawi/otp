@@ -2,8 +2,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2020-2024. All Rights Reserved.
 %% Copyright 1999-2002 Richard Carlsson
+%% Copyright Ericsson AB 2020-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -625,10 +625,13 @@ lay_map_pair(Node, Ctxt) ->
 lay_record(Node, Ctxt) ->
     Arg = record_arg(Node),
     Id = record_id(Node),
-    N = beside(lay(Arg, Ctxt), beside(floating(text("#")), lay(Id, Ctxt))),
-    beside(N, beside(floating(text("~{")),
+    N = case cerl:concrete(Arg) of
+	ok -> beside(floating(text("#")), lay(Id, Ctxt));
+	_ -> beside(lay(Arg, Ctxt), beside(floating(text("#")), lay(Id, Ctxt)))
+        end,
+    beside(N, beside(floating(text("{")),
             beside(par(seq(record_es(Node), floating(text(",")), Ctxt, fun lay/2)),
-	        floating(text("}~"))))).
+	        floating(text("}"))))).
 
 lay_record_pair(Node, Ctxt) ->
     K = record_pair_key(Node),

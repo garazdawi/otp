@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -64,6 +64,7 @@
          use_nifs/1]).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -435,7 +436,7 @@ do_otp_8949_a() ->
     
 split_cases(_) ->
     dummy1 = do_split_cases(x),
-    {'EXIT',{{badmatch,b},_}} = (catch do_split_cases(y)),
+    ?assertError({badmatch,b}, do_split_cases(y)),
     ok.
 
 do_split_cases(A) ->

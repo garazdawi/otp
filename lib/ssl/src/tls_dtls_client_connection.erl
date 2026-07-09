@@ -31,6 +31,8 @@
 -module(tls_dtls_client_connection).
 -moduledoc false.
 
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 2}}]).
+
 -include_lib("public_key/include/public_key.hrl").
 
 -include("ssl_connection.hrl").
@@ -132,7 +134,11 @@ wait_stapling(internal, #certificate_status{} = CertStatus,
                        stapling_state =
                            StaplingState#{status => received_staple,
                                           staple => CertStatus}}}};
-%% Server did not send OCSP staple message
+%% TLS 1.2 only: server negotiated stapling (included status_request
+%% in ServerHello) but sent a different message instead of
+%% CertificateStatus. Mark as not_received and postpone the message
+%% for the certify state. Hard-fail is enforced later by
+%% cert_status_check/5 in ssl_handshake.
 wait_stapling(internal, Msg,
                    #state{static_env = #static_env{protocol_cb = _Connection},
                           handshake_env = #handshake_env{
@@ -178,9 +184,11 @@ certify(internal, #certificate{asn1_certificates = DerCerts},
                connection_env = #connection_env{
                                    negotiated_version = Version},
                ssl_options = Opts} = State)
-  when StaplingStatus == not_negotiated; StaplingStatus == received_staple ->
-    %% this clause handles also scenario with stapling disabled, so
-    %% 'not_negotiated' appears in guard
+  when StaplingStatus == not_negotiated; StaplingStatus == received_staple;
+       StaplingStatus == not_received ->
+    %% not_negotiated covers two cases: stapling disabled (configured=false)
+    %% and stapling enabled but server did not include status_request in
+    %% ServerHello. Hard-fail for the latter is enforced by cert_status_check/5.
     Certs = try [#cert{der=DerCert, otp=public_key:pkix_decode_cert(DerCert, otp)}
                  || DerCert <- DerCerts]
             catch
@@ -581,6 +589,7 @@ handle_resumed_session(SessId, #state{static_env = #static_env{host = Host,
 calculate_secret(#server_dh_params{dh_p = Prime, dh_g = Base,
 				   dh_y = ServerPublicDhKey} = Params,
 		 #state{handshake_env = HsEnv} = State, Connection) ->
+    validate_dh_prime_size(Prime),
     Keys = {_, PrivateDhKey} = crypto:generate_key(dh, [Prime, Base]),
     PremasterSecret =
 	ssl_handshake:premaster_secret(ServerPublicDhKey, PrivateDhKey, Params),
@@ -609,6 +618,7 @@ calculate_secret(#server_dhe_psk_params{
 		    #state{handshake_env = HsEnv,
                            ssl_options = #{user_lookup_fun := PSKLookup}} =
 		     State, Connection) ->
+    validate_dh_prime_size(Prime),
     Keys = {_, PrivateDhKey} =
 	crypto:generate_key(dh, [Prime, Base]),
     PremasterSecret = ssl_handshake:premaster_secret(ServerKey, PrivateDhKey, PSKLookup),
@@ -633,6 +643,7 @@ calculate_secret(#server_srp_params{srp_n = Prime, srp_g = Generator} = ServerKe
 		 #state{handshake_env = HsEnv,
                         ssl_options = #{srp_identity := SRPId}} = State,
 		 Connection) ->
+    validate_dh_prime_size(Prime),
     Keys = generate_srp_client_keys(Generator, Prime, 0),
     PremasterSecret = ssl_handshake:premaster_secret(ServerKey, Keys, SRPId),
     tls_dtls_gen_connection:calculate_master_secret(PremasterSecret,
@@ -873,6 +884,15 @@ ext_info(#{status := received_staple, staple := CertStatus} = StaplingState,
          #cert{otp = PeerCert}) ->
     #{cert_ext => #{public_key:pkix_subject_id(PeerCert) => [CertStatus]},
       stapling_state => StaplingState};
-ext_info(#{status := not_negotiated} = StaplingState, #cert{otp = PeerCert}) ->
+ext_info(#{status := StaplingStatus} = StaplingState, #cert{otp = PeerCert})
+  when StaplingStatus == not_negotiated; StaplingStatus == not_received ->
     #{cert_ext => #{public_key:pkix_subject_id(PeerCert) => []},
       stapling_state => StaplingState}.
+
+%% Minimum DH prime size: 2048 bits (256 bytes).
+%% NIST SP 800-57, RFC 7919. Prevents Logjam-style attacks with
+%% weak primes that can be factored by a resourceful attacker.
+validate_dh_prime_size(Prime) when byte_size(Prime) < ?MIN_DH_PRIM_BYTE_SIZE ->
+    throw(?ALERT_REC(?FATAL, ?INSUFFICIENT_SECURITY, dh_prime_too_short));
+validate_dh_prime_size(_) ->
+    ok.

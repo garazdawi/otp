@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,6 +31,10 @@ The [**Tracing in Erlang with dbg Users guide**](`e:runtime_tools:dbg_guide.md`)
 explains how to quickly get started on tracing function calls, complex systems
 and more.
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}},
+          {nowarn_possibly_unsafe_function, {file, consult, 1}}]).
+
 %% Exports that use `dbg:session/1`.
 -export([start/0, stop/0, stop_clear/0,
          tracer/0, tracer/2, tracer/3, get_tracer/0, get_tracer/1,
@@ -1867,18 +1871,8 @@ loop({C,T}=SurviveLinks, Table, Parent, SessionName) ->
 		  end,
 	    reply(From, {ok, Tab}),
 	    loop(SurviveLinks, Tab, Parent, SessionName);
-	{_From,stop} ->
-	    %% We want to make sure that all trace messages have been delivered
-	    %% on all nodes that might be traced. Since dbg:cn/1 does not turn off
-	    %% tracing on the node it removes from the list of active trace nodes,
-	    %% we will call trace:delivered/2 on ALL nodes that we have
-	    %% connections to.
-	    %% If it is a file trace driver, we will also flush the port.
-	    lists:foreach(fun({Node,{_Relay,Port,Session}}) ->
-				  rpc:call(Node,?MODULE,deliver_and_flush,[Session,Port])
-			  end,
-			  get()),
-	    exit(done);
+        {_From,stop} ->
+            session_cleanup(done);
 	{From, {link_to, Pid}} ->
 	    case (catch link(Pid)) of
 		{'EXIT', Reason} ->
@@ -1938,12 +1932,7 @@ loop({C,T}=SurviveLinks, Table, Parent, SessionName) ->
 	    end,
             loop(SurviveLinks, Table, Parent, SessionName);
         {'DOWN', _Ref, process, Parent, _} ->
-            case get(node()) of
-                undefined -> ok;
-                {_Relay, _Tracer, Session} ->
-                    session_destroy(Session),
-                    exit(shutdown)
-            end;
+            session_cleanup(shutdown);
 	{'EXIT', Pid, Reason} ->
 	    case lists:delete(Pid, C) of
 		C ->
@@ -1972,6 +1961,19 @@ loop({C,T}=SurviveLinks, Table, Parent, SessionName) ->
 reply(Pid, Reply) ->
     Pid ! {dbg,Reply},
     ok.
+
+session_cleanup(Reason) ->
+    %% We want to make sure that all trace messages have been delivered
+    %% on all nodes that might be traced. Since dbg:cn/1 does not turn off
+    %% tracing on the node it removes from the list of active trace nodes,
+    %% we will call trace:delivered/2 on ALL nodes that we have
+    %% connections to.
+    %% If it is a file trace driver, we will also flush the port.
+    lists:foreach(fun({Node,{_Relay,Port,Session}}) ->
+                          rpc:call(Node,?MODULE,deliver_and_flush,[Session,Port])
+                  end,
+                  get()),
+    exit(Reason).
 
 
 %%% A process-based tracer.

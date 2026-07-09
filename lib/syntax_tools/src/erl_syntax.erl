@@ -3,8 +3,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0 OR LGPL-2.1-or-later
 %%
-%% Copyright Ericsson AB 2009-2024. All Rights Reserved.
 %% Copyright 1997-2006 Richard Carlsson
+%% Copyright Ericsson AB 2009-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -66,7 +66,8 @@ list `[]`. This can be relied on when writing functions that operate on syntax
 trees.
 """.
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}},
+          nowarn_deprecated_catch]).
 
 -export([type/1,
 	 is_leaf/1,
@@ -3292,11 +3293,11 @@ revert_attribute_1(record, [A, Tuple], Pos, Node) ->
     end;
 revert_attribute_1(native_record, [Name, Fields], Pos, Node) ->
     case type(Name) of
-	atom ->
-	    Fs = fold_record_fields(tuple_elements(Fields)),
-	    {attribute, Pos, record, {concrete(Name), Fs}};
-	_ ->
-	    Node
+        atom ->
+            Fs = fold_record_fields(tuple_elements(Fields)),
+            {attribute, Pos, native_record, {concrete(Name), Fs}};
+        _ ->
+            Node
     end;
 revert_attribute_1(import_record, [M, List], Pos, Node) ->
     case revert_module_name(M) of
@@ -4373,7 +4374,15 @@ revert_record_access(Node) ->
     Field = record_access_field(Node),
     case type(Type) of
         atom ->
-            {record_field, Pos, Argument, concrete(Type), Field};
+            case concrete(Type) of
+                '_' ->
+                    {record_field, Pos, Argument, [], Field};
+                T ->
+                    {record_field, Pos, Argument, T, Field}
+            end;
+        list ->
+            [Mod, Name] = list_elements(Type),
+            {record_field, Pos, Argument, {concrete(Mod), concrete(Name)}, Field};
         _ ->
             Node
     end.
@@ -4404,12 +4413,14 @@ _See also: _`record_access/3`.
 
 record_access_type(Node) ->
     case unwrap(Node) of
-	{record_field, Pos, _, {Mod, Name}, _} ->
-	    list([set_pos(atom(Mod), Pos), set_pos(atom(Name), Pos)]);
-	{record_field, Pos, _, Type, _} ->
-	    set_pos(atom(Type), Pos);
-	Node1 ->
-	    (data(Node1))#record_access.type
+        {record_field, Pos, _, {Mod, Name}, _} ->
+            list([set_pos(atom(Mod), Pos), set_pos(atom(Name), Pos)]);
+        {record_field, Pos, _, [], _} ->
+            set_pos(atom('_'), Pos);
+        {record_field, Pos, _, Type, _} ->
+            set_pos(atom(Type), Pos);
+        Node1 ->
+            (data(Node1))#record_access.type
     end.
 
 
@@ -4486,26 +4497,28 @@ revert_record_expr(Node) ->
     Fields = record_expr_fields(Node),
     Fs = fold_record_fields(Fields),
     case type(Type) of
-	atom ->
-	    T = concrete(Type),
-	    case Argument of
-		none ->
-		    {record, Pos, T, Fs};
-		_ ->
-		    {record, Pos, Argument, T, Fs}
-	    end;
-	list ->
-	    [Mod, Name] = list_elements(Type),
-	    case Argument of
-		none ->
-		    {record, Pos, {concrete(Mod), concrete(Name)}, Fs};
-		_ ->
-		    {record, Pos, Argument, {concrete(Mod), concrete(Name)}, Fs}
-	    end;
-	_ ->
-	    Node
+        atom ->
+            T = case concrete(Type) of
+                    '_' -> [];
+                    Res -> Res
+                end,
+            case Argument of
+                none ->
+                    {record, Pos, T, Fs};
+                _ ->
+                    {record, Pos, Argument, T, Fs}
+            end;
+        list ->
+            [Mod, Name] = list_elements(Type),
+            case Argument of
+                none ->
+                    {record, Pos, {concrete(Mod), concrete(Name)}, Fs};
+                _ ->
+                    {record, Pos, Argument, {concrete(Mod), concrete(Name)}, Fs}
+            end;
+        _ ->
+            Node
     end.
-
 
 -doc """
 Returns the argument subtree of a `record_expr` node, if any.
@@ -4538,18 +4551,22 @@ _See also: _`record_expr/3`.
 
 record_expr_type(Node) ->
     case unwrap(Node) of
-	{record, Pos, {Mod, Name}, _} ->
-	    list([set_pos(atom(Mod), Pos), set_pos(atom(Name), Pos)]);
-	{record_field, Pos, _, Name, _} ->
-	   set_pos(atom(Name), Pos);
-	{record, Pos, Type, _} ->
-	    set_pos(atom(Type), Pos);
-	{record, Pos, _, {Mod, Name}, _} ->
-	    list([set_pos(atom(Mod), Pos), set_pos(atom(Name), Pos)]);
-	{record, Pos, _, Type, _} ->
-	    set_pos(atom(Type), Pos);
-	Node1 ->
-	    (data(Node1))#record_expr.type
+        {record, Pos, {Mod, Name}, _} ->
+            list([set_pos(atom(Mod), Pos), set_pos(atom(Name), Pos)]);
+        {record, Pos, [], _} ->
+            set_pos(atom('_'), Pos);
+        {record_field, Pos, _, Name, _} ->
+           set_pos(atom(Name), Pos);
+        {record, Pos, Type, _} ->
+            set_pos(atom(Type), Pos);
+        {record, Pos, _, {Mod, Name}, _} ->
+            list([set_pos(atom(Mod), Pos), set_pos(atom(Name), Pos)]);
+        {record, Pos, _, [], _} ->
+            set_pos(atom('_'), Pos);
+        {record, Pos, _, Type, _} ->
+            set_pos(atom(Type), Pos);
+        Node1 ->
+            (data(Node1))#record_expr.type
     end.
 
 
@@ -7513,16 +7530,26 @@ is_literal(T) ->
     end.
 
 is_literal_binary_field(F) ->
+    case is_literal_binary_field_type(F) of
+        true ->
+            B = binary_field_body(F),
+            case type(B) of
+                size_qualifier ->
+                    is_literal(size_qualifier_body(B)) andalso
+                        is_literal(size_qualifier_argument(B));
+                _ ->
+                    is_literal(B)
+            end;
+        false ->
+            false
+    end.
+
+is_literal_binary_field_type(F) ->
     case binary_field_types(F) of
-	[] -> B = binary_field_body(F),
-              case type(B) of
-                  size_qualifier ->
-                      is_literal(size_qualifier_body(B)) andalso
-                          is_literal(size_qualifier_argument(B));
-                  _ ->
-                      is_literal(B)
-              end;
-	_  -> false
+        [] ->
+            true;
+        [Type] ->
+            is_literal(Type) andalso concrete(Type) =:= utf8
     end.
 
 is_literal_map_field(F) ->
@@ -8048,8 +8075,8 @@ subtrees(T) ->
                      [record_access_field(T)]];
 		record_expr ->
 		    Type = case type(record_expr_type(T)) of
-			       atom -> [record_expr_type(T)];
-			       list -> list_elements(record_expr_type(T))
+                               list -> list_elements(record_expr_type(T));
+                               _ -> [record_expr_type(T)]
 			   end,
 		    case record_expr_argument(T) of
 			none ->

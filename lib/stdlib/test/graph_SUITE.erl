@@ -747,15 +747,61 @@ traversals(Config) when is_list(Config) ->
     [] = graph:preorder(G),
     [] = graph:postorder(G),
     G1 = add_edges(G, [{a,b},{b,c},{c,d},{d,e}]),
-    [a,b,c,d,e] = graph:preorder(G1),
-    [e,d,c,b,a] = graph:postorder(G1),
+    Pre1 = [a,b,c,d,e],
+    Pre1 = graph:preorder(G1),
+    Post1 = lists:reverse(Pre1),
+    Post1 = graph:postorder(G1),
     G2 = add_edges(G1, [{0,1},{1,2},{2,0}]),
-    [a,b,c,d,e,1,2,0] = graph:preorder(G2),
-    [e,d,c,b,a,0,2,1] = graph:postorder(G2),
+    Cs = rotate([0,1,2]),
+    Pre2 = graph:preorder(G2),
+    AllowedPre2 = [lists:flatten(P) || P <- lists:flatmap(fun (C) -> permute([Pre1, C]) end, Cs)],
+    case lists:member(Pre2, AllowedPre2) of
+        true -> ok;
+        false -> error({bad_preorder, Pre2})
+    end,
+    RevCs = rotate([2,1,0]),
+    AllowedPost2 = [lists:flatten(P) || P <- lists:flatmap(fun (C) -> permute([Post1, C]) end, RevCs)],
+    Post2 = graph:postorder(G2),
+    case lists:member(Post2, AllowedPost2) of
+        true -> ok;
+        false -> error({bad_postorder, Post2})
+    end,
     G3 = add_edges(G1, [{x,0},{y,1},{z,2}]),
-    [x,0,y,1,a,b,c,d,e,z,2] = graph:preorder(G3),
-    [0,x,1,y,e,d,c,b,a,2,z] = graph:postorder(G3),
+    AllowedPre3 = [lists:flatten(P) || P <- permute([Pre1, [x,0], [y,1], [z,2]])],
+    Pre3 = graph:preorder(G3),
+    case lists:member(Pre3, AllowedPre3) of
+        true -> ok;
+        false -> error({bad_preorder, Pre3})
+    end,
+    AllowedPost3 = [lists:flatten(P) || P <- permute([Post1, [0,x], [1,y], [2,z]])],
+    Post3 = graph:postorder(G3),
+    case lists:member(Post3, AllowedPost3) of
+        true -> ok;
+        false -> error({bad_postorder, Post3})
+    end,
     ok.
+
+permute(Xs) ->
+    permute(Xs, []).
+
+permute([X], []) ->
+    [[X]];
+permute([X|After], RevBefore) ->
+    [ [X|Xs] || Xs <- permute(lists:reverse(RevBefore, After)) ]
+        ++ permute(After, [X|RevBefore]);
+permute([], _RevBefore) ->
+    [].
+
+rotate(Xs) ->
+    rotate(Xs, []).
+
+rotate([X], []) ->
+    [[X]];
+rotate([X|After], RevBefore) ->
+    [ [X|After] ++ lists:reverse(RevBefore)
+      | rotate(After, [X|RevBefore])];
+rotate([], _RevBefore) ->
+    [].
 
 is_tree(Es) ->
     is_tree([], Es).

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -89,11 +89,13 @@ so that environment variables surrounded by `%` can be expanded to their values.
 For more information on the Windows registry, see consult the Win32 Programmer's
 Reference.
 
-## See Also
+### See Also
 
 `erl_posix_msg`, The Windows 95 Registry (book from O'Reilly), Win32
 Programmer's Reference (from Microsoft)
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([open/1, close/1,
 	 current_key/1, change_key/2, change_key_create/2,

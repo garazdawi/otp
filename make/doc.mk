@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 1997-2025. All Rights Reserved.
+# Copyright Ericsson AB 1997-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ APP_EBIN_DIR = $(APP_DIR)/ebin
 # FLAGS
 # ----------------------------------------------------
 ifeq ($(EPUB), false)
-EX_DOC_FORMATS=-f html
+EX_DOC_FORMATS=$(shell $(ERL_TOP)/make/get_ex_doc_formats_no_epub.sh)
 else
 EX_DOC_FORMATS=
 endif
@@ -111,7 +111,17 @@ DOC_TARGETS?=$(DEFAULT_DOC_TARGETS)
 
 EX_DOC_WARNINGS_AS_ERRORS?=default
 
-docs: $(DOC_TARGETS)
+# If html is in $(DOC_TARGETS) wait for user's answer whether to download ex_doc
+# before processing other targets in parallel (if parallel make is enabled).
+# That could cause the question to be lost in earlier shell output because of printouts
+# from other $(DOC_TARGETS).
+docs: $(if $(filter html,$(DOC_TARGETS)),check_ex_doc)
+ifneq ($(DOC_TARGETS),)
+	$(MAKE) $(DOC_TARGETS)
+endif
+
+check_ex_doc:
+	$(ERL_TOP)/make/check_ex_doc
 
 chunks:
 
@@ -121,7 +131,7 @@ else
 DOC_VSN=$(VSN)
 endif
 
-HTML_DEPS?=$(wildcard $(APP_EBIN_DIR)/*.beam) $(wildcard *.md) $(wildcard */*.md) $(wildcard assets/*)
+HTML_DEPS?=$(wildcard $(APP_EBIN_DIR)/*.beam) $(wildcard *.md) $(filter-out $(wildcard html/*.md),$(wildcard */*.md)) $(wildcard assets/*)
 
 $(HTMLDIR)/index.html: $(HTML_DEPS) docs.exs $(ERL_TOP)/make/ex_doc.exs
 	$(gen_verbose)EX_DOC_WARNINGS_AS_ERRORS=$(EX_DOC_WARNINGS_AS_ERRORS) ERL_FLAGS="-pz $(ERL_TOP)/erts/ebin" \
@@ -134,25 +144,25 @@ man: $(MAN1_PAGES) $(MAN3_PAGES) $(MAN4_PAGES) $(MAN6_PAGES) $(MAN7_PAGES)
 MARKDOWN_TO_MAN=$(ERL_TOP)/make/markdown_to_man.escript
 
 man1/%.1: references/%_cmd.md $(MARKDOWN_TO_MAN)
-	@escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN1DIR) $<
+	$(gen_verbose)escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN1DIR) $<
 
 man3/%.3: src/%.md $(MARKDOWN_TO_MAN)
-	@escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN3DIR) $<
+	$(gen_verbose)escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN3DIR) $<
 
 man3/%.3: references/%.md $(MARKDOWN_TO_MAN)
-	@escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN3DIR) $<
+	$(gen_verbose)escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN3DIR) $<
 
 man3/%.3: %.erl $(MARKDOWN_TO_MAN)
-	@escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN3DIR) $<
+	$(gen_verbose)escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN3DIR) $<
 
 man4/%.4: references/%.md $(MARKDOWN_TO_MAN)
-	@escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN4DIR) -s 4 $<
+	$(gen_verbose)escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN4DIR) -s 4 $<
 
 man6/%.6: %_app.md $(MARKDOWN_TO_MAN)
-	@escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN6DIR) $<
+	$(gen_verbose)escript$(EXEEXT) $(MARKDOWN_TO_MAN) -o $(MAN6DIR) $<
 
 man7/%.7: $(APP_DIR)/mibs/%.mib
-	@mkdir -p man7
+	$(gen_verbose)mkdir -p man7
 	$(eval REL_PATH := $(patsubst $(ERL_TOP)/lib/%,%,$(abspath $<)))
 	$(eval APP_NAME := $(shell echo $(firstword $(subst /, ,$(REL_PATH))) |  tr '[:lower:]' '[:upper:]'))
 	$(eval MIB_NAME := $(basename $(notdir $<)))
@@ -205,9 +215,11 @@ ifneq ($(MAN7_DEPS),)
 	$(INSTALL_DIR_DATA) "$(MAN7DIR)" "$(RELSYS_MANDIR)/man7"
 endif
 
-
-
-release_docs_spec: $(DOC_TARGETS:%=release_%_spec)
+# See explanation in docs target
+release_docs_spec: $(if $(filter html,$(DOC_TARGETS)),check_ex_doc)
+ifneq ($(DOC_TARGETS),)
+	$(MAKE) $(DOC_TARGETS:%=release_%_spec)
+endif
 ifneq ($(STANDARDS),)
 	$(INSTALL_DIR) "$(RELEASE_PATH)/doc/standard"
 	$(INSTALL_DATA) $(STANDARDS) "$(RELEASE_PATH)/doc/standard"

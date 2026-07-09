@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -145,7 +145,7 @@ property list.
 
 - [](){: #prop_modules } **`{modules, [atom()]}`**  
   Defines which modules the HTTP server uses when handling requests. Default is
-  `[mod_alias, mod_auth, mod_esi, mod_actions, mod_cgi, mod_dir, mod_get, mod_head, mod_log, mod_disk_log]`.
+  `[mod_alias, mod_auth, mod_esi, mod_dir, mod_get, mod_head, mod_log, mod_disk_log]`.
   Notice that some `mod`\-modules are dependent on others, so the order cannot
   be entirely arbitrary. See the [Inets Web Server Modules](http_server.md) in
   the User's Guide for details.
@@ -424,6 +424,11 @@ property list.
 
 ### CGI Properties - Requires mod_cgi
 
+> #### Note {: .info }
+> `mod_cgi` and `mod_actions` are deprecated since OTP 29 and will be removed in OTP 30.
+> Use `mod_esi` instead for dynamic page generation.
+>
+
 - [](){: #prop_script_alias } **`{script_alias, {Alias, RealName}}`**  
   `Alias = string()` and `RealName = string()`. Have the same behavior as
   property `alias`, except that they also mark the target directory as
@@ -436,6 +441,14 @@ property list.
 
   Access to http://your.server.org/cgi-bin/foo would cause the server to run the
   script /web/cgi-bin/foo.
+
+  > #### Note {: .info }
+  >
+  > When using `script_alias` with directory-based authentication
+  > (see [`directory`](`m:httpd#prop_dri`)), ensure that authentication
+  > rules reference the actual filesystem path (RealName), not the URL path (Alias).
+  > The server correctly resolves script_alias paths for authentication checks.
+  >
 
 - [](){: #prop_script_re_write } **`{script_re_write, {Re, Replacement}}`**  
   `Re = string()` and `Replacement = string()`. Have the same behavior as
@@ -472,6 +485,11 @@ property list.
   {action, {"text/plain", "/cgi-bin/log_and_deliver_text"}}
   ```
 
+> #### Note {: .info }
+> `mod_cgi` and `mod_actions` are deprecated since OTP 29 and will be removed in OTP 30.
+> Use `mod_esi` instead for dynamic page generation.
+>
+
 - [](){: #prop_script } **`{script, {Method, CgiScript}}`** - requires `mod_actions`  
   `Method = string()` and `CgiScript = string()`. `script` adds an action
   activating a CGI script whenever a file is requested using a certain HTTP
@@ -485,6 +503,11 @@ property list.
   ```erlang
   {script, {"PUT", "/cgi-bin/put"}}
   ```
+
+> #### Note {: .info }
+> `mod_cgi` and `mod_actions` are deprecated since OTP 29 and will be removed in OTP 30.
+> Use `mod_esi` instead for dynamic page generation.
+>
 
 [](){: #props_esi }
 
@@ -799,6 +822,8 @@ The fields of record `mod` have the following meaning:
 [RFC 2616](http://www.ietf.org/rfc/rfc2616.txt), `m:inets`, `m:ssl`
 """.
 
+-compile([{nowarn_possibly_unsafe_function, {file, consult, 1}}]).
+
 -behaviour(inets_service).
 
 -include("httpd_internal.hrl").
@@ -864,17 +889,29 @@ that the fun either returns a list `(Body)` that is an HTTP response, or the
 atom `sent` if the HTTP response is sent back to the client. If `close` is
 returned from the fun, something has gone wrong and the server signals this to
 the client by closing the connection.
+
+> #### Note {: .info }
+>
+> It is strongly advised to use NewDataFormat in the return value of `do/1`
+> as it relies on a newer mechanism for parsing and sending headers,
+> provides more accurate status codes, and supports a wider range of Body formats.
+>
+
 """.
 -doc(#{group => <<"ERLANG WEB SERVER API CALLBACK FUNCTIONS">>}).
 -callback do(ModData) -> {proceed, OldData} | {proceed, NewData} | {break, NewData} | done when
       ModData :: [{data,NewData} | {'Body', Body} | {'Head',Head}],
       OldData :: list(),
-      NewData :: [{response, {StatusCode, Body}}],
+      NewData :: [{response, NewDataCompatFormat}] | [{response, NewDataFormat}],
+      NewDataCompatFormat :: {StatusCode, Body},
+      NewDataFormat :: {response, Head, Body} | {already_sent, StatusCode, Size},
       StatusCode :: integer(),
+      Size :: non_neg_integer(),
       Body :: iolist() | nobody | {Fun, FunArg},
-      Head :: [HeaderOption],
+      Head :: [HeaderOption] | {Key, Value},
       HeaderOption :: {Option, Value} | {code, StatusCode},
       Option :: accept_ranges | allow,
+      Key :: atom() | string(),
       Value :: string(),
       FunArg :: [term()],
       Fun :: fun((FunArg) -> sent | close | Body).
@@ -1545,13 +1582,14 @@ do_reload_config(ConfigList, Mode) ->
 	    Address = proplists:get_value(bind_address, Config, any), 
 	    Port    = proplists:get_value(port, Config, 80),
 	    Profile = proplists:get_value(profile, Config, default),
-	    case block(Address, Port, Profile, Mode) of
-		ok ->
-		    reload(Config, Address, Port, Profile),
-		    unblock(Address, Port, Profile);
-		Error ->
-		    Error
-	    end;
+            case block(Address, Port, Profile, Mode) of
+                ok ->
+                    Result = reload(Config, Address, Port, Profile),
+                    unblock(Address, Port, Profile),
+                    Result;
+                Error ->
+                    Error
+            end;
 	Error ->
 	    Error
     end.

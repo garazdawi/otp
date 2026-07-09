@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %% 
-%% Copyright Ericsson AB 2024-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2024-2026. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 
@@ -232,6 +232,7 @@
          api_opt_sock_sndtimeo_udp4/1,
          api_opt_sock_timestamp_udp4/1,
          api_opt_sock_timestamp_tcp4/1,
+         api_opt_sock_timestampns_udp4/1,
          api_opt_ip_add_drop_membership/0, api_opt_ip_add_drop_membership/1,
          api_opt_ip_pktinfo_udp4/1,
          api_opt_ip_recvopts_udp4/1,
@@ -353,6 +354,7 @@ groups() ->
      {option_sock_lowat,       [], api_option_sock_lowat_cases()},
      {option_sock_timeo,       [], api_option_sock_timeo_cases()},
      {option_sock_timestamp,   [], api_option_sock_timestamp_cases()},
+     {option_sock_timestampns, [], api_option_sock_timestampns_cases()},
      {options_ip,              [], api_options_ip_cases()},
      {options_ipv6,            [], api_options_ipv6_cases()},
      {options_tcp,             [], api_options_tcp_cases()},
@@ -535,6 +537,7 @@ api_options_socket_cases() ->
      {group, option_sock_lowat},
      {group, option_sock_timeo},
      {group, option_sock_timestamp},
+     {group, option_sock_timestampns},
      api_opt_sock_reuseaddr,
      api_opt_sock_exclusiveaddruse,
      api_opt_sock_bsp_state
@@ -583,6 +586,11 @@ api_option_sock_timestamp_cases() ->
     [
      api_opt_sock_timestamp_udp4,
      api_opt_sock_timestamp_tcp4
+    ].
+
+api_option_sock_timestampns_cases() ->
+    [
+     api_opt_sock_timestampns_udp4
     ].
 
 api_options_ip_cases() ->
@@ -664,12 +672,13 @@ api_op_with_timeout_cases() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init_per_suite(Config0) ->
-    ?P("init_per_suite -> entry with"
+    ?P("~s -> entry with"
        "~n      Config: ~p"
-       "~n      Nodes:  ~p", [Config0, erlang:nodes()]),
+       "~n      Nodes:  ~p", [?FUNCTION_NAME, Config0, erlang:nodes()]),
     
     try socket:info() of
-        #{} ->
+        #{load_nif_result := ok} ->
+	    ?P("~s -> socket nif loaded", [?FUNCTION_NAME]),
             case ?KLIB:init_per_suite(Config0) of
                 {skip, _} = SKIP ->
                     SKIP;
@@ -707,11 +716,22 @@ init_per_suite(Config0) ->
                                     {skip, "Failed starting logger"}
                             end
                     end
-            end
+            end;
+
+	#{load_nif_result := LoadRes} ->
+	    ?P("~s -> 'socket' not supperted"
+	       "~n   (socket) nif load result: ~p", [?FUNCTION_NAME, LoadRes]),
+	    {skip, "esock not supported (nif not loaded)"};
+	_ ->
+            ?P("~s -> 'socket' not supperted", [?FUNCTION_NAME]),
+	    {skip, "esock not supported"}
+	
     catch
         error : notsup ->
+            ?P("~s -> 'socket' not supperted (error:notsup)", [?FUNCTION_NAME]),
             {skip, "esock not supported"};
         error : undef ->
+            ?P("~s -> 'socket' not supperted (error:undef)", [?FUNCTION_NAME]),
             {skip, "esock not configured"}
     end.
 
@@ -724,7 +744,7 @@ end_per_suite(Config0) ->
     %% Stop the local monitor
     kernel_test_sys_monitor:stop(),
 
-    (catch ?LOGGER:stop()),
+    ?CATCH_AND_IGNORE( ?LOGGER:stop() ),
 
     Config1 = ?KLIB:end_per_suite(Config0),
 
@@ -2273,7 +2293,7 @@ api_b_send_and_recv_conn(InitState) ->
                                       "~n   Expected: (~w bytes) ~p",
                                       [byte_size(BadReq), BadReq,
                                        byte_size(?BASIC_REQ), ?BASIC_REQ]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    ?FAIL({unexpected_request, BadReq});
                                {error, _} = ERROR ->
                                    ERROR
@@ -12309,7 +12329,7 @@ api_opt_sock_acceptconn_udp() ->
                                    %% for UDP, so skip this part (UDP).
                                    ?SEV_EPRINT("Expected Failure: "
                                                "~p => SKIP", [Reason]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {skip, Reason};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Unexpected Failure: ~p",
@@ -12452,7 +12472,7 @@ api_opt_sock_acceptconn_tcp() ->
                                {error, enoprotoopt = Reason} ->
                                    ?SEV_EPRINT("Expected Failure: "
                                                "~p => SKIP", [Reason]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {skip, Reason};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Unexpected Failure: ~p",
@@ -12897,7 +12917,7 @@ api_opt_sock_bindtodevice() ->
                                    ok;
                                {error, eperm = Reason} ->
                                    ?SEV_IPRINT("Expected Failure: ~p", [Reason]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {ok, State#{usock1 => skip}};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Unexpected Failure: ~p", [Reason]),
@@ -12927,7 +12947,7 @@ api_opt_sock_bindtodevice() ->
                                    {skip, Reason};
                                {error, eperm = Reason} ->
                                    ?SEV_IPRINT("Expected Failure: ~p", [Reason]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {ok, State#{tsock1 => skip}};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Unexpected Failure: ~p", [Reason]),
@@ -20562,7 +20582,8 @@ api_opt_ip_recvtos_udp(InitState) ->
 
          #{desc => "extract the (expected) recvtos \"default\" value",
            cmd  => fun(#{sock_dst := Sock} = State) ->
-                           {ok, DefValue} = socket:getopt(Sock, ip, tos),
+                           {ok, #{tos := DefValue}} =
+                               socket:getopt(Sock, ip, tos),
                            ?SEV_IPRINT("(expected) recvtos def value: ~w",
                                        [DefValue]),
                            {ok, State#{dst_def_value => DefValue}}
@@ -20588,7 +20609,7 @@ api_opt_ip_recvtos_udp(InitState) ->
                            case Recv(Sock) of
                                {ok, {Src, [#{level := ip,
                                              type  := TOS,
-                                             value := DefValue}], ?BASIC_REQ}}
+                                             value := #{tos := DefValue}}], ?BASIC_REQ}}
                                  when (TOS =:= tos) orelse
                                       (TOS =:= recvtos) ->
                                    ?SEV_IPRINT("got default TOS (~w) "
@@ -20625,10 +20646,13 @@ api_opt_ip_recvtos_udp(InitState) ->
 
          #{desc => "set tos = reliability on src sock",
            cmd  => fun(#{sock_src := Sock}) ->
-                           ok = socket:setopt(Sock, ip, tos, reliability)
+                           ok = socket:setopt(Sock,
+                                              ip, tos,
+                                              #{precedence => routine,
+                                                tos        => throughput})
                    end},
 
-         #{desc => "send req (to dst) (w tos = mincost)",
+         #{desc => "send req (to dst) (w tos = throughput)",
            cmd  => fun(#{sock_src := Sock, sa_dst := Dst, send := Send}) ->
                            Send(Sock, ?BASIC_REQ, Dst, default)
                    end},
@@ -20637,7 +20661,7 @@ api_opt_ip_recvtos_udp(InitState) ->
                            case Recv(Sock) of
                                {ok, {Src, [#{level := ip,
                                              type  := TOS,
-                                             value := reliability = TOSData}],
+                                             value := #{tos := #{tos := throughput = TOSData}}}],
                                      ?BASIC_REQ}} 
                                  when ((TOS =:= tos) orelse (TOS =:= recvtos)) ->
                                    ?SEV_IPRINT("got expected TOS (~w) = ~w "
@@ -20895,8 +20919,8 @@ api_opt_ip_recvttl_udp(InitState) ->
                                    %% IF we can't send it the test will not work
                                    ?SEV_EPRINT("Cannot send TTL: "
                                                "~p => SKIP", [Reason]),
-                                   (catch socket:close(SSock)),
-                                   (catch socket:close(DSock)),
+                                   ?CATCH_AND_IGNORE( socket:close(SSock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(DSock) ),
                                    {skip,
 				    ?F("Cannot send with TTL: ~p", [Reason])};
                                {error, enoprotoopt = Reason} ->
@@ -20904,8 +20928,8 @@ api_opt_ip_recvttl_udp(InitState) ->
                                    %% accepted (FreeBSD), so skip.
                                    ?SEV_EPRINT("Expected Failure: "
                                                "~p => SKIP", [Reason]),
-                                   (catch socket:close(SSock)),
-                                   (catch socket:close(DSock)),
+                                   ?CATCH_AND_IGNORE( socket:close(SSock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(DSock) ),
                                    {skip, Reason};
 
                                {error,
@@ -20925,8 +20949,8 @@ api_opt_ip_recvttl_udp(InitState) ->
                                                [Info,
                                                 File, Function, Line,
                                                 RawInfo]),
-                                   (catch socket:close(SSock)),
-                                   (catch socket:close(DSock)),
+                                   ?CATCH_AND_IGNORE( socket:close(SSock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(DSock) ),
                                    {skip,
                                     ?F("Cannot send with TTL: ~p", [Info])};
                                {error, {get_overlapped_result,
@@ -20934,8 +20958,8 @@ api_opt_ip_recvttl_udp(InitState) ->
                                    %% IF we can't send it the test will not work
                                    ?SEV_EPRINT("Cannot send TTL: "
                                                "~p => SKIP", [Info]),
-                                   (catch socket:close(SSock)),
-                                   (catch socket:close(DSock)),
+                                   ?CATCH_AND_IGNORE( socket:close(SSock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(DSock) ),
                                    {skip,
                                     ?F("Cannot send with TTL: ~p", [Info])};
 
@@ -20956,8 +20980,8 @@ api_opt_ip_recvttl_udp(InitState) ->
                                                [Info,
                                                 File, Function, Line,
                                                 RawInfo]),
-                                   (catch socket:close(SSock)),
-                                   (catch socket:close(DSock)),
+                                   ?CATCH_AND_IGNORE( socket:close(SSock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(DSock) ),
                                    {skip,
                                     ?F("Cannot send with TTL: ~p", [Info])};
                                {error, {completion_status,
@@ -20965,8 +20989,8 @@ api_opt_ip_recvttl_udp(InitState) ->
                                    %% IF we can't send it the test will not work
                                    ?SEV_EPRINT("Cannot send TTL: "
                                                "~p => SKIP", [Info]),
-                                   (catch socket:close(SSock)),
-                                   (catch socket:close(DSock)),
+                                   ?CATCH_AND_IGNORE( socket:close(SSock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(DSock) ),
                                    {skip,
                                     ?F("Cannot send with TTL: ~p", [Info])};
 
@@ -21223,19 +21247,23 @@ api_opt_ip_tos_udp(InitState) ->
                            end
                    end},
 
+         %% The default value for TOS is usually 'default', but on FreeBSD...
          #{desc => "get default tos",
            cmd  => fun(#{sock := Sock, get := Get} = _State) ->
                            case Get(Sock) of
-                               {ok, 0 = Value} ->
-                                   ?SEV_IPRINT("expected default tos: ~p", [Value]),
+                               {ok, #{native := 0} = Value} ->
+                                   ?SEV_IPRINT("expected default tos: ~p",
+                                               [Value]),
                                    ok;
-                               {ok, Value} ->
-                                   %% On FreeBSD 14 default value is not 0!
+                               {ok, #{tos := #{tos := Value}}} ->
+                                   %% On FreeBSD 14 & 15 default value is not 0!
                                    case os:type() of
                                        {unix, freebsd} ->
                                            case os:version() of
-                                               {14, _, _}
-                                                 when (Value =:= mincost) ->
+                                               {Maj, _, _}
+                                                 when ((Maj =:= 14) orelse
+                                                       (Maj =:= 15)) andalso
+                                                      (Value =:= mincost) ->
                                                    ok;
                                                _ ->
                                                    ?SEV_EPRINT("Unexpected "
@@ -21258,6 +21286,7 @@ api_opt_ip_tos_udp(InitState) ->
                            end
                    end},
 
+         %% 'mincost' does not exist on all platforms
          %% #{desc => "set tos " ++ TOS1Str,
          %%   cmd  => fun(#{sock := Sock, set := Set} = _State) ->
          %%                   socket:setopt(Sock, otp, debug, true),
@@ -21305,7 +21334,7 @@ api_opt_ip_tos_udp(InitState) ->
          #{desc => "get tos (expect " ++ TOS2Str ++ ")",
            cmd  => fun(#{sock := Sock, get := Get} = _State) ->
                            case Get(Sock) of
-                               {ok, TOS2 = Value} ->
+                               {ok, #{tos := #{tos := TOS2 = Value}}} ->
                                    ?SEV_IPRINT("expected tos (~p)", [Value]),
                                    ok;
                                {ok, Unexpected} ->
@@ -21334,7 +21363,7 @@ api_opt_ip_tos_udp(InitState) ->
          #{desc => "get tos (expect " ++ TOS3Str ++ ")",
            cmd  => fun(#{sock := Sock, get := Get} = _State) ->
                            case Get(Sock) of
-                               {ok, TOS3 = Value} ->
+                               {ok, #{tos := #{tos := TOS3 = Value}}} ->
                                    ?SEV_IPRINT("expected tos (~p)", [Value]),
                                    ok;
                                {ok, Unexpected} ->
@@ -21363,7 +21392,7 @@ api_opt_ip_tos_udp(InitState) ->
          #{desc => "get tos (expect " ++ TOS4Str ++ ")",
            cmd  => fun(#{sock := Sock, get := Get} = _State) ->
                            case Get(Sock) of
-                               {ok, TOS4 = Value} ->
+                               {ok, #{tos := #{tos := TOS4 = Value}}} ->
                                    ?SEV_IPRINT("expected tos (~p)", [Value]),
                                    ok;
                                {ok, Unexpected} ->
@@ -21392,7 +21421,7 @@ api_opt_ip_tos_udp(InitState) ->
          #{desc => "get tos (expect " ++ TOS5Str ++ ")",
            cmd  => fun(#{sock := Sock, get := Get} = _State) ->
                            case Get(Sock) of
-                               {ok, TOS5 = Value} ->
+                               {ok, #{native := TOS5 = Value}} ->
                                    ?SEV_IPRINT("expected tos (~p)", [Value]),
                                    ok;
                                {ok, Unexpected} ->
@@ -22120,8 +22149,8 @@ api_opt_ip_mopts_udp(InitState) ->
                                                            "Failure: "
                                                            "~p => SKIP",
                                                            [Reason]),
-                                               (catch socket:close(DSock)),
-                                               (catch socket:close(SSock)),
+                                               ?CATCH_AND_IGNORE( socket:close(DSock) ),
+                                               ?CATCH_AND_IGNORE( socket:close(SSock) ),
                                                {skip, Reason};
                                            {error, Reason} = ERROR ->
                                                ?SEV_EPRINT("Failed "
@@ -22491,7 +22520,7 @@ api_opt_ipv6_recvpktinfo_udp(InitState) ->
 
 api_opt_ipv6_flowinfo_udp6(_Config) when is_list(_Config) ->
     ?TT(?SECS(5)),
-    tc_try(api_opt_ipv6_flowinfo_udp6,
+    tc_try(?FUNCTION_NAME,
            fun() ->
                    has_support_ipv6(),
                    has_support_ipv6_flowinfo()
@@ -22610,7 +22639,7 @@ api_opt_ipv6_flowinfo_udp(InitState) ->
            cmd  => fun(#{sock_src := Sock, sa_dst := Dst, send := Send}) ->
                            Send(Sock, ?BASIC_REQ, Dst)
                    end},
-         #{desc => "recv req (from src)",
+         #{desc => "recv req wo flowinfo (from src)",
            cmd  => fun(#{sock_dst := Sock, sa_src := Src, recv := Recv}) ->
                            case Recv(Sock) of
                                {ok, {Src, [], ?BASIC_REQ}} ->
@@ -22659,12 +22688,13 @@ api_opt_ipv6_flowinfo_udp(InitState) ->
            cmd  => fun(#{sock_src := Sock, sa_dst := Dst, send := Send}) ->
                            Send(Sock, ?BASIC_REQ, Dst)
                    end},
-         #{desc => "recv req (from src)",
+         #{desc => "recv req w flowinfo (from src)",
            cmd  => fun(#{sock_dst := Sock, sa_src := Src, recv := Recv}) ->
                            case Recv(Sock) of
                                {ok, {Src, [#{level := ipv6,
                                              type  := flowinfo,
-                                             value := FlowID}], ?BASIC_REQ}} ->
+                                             value := FlowID}],
+                                     ?BASIC_REQ}} when is_integer(FlowID) ->
                                    ?SEV_IPRINT("Got flow info: "
 					       "~n   Flow ID: ~p", [FlowID]),
                                    ok;
@@ -22869,9 +22899,9 @@ api_opt_ipv6_hoplimit_udp(InitState) ->
                                    %% for UDP, so skip this part (UDP).
                                    ?SEV_EPRINT("Expected Failure: "
                                                "~p => SKIP", [Reason]),
-                                   (catch socket:close(Sock)),
-                                   (catch socket:close(maps:get_value(sock_src,
-								      State))),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(maps:get_value(sock_src,
+										  State)) ),
                                    {skip, Reason};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Failed getting (default) hoplimit:"
@@ -22927,9 +22957,9 @@ api_opt_ipv6_hoplimit_udp(InitState) ->
                                    %% for UDP, so skip this part (UDP).
                                    ?SEV_EPRINT("Expected Failure: "
                                                "~p => SKIP", [Reason]),
-                                   (catch socket:close(Sock)),
-                                   (catch socket:close(maps:get_value(sock_src,
-								      State))),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(maps:get_value(sock_src,
+										  State)) ),
                                    {skip, Reason};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Failed setting hoplimit:"
@@ -23163,9 +23193,9 @@ api_opt_ipv6_tclass_udp(InitState) ->
                                    %% for UDP, so skip this part (UDP).
                                    ?SEV_EPRINT("Expected Failure: "
                                                "~p => SKIP", [Reason]),
-                                   (catch socket:close(Sock)),
-                                   (catch socket:close(maps:get_value(sock_src,
-								      State))),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(maps:get_value(sock_src,
+										  State)) ),
                                    {skip, Reason};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Failed getting (default) tclass:"
@@ -23221,9 +23251,9 @@ api_opt_ipv6_tclass_udp(InitState) ->
                                    %% for UDP, so skip this part (UDP).
                                    ?SEV_EPRINT("Expected Failure: "
                                                "~p => SKIP", [Reason]),
-                                   (catch socket:close(Sock)),
-                                   (catch socket:close(maps:get_value(sock_src,
-								      State))),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
+                                   ?CATCH_AND_IGNORE( socket:close(maps:get_value(sock_src,
+										  State)) ),
                                    {skip, Reason};
                                {error, Reason} = ERROR ->
                                    ?SEV_EPRINT("Failed setting tclass:"
@@ -23299,7 +23329,7 @@ api_opt_ipv6_tclass_udp(InitState) ->
                                                [Info,
                                                 File, Function, Line,
                                                 RawInfo]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {skip,
                                     ?F("Cannot send with TClass: ~p", [Info])};
                                {error, {get_overlapped_result,
@@ -23307,7 +23337,7 @@ api_opt_ipv6_tclass_udp(InitState) ->
                                    %% IF we can't send it the test will not work
                                    ?SEV_EPRINT("Cannot send TClass: "
                                                "~p => SKIP", [Info]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {skip,
                                     ?F("Cannot send with TClass: ~p", [Info])};
 
@@ -23328,7 +23358,7 @@ api_opt_ipv6_tclass_udp(InitState) ->
                                                [Info,
                                                 File, Function, Line,
                                                 RawInfo]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {skip,
                                     ?F("Cannot send with TClass: ~p", [Info])};
                                {error, {completion_status,
@@ -23336,7 +23366,7 @@ api_opt_ipv6_tclass_udp(InitState) ->
                                    %% IF we can't send it the test will not work
                                    ?SEV_EPRINT("Cannot send TClass: "
                                                "~p => SKIP", [Info]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {skip,
                                     ?F("Cannot send with TClass: ~p", [Info])};
 
@@ -23650,8 +23680,8 @@ api_opt_ipv6_mopts_udp(InitState) ->
                                                            "Failure: "
                                                            "~p => SKIP",
                                                            [Reason]),
-                                               (catch socket:close(DSock)),
-                                               (catch socket:close(SSock)),
+                                               ?CATCH_AND_IGNORE( socket:close(DSock) ),
+                                               ?CATCH_AND_IGNORE( socket:close(SSock) ),
                                                {skip, Reason};
                                            {error, Reason} = ERROR ->
                                                ?SEV_EPRINT("Failed "
@@ -25788,17 +25818,17 @@ api_to_connect_tcp_await_timeout2(_ID, To, ServerSA, NewSock) ->
             TDiff = Stop - Start,
             if
                 (TDiff >= To) ->
-                    (catch socket:close(Sock)),
+                    ?CATCH_AND_IGNORE( socket:close(Sock) ),
                     ok;
                 true ->
-                    (catch socket:close(Sock)),
+                    ?CATCH_AND_IGNORE( socket:close(Sock) ),
                     ?FAIL({unexpected_timeout, TDiff, To})
             end;
         {error, econnreset = _Reason} ->
-            (catch socket:close(Sock)),
+            ?CATCH_AND_IGNORE( socket:close(Sock) ),
             ok;
         {error, Reason} ->
-            (catch socket:close(Sock)),
+            ?CATCH_AND_IGNORE( socket:close(Sock) ),
             ?FAIL({connect, Reason});
         ok ->
             {ok, Sock}
@@ -25807,7 +25837,7 @@ api_to_connect_tcp_await_timeout2(_ID, To, ServerSA, NewSock) ->
 api_to_connect_tcp_await_timeout3([]) ->
     ok;
 api_to_connect_tcp_await_timeout3([Sock|Socka]) ->
-    (catch socket:close(Sock)),
+    ?CATCH_AND_IGNORE( socket:close(Sock) ),
     api_to_connect_tcp_await_timeout3(Socka).
 
 
@@ -25881,7 +25911,7 @@ api_to_accept_tcp(InitState) ->
                                {error, timeout} ->
                                    {ok, State#{start => Start, stop => ?TS()}};
                                {ok, Sock} ->
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {error, unexpected_success};
                                {error, _} = ERROR ->
                                    ERROR
@@ -26009,7 +26039,7 @@ api_to_maccept_tcp(InitState) ->
                                {ok, Sock} ->
                                    ?SEV_EPRINT("Unexpected accept success: "
                                                "~n   ~p", [Sock]),
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {error, unexpected_success};
                                {error, _} = ERROR ->
                                    ERROR
@@ -26082,7 +26112,7 @@ api_to_maccept_tcp(InitState) ->
                                {error, timeout} ->
                                    {ok, State#{start => Start, stop => ?TS()}};
                                {ok, Sock} ->
-                                   (catch socket:close(Sock)),
+                                   ?CATCH_AND_IGNORE( socket:close(Sock) ),
                                    {error, unexpected_success};
                                {error, _} = ERROR ->
                                    ERROR
@@ -27159,6 +27189,284 @@ has_support_sock_sndtimeo() ->
 
 has_support_sock_timestamp() ->
     has_support_socket_option_sock(timestamp).
+
+has_support_sock_timestampns() ->
+    has_support_socket_option_sock(timestampns).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%% SO_TIMESTAMPNS tests
+%%
+
+%% Tests that the timestampns control message header is received when
+%% setting the socket 'socket' option true when using sendmsg/recvmsg
+%% on an IPv4 UDP (dgram) socket.
+%% So, this is done on the receiving side: 
+%%
+%%               socket:setopt(Sock, socket, timestampns, boolean()).
+%%
+%% All subsequent *received* messages will be timestamped with nanosecond precision.
+
+api_opt_sock_timestampns_udp4(_Config) when is_list(_Config) ->
+    ?TT(?SECS(5)),
+    tc_try(api_opt_sock_timestampns_udp4,
+           fun() -> has_support_ipv4(), has_support_sock_timestampns() end,
+           fun() ->
+                   Set  = fun(Sock, Value) ->
+                                  socket:setopt(Sock, socket, timestampns, Value)
+                          end,
+                   Get  = fun(Sock) ->
+                                  socket:getopt(Sock, socket, timestampns)
+                          end,
+                   Send = fun(Sock, Data, Dest) ->
+                                  Msg = #{addr => Dest, iov => [Data]},
+                                  socket:sendmsg(Sock, Msg)
+                          end,
+                   Recv = fun(Sock) ->
+                                  case socket:recvmsg(Sock) of
+                                      {ok, #{addr := Source,
+                                             ctrl := CMsgs,
+                                             iov  := [Data]}} ->
+                                          {ok, {Source, CMsgs, Data}};
+                                      {error, _} = ERROR ->
+                                          ERROR
+                                  end
+                          end,
+                   InitState = #{domain => inet,
+                                 proto  => udp,
+                                 send   => Send,
+                                 recv   => Recv,
+                                 set    => Set,
+                                 get    => Get},
+                   ok = api_opt_sock_timestampns_udp(InitState)
+           end).
+
+api_opt_sock_timestampns_udp(InitState) ->
+    Seq =
+        [
+         #{desc => "local address",
+           cmd  => fun(#{domain := Domain} = State) ->
+                           LSA = which_local_socket_addr(Domain),
+                           {ok, State#{lsa_src => LSA,
+                                       lsa_dst => LSA}}
+                   end},
+         #{desc => "open src socket",
+           cmd  => fun(#{domain := Domain,
+                         proto  := Proto} = State) ->
+                           Sock = sock_open(Domain, dgram, Proto),
+                           {ok, State#{sock_src => Sock}}
+                   end},
+         #{desc => "bind src",
+           cmd  => fun(#{sock_src := Sock, lsa_src := LSA}) ->
+                           case sock_bind(Sock, LSA) of
+                               ok ->
+                                   ?SEV_IPRINT("src bound"),
+                                   ok;
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("src bind failed: ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "sockname src socket",
+           cmd  => fun(#{sock_src := Sock} = State) ->
+                           SASrc = sock_sockname(Sock),
+                           ?SEV_IPRINT("src sockaddr: "
+                                       "~n   ~p", [SASrc]),
+                           {ok, State#{sa_src => SASrc}}
+                   end},
+         #{desc => "get current (default) timestampns for src socket",
+           cmd  => fun(#{sock_src := Sock, get := Get} = _State) ->
+                           case Get(Sock) of
+                               {ok, false = Value} ->
+                                   ?SEV_IPRINT("src timestampns: ~p", [Value]),
+                                   ok;
+                               {ok, Unexpected} ->
+                                   ?SEV_EPRINT("Unexpected src timestampns: ~p",
+                                               [Unexpected]),
+                                   {error, {unexpected, Unexpected}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Failed getting (default) timestampns:"
+                                               "   ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "open dst socket",
+           cmd  => fun(#{domain := Domain,
+                         proto  := Proto} = State) ->
+                           Sock = sock_open(Domain, dgram, Proto),
+                           {ok, State#{sock_dst => Sock}}
+                   end},
+         #{desc => "bind dst",
+           cmd  => fun(#{sock_dst := Sock, lsa_dst := LSA}) ->
+                           case sock_bind(Sock, LSA) of
+                               ok ->
+                                   ?SEV_IPRINT("dst bound"),
+                                   ok;
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("dst bind failed: ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "sockname dst socket",
+           cmd  => fun(#{sock_dst := Sock} = State) ->
+                           SADst = sock_sockname(Sock),
+                           ?SEV_IPRINT("dst sockaddr: "
+                                       "~n   ~p", [SADst]),
+                           {ok, State#{sa_dst => SADst}}
+                   end},
+         #{desc => "send req (to dst) (WO TIMESTAMPNS)",
+           cmd  => fun(#{sock_src := Sock, sa_dst := Dst, send := Send}) ->
+                           Send(Sock, ?BASIC_REQ, Dst)
+                   end},
+         #{desc => "recv req (from src)",
+           cmd  => fun(#{sock_dst := Sock, sa_src := Src, recv := Recv}) ->
+                           case Recv(Sock) of
+                               {ok, {Src, [], ?BASIC_REQ}} ->
+                                   ok;
+                               {ok, {BadSrc, BadCHdrs, BadReq} = UnexpData} ->
+                                   ?SEV_EPRINT("Unexpected msg: "
+                                               "~n   Expect Source: ~p"
+                                               "~n   Recv Source:   ~p"
+                                               "~n   Expect CHdrs:  ~p"
+                                               "~n   Recv CHdrs:    ~p"
+                                               "~n   Expect Msg:    ~p"
+                                               "~n   Recv Msg:      ~p",
+                                               [Src, BadSrc,
+                                                [], BadCHdrs,
+                                                ?BASIC_REQ, BadReq]),
+                                   {error, {unexpected_data, UnexpData}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Failed recv: ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "enable timestampns on dst socket",
+           cmd  => fun(#{sock_dst := Sock, set := Set}) ->
+                           case Set(Sock, true) of
+                               ok ->
+                                   ?SEV_IPRINT("dst timestampns enabled"),
+                                   ok;
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Failed setting timestampns:"
+                                               "   ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "send req 1 (to dst) (W TIMESTAMPNS)",
+           cmd  => fun(#{sock_src := Sock, sa_dst := Dst, send := Send}) ->
+                           Send(Sock, ?BASIC_REQ, Dst)
+                   end},
+         #{desc => "recv req 1 (from src) (W TIMESTAMPNS)",
+           cmd  => fun(#{sock_dst := Sock, sa_src := Src, recv := Recv}) ->
+                           case Recv(Sock) of
+                               {ok, {Src, [#{level := socket,
+                                             type  := timestampns,
+                                             value  := #{sec := Sec, nsec := NSec}}], ?BASIC_REQ}} ->
+                                   ?SEV_IPRINT("received req *with* timestampns: "
+                                               "~n   sec:  ~p"
+                                               "~n   nsec: ~p",
+                                               [Sec, NSec]),
+                                   ok;
+                               {ok, {BadSrc, BadCHdrs, BadReq} = UnexpData} ->
+                                   ?SEV_EPRINT("Unexpected msg (expected timestampns): "
+                                               "~n   Expect Source: ~p"
+                                               "~n   Recv Source:   ~p"
+                                               "~n   Expect CHdrs:  [timestampns]"
+                                               "~n   Recv CHdrs:    ~p"
+                                               "~n   Expect Msg:    ~p"
+                                               "~n   Recv Msg:      ~p",
+                                               [Src, BadSrc,
+                                                BadCHdrs,
+                                                ?BASIC_REQ, BadReq]),
+                                   {error, {unexpected_data, UnexpData}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Failed recv: ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "send req 2 (to dst) (W TIMESTAMPNS)",
+           cmd  => fun(#{sock_src := Sock, sa_dst := Dst, send := Send}) ->
+                           Send(Sock, ?BASIC_REQ, Dst)
+                   end},
+         #{desc => "recv req 2 (from src) (W TIMESTAMPNS)",
+           cmd  => fun(#{sock_dst := Sock, sa_src := Src, recv := Recv}) ->
+                           case Recv(Sock) of
+                               {ok, {Src, [#{level := socket,
+                                             type  := timestampns,
+                                             value  := #{sec := Sec, nsec := NSec}}], ?BASIC_REQ}} ->
+                                   ?SEV_IPRINT("received req *with* timestampns: "
+                                               "~n   sec:  ~p"
+                                               "~n   nsec: ~p",
+                                               [Sec, NSec]),
+                                   ok;
+                               {ok, {BadSrc, BadCHdrs, BadReq} = UnexpData} ->
+                                   ?SEV_EPRINT("Unexpected msg (expected timestampns): "
+                                               "~n   Expect Source: ~p"
+                                               "~n   Recv Source:   ~p"
+                                               "~n   Expect CHdrs:  [timestampns]"
+                                               "~n   Recv CHdrs:    ~p"
+                                               "~n   Expect Msg:    ~p"
+                                               "~n   Recv Msg:      ~p",
+                                               [Src, BadSrc,
+                                                BadCHdrs,
+                                                ?BASIC_REQ, BadReq]),
+                                   {error, {unexpected_data, UnexpData}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Failed recv: ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "disable timestampns on dst socket",
+           cmd  => fun(#{sock_dst := Sock, set := Set}) ->
+                           case Set(Sock, false) of
+                               ok ->
+                                   ?SEV_IPRINT("dst timestampns disabled"),
+                                   ok;
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Failed setting timestampns:"
+                                               "   ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "send req (to dst) (WO TIMESTAMPNS)",
+           cmd  => fun(#{sock_src := Sock, sa_dst := Dst, send := Send}) ->
+                           Send(Sock, ?BASIC_REQ, Dst)
+                   end},
+         #{desc => "recv req (from src) (WO TIMESTAMPNS)",
+           cmd  => fun(#{sock_dst := Sock, sa_src := Src, recv := Recv}) ->
+                           case Recv(Sock) of
+                               {ok, {Src, [], ?BASIC_REQ}} ->
+                                   ?SEV_IPRINT("received req *without* timestampns"),
+                                   ok;
+                               {ok, {BadSrc, BadCHdrs, BadReq} = UnexpData} ->
+                                   ?SEV_EPRINT("Unexpected msg (expected no timestampns): "
+                                               "~n   Expect Source: ~p"
+                                               "~n   Recv Source:   ~p"
+                                               "~n   Expect CHdrs:  []"
+                                               "~n   Recv CHdrs:    ~p"
+                                               "~n   Expect Msg:    ~p"
+                                               "~n   Recv Msg:      ~p",
+                                               [Src, BadSrc,
+                                                BadCHdrs,
+                                                ?BASIC_REQ, BadReq]),
+                                   {error, {unexpected_data, UnexpData}};
+                               {error, Reason} = ERROR ->
+                                   ?SEV_EPRINT("Failed recv: ~p", [Reason]),
+                                   ERROR
+                           end
+                   end},
+         #{desc => "close sockets",
+           cmd  => fun(#{sock_src := Src, sock_dst := Dst}) ->
+                           (catch socket:close(Src)),
+                           (catch socket:close(Dst)),
+                           ok
+                   end},
+         ?SEV_FINISH_NORMAL
+        ],
+    Evaluator = ?SEV_START("tester", Seq, InitState),
+    ok = ?SEV_AWAIT_FINISH([Evaluator]).
+
 
 
 %% --- IP socket option test functions ---

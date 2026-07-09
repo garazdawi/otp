@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 1996-2025. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1952,7 +1952,15 @@ read_args_file(char *filename)
 
     do {
 	errno = 0;
+#ifdef __WIN32__
+	{
+	    WCHAR *wfilename = utf8_to_utf16((unsigned char *)filename);
+	    file = _wfopen(wfilename, L"r");
+	    efree(wfilename);
+	}
+#else
 	file = fopen(filename, "r");
+#endif
     } while (!file && errno == EINTR);
     if (!file) {
 #ifdef __WIN32__

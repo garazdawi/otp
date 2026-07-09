@@ -54,7 +54,8 @@ and `m:erl_prim_loader` in ERTS.
 [`erts:init`](`m:init`), [`erts:erl_prim_loader`](`m:erl_prim_loader`)
 """.
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}},
+          nowarn_deprecated_catch]).
 
 -include("inet_boot.hrl").
 
@@ -112,7 +113,7 @@ The boot server listening port can be configured with `listen_port`.
 If an empty map is provided, or `listen_port` is zero, then an ephemeral port
 is used.
 """.
--doc #{ since => <<"OTP @OTP-19944@">> }.
+-doc #{ since => <<"OTP 29.0">> }.
 -spec start(Slaves, Options) -> {'ok', Pid} | {'error', Reason} when
       Slaves :: [Host],
       Host :: inet:ip_address() | inet:hostname(),
@@ -144,7 +145,7 @@ start_link(Slaves) ->
 The same as [`start(Slaves, Options)`](`start/2`), but it also links to the
 caller.
 """.
--doc #{ since => <<"OTP @OTP-19944@">> }.
+-doc #{ since => <<"OTP 29.0">> }.
 -spec start_link(Slaves, Options) -> {'ok', Pid} | {'error', Reason} when
       Slaves :: [Host],
       Host :: inet:ip_address() | inet:hostname(),

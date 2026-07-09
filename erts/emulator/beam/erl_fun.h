@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 2000-2025. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,17 @@ typedef struct erl_fun_entry {
     int arity;                      /* The arity of the fun. */
     int index;                      /* New style index. */
 
-    /* These have been prepared for removal in OTP 29. */
+    /* These are not used to identify the function anymore, and could in theory
+     * be removed at any time if we didn't care about backwards compatibility.
+     *
+     * However, we have leaked their presence through `phash2`. If we would
+     * replace these with placeholder values or whatever, the hash of a
+     * fun would depend on what node version it runs on. What's worse, if we
+     * were to have the _compiler_ emit the placeholder value for a few
+     * versions before removal, we would still run afoul of this mess if a
+     * really old fun was stored in ETF.
+     *
+     * We'll need decide what to do with this in OTP 30+ */
     int old_uniq;                   /* Unique number (old_style) */
     int old_index;                  /* Old style index */
 } ErlFunEntry;

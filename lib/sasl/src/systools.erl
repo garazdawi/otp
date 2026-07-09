@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ A Set of Release Handling Tools
 This module contains functions to generate boot scripts (`.boot`, `.script`), a
 release upgrade file (`relup`), and release packages.
 
-## See Also
+### See Also
 
 [`app(4)`](`e:kernel:app.md`), [`appup(4)`](appup.md),
 [`erl(1)`](`e:erts:erl_cmd.md`), [`rel(4)`](rel.md), `m:release_handler`,

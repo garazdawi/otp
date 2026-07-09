@@ -43,7 +43,6 @@
 -module(mnesia_controller).
 -moduledoc false.
 -compile([{nowarn_deprecated_function, [{erlang,phash,2}]}]).
--compile(nowarn_obsolete_bool_op).
 
 -behaviour(gen_server).
 
@@ -734,8 +733,8 @@ handle_call(disc_load_intents,From,State = #state{loader_queue=LQ,late_loader_qu
 handle_call({update_where_to_write, [add, Tab, AddNode], _From}, _Dummy, State) ->
     Current = val({current, db_nodes}),
     Res =
-	case lists:member(AddNode, Current) and
-	    (State#state.schema_is_merged == true) of
+	case lists:member(AddNode, Current) andalso
+	    State#state.schema_is_merged == true of
 	    true ->
 		mnesia_lib:add_lsort({Tab, where_to_write}, AddNode),
 		update_where_to_wlock(Tab);

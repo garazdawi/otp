@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ This module is the default error report module, but can be explicitly
 configured, see [snmpa_error](`m:snmpa_error#desc`) and
 [configuration parameters](snmp_config.md#configuration_params).
 
-## See Also
+### See Also
 
 error_logger(3)
 """.

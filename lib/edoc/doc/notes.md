@@ -23,6 +23,25 @@ limitations under the License.
 
 This document describes the changes made to the EDoc application.
 
+## Edoc 1.5
+
+### Improvements and New Features
+
+- Changed behavior of EDoc so that when a module defines a private type and a private function spec uses it, that type no longer gets included in the EDoc chunk.
+
+  Own Id: OTP-20030 Aux Id: [PR-10770]
+
+- Added support for `-unsafe` attributes, which is used to mark functions as unsafe to use. 
+  
+  This is similar to but separate from deprecation, and the compiler will by default now generate warnings for calls to functions in Erlang/OTP that are known to be always unsafe.
+  
+  Furthermore, `m:xref` can now be used to find calls to functions in another application that lack a `-doc` attribute (`undocumented_function_calls`), calls to functions in another application marked `-doc false.` (`private_function_calls`), as well as calls to unsafe functions (`unsafe_function_calls`).
+
+  Own Id: OTP-20066 Aux Id: [PR-10839]
+
+[PR-10770]: https://github.com/erlang/otp/pull/10770
+[PR-10839]: https://github.com/erlang/otp/pull/10839
+
 ## Edoc 1.4.1
 
 ### Fixed Bugs and Malfunctions

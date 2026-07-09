@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1998-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@
 -module(mnesia_loader).
 -moduledoc false.
 
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}}]).
+
 %% Mnesia internal stuff
 -export([disc_load_table/3,
 	 net_load_table/4,
@@ -36,8 +38,6 @@
 -import(mnesia_lib, [set/2, fatal/2, verbose/2, dbg_out/2]).
 
 -include("mnesia.hrl").
-
--compile(nowarn_obsolete_bool_op).
 
 %% Local function in order to avoid external function call
 val(Var) ->
@@ -436,7 +436,7 @@ create_table(Tab, TabSize, Storage, Cs) ->
 		    mnesia_lib:unlock_table(Tab),
 		    {error, {mktab, Reason}}
 	    end;
-	(Storage == ram_copies) or (Storage == disc_copies) ->
+	Storage == ram_copies; Storage == disc_copies ->
 	    EtsOpts = proplists:get_value(ets, StorageProps, []),
 	    Args = [{keypos, 2}, public, named_table, Cs#cstruct.type | EtsOpts],
 	    case mnesia_monitor:unsafe_mktab(Tab, Args) of

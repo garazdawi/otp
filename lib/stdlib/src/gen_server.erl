@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -107,7 +107,7 @@ using exit signals.
 
 [1]: `e:system:ref_man_processes.md#blocking-signaling-over-distribution`
 
-## See Also
+### See Also
 
 `m:gen_event`, `m:gen_statem`, `m:proc_lib`, `m:supervisor`, `m:sys`
 """.
@@ -296,8 +296,7 @@ by the new process to initialize the server.
 
 The return value `Result` is interpreted as follows:
 
-- **`{ok,State}`\
-  `{ok,State,_}`** - Initialization was succesful
+- **`{ok,State}` | `{ok,State,_}`** - Initialization was succesful
    and `State` is the internal state of the `gen_server` process.
 
 - **`{ok,_,Action}`**  - `Action` is described by the `t:action/0` type.
@@ -305,8 +304,11 @@ The return value `Result` is interpreted as follows:
 - **`{stop,Reason}`** - Initialization failed.  The `gen_server`
   process exits with reason `Reason`.
 
-- **`{error,Reason}` _since OTP 26.0_\
-  `ignore`** - Initialization failed. The `gen_server` process exits
+- **`{error,Reason}`** - _since OTP 26.0_\
+  Initialization failed. The `gen_server` process exits
+  with reason `Reason`.
+
+- **`ignore`** - Initialization failed. The `gen_server` process exits
   with reason `normal`.
 
 See function [`start_link/3,4`](`start_link/3`)'s return value
@@ -937,7 +939,7 @@ Return value from the [`start/3,4`](`start/3`) and
 - **`{error, timeout}`** - The `gen_server` process failed to initialize
   since [`Module:init/1`](`c:init/1`) did not return within the
   [start time-out](`t:start_opt/0`). The `gen_server` process was killed
-  with [`exit(_, kill)`](`erlang:exit/2`).
+  with [`exit_signal(_, kill)`](`erlang:exit_signal/2`).
 
 - **`ignore`** - The `gen_server` process failed to initialize since
   [`Module:init/1`](`c:init/1`) returned `ignore`.

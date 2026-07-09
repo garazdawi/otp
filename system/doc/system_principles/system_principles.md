@@ -143,7 +143,7 @@ For more information about `.rel` files, see
 [Release Handling](`e:system:release_handling.md`) and the
 [rel](`e:sasl:rel.md`) page in SASL.
 
-To generate the binary boot script file `Name.boot` the boot script file
+To generate the binary boot script file `Name.boot` from the boot script file
 `Name.script`, use the
 [`systools:script2boot(File)`](https://www.erlang.org/doc/man/systools#script2boot-1)
 function.

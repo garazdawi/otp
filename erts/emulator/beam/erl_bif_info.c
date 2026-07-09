@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 1999-2024. All Rights Reserved.
+ * Copyright Ericsson AB 1999-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -3577,6 +3577,74 @@ BIF_RETTYPE system_info_1(BIF_ALIST_1)
         hp = hsz ? HAlloc(BIF_P, hsz) : NULL;
         res = erts_bld_sint64(&hp, NULL, (Sint64) erts_halt_flush_timeout);
         BIF_RET(res);
+    } else if (ERTS_IS_ATOM_STR("embedded_3pps", BIF_ARG_1)) {
+        Uint xtra;
+        Eterm res, *hp;
+        Eterm included = NIL, excluded = NIL;
+        Eterm ks[2], vs[2];
+        ErtsHeapFactory hfact;
+        ERTS_DECL_AM(included);
+        ERTS_DECL_AM(excluded);
+        ERTS_DECL_AM(asmjit);
+        ERTS_DECL_AM(pcre2);
+        ERTS_DECL_AM(ryu);
+        ERTS_DECL_AM(STL);
+        ERTS_DECL_AM(zstd);
+        ERTS_DECL_AM(zlib);
+
+        erts_factory_proc_init(&hfact, BIF_P);
+
+        xtra = 2*8 /* cons-cells */ + MAP_HEADER_FLATMAP_SZ + 2 /* map size */;
+
+        hp = erts_produce_heap(&hfact, 2, xtra);
+#ifdef ERTS_USE_BUILTIN_ZLIB
+        included = CONS(hp, AM_zlib, included);
+#else
+        excluded = CONS(hp, AM_zlib, excluded);
+#endif
+        xtra -= 2;
+
+        hp = erts_produce_heap(&hfact, 2, xtra);
+#ifdef ERTS_USE_BUILTIN_ZSTD
+        included = CONS(hp, AM_zstd, included);
+#else
+        excluded = CONS(hp, AM_zstd, excluded);
+#endif
+        xtra -= 2;
+
+        hp = erts_produce_heap(&hfact, 4, xtra);
+#ifdef ERTS_USE_BUILTIN_RYU
+        included = CONS(hp, AM_STL, included);
+        included = CONS(hp+2, AM_ryu, included);
+#else
+        excluded = CONS(hp, AM_STL, excluded);
+        excluded = CONS(hp+2, AM_ryu, excluded);
+#endif
+        xtra -= 4;
+
+        hp = erts_produce_heap(&hfact, 2, xtra);
+        included = CONS(hp, AM_pcre2, included);
+        xtra -= 2;
+
+        hp = erts_produce_heap(&hfact, 2, xtra);
+#ifdef BEAMASM
+        included = CONS(hp, AM_asmjit, included);
+#else
+        excluded = CONS(hp, AM_asmjit, excluded);
+#endif
+        xtra -= 2;
+
+        ks[0] = AM_included;
+        vs[0] = included;
+
+        ks[1] = AM_excluded;
+        vs[1] = excluded;
+
+        res = erts_map_from_ks_and_vs(&hfact, ks, vs, 2);
+
+        erts_factory_close(&hfact);
+
+        BIF_RET(res);
     }
 
     BIF_ERROR(BIF_P, BADARG);
@@ -3887,10 +3955,6 @@ fun_info_2(BIF_ALIST_2)
     switch (what) {
     case am_type:
         val = is_local_fun(funp) ? am_local : am_external;
-        hp = HAlloc(p, 3);
-        break;
-    case am_pid:
-        val = is_local_fun(funp) ? erts_init_process_id : am_undefined;
         hp = HAlloc(p, 3);
         break;
     case am_module:
@@ -4586,6 +4650,10 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
         }
         else if (ERTS_IS_ATOM_STR("debugger_support", BIF_ARG_1)) {
             return erts_debugger_flags & ERTS_DEBUGGER_ENABLED ? am_true : am_false;
+        }
+        else if (ERTS_IS_ATOM_STR("dirty_gc_limit", BIF_ARG_1)) {
+            ERTS_CT_ASSERT(ERTS_POTENTIALLY_LONG_GC_HSIZE < MAX_SMALL);
+            return make_small(ERTS_POTENTIALLY_LONG_GC_HSIZE);
         }
     }
     else if (is_tuple(BIF_ARG_1)) {

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -36,8 +36,8 @@
 -include("tls_connection.hrl").
 
 %% Initial Erlang process setup
--export([tls_start_link/7,
-         dtls_start_link/7,
+-export([tls_start_link/2,
+         dtls_start_link/2,
          init/1]).
 
 %% TLS connection setup
@@ -110,37 +110,43 @@
 %%% Initial Erlang process setup
 %%--------------------------------------------------------------------
 %%--------------------------------------------------------------------
--spec tls_start_link(client | server, ssl:host(), inet:port_number(), port(), tuple(), pid(), tuple()) ->
+-spec tls_start_link(pid(), list()) ->
     {ok, pid()} | ignore |  {error, ssl:reason()}.
 %%
 %% Description: Creates a process which calls Module:init/1 to
-%% choose appropriat gen_statem and initialize.
+%% choose appropriate gen_statem and initialize.
 %%--------------------------------------------------------------------
-tls_start_link(Role, Host, Port, Socket, {SslOpts, _, _} = Options, User, CbInfo) ->
-    ReceiverOpts = maps:get(receiver_spawn_opts, SslOpts, []),
-    Opts = [link | proplists:delete(link, ReceiverOpts)],
-    Pid = proc_lib:spawn_opt(?MODULE, init, [[Role, self(), Host, Port, Socket, Options, User, CbInfo]], Opts),
+tls_start_link(ConnSupv, ReceiverSpawnOpts) ->
+    Opts = [link | proplists:delete(link, ReceiverSpawnOpts)],
+    Pid = proc_lib:spawn_opt(?MODULE, init, [ConnSupv], Opts),
     {ok, Pid}.
 
 %%--------------------------------------------------------------------
--spec dtls_start_link(client | server, ssl:host(), inet:port_number(), port(), tuple(), pid(), tuple()) ->
+-spec dtls_start_link(pid(), list()) ->
 			{ok, pid()} | ignore |  {error, ssl:reason()}.
 %%
 %% Description: Creates a gen_statem process which calls Module:init/1 to
 %% initialize.
 %%--------------------------------------------------------------------
-dtls_start_link(Role, Host, Port, Socket, {SslOpts, _, _} = Options, User, CbInfo) ->
-    ReceiverOpts = maps:get(receiver_spawn_opts, SslOpts, []),
-    Opts = [link | proplists:delete(link, ReceiverOpts)],
-    Pid = proc_lib:spawn_opt(?MODULE, init, [[Role, Host, Port, Socket, Options, User, CbInfo]], Opts),
+dtls_start_link(ConnSupv, ReceiverSpawnOpts) ->
+    Opts = [link | proplists:delete(link, ReceiverSpawnOpts)],
+    Pid = proc_lib:spawn_opt(?MODULE, init, [ConnSupv], Opts),
     {ok, Pid}.
 
 
 %%--------------------------------------------------------------------
--spec init(list()) -> no_return().
+-spec init(pid()) -> no_return().
 %% Description: Initialization
+%%   We are linked through the supervisors here so either we die or get
+%%   the message from the supervisor.
 %%--------------------------------------------------------------------
-init([Role, Sup, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo]) ->
+init(ConnSupv) ->
+    receive
+        {ConnSupv, options, Args} ->
+            init_statem(Args)
+    end.
+
+init_statem([Role, Sup, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo]) ->
     process_flag(trap_exit, true),
 
     {ok, {_, Sender,_,_}} = supervisor:which_child(Sup, sender),
@@ -176,7 +182,7 @@ init([Role, Sup, Host, Port, Socket, {TLSOpts, EmOpts, Trackers}, User, CbInfo])
                     tls_server_connection:init([Role, Sender, Tab|InitArgs])
             end
     end;
-init([Role, Host, Port, Socket, {DTLSOpts,EmOpts,Trackers}, User, CbInfo]) ->
+init_statem([Role, Host, Port, Socket, {DTLSOpts,EmOpts,Trackers}, User, CbInfo]) ->
     process_flag(trap_exit, true),
 
     init_label(Role, Host, Port, DTLSOpts),
@@ -1010,8 +1016,12 @@ send_alert(Alert, _, #state{static_env = #static_env{protocol_cb = Connection}} 
 
 handle_own_alert(Alert0, StateName,
 		 #state{static_env = #static_env{role = Role,
+                                                 host = Host,
+                                                 port = Port,
                                                  protocol_cb = Connection},
-                        ssl_options = #{log_level := LogLevel}} = State) ->
+                        ssl_options = #{log_level := LogLevel},
+                        session = Session} = State) ->
+    invalidate_session(Role, Host, Port, Session),
     Alert = Alert0#alert{role = Role},
     try %% Try to tell the other side
         send_alert(Alert, StateName, State)
@@ -1064,7 +1074,7 @@ handle_alert(#alert{level = ?WARNING, description = ?NO_RENEGOTIATION} = Alert, 
                                              protocol_cb = Connection},
                     handshake_env = #handshake_env{renegotiation = {false, first}},
                     ssl_options = #{log_level := LogLevel}
-		   } = State) when StateName == intial_hello;
+                   } = State) when StateName == initial_hello;
                                    StateName == hello;
                                    StateName == certify;
                                    StateName == abbreviated;
@@ -1078,7 +1088,7 @@ handle_alert(#alert{} = Alert, StateName,
                                              protocol_cb = Connection},
                     handshake_env = #handshake_env{renegotiation = {false, first}},
                     ssl_options = #{log_level := LogLevel}} = State) when StateName == start;
-                                                                          StateName == intial_hello;
+                                                                          StateName == initial_hello;
                                                                           StateName == hello ->
     log_alert(LogLevel, Role,
               Connection:protocol_name(), StateName, Alert#alert{role = opposite_role(Role)}),
@@ -2185,17 +2195,22 @@ keylog_1_3(Info) ->
 keylog_1_3(ClientRandom, Prf, Role, Sender, Info) ->
     {ok, SecretWrite, NWrite} = call(Sender, get_application_traffic_secret),
     EarlySecret = proplists:get_value(client_early_data_secret, Info, undefined),
+    %% Note the current role is the writer, and the opposite role is the reader
     case Role of
         client ->
-            {server_traffic_secret, SecretRead, NRead} = lists:keyfind(server_traffic_secret, 1, Info),
+            {server_traffic_secret, SecretRead, NRead} =
+                lists:keyfind(server_traffic_secret, 1, Info),
             hs_logs(NRead, ClientRandom, Prf, EarlySecret, Info) ++
-                ssl_logger:keylog_traffic_1_3(Role, ClientRandom, Prf, SecretRead, NRead) ++
-                ssl_logger:keylog_traffic_1_3(server, ClientRandom, Prf, SecretWrite, NWrite);
+                ssl_logger:keylog_traffic_1_3(Role, ClientRandom, Prf, SecretWrite, NWrite) ++
+                ssl_logger:keylog_traffic_1_3(opposite_role(Role), ClientRandom,
+                                              Prf, SecretRead, NRead);
         server ->
-            {client_traffic_secret, SecretRead, NRead} = lists:keyfind(client_traffic_secret, 1, Info),
+            {client_traffic_secret, SecretRead, NRead} =
+                lists:keyfind(client_traffic_secret, 1, Info),
             hs_logs(NRead, ClientRandom, Prf, EarlySecret, Info) ++
-                ssl_logger:keylog_traffic_1_3(client, ClientRandom, Prf, SecretWrite, NWrite) ++
-                ssl_logger:keylog_traffic_1_3(Role, ClientRandom, Prf, SecretRead, NRead)
+                ssl_logger:keylog_traffic_1_3(opposite_role(Role), ClientRandom,
+                                              Prf, SecretRead, NRead) ++
+                ssl_logger:keylog_traffic_1_3(Role, ClientRandom, Prf, SecretWrite, NWrite)
     end.
 
 hs_logs(0, ClientRandom, Prf, EarlySecret, Info) ->
@@ -2208,7 +2223,7 @@ hs_logs(0, ClientRandom, Prf, EarlySecret, Info) ->
         undefined ->
             HSItems;
         _  ->
-            [ssl_logger:keylog_early_data(ClientRandom, Prf, EarlySecret) | HSItems]
+            ssl_logger:keylog_early_data(ClientRandom, Prf, EarlySecret) ++ HSItems
     end;
 hs_logs(_,_,_,_, _) ->
     [].
@@ -2256,13 +2271,13 @@ keylog_hs_alert(negotiated, #state{static_env = #static_env{role = server},
                                                          current_write := Write
                                                         }})
   when ?TLS_GTE(TlsVersion, ?TLS_1_3) ->
-     #{server_handshake_traffic_secret := ServerHSSecret,
-      security_parameters :=
-          #security_parameters{client_random = ClientRandomBin,
-                               client_early_data_secret = EarlySecret,
-                               prf_algorithm = Prf
-                              }} = Write,
-    #{client_handshake_traffic_secret := ClientHSSecret} = Read,
+    #{server_handshake_traffic_secret := ServerHSSecret} = Write,
+    #{client_handshake_traffic_secret := ClientHSSecret,
+      security_parameters := #security_parameters{client_random = ClientRandomBin,
+                                                  client_early_data_secret = EarlySecret,
+                                                  prf_algorithm = Prf
+                                                 }
+     } = Read,
     {keylog_hs_1_3(ClientRandomBin, Prf, EarlySecret, ServerHSSecret, ClientHSSecret),
      ClientRandomBin};
 keylog_hs_alert(wait_eoed, #state{static_env = #static_env{role = server},
@@ -2290,15 +2305,15 @@ keylog_hs_alert(connection, #state{static_env = #static_env{role = client},
   when ?TLS_GTE(TlsVersion, ?TLS_1_3) ->
     #{server_handshake_traffic_secret := ServerHSSecret,
       security_parameters :=
-          #security_parameters{client_random = ClientRandomBin,
-                               client_early_data_secret = EarlySecret,
-                               prf_algorithm = Prf,
-                               master_secret = {master_secret, STrafficSecret}
+          #security_parameters{master_secret = {master_secret, STrafficSecret}
                               }}
         = Read,
     #{client_handshake_traffic_secret := ClientHSSecret,
        security_parameters :=
-          #security_parameters{master_secret = {master_secret, CTrafficSecret}
+          #security_parameters{master_secret = {master_secret, CTrafficSecret},
+                               client_random = ClientRandomBin,
+                               client_early_data_secret = EarlySecret,
+                               prf_algorithm = Prf
                               }} = Write,
 
     {keylog_hs_1_3(ClientRandomBin, Prf, EarlySecret, ClientHSSecret, ServerHSSecret) ++
@@ -2312,14 +2327,14 @@ keylog_hs_alert(_, #state{static_env = #static_env{role = client},
                                                 current_write := Write
                                                }})
   when ?TLS_GTE(TlsVersion, ?TLS_1_3) ->
-   #{server_handshake_traffic_secret := ServerHSSecret,
+    #{server_handshake_traffic_secret := ServerHSSecret} = Read,
+    #{client_handshake_traffic_secret := ClientHSSecret,
       security_parameters :=
-                   #security_parameters{client_random = ClientRandomBin,
-                                        client_early_data_secret = EarlySecret,
-                                        prf_algorithm = Prf
-                                       }}
-        = Write,
-    #{client_handshake_traffic_secret := ClientHSSecret} = Read,
+          #security_parameters{client_random = ClientRandomBin,
+                               client_early_data_secret = EarlySecret,
+                               prf_algorithm = Prf
+                              }
+     } = Write,
     {keylog_hs_1_3(ClientRandomBin, Prf, EarlySecret, ClientHSSecret, ServerHSSecret),
      ClientRandomBin};
 keylog_hs_alert(_, _) -> % NOT Relevant pre TLS-1.3
@@ -2332,19 +2347,20 @@ keylog_hs_1_3(ClientRandomBin, Prf, EarlySecret, ClientSecret, ServerSecret) ->
         undefined ->
             HSItems;
         _  ->
-            [ssl_logger:keylog_early_data(ClientRandomBin, Prf, EarlySecret) | HSItems]
+            ssl_logger:keylog_early_data(ClientRandomBin, Prf, EarlySecret) ++ HSItems
     end.
 
 keylog_1_3_client_finished(Read, Write) ->
     #{server_handshake_traffic_secret := ServerHSSecret,
-      security_parameters :=
-                   #security_parameters{client_random = ClientRandomBin,
-                                        client_early_data_secret = EarlySecret,
-                                        prf_algorithm = Prf,
-                                        master_secret = {master_secret, TrafficSecret}
-                                       }}
+      security_parameters := #security_parameters{client_random = ClientRandomBin,
+                                                  prf_algorithm = Prf,
+                                                  master_secret = {master_secret, TrafficSecret}
+                                                 }}
         = Write,
-    #{client_handshake_traffic_secret := ClientHSSecret} = Read,
+    #{client_handshake_traffic_secret := ClientHSSecret,
+      security_parameters :=
+          #security_parameters{client_early_data_secret = EarlySecret}
+     } = Read,
     {keylog_hs_1_3(ClientRandomBin, Prf, EarlySecret, ServerHSSecret, ClientHSSecret) ++
          ssl_logger:keylog_traffic_1_3(server, ClientRandomBin, Prf, TrafficSecret, 0),
      ClientRandomBin}.

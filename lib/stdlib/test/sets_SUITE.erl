@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2004-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@
          doctests_gb_sets/1, doctests_ordsets/1, doctests_sets/1]).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 -import(lists, [foldl/3,reverse/1]).
 
@@ -195,7 +196,7 @@ intersection_1(List, M) ->
     true = M(is_equal, {Empty,M(intersection, [S0,Empty,S0,Empty])}),
 
     %% The intersection of no sets is undefined.
-    {'EXIT',_} = (catch M(intersection, [])),
+    ?assertError(_, M(intersection, [])),
 
     %% Disjoint sets.
     Disjoint = [{El} || El <- List],
@@ -540,13 +541,16 @@ iterate_set_1(M, {E, I}, R) ->
     iterate_set_1(M, M(next, I), [E | R]).
 
 doctests_gb_sets(_Config) ->
-    shell_docs:test(gb_sets, []).
+    ct_doctest:module(gb_sets, [{skipped_blocks, 1},
+                                {missing_tests, []}]).
 
 doctests_ordsets(_Config) ->
-    shell_docs:test(ordsets, []).
+    ct_doctest:module(ordsets, [{skipped_blocks, 1},
+                                {missing_tests, []}]).
 
 doctests_sets(_Config) ->
-    shell_docs:test(sets, []).
+    ct_doctest:module(sets, [{skipped_blocks, 1},
+                             {missing_tests, []}]).
 
 %%%
 %%% Helper functions.

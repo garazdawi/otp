@@ -4,8 +4,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2009-2024. All Rights Reserved.
 %% Copyright 2004-2010 held by the authors. All Rights Reserved.
+%% Copyright Ericsson AB 2009-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -30,8 +30,6 @@
 %%%-------------------------------------------------------------------
 -module(dialyzer_utils).
 -moduledoc false.
-
--compile(nowarn_obsolete_bool_op).
 
 -export([
 	 format_sig/1,
@@ -173,9 +171,14 @@ get_record_and_type_info(Core) ->
 get_record_and_type_info([{native_record, Location, [{Name, Fields0}]}|Left],
 			 Module, RecDict, File) ->
   {ok, Fields} = get_record_fields(Fields0, RecDict),
-  Arity = length(Fields),
   FN = {File, Location},
-  NewRecDict = maps:put({native_record, Name}, {FN, [{Arity,Fields}]}, RecDict),
+  NewRecDict = maps:put({native_record, {Module,Name}}, {FN, Fields}, RecDict),
+  get_record_and_type_info(Left, Module, NewRecDict, File);
+get_record_and_type_info([{import_record, _Location, [{Mod, Names}]}|Left],
+                         Module, RecDict, File) ->
+  NewRecDict = lists:foldl(fun(Name, Acc) ->
+                             maps:put({import_record, Name}, Mod, Acc)
+                           end, RecDict, Names),
   get_record_and_type_info(Left, Module, NewRecDict, File);
 get_record_and_type_info([{record, Location, [{Name, Fields0}]}|Left],
 			 Module, RecDict, File) ->
@@ -309,26 +312,19 @@ process_record_remote_types_module(Module, CServer) ->
           {native_record, Name} ->
             {FileLocation, Fields} = Value,
             {File, _Location} = FileLocation,
+            Site = {native_record, Name, File},
             FieldFun =
-              fun({Arity, Fields0}, C4) ->
-                  MRA = {Module, Name, Arity},
-                  Site = {native_record, MRA, File},
-                  {Fields1, C7} =
-                    lists:mapfoldl(fun({FieldName, Field, _}, C5) ->
-                                       check_remote(Field, ExpTypes, MRA,
-                                                    File, RecordTable),
-                                       {FieldT, C6} =
-                                         erl_types:t_from_form
-                                           (Field, ExpTypes, Site,
-                                            RecordTable, VarTable,
-                                            C5),
-                                       {{FieldName, Field, FieldT}, C6}
-                                   end, C4, Fields0),
-                  {{Arity, Fields1}, C7}
+              fun({FieldName, Field, _}, C5) ->
+                {FieldT, C6} =
+                  erl_types:t_from_form
+                    (Field, ExpTypes, Site,
+                    RecordTable, VarTable,
+                    C5),
+                {{FieldName, Field, FieldT}, C6}
               end,
             {FieldsList, C3} =
-              lists:mapfoldl(FieldFun, C2, orddict:to_list(Fields)),
-            {{{native_record, {Module,Name}}, {FileLocation, orddict:from_list(FieldsList)}}, C3};
+              lists:mapfoldl(FieldFun, C2, Fields),
+            {{Key, {FileLocation, FieldsList}}, C3};
           {record, Name} ->
             {FileLocation, Fields} = Value,
             {File, _Location} = FileLocation,
@@ -352,6 +348,8 @@ process_record_remote_types_module(Module, CServer) ->
             {FieldsList, C3} =
               lists:mapfoldl(FieldFun, C2, orddict:to_list(Fields)),
             {{Key, {FileLocation, orddict:from_list(FieldsList)}}, C3};
+          {import_record, _Name} ->
+            {{Key, Value}, C2};
           {_TypeOrOpaque, Name, NArgs} ->
             %% Make sure warnings about unknown types are output
             %% also for types unused by specs.
@@ -421,6 +419,8 @@ process_opaque_types(AllModules, CServer, TempExpTypes) ->
                 {record, _RecName} ->
                   {{Key, Value}, C2};
                 {native_record, _RecName} ->
+                  {{Key, Value}, C2};
+                {import_record, _RecName} ->
                   {{Key, Value}, C2}
               end
           end,
@@ -462,15 +462,15 @@ check_record_fields(AllModules, CServer, TempExpTypes) ->
                 {native_record, Name} ->
                   {FileLocation, Fields} = Value,
                   {File, _Location} = FileLocation,
+                  Site = {native_record, Name, File},
                   FieldFun =
-                    fun({Arity, Fields0}, C3) ->
-                        Site = {native_record, {Module, Name, Arity}, File},
-                        lists:foldl(fun({_, Field, _}, C4) ->
-                                        CheckForm(Field, Site, C4)
-                                    end, C3, Fields0)
+                    fun({_, Field, _}, C4) ->
+                      CheckForm(Field, Site, C4)
                     end,
                   Fun = fun() -> lists:foldl(FieldFun, C2, Fields) end,
                   msg_with_position(Fun, FileLocation);
+                {import_record, _Name} ->
+                  C2;
                 {_OpaqueOrType, Name, NArgs} ->
                   {{_Module, FileLocation, Form, _ArgNames}, _Type} = Value,
                   {File, _Location} = FileLocation,
@@ -560,7 +560,7 @@ get_optional_callbacks(Tuples, ModName) ->
 
 get_spec_info([{Contract, Ln, [{Id, TypeSpec}]}|Left],
 	      SpecMap, CallbackMap, RecordsMap, ModName, OptCb, File)
-  when ((Contract =:= 'spec') or (Contract =:= 'callback')),
+  when Contract =:= 'spec' orelse Contract =:= 'callback',
        is_list(TypeSpec) ->
   MFA = case Id of
 	  {_, _, _} = T -> T;
@@ -647,7 +647,8 @@ massage_type({type, Loc, 'fun',
   Ret = massage_type(Ret0, Defs),
   {type, Loc, 'fun', [Args, Ret]};
 massage_type({type, Loc, Name, Args0}, Defs) when is_list(Args0) ->
-  case sets:is_element({Name, length(Args0)}, Defs) of
+  case sets:is_element({Name, length(Args0)}, Defs) andalso
+       erl_internal:is_type(Name, length(Args0)) of
     true ->
       %% This name for a built-in type has been overriden locally
       %% with a new definition.
@@ -1026,11 +1027,11 @@ pp_flags([Flag|Flags]) ->
 				  pp_flags(Flags))).
 
 keep_endian(Flags) ->
-  [cerl:c_atom(X) || X <- Flags, (X =:= little) or (X =:= native)].
+  [cerl:c_atom(X) || X <- Flags, X =:= little orelse X =:= native].
 
 keep_all(Flags) ->
   [cerl:c_atom(X) || X <- Flags,
-		     (X =:= little) or (X =:= native) or (X =:= signed)].
+		     X =:= little orelse X =:= native orelse X =:= signed].
 
 pp_unit(Unit, Ctxt, Cont) ->
   case cerl:concrete(Unit) of
@@ -1164,7 +1165,7 @@ refold_concrete_pat(Val) ->
     [H|T] ->
       HP = refold_concrete_pat(H),
       TP = refold_concrete_pat(T),
-      case  cerl:is_literal(HP) and cerl:is_literal(TP) of
+      case cerl:is_literal(HP) andalso cerl:is_literal(TP) of
 	true -> cerl:abstract(Val);
 	false -> label(cerl:c_cons_skel(HP, TP))
       end;

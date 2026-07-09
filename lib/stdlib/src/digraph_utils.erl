@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1999-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ For basic functions on directed graphs, see the `m:digraph` module.
 - A _tree_{: #tree } is an acyclic non-empty digraph such that there is a unique
   path between every pair of vertices, considering all edges undirected.
 
-## See Also
+### See Also
 
 `m:digraph`
 """.

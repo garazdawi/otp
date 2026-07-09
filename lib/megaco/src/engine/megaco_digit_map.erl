@@ -70,8 +70,6 @@ but as of 27.0, its also documented.
 """.
 -moduledoc(#{since => "OTP 27.0"}).
 
--compile(nowarn_obsolete_bool_op).
-
 -export([parse/1, eval/1, eval/2, report/2, test/2]). % Public
 -export([test_eval/2]).                               % Internal
 
@@ -856,9 +854,9 @@ report(Pid, Event) when is_pid(Pid) ->
 	$s                      -> sleep(1);  % 1 sec (1000 ms)
 	$L                      -> sleep(10); % 10 sec (10000 ms)
 	$l                      -> sleep(10); % 10 sec (10000 ms)
-        {long, I} when (I >= $0) and (I =< $9) -> cast(Pid, {long, I});
-        {long, A} when (A >= $a) and (A =< $k) -> cast(Pid, {long, A});
-        {long, A} when (A >= $A) and (A =< $K) -> cast(Pid, {long, A});
+        {long, I} when I >= $0, I =< $9 -> cast(Pid, {long, I});
+        {long, A} when A >= $a, A =< $k -> cast(Pid, {long, A});
+        {long, A} when A >= $A, A =< $K -> cast(Pid, {long, A});
 %%         {long, I} when (I >= $0) and (I =< $9) -> long(Pid, I);
 %%         {long, A} when (A >= $a) and (A =< $k) -> long(Pid, A);
 %%         {long, A} when (A >= $A) and (A =< $K) -> long(Pid, A);

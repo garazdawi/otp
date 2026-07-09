@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2002-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@
 %%
 
 -module(etop_SUITE).
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_atom, 1}}]).
 
 -define(ERASE_ALL, <<"\e[;H\e[2J">>).
 -define(COOKED_ENDING, <<"Type Ctrl+G, then enter 'i' to interrupt etop.">>).

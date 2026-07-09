@@ -126,11 +126,11 @@ end_per_testcase(_TestCase, _Config) ->
 
 %%----------------------------------------------------------------------------
 %%% Idle timeout test
-rekey0() -> [{timetrap,{seconds,120}}].
-rekey1() -> [{timetrap,{seconds,120}}].
-rekey2() -> [{timetrap,{seconds,120}}].
-rekey3() -> [{timetrap,{seconds,120}}].
-rekey4() -> [{timetrap,{seconds,120}}].
+rekey0() -> [{timetrap,{seconds,120 * ssh_test_lib:timetrap_scale()}}].
+rekey1() -> [{timetrap,{seconds,120 * ssh_test_lib:timetrap_scale()}}].
+rekey2() -> [{timetrap,{seconds,120 * ssh_test_lib:timetrap_scale()}}].
+rekey3() -> [{timetrap,{seconds,120 * ssh_test_lib:timetrap_scale()}}].
+rekey4() -> [{timetrap,{seconds,120 * ssh_test_lib:timetrap_scale()}}].
     
 rekey0(Config) -> ssh_dbg:start(), ssh_dbg:on(renegotiation),
                   R = rekey_chk(Config, 0,                   0),
@@ -144,7 +144,8 @@ rekey4(Config) -> rekey_chk(Config, 0,                   {infinity,infinity}).
 rekey_chk(Config, RLdaemon, RLclient) ->
     {Pid, Host, Port} =
         ssh_test_lib:std_daemon(Config,
-                                [{rekey_limit, RLdaemon}, ?ALIVE]),
+                                [{subsystems, [ssh_sftpd:subsystem_spec([])]},
+                                 {rekey_limit, RLdaemon}, ?ALIVE]),
     ConnectionRef =
         ssh_test_lib:std_connect(Config, Host, Port,
                                  [{rekey_limit, RLclient}, ?ALIVE]),
@@ -172,7 +173,8 @@ rekey_limit_client(Config) ->
     Algs = proplists:get_value(preferred_algorithms, Config),
     {Pid, Host, Port} =
         ssh_test_lib:std_daemon(Config,
-                                [{max_random_length_padding,0},
+                                [{subsystems, [ssh_sftpd:subsystem_spec([])]},
+                                 {max_random_length_padding,0},
                                  ?ALIVE,
                                  {preferred_algorithms,Algs}]),
 
@@ -226,7 +228,8 @@ rekey_limit_daemon(Config) ->
 
     Algs = proplists:get_value(preferred_algorithms, Config),
     {Pid, Host, Port} =
-        ssh_test_lib:std_daemon(Config, [{rekey_limit, Limit},
+        ssh_test_lib:std_daemon(Config, [{subsystems, [ssh_sftpd:subsystem_spec([])]},
+                                         {rekey_limit, Limit},
                                          {max_random_length_padding,0},
                                          ?ALIVE,
                                          {preferred_algorithms,Algs}]),
@@ -279,7 +282,8 @@ norekey_limit_client(Config) ->
 
     Algs = proplists:get_value(preferred_algorithms, Config),
     {Pid, Host, Port} =
-        ssh_test_lib:std_daemon(Config,[{max_random_length_padding,0},
+        ssh_test_lib:std_daemon(Config,[{subsystems, [ssh_sftpd:subsystem_spec([])]},
+                                        {max_random_length_padding,0},
                                         ?ALIVE,
                                         {preferred_algorithms,Algs}]),
 
@@ -311,7 +315,8 @@ norekey_limit_daemon(Config) ->
 
     Algs = proplists:get_value(preferred_algorithms, Config),
     {Pid, Host, Port} =
-        ssh_test_lib:std_daemon(Config,[{rekey_limit, Limit},
+        ssh_test_lib:std_daemon(Config,[{subsystems, [ssh_sftpd:subsystem_spec([])]},
+                                        {rekey_limit, Limit},
                                         {max_random_length_padding,0},
                                         ?ALIVE,
                                         {preferred_algorithms,Algs}]),
@@ -342,7 +347,8 @@ rekey_time_limit_client(Config) ->
     GB = 1024*1000*1000,
     Algs = proplists:get_value(preferred_algorithms, Config),
     {Pid, Host, Port} =
-        ssh_test_lib:std_daemon(Config,[{max_random_length_padding,0},
+        ssh_test_lib:std_daemon(Config,[{subsystems, [ssh_sftpd:subsystem_spec([])]},
+                                        {max_random_length_padding,0},
                                         ?ALIVE,
                                         {preferred_algorithms,Algs}]),
     ConnectionRef =
@@ -358,7 +364,8 @@ rekey_time_limit_daemon(Config) ->
     GB = 1024*1000*1000,
     Algs = proplists:get_value(preferred_algorithms, Config),
     {Pid, Host, Port} =
-        ssh_test_lib:std_daemon(Config,[{rekey_limit, {Minutes, GB}},
+        ssh_test_lib:std_daemon(Config,[{subsystems, [ssh_sftpd:subsystem_spec([])]},
+                                        {rekey_limit, {Minutes, GB}},
                                         {max_random_length_padding,0},
                                         ?ALIVE,
                                         {preferred_algorithms,Algs}]),
@@ -397,7 +404,8 @@ renegotiate1(Config) ->
 
     Algs = proplists:get_value(preferred_algorithms, Config),
     {Pid, Host, DPort} =
-        ssh_test_lib:std_daemon(Config,[{max_random_length_padding,0},
+        ssh_test_lib:std_daemon(Config,[{subsystems, [ssh_sftpd:subsystem_spec([])]},
+                                        {max_random_length_padding,0},
                                         ?ALIVE,
                                         {preferred_algorithms,Algs}]),
 
@@ -440,7 +448,8 @@ renegotiate2(Config) ->
     Algs = proplists:get_value(preferred_algorithms, Config),
     {Pid, Host, DPort} =
         ssh_test_lib:std_daemon(Config,
-                                [{max_random_length_padding,0},
+                                [{subsystems, [ssh_sftpd:subsystem_spec([])]},
+                                 {max_random_length_padding,0},
                                  ?ALIVE,
                                  {preferred_algorithms,Algs}]),
 

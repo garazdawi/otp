@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2019-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2019-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -165,12 +165,14 @@ will_succeed(erlang, setelement, [Pos, Tuple0, _Value]=Args) ->
         {_, none} ->
             no;
         {#t_integer{elements={Min,Max}}=Pos, Tuple} ->
-            MaxTupleSize = max_tuple_size(Tuple),
+            TupleSizes = tuple_sizes(Tuple),
+            MaxTupleSize = lists:max(TupleSizes),
+            MinTupleSize = lists:min(TupleSizes),
             if
                 MaxTupleSize < Min ->
                     %% Index is always out of range.
                     no;
-                Tuple0 =:= Tuple, Max =< MaxTupleSize ->
+                Tuple0 =:= Tuple, Max =< MinTupleSize ->
                     %% We always have a tuple, and the index is always in
                     %% range.
                     yes;
@@ -209,14 +211,14 @@ will_succeed(Mod, Func, Args) ->
             end
     end.
 
-max_tuple_size(#t_union{tuple_set=[_|_]=Set}=Union) ->
+tuple_sizes(#t_union{tuple_set=[_|_]=Set}=Union) ->
     Union = meet(Union, #t_tuple{}),            %Assertion.
     Arities = [Arity || {{Arity, _Tag}, _Record} <:- Set],
-    lists:max(Arities);
-max_tuple_size(#t_tuple{exact=true,size=Size}) ->
-    Size;
-max_tuple_size(#t_tuple{exact=false}) ->
-    ?MAX_TUPLE_SIZE.
+    Arities;
+tuple_sizes(#t_tuple{exact=true,size=Size}) ->
+    [Size];
+tuple_sizes(#t_tuple{exact=false,size=Size}) ->
+    [Size,?MAX_TUPLE_SIZE].
 
 %% While we can't infer success for functions outside the 'erlang'
 %% module, it's safe to infer failure when we know they return `none` or
@@ -420,6 +422,43 @@ types(erlang, is_pid, [Type]) ->
     sub_unsafe_type_test(Type, pid);
 types(erlang, is_port, [Type]) ->
     sub_unsafe_type_test(Type, port);
+types(erlang, is_record, [Type]) ->
+    sub_unsafe_type_test(Type, #t_record{});
+types(erlang, is_record, [Type,Mod0,Name0]=Args) ->
+    case {Mod0,Name0} of
+        {#t_atom{elements=[Mod]},
+         #t_atom{elements=[Name]}} ->
+            %% We KNOW that this is_record/3 test is always preceeded
+            %% by an is_record/1 test. Therefore, `Type` is always a
+            %% record or a record set.
+            RetType =
+                case meet(Type, #t_record{}) of
+                    #t_record{name=Id} ->
+                        case Id of
+                            {Mod,Name} ->
+                                #t_atom{elements=[true]};
+                            {_,_} ->
+                                #t_atom{elements=[false]};
+                            nil ->
+                                beam_types:make_boolean()
+                        end;
+                    #t_union{native_record_set=Recs} ->
+                        case any(fun(#t_record{name=Id}) ->
+                                         case Id of
+                                             {Mod,Name} -> true;
+                                             {_,_} -> false
+                                         end
+                                 end, Recs) of
+                            false ->
+                                #t_atom{elements=[false]};
+                            true ->
+                                beam_types:make_boolean()
+                        end
+                end,
+            sub_unsafe(RetType, Args);
+        {_, _} ->
+            sub_unsafe(beam_types:make_boolean(), Args)
+    end;
 types(erlang, is_reference, [Type]) ->
     sub_unsafe_type_test(Type, reference);
 types(erlang, is_tuple, [Type]) ->
@@ -455,9 +494,7 @@ types(erlang, 'bnot', [_]) ->
     %% between the ranges calculated by the type pass and by
     %% beam_validator.
     %%
-    %% Therefore, don't attempt to calculate a range now. Save the
-    %% range calculation for the opt_ranges pass (arith_type/2), which
-    %% is only run once.
+    %% Therefore, don't attempt to calculate a range now.
     sub_unsafe(#t_integer{}, [#t_integer{}]);
 
 %% Fixed-type arithmetic
@@ -1047,10 +1084,8 @@ types(maps, from_list, [Pairs]) ->
                       SKey = beam_types:get_tuple_element(1, Es),
                       SValue = beam_types:get_tuple_element(2, Es),
                       #t_map{super_key=SKey,super_value=SValue};
-                  none when PairType =:= none ->
-                      #t_map{super_key=none,super_value=none};
-                  none when PairType =/= none ->
-                      none
+                  none ->
+                      #t_map{super_key=none,super_value=none}
               end,
     sub_unsafe(RetType, [proper_list()]);
 types(maps, get, [_Key, _Map]=Args) ->
@@ -1245,10 +1280,14 @@ beam_bounds_type(Op, Type, [LHS, RHS]) ->
 get_range(LHS, RHS, Type) ->
     get_range(meet(LHS, Type), meet(RHS, Type)).
 
-get_range(#t_float{}=LHS, #t_float{}=RHS) ->
-    {float, get_range(LHS), get_range(RHS)};
 get_range(#t_integer{}=LHS, #t_integer{}=RHS) ->
     {integer, get_range(LHS), get_range(RHS)};
+get_range(#t_float{}=LHS, #t_float{}=RHS) ->
+    {float, get_range(LHS), get_range(RHS)};
+get_range(#t_float{}=LHS, RHS) ->
+    {float, get_range(LHS), get_range(RHS)};
+get_range(LHS, #t_float{}=RHS) ->
+    {float, get_range(LHS), get_range(RHS)};
 get_range(LHS, RHS) ->
     {number, get_range(LHS), get_range(RHS)}.
 

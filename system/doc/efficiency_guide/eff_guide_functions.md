@@ -23,7 +23,7 @@ limitations under the License.
 
 ## Pattern Matching
 
-Pattern matching in function head as well as in `case` and `receive` clauses are
+Pattern matching in function head as well as in `case` and `receive` clauses is
 optimized by the compiler. With a few exceptions, there is nothing to gain by
 rearranging clauses.
 
@@ -55,7 +55,7 @@ follows:
   single instruction that does a binary search; thus, quite efficient even if
   there are many values) to select which one of the first three clauses to
   execute (if any).
-- If none of the first three clauses match, the fourth clause match as a
+- If none of the first three clauses match, the fourth clause matches as a
   variable always matches.
 - If the guard test [`is_integer(Int)`](`is_integer/1`) succeeds, the fourth
   clause is executed.

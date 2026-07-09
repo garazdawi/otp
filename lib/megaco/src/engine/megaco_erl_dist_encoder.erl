@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2000-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2000-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
 -module(megaco_erl_dist_encoder).
 -moduledoc false.
 
--compile(nowarn_obsolete_bool_op).
+-compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}}]).
 
 -behaviour(megaco_encoder).
 
@@ -70,7 +70,7 @@ encode_message([megaco_compressed|Config], Vsn, MegaMsg)
   when is_record(MegaMsg, 'MegacoMessage') ->
     {ok, erlang:term_to_binary(?MC_MOD:encode(MegaMsg, Vsn), Config)};
 encode_message([{megaco_compressed, Mod}|Config], Vsn, MegaMsg) 
-  when is_atom(Mod) and is_record(MegaMsg, 'MegacoMessage') ->
+  when is_atom(Mod), is_record(MegaMsg, 'MegacoMessage') ->
     {ok, erlang:term_to_binary(Mod:encode(MegaMsg, Vsn), Config)};
 encode_message(Config, _Vsn, MegaMsg) 
   when is_record(MegaMsg, 'MegacoMessage') ->

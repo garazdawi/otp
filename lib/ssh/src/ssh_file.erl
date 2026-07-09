@@ -45,12 +45,18 @@ handler.
 Such another callback module could be used by setting the option
 [`key_cb`](`t:ssh:key_cb_common_option/0`) when starting a client or a server
 (with for example [ssh:connect](`ssh:connect/3`), [ssh:daemon](`ssh:daemon/2`)
-of [ssh:shell](`ssh:shell/1`) ).
+or [ssh:shell](`ssh:shell/1`) ).
 
-> #### Note {: .info }
+> #### Callbacks {: .info }
 >
-> The functions are _Callbacks_ for the SSH app. They are not intended to be
-> called from the user's code\!
+> The callback functions (`host_key/2`, `is_auth_key/3`, `user_key/2`,
+> `is_host_key/5`, `add_host_key/4`) are called by the SSH application
+> internally. They are documented here to show which files and options
+> the default implementation uses. See `m:ssh_server_key_api` and
+> `m:ssh_client_key_api` for the callback specifications.
+>
+> The public API functions are `decode/2`, `encode/2`, and
+> `extract_public_key/1`.
 
 ## Files, directories and who uses them
 
@@ -263,10 +269,7 @@ call that initiates an ssh connection.
 
 %%%---------------- SERVER API ------------------------------------
 -doc """
-**Types and description**
-
-See the api description in
-[ssh_server_key_api, Module:host_key/2](`c:ssh_server_key_api:host_key/2`).
+Implements `c:ssh_server_key_api:host_key/2`.
 
 **Options**
 
@@ -280,7 +283,7 @@ See the api description in
 - [`SYSDIR/ssh_host_ed25519_key`](`m:ssh_file#FILE-ssh_host_ed25519_key`)
 - [`SYSDIR/ssh_host_ed448_key`](`m:ssh_file#FILE-ssh_host_ed448_key`)
 """.
--doc(#{since => <<"OTP 21.2">>}).
+-doc(#{since => <<"OTP 21.2">>, group => <<"Callback Implementations">>}).
 -spec host_key(Algorithm, Options) -> Result when
       Algorithm :: ssh:pubkey_alg(),
       Result :: {ok, public_key:private_key()} | {error, term()},
@@ -291,10 +294,7 @@ host_key(Algorithm, Opts) ->
 
 %%%................................................................
 -doc """
-**Types and description**
-
-See the api description in
-[ssh_server_key_api: Module:is_auth_key/3](`c:ssh_server_key_api:is_auth_key/3`).
+Implements `c:ssh_server_key_api:is_auth_key/3`.
 
 **Options**
 
@@ -309,7 +309,7 @@ See the api description in
 This functions discards all options in the beginning of the lines of thoose
 files when reading them.
 """.
--doc(#{since => <<"OTP 21.2">>}).
+-doc(#{since => <<"OTP 21.2">>, group => <<"Callback Implementations">>}).
 -spec is_auth_key(Key, User, Options) -> boolean() when
       Key :: public_key:public_key(),
       User :: string(),
@@ -327,10 +327,7 @@ is_auth_key(Key0, User, Opts) ->
 
 %%%---------------- CLIENT API ------------------------------------
 -doc """
-**Types and description**
-
-See the api description in
-[ssh_client_key_api, Module:user_key/2](`c:ssh_client_key_api:user_key/2`).
+Implements `c:ssh_client_key_api:user_key/2`.
 
 **Options**
 
@@ -349,7 +346,7 @@ Note that EdDSA passhrases (Curves 25519 and 448) are not implemented.
 - [`USERDIR/id_ed25519`](`m:ssh_file#FILE-id_ed25519`)
 - [`USERDIR/id_ed448`](`m:ssh_file#FILE-id_ed448`)
 """.
--doc(#{since => <<"OTP 21.2">>}).
+-doc(#{since => <<"OTP 21.2">>, group => <<"Callback Implementations">>}).
 -spec user_key(Algorithm, Options) -> Result when
       Algorithm :: ssh:pubkey_alg(),
       Result :: {ok, public_key:private_key()} |
@@ -362,16 +359,9 @@ user_key(Algorithm, Opts) ->
 %%%................................................................
 %%% New style (with port number)
 -doc """
-**Types and description**
-
-See the api description in
-[ssh_client_key_api, Module:is_host_key/5](`c:ssh_client_key_api:is_host_key/5`).
+Implements `c:ssh_client_key_api:is_host_key/5`.
 
 [](){: #is_host_key-4 }
-
-Note that the alternative, the old
-[Module:is_host_key/4](`c:ssh_client_key_api:is_host_key/4`) is no longer
-supported by `ssh_file`.
 
 **Option**
 
@@ -381,7 +371,7 @@ supported by `ssh_file`.
 
 - [`USERDIR/known_hosts`](`m:ssh_file#FILE-known_hosts`)
 """.
--doc(#{since => <<"OTP 23.0">>}).
+-doc(#{since => <<"OTP 23.0">>, group => <<"Callback Implementations">>}).
 -spec is_host_key(Key, Host, Port, Algorithm, Options) -> Result when
       Key :: public_key:public_key(),
       Host :: inet:ip_address() | inet:hostname() | [inet:ip_address() | inet:hostname()],
@@ -401,16 +391,9 @@ is_host_key(Key0, Hosts0, Port, Algorithm, Opts) ->
 
 %%%----------------------------------------------------------------
 -doc """
-**Types and description**
-
-See the api description in
-[ssh_client_key_api, Module:add_host_key/4](`c:ssh_client_key_api:add_host_key/4`).
+Implements `c:ssh_client_key_api:add_host_key/4`.
 
 [](){: #add_host_key-3 }
-
-Note that the alternative, the old
-[Module:add_host_key/3](`c:ssh_client_key_api:add_host_key/3`) is no longer
-supported by `ssh_file`.
 
 **Option**
 
@@ -420,7 +403,7 @@ supported by `ssh_file`.
 
 - [`USERDIR/known_hosts`](`m:ssh_file#FILE-known_hosts`)
 """.
--doc(#{since => <<"OTP 23.0">>}).
+-doc(#{since => <<"OTP 23.0">>, group => <<"Callback Implementations">>}).
 -spec add_host_key(Host, Port, Key, Options) -> Result when 
       Host :: inet:ip_address() | inet:hostname()
             | [inet:ip_address() | inet:hostname()],
@@ -461,7 +444,7 @@ OpenSSH public key.
 >
 > The implementation of the `openssh_key_v1` format is still experimental.
 """.
--doc(#{since => <<"OTP 24.0">>}).
+-doc(#{since => <<"OTP 24.0">>, group => <<"API">>}).
 -spec decode(SshBin, Type) -> Decoded | {error,term()}
                                   when SshBin :: binary(),
                                        Type :: ssh2_pubkey
@@ -614,7 +597,7 @@ Encodes a list of SSH file entries (public keys and attributes) to a binary.
 >
 > The implementation of the `openssh_key_v1` format is still experimental.
 """.
--doc(#{since => <<"OTP 24.0">>}).
+-doc(#{since => <<"OTP 24.0">>, group => <<"API">>}).
 -spec encode(InData, Type) -> binary() | {error,term()}
                                   when Type :: ssh2_pubkey
                                              | openssh_key
@@ -700,7 +683,7 @@ encode(_KeyBin, _Type) ->
 %%%----------------------------------------------------------------
 
 -doc "Fetches the public key from a private key.".
--doc(#{since => <<"OTP 25.0">>}).
+-doc(#{since => <<"OTP 25.0">>, group => <<"API">>}).
 -spec extract_public_key(PrivKey) -> PubKey
                         when PrivKey :: public_key:private_key(),
                               PubKey :: public_key:public_key().

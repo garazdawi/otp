@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 1997-2024. All Rights Reserved.
+# Copyright Ericsson AB 1997-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -1024,8 +1024,6 @@ bs_test_tail2 Fail=f _Ms=xy o => jump Fail
 
 bs_test_tail2 f S W
 
-bs_test_unit f S t
-
 # Gets a bitstring from the tail of a context.
 bs_get_tail S d t
 
@@ -1218,14 +1216,16 @@ gc_bif2 Fail1 _Live1 u$bif:erlang:stimes/2 S1 S2 Dst1 |
   gc_bif2 Fail2 _Live2 u$bif:erlang:splus/2 S3 S4 Dst2 |
   equal(Dst1, S3) |
   equal(Dst1, Dst2) |
-  equal(Fail1, Fail2) =>
+  equal(Fail1, Fail2) |
+  distinct(S3, S4) =>
     i_mul_add Fail1 S1 S2 S3 S4 Dst1
 
 gc_bif2 Fail1 _Live1 u$bif:erlang:stimes/2 S1 S2 Dst1 |
   gc_bif2 Fail2 _Live2 u$bif:erlang:splus/2 S3 S4 Dst2 |
   equal(Dst1, S4) |
   equal(Dst1, Dst2) |
-  equal(Fail1, Fail2) =>
+  equal(Fail1, Fail2) |
+  distinct(S3, S4) =>
     i_mul_add Fail1 S1 S2 S4 S3 Dst1
 
 gc_bif2 Fail _Live u$bif:erlang:stimes/2 S1 S2 Dst =>
@@ -1429,5 +1429,8 @@ i_create_native_record c d t I *
 i_update_native_record s d t I *
 
 is_record_accessible f xy a
+
+get_record_field Fail BadRecord=c Mod Name Dst =>
+    move BadRecord x | get_record_field Fail x Mod Name Dst
 
 get_record_field j xy c a d

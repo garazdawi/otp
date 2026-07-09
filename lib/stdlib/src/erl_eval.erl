@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -126,6 +126,8 @@ the local function handler argument. A possible use is to call
 [`exit/1`](`exit/1`) on calls to functions that for some reason are not allowed
 to be called.
 """.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 %% An evaluator for Erlang abstract syntax.
 
@@ -477,6 +479,18 @@ expr({record_field,Anno,{var,_,Src0},[],{atom,_,K}}, Bs, _Lf, Ef, RBs, _FUVs) ->
             end;
         _ -> apply_error({unbound,Src0}, ?STACKTRACE, Anno, Bs, Ef, RBs)
     end;
+expr({record_field,Anno,{var,_,Src0},N,{atom,_,K}}, Bs, _Lf, Ef, RBs, _FUVs) ->
+    case binding(Src0, Bs) of
+        {value, Src1} ->
+            case is_record(Src1, N) of
+                true ->
+                    Val = records:get(K, Src1),
+                    ret_expr(Val, Bs, RBs);
+                false ->
+                    apply_error({badarg,Src1}, ?STACKTRACE, Anno, Bs, Ef, RBs)
+            end;
+        _ -> apply_error({unbound,Src0}, ?STACKTRACE, Anno, Bs, Ef, RBs)
+    end;
 expr({record_field,Anno,Src,Name,K}, Bs, _Lf, Ef, RBs, _FUVs) ->
     case Src of
         {var,_,_V} -> ok;
@@ -489,8 +503,8 @@ expr({record_field,Anno,Src,Name,K}, Bs, _Lf, Ef, RBs, _FUVs) ->
     apply_error({badarg,Name}, ?STACKTRACE, Anno, Bs, Ef, RBs);
 expr({record_index,Anno,Name,_}, Bs, _Lf, Ef, RBs, _FUVs) ->
     apply_error({undef_record,Name}, ?STACKTRACE, Anno, Bs, Ef, RBs);
-expr({record,Anno,{M,N},Es}, Bs0, Lf, Ef, RBs, FUVs) ->
-    Error = [{Err,F} || {record_field,_,{atom,_,F},{nil,Err}} <- Es,
+expr({record,Anno,{M=shell_default,N},Es}, Bs0, Lf, Ef, RBs, FUVs) ->
+    Error = [{Err,{{M,N},F}} || {record_field,_,{atom,_,F},{nil,Err}} <- Es,
                     Err =:= novalue orelse Err =:= badfield],
     case Error of
         [] ->
@@ -498,6 +512,23 @@ expr({record,Anno,{M,N},Es}, Bs0, Lf, Ef, RBs, FUVs) ->
             R = records:create(M, N, Vs, #{is_exported=>false}),
             ret_expr(R, Bs, RBs);
         [E|_] -> apply_error(E, ?STACKTRACE, Anno, Bs0, Ef, RBs)
+    end;
+expr({record,Anno,{M,N}, Es}, Bs0, Lf, Ef, RBs, FUVs) ->
+    try records:get_definition(M, N) of
+        {Ops, Defs} ->
+            {Vs, Bs} = expr_list(Es, Bs0, Lf, Ef, FUVs),
+            case native_record_init(Defs, Vs, []) of
+                {novalue, K} ->
+                    apply_error({novalue,{{M,N},K}}, ?STACKTRACE, Anno, Bs0, Ef, RBs);
+                {badfield, F} ->
+                    apply_error({badfield,{{M,N},F}}, ?STACKTRACE, Anno, Bs0, Ef, RBs);
+                Acc ->
+                    R = records:create(M, N, Acc, Ops),
+                    ret_expr(R, Bs, RBs)
+            end
+    catch
+        _:_ ->
+            apply_error({undef_record,{M, N}}, ?STACKTRACE, Anno, Bs0, Ef, RBs)
     end;
 expr({record,Anno,Name,_Es}, Bs, _Lf, Ef, RBs, _FUVs) ->
     apply_error({undef_record,Name}, ?STACKTRACE, Anno, Bs, Ef, RBs);
@@ -525,6 +556,20 @@ expr({record,Anno,{var,_,Src0},[],Es}, Bs0, Lf, Ef, RBs, FUVs) ->
                     {Vs,Bs} = expr_list(Es, Bs0, Lf, Ef, FUVs),
                     Updates = #{K => V || {K, V} <:- Vs},
                     R = records:update(Src1, M, N, Updates),
+                    ret_expr(R, Bs, RBs);
+                false ->
+                    apply_error({badarg,Src1}, ?STACKTRACE, Anno, Bs0, Ef, RBs)
+            end;
+        _ -> apply_error({unbound,Src0}, ?STACKTRACE, Anno, Bs0, Ef, RBs)
+    end;
+expr({record,Anno,{var,_,Src0},N,Es}, Bs0, Lf, Ef, RBs, FUVs) ->
+    case binding(Src0, Bs0) of
+        {value, Src1} ->
+            case is_record(Src1, N) of
+                true ->
+                    {Vs,Bs} = expr_list(Es, Bs0, Lf, Ef, FUVs),
+                    Updates = #{K => V || {K, V} <:- Vs},
+                    R = records:update(Src1, shell_default, N, Updates),
                     ret_expr(R, Bs, RBs);
                 false ->
                     apply_error({badarg,Src1}, ?STACKTRACE, Anno, Bs0, Ef, RBs)
@@ -1245,6 +1290,29 @@ is_generator_end([]) -> true;
 is_generator_end(<<>>) -> true;
 is_generator_end(Other) -> Other =:= #{}.
 
+native_record_init([{K, V}|Defs], Vs, Acc) ->
+    %% Fill in fields that have default values.
+    case lists:keyfind(K, 1, Vs) of
+        false ->
+            native_record_init(Defs, Vs, [{K, V}|Acc]);
+        Res ->
+            native_record_init(Defs, Vs, [Res|Acc])
+    end;
+native_record_init([K|Defs], Vs, Acc) ->
+    %% Fill in fields with no default values.
+    case lists:keyfind(K, 1, Vs) of
+        false ->
+            {novalue, K};
+        Res ->
+            native_record_init(Defs, Vs, [Res|Acc])
+    end;
+native_record_init([], Vs, Acc) ->
+    %% Report error for fields that don't exist in the definition.
+    case lists:partition(fun({K, _}) -> lists:keyfind(K, 1, Acc) =:= false end, Vs) of
+        {[], _} -> lists:reverse(Acc);
+        {[{F,_}|_], _} ->{badfield, F}
+    end.
+
 get_vars(Lit) ->
     get_vars(Lit, []).
 
@@ -1943,6 +2011,7 @@ match_map([], _, Bs, _, _) ->
 match_record({record, _, N, Fs}, R, Bs, BBs, Ef) ->
     case {N, records:get_module(R), records:get_name(R)} of
         {{Mod, Name}, Mod, Name} -> ok;
+        {N, _, N} -> ok;
         _ -> throw(nomatch)
     end,
     KVs = [{K, V} || {record_field, _, {atom, _, K}, V} <- Fs],

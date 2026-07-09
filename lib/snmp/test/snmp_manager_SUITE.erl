@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2003-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -99,6 +99,9 @@
 	 simple_v3_exchange_sha256/0, simple_v3_exchange_sha256/1,
 	 simple_v3_exchange_sha384/0, simple_v3_exchange_sha384/1,
 	 simple_v3_exchange_sha512/0, simple_v3_exchange_sha512/1,
+
+         v3_usm_unknown_engine_id_error_info/0,
+         v3_usm_unknown_engine_id_error_info/1,
 
 	 discovery/1,
 	 
@@ -351,7 +354,8 @@ v3_cases() ->
      simple_v3_exchange_sha224,
      simple_v3_exchange_sha256,
      simple_v3_exchange_sha384,
-     simple_v3_exchange_sha512
+     simple_v3_exchange_sha512,
+     v3_usm_unknown_engine_id_error_info
     ].
     
 
@@ -705,6 +709,8 @@ init_per_testcase3(simple_v3_exchange_sha384 = Case, Config) ->
     init_v3_testcase(Case, [{auth_alg, sha384} | Config]);
 init_per_testcase3(simple_v3_exchange_sha512 = Case, Config) ->
     init_v3_testcase(Case, [{auth_alg, sha512} | Config]);
+init_per_testcase3(v3_usm_unknown_engine_id_error_info = Case, Config) ->
+    init_v3_testcase(Case, [{auth_alg, md5} | Config]);
 init_per_testcase3(Case, Config) ->
     ApiCases02 = 
 	[
@@ -868,7 +874,8 @@ end_per_testcase2(Case, Config)
         (Case =:= simple_v3_exchange_sha224) orelse
         (Case =:= simple_v3_exchange_sha256) orelse
         (Case =:= simple_v3_exchange_sha384) orelse
-        (Case =:= simple_v3_exchange_sha512)) ->
+        (Case =:= simple_v3_exchange_sha512) orelse
+        (Case =:= v3_usm_unknown_engine_id_error_info)) ->
     Conf1 = fin_mgr_user_data2(Config),
     Conf2 = fin_mgr_user(Conf1),
     Conf3 = fin_v3_manager(Conf2),
@@ -3863,6 +3870,76 @@ simple_v3_exchange(Config) when is_list(Config) ->
             {error, X}
     end.
 
+
+%%======================================================================
+%% GH-7156: Verify that usmStatsUnknownEngineIDs error propagates
+%% the authoritative EngineID and UserName to the handle_error callback
+%% as a proplist in sec_data.
+%%======================================================================
+
+v3_usm_unknown_engine_id_error_info() ->
+    [{doc, "GH-7156: Verify that usmStatsUnknownEngineIDs error "
+           "includes msgAuthoritativeEngineID and msgUserName "
+           "in the handle_error callback reason (sec_data proplist)"}].
+
+v3_usm_unknown_engine_id_error_info(Config) when is_list(Config) ->
+    ?IPRINT("starting with Config: "
+            "~n      ~p", [Config]),
+
+    Node       = ?config(manager_node, Config),
+    TargetName = ?config(manager_agent_target_name, Config),
+    AuthAlg    = ?config(auth_alg, Config),
+    SecName    = select_secname_from_authalg(AuthAlg),
+    AuthKey    = select_authkey_from_authalg(AuthAlg),
+
+    %% Remove the USM user for the real agent EngineID so that
+    %% when the agent's report comes back with "agentEngine",
+    %% the manager USM layer hits usmStatsUnknownEngineIDs.
+    ok = rcall(Node, snmpm, unregister_usm_user,
+               [?AGENT_ENGINE_ID, SecName]),
+
+    %% Register USM credentials under a wrong EngineID so the
+    %% manager can encode the outgoing message.
+    WrongEngineID = "wrongEngineID",
+    Credentials = [{auth, select_auth_proto(AuthAlg)},
+                   {auth_key, AuthKey}],
+    ok = mgr_register_usm_user(Node, WrongEngineID, SecName, Credentials),
+
+    %% Point the agent target at the wrong EngineID.
+    ok = mgr_user_update_agent_info(Node, TargetName,
+                                    engine_id, WrongEngineID),
+
+    Oids = [?sysDescr_instance],
+    ?IPRINT("send get with wrong engine id"),
+    _Result = mgr_user_sync_get2(Node, TargetName, Oids, []),
+    ?IPRINT("sync_get2 result: ~p", [_Result]),
+
+    ?IPRINT("check for handle_error with engine id in sec_data"),
+    receive
+        {async_event, _ErrReqId,
+         {error, {failed_processing_message,
+                  {securityError, usmStatsUnknownEngineIDs,
+                   Opts}}}} when is_list(Opts) ->
+            SecData = proplists:get_value(sec_data, Opts),
+            ?IPRINT("received expected error with sec_data: "
+                    "~n      ~p", [SecData]),
+
+            %% Verify the real EngineID is present
+            ?AGENT_ENGINE_ID =
+                proplists:get_value(msgAuthoritativeEngineID, SecData),
+
+            %% Verify the UserName is present
+            SecName =
+                proplists:get_value(msgUserName, SecData),
+
+            ?IPRINT("GH-7156 verified: EngineID and UserName "
+                    "propagated in handle_error"),
+            display_log(Config),
+            ok
+    after 15000 ->
+            ?EPRINT("no matching handle_error received"),
+            ?FAIL(missing_error_with_engine_id)
+    end.
 
 
 %%======================================================================

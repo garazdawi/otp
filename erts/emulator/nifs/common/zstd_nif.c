@@ -3,8 +3,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
+ * Copyright Ericsson AB 2023-2026. All Rights Reserved.
  * Copyright Ericsson 2023-2025. All Rights Reserved.
- * Copyright Ericsson AB 2023-2025. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,9 +33,16 @@
 
 #include "sys.h"
 #include "erl_nif.h"
+#include "config.h"
 #define ZSTD_STATIC_LINKING_ONLY
-#include "erl_zstd.h"
-#include "erl_zdict.h"
+
+#ifdef ERTS_USE_BUILTIN_ZSTD
+#  include "erl_zstd.h"
+#  include "erl_zdict.h"
+#else
+#  include <zstd.h>
+#  include <zdict.h>
+#endif
 
 static ErlNifResourceType *compress_type;
 static ErlNifResourceType *decompress_type;

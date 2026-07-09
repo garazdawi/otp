@@ -28,8 +28,6 @@
 -module(megaco_config).
 -moduledoc false.
 
--compile(nowarn_obsolete_bool_op).
-
 -behaviour(gen_server).
 
 %% Application internal exports
@@ -1530,7 +1528,7 @@ verify_val(Item, Val) ->
 	    megaco_config_misc:verify_uint(Val);
 
         trans_timer            -> 
-	    verify_timer(Val) and (Val >= 0);
+	    verify_timer(Val) andalso Val >= 0;
 	trans_sender when Val =:= undefined -> true;
 
         pending_timer                      -> verify_timer(Val);
@@ -1831,7 +1829,7 @@ update_trans_timer(#conn_data{trans_sender = Pid} = CD, 0) when is_pid(Pid) ->
     CD#conn_data{trans_timer = 0, trans_sender = undefined};
 
 update_trans_timer(#conn_data{trans_sender = Pid} = CD, To) 
-  when is_pid(Pid) and (To > 0) ->
+  when is_pid(Pid), To > 0 ->
     megaco_trans_sender:timeout(Pid, To),
     CD#conn_data{trans_timer = To};
 
@@ -1840,7 +1838,7 @@ update_trans_timer(CD, To) when To > 0 ->
 
 %% update trans_ack_maxcount
 update_trans_ack_maxcount(#conn_data{trans_sender = Pid} = CD, Max) 
-  when is_pid(Pid) and (Max > 0) ->
+  when is_pid(Pid), Max > 0 ->
     megaco_trans_sender:ack_maxcount(Pid, Max),
     CD#conn_data{trans_ack_maxcount = Max};
 
@@ -1851,7 +1849,7 @@ update_trans_ack_maxcount(CD, Max)
 
 %% update trans_req_maxcount
 update_trans_req_maxcount(#conn_data{trans_sender = Pid} = CD, Max) 
-  when is_pid(Pid) and (Max > 0) ->
+  when is_pid(Pid), Max > 0 ->
     megaco_trans_sender:req_maxcount(Pid, Max),
     CD#conn_data{trans_req_maxcount = Max};
 
@@ -1862,7 +1860,7 @@ update_trans_req_maxcount(CD, Max)
 
 %% update trans_req_maxsize
 update_trans_req_maxsize(#conn_data{trans_sender = Pid} = CD, Max) 
-  when is_pid(Pid) and (Max > 0) ->
+  when is_pid(Pid), Max > 0 ->
     megaco_trans_sender:req_maxsize(Pid, Max),
     CD#conn_data{trans_req_maxsize = Max};
 

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1997-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@
 %%
 %%
 -module(mod_actions).
+
+-deprecated([{'_','_',"use 'mod_esi' for dynamic page generation"}]).
 -moduledoc false.
 -export([do/1, store/2]).
 

@@ -521,6 +521,10 @@ do_interesting(Module) ->
     [] = binary:split(<<>>, <<",">>, [global,trim]),
     [] = binary:split(<<>>, <<",">>, [global,trim_all]),
 
+    %% Assert empty binaries are shared
+    [<<"a">>, <<>> = WS1, WS2, <<"b">>] = binary:split(<<"a,,,b">>, <<",">>, [global]),
+    true = erts_debug:same(WS1, WS2),
+
     ReplaceFn = fun(Match) -> << <<(B + 1)>> || <<B>> <= Match >> end,
     badarg = ?MASK_ERROR(
 		Module:replace(<<1,2,3,4,5,6,7,8>>,
@@ -1598,7 +1602,8 @@ join(Config) when is_list(Config) ->
     ~"" = binary:join([], ~", ").
 
 doctests(_Config) ->
-    shell_docs:test(binary, []).
+    ct_doctest:module(binary, [{skipped_blocks, 1},
+                                {missing_tests, [{list_to_bin, 1}]}]).
 
 %%%
 %%% Utilities.

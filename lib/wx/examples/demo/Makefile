@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2009-2025. All Rights Reserved.
+# Copyright Ericsson AB 2009-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -77,7 +77,7 @@ docs:
 run: opt
 	erl -smp -detached -pa $(TOPDIR)/ebin -s demo
 
-EXRELSYSDIR = "$(RELSYSDIR)/examples/demo"
+EXRELSYSDIR = "$(RELSYSDIR)/doc/examples/demo"
 include $(ERL_TOP)/make/otp_release_targets.mk
 
 docs:

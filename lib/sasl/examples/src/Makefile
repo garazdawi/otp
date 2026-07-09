@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2010-2025. All Rights Reserved.
+# Copyright Ericsson AB 2010-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -66,16 +66,9 @@ docs:
 include $(ERL_TOP)/make/otp_release_targets.mk
 
 release_spec: opt
-	$(INSTALL_DIR) "$(RELSYSDIR)/examples/src"
-	$(INSTALL_DIR) "$(RELSYSDIR)/examples/ebin"
-	(cd ..; tar cf - src ebin  | (cd "$(RELSYSDIR)/examples"; tar xf -))
-	chmod -R ug+w "$(RELSYSDIR)/examples"
 
 release_docs_spec:
-
-
-
-
-
-
-
+	$(INSTALL_DIR) "$(RELSYSDIR)/doc/examples/src"
+	$(INSTALL_DIR) "$(RELSYSDIR)/doc/examples/ebin"
+	(cd ..; tar cf - src ebin  | (cd "$(RELSYSDIR)/doc/examples"; tar xf -))
+	chmod -R ug+w "$(RELSYSDIR)/doc/examples"

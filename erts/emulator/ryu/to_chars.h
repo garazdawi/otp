@@ -1,5 +1,7 @@
 // SPDX-CopyrightText: Copyright (c) Microsoft Corporation.
 // SPDX-CopyrightText: Copyright 2018 Ulf Adams
+// SPDX-CopyrightText: Copyright 2021 Thomas Depierre
+// SPDX-CopyrightText: Copyright 2025 Copyright Ericsson AB 2025. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception AND BSL-1.0
 //h
 // The license information in the original file is not super clear.

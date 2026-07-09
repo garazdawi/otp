@@ -2,9 +2,9 @@
 %% %CopyrightBegin%
 %%
 %% SPDX-License-Identifier: Apache-2.0
-%% 
-%% Copyright Ericsson AB 2007-2025. All Rights Reserved.
-%% 
+%%
+%% Copyright Ericsson AB 2007-2026. All Rights Reserved.
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -16,7 +16,7 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 -module(interactive_shell_SUITE).
@@ -230,16 +230,22 @@ init_per_group(Group, Config) when Group =:= tty_unicode;
           os:getenv("LC_ALL",
                     os:getenv("LC_CTYPE",
                               os:getenv("LANG","en_US.UTF-8"))),"."),
-    case Group of
-        tty_unicode ->
-            [{encoding, unicode},{env,[{"LC_ALL",Lang++".UTF-8"}]}|Config];
-        tty_latin1 ->
+    %% Version 3.3 introduced new widths for unicode characters which seem to be different from running in non tmux shell
+    %% An option is added in 3.6 where a unicode character width can be overridden, skip unicode for 3.3-3.5a
+    TmuxVersion = string:chomp(os:cmd("tmux -V")),
+    Skip = [] =/= [true || Major <- ["3.3","3.4","3.5"], Minor <- ["","a"], TmuxVersion =:= (Major++Minor)],
+    case {Group,Skip} of
+        {tty_latin1,_} ->
             % [{encoding, latin1},{env,[{"LC_ALL",Lang++".ISO-8859-1"}]}|Config],
             {skip, "latin1 tests not implemented yet"};
-        ssh_unicode ->
+        {ssh_latin1,_} ->
+            {skip, "latin1 tests not implemented yet"};
+        {_, true} ->
+            {skip, "tmux version incompatible with unicode tests"};
+        {tty_unicode,_} ->
             [{encoding, unicode},{env,[{"LC_ALL",Lang++".UTF-8"}]}|Config];
-        ssh_latin1 ->
-            {skip, "latin1 tests not implemented yet"}
+        {ssh_unicode,_} ->
+            [{encoding, unicode},{env,[{"LC_ALL",Lang++".UTF-8"}]}|Config]
     end;
 init_per_group(sh_custom, Config) ->
     %% Ensure that ERL_AFLAGS will not override the value of the shell_history variable.
@@ -1026,42 +1032,46 @@ shell_insert(Config) ->
     end.
 
 shell_update_window(Config) ->
-    Term = start_tty(Config),
+    Unicode = proplists:get_value(encoding, Config, false),
+    case {os:type(), Unicode} of
+        {{unix, freebsd}, unicode} -> {skip, "Tmux on FreeBSD redraws incorrectly"};
+        _ ->
+            Term = start_tty(Config),
+            Text = lists:flatten(["abcdefghijklmabcdefghijklm"]),
+            {_Row, Col} = shell_test_lib:get_location(Term),
+            try
+                shell_test_lib:send_tty(Term,Text),
+                shell_test_lib:check_content(Term,Text),
+                shell_test_lib:check_location(Term, {0, width(Text)}),
+                shell_test_lib:tmux(["resize-window -t ",shell_test_lib:tty_name(Term)," -x ",width(Text)+Col+1]),
+                shell_test_lib:send_tty(Term,"a"),
+                shell_test_lib:check_location(Term, {0, -Col}),
+                shell_test_lib:send_tty(Term,"BSpace"),
+                shell_test_lib:check_location(Term, {-1, width(Text)}),
+                shell_test_lib:tmux(["resize-window -t ",shell_test_lib:tty_name(Term)," -x ",width(Text)+Col]),
+                %% When resizing, tmux does not xnfix the cursor, so it will remain
+                %% at the previous locations
+                shell_test_lib:check_location(Term, {-1, width(Text)}),
+                shell_test_lib:send_tty(Term,"a"),
+                shell_test_lib:check_location(Term, {0, -Col + 1}),
 
-    Text = lists:flatten(["abcdefghijklmabcdefghijklm"]),
-    {_Row, Col} = shell_test_lib:get_location(Term),
+                %% When we do backspace here, tmux seems to place the cursor in an
+                %% incorrect position except when a terminal is attached.
+                shell_test_lib:send_tty(Term,"BSpace"),
+                %% This really should be {0, -Col}, but sometimes tmux sets it to
+                %% {-1, width(Text)} instead.
+                shell_test_lib:check_location(Term, [{0, -Col}, {-1, width(Text)}]),
 
-    try
-        shell_test_lib:send_tty(Term,Text),
-        shell_test_lib:check_content(Term,Text),
-        shell_test_lib:check_location(Term, {0, width(Text)}),
-        shell_test_lib:tmux(["resize-window -t ",shell_test_lib:tty_name(Term)," -x ",width(Text)+Col+1]),
-        shell_test_lib:send_tty(Term,"a"),
-        shell_test_lib:check_location(Term, {0, -Col}),
-        shell_test_lib:send_tty(Term,"BSpace"),
-        shell_test_lib:check_location(Term, {-1, width(Text)}),
-        shell_test_lib:tmux(["resize-window -t ",shell_test_lib:tty_name(Term)," -x ",width(Text)+Col]),
-        %% When resizing, tmux does not xnfix the cursor, so it will remain
-        %% at the previous locations
-        shell_test_lib:check_location(Term, {-1, width(Text)}),
-        shell_test_lib:send_tty(Term,"a"),
-        shell_test_lib:check_location(Term, {0, -Col + 1}),
+                shell_test_lib:tmux(["resize-window -t ",shell_test_lib:tty_name(Term)," -x ",width(Text) div 2 + Col]),
 
-        %% When we do backspace here, tmux seems to place the cursor in an
-        %% incorrect position except when a terminal is attached.
-        shell_test_lib:send_tty(Term,"BSpace"),
-        %% This really should be {0, -Col}, but sometimes tmux sets it to
-        %% {-1, width(Text)} instead.
-        shell_test_lib:check_location(Term, [{0, -Col}, {-1, width(Text)}]),
-
-        shell_test_lib:tmux(["resize-window -t ",shell_test_lib:tty_name(Term)," -x ",width(Text) div 2 + Col]),
-        %% Depending on what happened with the cursor above, the line will be
-        %% different here.
-        shell_test_lib:check_location(Term, [{0, -Col + width(Text) div 2},
-                              {-1, -Col + width(Text) div 2}]),
-        ok
-    after
-        shell_test_lib:stop_tty(Term)
+                %% Depending on what happened with the cursor above, the line will be
+                %% different here.
+                shell_test_lib:check_location(Term, [{0, -Col + width(Text) div 2},
+                                    {-1, -Col + width(Text) div 2}]),
+                ok
+            after
+                shell_test_lib:stop_tty(Term)
+            end
     end.
 shell_small_window_multiline_navigation(Config) ->
     Term0 = start_tty(Config),
@@ -2012,6 +2022,7 @@ noshell_raw(Config) ->
 
                                   try
                                     %% Make sure we are in unicode encoding
+                                    io:setopts([{encoding, unicode}]),
                                     unicode = proplists:get_value(encoding, io:getopts()),
 
                                     %% "\el" is an artifact from the attaching to_erl program
@@ -2075,7 +2086,7 @@ noshell_raw(Config) ->
               [
                {eval, fun() -> spawn(TestcaseFun), ok end},
 
-               %% Test io:get_line in cookec mode
+               %% Test io:get_line in cooked mode
                {expect, "1> $"},
                {putline, "hello"},
 

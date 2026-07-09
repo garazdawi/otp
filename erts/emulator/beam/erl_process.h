@@ -1213,6 +1213,8 @@ struct process {
     ErtsSchedulerData *scheduler_data;
     erts_atomic_t run_queue;
 
+    ErtsPausedBifTimers* paused_bif_timers; /* BIF timers paused during suspend */
+
 #ifdef USE_VM_PROBES
     Eterm dt_utag;              /* Place to store the dynamic trace user tag */
     Uint dt_utag_flags;         /* flag field for the dt_utag */
@@ -1240,6 +1242,7 @@ struct process {
 #ifdef DEBUG
     Uint debug_reds_in;
 #endif
+
 };
 
 extern Eterm erts_init_process_id; /* pid of init process */
@@ -1258,19 +1261,6 @@ void erts_check_for_holes(Process* p);
 #else
 # define INIT_HOLE_CHECK(p)
 # define ERTS_HOLE_CHECK(p)
-#endif
-
-/*
- * The MBUF_GC_FACTOR decides how easily a process is subject to GC 
- * due to message buffers allocated outside the heap.
- * The larger the factor, the easier the process gets GCed.
- * On a small memory system with lots of processes, this makes a significant 
- * difference, especially since the GCs help fragmentation quite a bit too.
- */
-#if defined(SMALL_MEMORY)
-#define MBUF_GC_FACTOR 4
-#else
-#define MBUF_GC_FACTOR 1
 #endif
 
 #define SEQ_TRACE_TOKEN(p)  ((p)->seq_trace_token)
@@ -1455,6 +1445,15 @@ void erts_check_for_holes(Process* p);
 /* MAYBE_SELF_SIGS - We might have outstanding signals
    from ourselves to ourselves. */
 #define ERTS_PXSFLG_MAYBE_SELF_SIGS	(((erts_aint32_t) 1) << 8)
+/* HANDOVER_CODE_MOD_PERM - Waiting process was given the code mod permission
+   but has not yet seized the lock. */
+#define ERTS_PXSFLG_HANDOVER_CODE_MOD_PERM   (((erts_aint32_t) 1) << 9)
+/* HANDOVER_CODE_STAGE_PERM - Waiting process was given the code stage permission
+   but has not yet seized the lock. */
+#define ERTS_PXSFLG_HANDOVER_CODE_STAGE_PERM (((erts_aint32_t) 1) << 10)
+/* GC - Process is garbage collecting */
+#define ERTS_PXSFLG_GC			     (((erts_aint32_t) 1) << 11)
+
 
 #define ERTS_PXSFLGS_QMASK 		ERTS_PSFLGS_QMASK
 #define ERTS_PXSFLGS_IN_CPU_PRQ_MASK_OFFSET 0

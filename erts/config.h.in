@@ -78,6 +78,15 @@
    64-bit alignment will be forced. */
 #undef ERTS_STRUCTURE_ALIGNED_ALLOC
 
+/* Define if builtin ryu should be used */
+#undef ERTS_USE_BUILTIN_RYU
+
+/* Define if builtin zlib should be used */
+#undef ERTS_USE_BUILTIN_ZLIB
+
+/* Define if builtin zstd should be used */
+#undef ERTS_USE_BUILTIN_ZSTD
+
 /* Define if poll() should be used instead of select() */
 #undef ERTS_USE_POLL
 
@@ -887,6 +896,9 @@
 /* Define if setsockopt() accepts multicast options */
 #undef HAVE_MULTICAST_SUPPORT
 
+/* Define to 1 if you have the <ncurses/curses.h> header file. */
+#undef HAVE_NCURSES_CURSES_H
+
 /* Define to 1 if you have the <ndir.h> header file, and it defines 'DIR'. */
 #undef HAVE_NDIR_H
 
@@ -953,6 +965,9 @@
 /* Define to 1 if you have the 'pwrite' function. */
 #undef HAVE_PWRITE
 
+/* Define to 1 if you have the 'recvmmsg' function. */
+#undef HAVE_RECVMMSG
+
 /* Define to 1 if you have the 'res_gethostbyname' function. */
 #undef HAVE_RES_GETHOSTBYNAME
 
@@ -998,6 +1013,9 @@
 /* Define to 1 if you have the `sendfilev' function. */
 #undef HAVE_SENDFILEV
 
+/* Define to 1 if you have the 'sendmmsg' function. */
+#undef HAVE_SENDMMSG
+
 /* Define to 1 if you have the 'setlocale' function. */
 #undef HAVE_SETLOCALE
 
@@ -1033,6 +1051,9 @@
 
 /* Define to 1 if you have the 'strerror' function. */
 #undef HAVE_STRERROR
+
+/* Define to 1 if you have the 'strerrorname_np' function. */
+#undef HAVE_STRERRORNAME_NP
 
 /* Define to 1 if you have the 'strerror_r' function. */
 #undef HAVE_STRERROR_R

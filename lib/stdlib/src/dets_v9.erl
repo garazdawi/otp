@@ -2,9 +2,9 @@
 %% %CopyrightBegin%
 %%
 %% SPDX-License-Identifier: Apache-2.0
-%% 
-%% Copyright Ericsson AB 2001-2025. All Rights Reserved.
-%% 
+%%
+%% Copyright Ericsson AB 2001-2026. All Rights Reserved.
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -16,14 +16,15 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 -module(dets_v9).
 -moduledoc false.
--compile([{nowarn_deprecated_function, [{erlang,phash,2}]}]).
 
--compile(nowarn_deprecated_catch).
+-compile([{nowarn_deprecated_function, [{erlang,phash,2}]},
+          {nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}},
+          nowarn_deprecated_catch]).
 
 %% Dets files, implementation part. This module handles version 9.
 %% To be called from dets.erl only.
@@ -1449,19 +1450,14 @@ temp_file(Head, SizeT, N) ->
     {TmpName, Fd}.
 
 %% Does not close Fd.
-fsck_input(Head, Fd, Cntrs, FileHeader) ->
-    MaxSz0 = case FileHeader#fileheader.has_md5 of
-                 true when is_list(FileHeader#fileheader.no_colls) ->
-                     ?POW(max_objsize(FileHeader#fileheader.no_colls));
+fsck_input(Head, Fd, Cntrs, _FileHeader) ->
+    %% The file is not compressed, so the bucket size
+    %% cannot exceed the filesize, for all buckets.
+    MaxSz0 = case file:position(Fd, eof) of
+                 {ok, Pos} ->
+                     Pos;
                  _ ->
-                     %% The file is not compressed, so the bucket size
-                     %% cannot exceed the filesize, for all buckets.
-                     case file:position(Fd, eof) of
-                         {ok, Pos} ->
-                             Pos;
-                         _ ->
-                             1 bsl 32
-                     end
+                     1 bsl 32
              end,
     MaxSz = erlang:max(MaxSz0, ?CHUNK_SIZE),
     State0 = fsck_read(?BASE, Fd, [], 0),

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2005-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -92,7 +92,8 @@
 	 ip                    = default, % specify local interface
 	 port                  = default, % specify local port
 	 socket_opts           = [],      % other socket options
-	 unix_socket           = undefined % Local unix socket
+         unix_socket           = undefined, % Local unix socket
+         max_connections_open  = infinity   % Maximum number of open handlers
 	}
        ).
 -type options() :: #options{}.

@@ -54,10 +54,10 @@ erlang. The discovery module must implement the following callbacks:
 - **[names/1](`erl_epmd:names/1`)** - Return node names held by the registrar
   for the given host.
 
-- **[register_node/2](`erl_epmd:register_node/2`)** - Register the given node
+- **[register_node/3](`erl_epmd:register_node/3`)** - Register the given node
   name with the registrar.
 
-- **[port_please/3](`erl_epmd:port_please/3`)** - Return the distribution port
+- **[port_please/2](`erl_epmd:port_please/2`)** - Return the distribution port
   used by the given node.
 
 The discovery module may implement the following callback:

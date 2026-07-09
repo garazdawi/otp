@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 -module(mnesia_evil_coverage_test).
 -author('hakan@erix.ericsson.se').
 -include("mnesia_test_lib.hrl").
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([init_per_testcase/2, end_per_testcase/2,
          init_per_group/2, end_per_group/2,
@@ -1474,12 +1476,11 @@ wait_for_tables(Config) when is_list(Config) ->
 
     ?match(stopped, erpc:call(Node2, mnesia, stop, [])),
     fun Wait () ->  %% Sync node_down
+            timer:sleep(200),
+            _ = mnesia_controller:get_info(1000),
             case mnesia:table_info(schema, active_replicas) of
                 [Node1] -> ok;
-                _ ->
-                    timer:sleep(100),
-                    _ = mnesia_controller:get_info(1000),
-                    Wait()
+                _ -> Wait()
             end
     end (),
     {ok, foo, _} = mnesia:activate_checkpoint([{name, foo}, {max, Tabs}, {ram_overrides_dump, true}]),

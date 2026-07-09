@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 2020-2025. All Rights Reserved.
+ * Copyright Ericsson AB 2020-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1087,29 +1087,6 @@ void BeamModuleAssembler::emit_i_bs_validate_unicode_retract(
     }
 
     a.bind(next);
-}
-
-void BeamModuleAssembler::emit_bs_test_unit(const ArgLabel &Fail,
-                                            const ArgRegister &Ctx,
-                                            const ArgWord &Unit) {
-    unsigned int unit = Unit.get();
-
-    mov_arg(ARG1, Ctx);
-
-    a.mov(RET, emit_boxed_val(ARG1, offsetof(ErlSubBits, end)));
-    a.sub(RET, emit_boxed_val(ARG1, offsetof(ErlSubBits, start)));
-
-    if ((unit & (unit - 1))) {
-        /* Clobbers ARG3 */
-        a.cqo();
-        mov_imm(ARG1, unit);
-        a.div(ARG1);
-        a.test(x86::rdx, x86::rdx);
-    } else {
-        a.test(RETb, imm(unit - 1));
-    }
-
-    a.jnz(resolve_beam_label(Fail));
 }
 
 void BeamModuleAssembler::emit_bs_init_writable() {

@@ -2,7 +2,7 @@
 ##
 ## SPDX-License-Identifier: Apache-2.0
 ##
-## Copyright Ericsson AB 2009-2024. All Rights Reserved.
+## Copyright Ericsson AB 2009-2026. All Rights Reserved.
 ##
 ## Licensed under the Apache License, Version 2.0 (the "License");
 ## you may not use this file except in compliance with the License.
@@ -76,7 +76,8 @@ MODULES= \
 	warnings_SUITE \
 	z_SUITE \
 	zlc_SUITE \
-	test_lib
+	test_lib \
+        erl_md5
 
 NO_BOOL_OPT= \
 	guard \
@@ -142,12 +143,6 @@ INLINE= \
 	receive \
 	record
 
-R26= \
-	bs_construct \
-	bs_match \
-	bs_utf \
-	bs_bincomp
-
 COVER=$(NO_OPT)
 
 DIALYZER = bs_match
@@ -174,8 +169,6 @@ NO_CORE_SSA_OPT_MODULES= $(NO_OPT:%=%_no_copt_ssa_SUITE)
 NO_CORE_SSA_OPT_ERL_FILES= $(NO_CORE_SSA_OPT_MODULES:%=%.erl)
 INLINE_MODULES= $(INLINE:%=%_inline_SUITE)
 INLINE_ERL_FILES= $(INLINE_MODULES:%=%.erl)
-R26_MODULES= $(R26:%=%_r26_SUITE)
-R26_ERL_FILES= $(R26_MODULES:%=%.erl)
 NO_MOD_OPT_MODULES= $(NO_MOD_OPT:%=%_no_module_opt_SUITE)
 NO_MOD_OPT_ERL_FILES= $(NO_MOD_OPT_MODULES:%=%.erl)
 NO_SSA_OPT_MODULES= $(NO_SSA_OPT:%=%_no_ssa_opt_SUITE)
@@ -187,6 +180,7 @@ DIALYZER_ERL_FILES= $(DIALYZER_MODULES:%=%.erl)
 COVER_MODULES= $(COVER:%=%_cover_SUITE)
 COVER_ERL_FILES= $(COVER_MODULES:%=%.erl)
 
+HRL_FILES= test_lib.hrl
 ERL_FILES= $(MODULES:%=%.erl)
 CORE_FILES= $(CORE_MODULES:%=%.core)
 ERL_DUMMY_FILES= $(CORE_MODULES:%=%.erl)
@@ -224,7 +218,7 @@ make_emakefile: $(NO_BOOL_OPT_ERL_FILES) $(NO_OPT_ERL_FILES) \
                 $(NO_CORE_OPT_ERL_FILES) $(NO_CORE_SSA_OPT_ERL_FILES) \
                 $(INLINE_ERL_FILES) $(NO_MOD_OPT_ERL_FILES) \
                 $(NO_TYPE_OPT_ERL_FILES) $(DIALYZER_ERL_FILES) \
-                $(COVER_ERL_FILES) $(R26_ERL_FILES)
+                $(COVER_ERL_FILES)
 	$(ERL_TOP)/make/make_emakefile $(ERL_COMPILE_FLAGS) -o$(EBIN) $(MODULES) \
 	  > $(EMAKEFILE)
 	$(ERL_TOP)/make/make_emakefile +no_bool_opt $(ERL_COMPILE_FLAGS) \
@@ -241,8 +235,6 @@ make_emakefile: $(NO_BOOL_OPT_ERL_FILES) $(NO_OPT_ERL_FILES) \
 	  -o$(EBIN) $(NO_CORE_SSA_OPT_MODULES) >> $(EMAKEFILE)
 	$(ERL_TOP)/make/make_emakefile +inline $(ERL_COMPILE_FLAGS) \
 	  -o$(EBIN) $(INLINE_MODULES) >> $(EMAKEFILE)
-	$(ERL_TOP)/make/make_emakefile +r26 $(ERL_COMPILE_FLAGS) \
-	  -o$(EBIN) $(R26_MODULES) >> $(EMAKEFILE)
 	$(ERL_TOP)/make/make_emakefile +no_module_opt $(ERL_COMPILE_FLAGS) \
 	  -o$(EBIN) $(NO_MOD_OPT_MODULES) >> $(EMAKEFILE)
 	$(ERL_TOP)/make/make_emakefile +from_core $(ERL_COMPILE_FLAGS) \
@@ -289,9 +281,6 @@ docs:
 %_inline_SUITE.erl: %_SUITE.erl
 	sed -e 's;-module($(basename $<));-module($(basename $@));' $< > $@
 
-%_r26_SUITE.erl: %_SUITE.erl
-	sed -e 's;-module($(basename $<));-module($(basename $@));' $< > $@
-
 %_no_module_opt_SUITE.erl: %_SUITE.erl
 	sed -e 's;-module($(basename $<));-module($(basename $@));' $< > $@
 
@@ -320,7 +309,6 @@ release_tests_spec: make_emakefile
 		$(NO_OPT_ERL_FILES) \
 		$(POST_OPT_ERL_FILES) \
 		$(INLINE_ERL_FILES) \
-	        $(R26_ERL_FILES) \
 		$(NO_CORE_OPT_ERL_FILES) \
 		$(NO_CORE_SSA_OPT_ERL_FILES) \
 		$(NO_MOD_OPT_ERL_FILES) \
@@ -328,6 +316,7 @@ release_tests_spec: make_emakefile
 	        $(NO_TYPE_OPT_ERL_FILES) \
 	        $(COVER_ERL_FILES) \
 	        $(DIALYZER_ERL_FILES) "$(RELSYSDIR)"
+	$(INSTALL_DATA) $(HRL_FILES) "$(RELSYSDIR)"
 	$(INSTALL_DATA) $(CORE_FILES) "$(RELSYSDIR)"
 	for file in $(ERL_DUMMY_FILES); do \
 	    module=`basename $$file .erl`; \

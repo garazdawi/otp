@@ -3,7 +3,7 @@
 
 SPDX-License-Identifier: Apache-2.0
 
-Copyright Ericsson AB 2023-2025. All Rights Reserved.
+Copyright Ericsson AB 2023-2026. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -1495,6 +1495,25 @@ behavior of earlier flags.
   a crash dump file.
 
   Introduced in ERTS 8.1.2 (Erlang/OTP 19.2).
+
+- **`ERL_CRASH_DUMP_PUBLIC_KEY`{: #ERL_CRASH_DUMP_PUBLIC_KEY }** - If the
+  emulator has been built to emit encrypted crash dumps, this variable **must**
+  be set to a file containing the public key to be used for encryption
+  (in x509 format, usually known as ".pem" files).
+
+  When built to emit encrypted crash dumps, the emulator will refuse to start
+  if this is not properly configured, as it would be too late to handle any
+  potential issues when the emulator is crashing.
+
+  Under this encryption scheme, the emulator only knows how to _encrypt_ the
+  crash dump. To decrypt a crash dump, the `m:crashdump` module should be used
+  with the _private key_, and care should be taken not to store the
+  _private key_ on the target system.
+
+  Supported key types are RSA of 2048 bits or higher, as well as ML-KEM if
+  your OpenSSL installation supports it.
+
+  Introduced in ERTS 16.3 (Erlang/OTP 29).
 
 - **`ERL_AFLAGS`{: #ERL_AFLAGS }** - The content of this variable is added to
   the beginning of the command line for `erl`.

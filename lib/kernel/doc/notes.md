@@ -3,7 +3,7 @@
 
 SPDX-License-Identifier: Apache-2.0
 
-Copyright Ericsson AB 2023-2025. All Rights Reserved.
+Copyright Ericsson AB 2023-2026. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,6 +22,316 @@ limitations under the License.
 # Kernel Release Notes
 
 This document describes the changes made to the Kernel application.
+
+## Kernel 11.0.3
+
+### Fixed Bugs and Malfunctions
+
+- inet:info/1 could crash when calling for a closing (port) socket.
+
+  Own Id: OTP-20173
+
+- Handling of the truncation bit in `inet_res` has been fixed so it properly falls back to querying over TCP after a truncated UDP reply.
+  
+  This fixes a bug introduced in OTP-28.4.2 - kernel-10.6.2 making a truncated UDP answer fail to parse and never execute the fallback, instead the name resolve operation fails.
+
+  Own Id: OTP-20199 Aux Id: [PR-11247]
+
+[PR-11247]: https://github.com/erlang/otp/pull/11247
+
+## Kernel 11.0.2
+
+### Fixed Bugs and Malfunctions
+
+- gen_tcp_socket accept should explicitly inherit the same options as plain gen_tcp.
+
+  Own Id: OTP-20057
+
+## Kernel 11.0.1
+
+### Fixed Bugs and Malfunctions
+
+- SCTP peeloff of an IPv6 socket, the peeled-off socket does not inherit
+  the parent options as expected.
+
+  Own Id: OTP-20134 Aux Id: [PR-11007]
+
+[PR-11007]: https://github.com/erlang/otp/pull/11007
+
+## Kernel 11.0
+
+### Fixed Bugs and Malfunctions
+
+- Fixed (`inet`) module selection when calling (`gen_tcp`) listen and connect and (`gen_udp`) open. Depending on the order of the options, the module option (`tcp_module` or `udp_module`) was sometimes ignored.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-19695 Aux Id: [GH-9822], [PR-10013]
+
+- The TCP/UDP compatibility layer has been fixed so that `inet_backend = socket` now supports socket options `reuseport` and `reuseport_lb` for `gen_tcp` and `gen_udp`.
+
+  Own Id: OTP-19917 Aux Id: [PR-10514]
+
+- Some errors in config files for the application controller would result in very cryptic crashes. Error handling has been improved to ensure that the file name and line number of the offending token are now printed.
+
+  Own Id: OTP-20054 Aux Id: [GH-10214], [PR-10259]
+
+- The TOS handling on socket has been significantlyupdated and improved.  Socket did not properly handle set, get and recv (cmsg) of TOS.
+  
+  Note that the returned TOS value has been changed.  It was previously an atom or an integer.  Now it is a map with different interpretations of the TOS octet.  See the documentation.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-20102 Aux Id: [GH-10968], [PR-11059]
+
+- Replaced a sleep clause in user_drv shutdown with a flush of the output buffer.
+
+  Own Id: OTP-20124 Aux Id: [PR-10808]
+
+[GH-9822]: https://github.com/erlang/otp/issues/9822
+[PR-10013]: https://github.com/erlang/otp/pull/10013
+[PR-10514]: https://github.com/erlang/otp/pull/10514
+[GH-10214]: https://github.com/erlang/otp/issues/10214
+[PR-10259]: https://github.com/erlang/otp/pull/10259
+[GH-10968]: https://github.com/erlang/otp/issues/10968
+[PR-11059]: https://github.com/erlang/otp/pull/11059
+[PR-10808]: https://github.com/erlang/otp/pull/10808
+
+### Improvements and New Features
+
+- Added an option to set the `erl_boot_server` listen port.
+
+  Own Id: OTP-19708 Aux Id: [PR-9894]
+
+- The memory footprint of some supervisors has been reduced by purging obsoleted data when the supervisor is transitioning to and from hibernation.
+
+  Own Id: OTP-19713 Aux Id: [PR-9866]
+
+- Improved name consistency of EPMD protocol messages in documentation and code. Renamed `PORT_PLEASE2_REQ` to `PORT2_REQ` and added prefix `EPMD_`.
+
+  Own Id: OTP-19734 Aux Id: [GH-10071], [PR-10078]
+
+- The legacy `and` and `or` operators have been replaced with other language constructs.
+
+  Own Id: OTP-19744 Aux Id: [PR-10114], [PR-10554], [PR-10568], [PR-10579], [PR-10585], [PR-10598], [PR-10710], [PR-10718], [PR-10580], [PR-10730]
+
+- Refactored a `kernel_load_completed` clause in the `init` module for conciseness.
+
+  Own Id: OTP-19786 Aux Id: [PR-10134]
+
+- Full support for SCTP in `m:socket`.
+  Not (yet) supported for FreeBSD.
+
+  Own Id: OTP-19834
+
+- In the default code path for the Erlang system, the current working directory (`.`) is now in the last position instead of the first.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-19842
+
+- It was previously not possible to check on the socket nif load result. A successful load was self-evident, but a failure was only visible from the fact that most `m:socket` functions failed with `notsup`.
+  This has now been improved such that the (socket nif) load result is visible in the info map (from `socket:info/0`).
+
+  Own Id: OTP-20003
+
+- Added support for socket functions `recvmmsg()` and `sendmmsg()`.
+
+  Own Id: OTP-20015 Aux Id: [PR-10564]
+
+- Added a new module called `io_ansi` that allows the user to emit Virtual Terminal Sequences (a.k.a. ANSI sequences) to the terminal in order to add colors/styling to text or create fully-fledged terminal applications.
+  
+  `io_ansi` uses the local terminfo database in order to be as cross-platform compatible as possible.
+  
+  It also works across nodes so that if functions on a remote node call `io_ansi:fwrite/1` it will use the destination terminal's terminfo database to determine which sequences to emit. In practice, this means that you can call functions in a remote shell session that use `io_ansi` and it will properly detect the terminal sequences the target terminal can handle and will print using them correctly.
+
+  Own Id: OTP-20028 Aux Id: [PR-9940], [PR-10905]
+
+- Polished the documentation groups, essentially removed groups that did nothing but obscure the documentation.
+
+  Own Id: OTP-20029 Aux Id: [PR-10755]
+
+- Added a new behavior, `data_publisher`, for building eventually consistent, replicated data stores across distributed nodes. This is a generalization of the `pg` module.
+
+  Own Id: OTP-20055 Aux Id: [PR-10426]
+
+- Added support for `-unsafe` attributes, which is used to mark functions as unsafe to use. 
+  
+  This is similar to but separate from deprecation, and the compiler will by default now generate warnings for calls to functions in Erlang/OTP that are known to be always unsafe.
+  
+  Furthermore, `m:xref` can now be used to find calls to functions in another application that lack a `-doc` attribute (`undocumented_function_calls`), calls to functions in another application marked `-doc false.` (`private_function_calls`), as well as calls to unsafe functions (`unsafe_function_calls`).
+
+  Own Id: OTP-20066 Aux Id: [PR-10839]
+
+- When implementing an [alternate distribution](`e:erts:alt_dist.md`) implementors can now use an alternate [*handshake complete* fun of arity 4](`e:erts:alt_dist.md#hs_data_f_handshake_complete`) if needed.
+
+  Own Id: OTP-20090 Aux Id: [PR-10478]
+
+- Added support for socket option SO_TIMESTAMPNS (not available on all platforms).
+
+  Own Id: OTP-20115 Aux Id: [PR-10929]
+
+- Added a flag `log_missed_net_ticks = true | false`
+  that controls whether a warning is logged for each missed sub-tick on a distribution
+    connection. A sub-tick is missed when no data has been received from a
+    connected node during one tick interval. A warning is emitted on every
+    subsequent missed sub-tick until the node is declared down after
+    `net_tickintensity` consecutive missed
+    sub-ticks, at which point a final timeout warning is always logged regardless
+    of this setting. Defaults to `false`.
+
+  Own Id: OTP-20117 Aux Id: [PR-11031]
+
+[PR-9894]: https://github.com/erlang/otp/pull/9894
+[PR-9866]: https://github.com/erlang/otp/pull/9866
+[GH-10071]: https://github.com/erlang/otp/issues/10071
+[PR-10078]: https://github.com/erlang/otp/pull/10078
+[PR-10114]: https://github.com/erlang/otp/pull/10114
+[PR-10554]: https://github.com/erlang/otp/pull/10554
+[PR-10568]: https://github.com/erlang/otp/pull/10568
+[PR-10579]: https://github.com/erlang/otp/pull/10579
+[PR-10585]: https://github.com/erlang/otp/pull/10585
+[PR-10598]: https://github.com/erlang/otp/pull/10598
+[PR-10710]: https://github.com/erlang/otp/pull/10710
+[PR-10718]: https://github.com/erlang/otp/pull/10718
+[PR-10580]: https://github.com/erlang/otp/pull/10580
+[PR-10730]: https://github.com/erlang/otp/pull/10730
+[PR-10134]: https://github.com/erlang/otp/pull/10134
+[PR-10564]: https://github.com/erlang/otp/pull/10564
+[PR-9940]: https://github.com/erlang/otp/pull/9940
+[PR-10905]: https://github.com/erlang/otp/pull/10905
+[PR-10755]: https://github.com/erlang/otp/pull/10755
+[PR-10426]: https://github.com/erlang/otp/pull/10426
+[PR-10839]: https://github.com/erlang/otp/pull/10839
+[PR-10478]: https://github.com/erlang/otp/pull/10478
+[PR-10929]: https://github.com/erlang/otp/pull/10929
+[PR-11031]: https://github.com/erlang/otp/pull/11031
+
+## Kernel 10.6.3.3
+
+### Fixed Bugs and Malfunctions
+
+- inet:info/1 could crash when calling for a closing (port) socket.
+
+  Own Id: OTP-20173
+
+- Handling of the truncation bit in `inet_res` has been fixed so it properly falls back to querying over TCP after a truncated UDP reply.
+  
+  This fixes a bug introduced in OTP-28.4.2 - kernel-10.6.2 making a truncated UDP answer fail to parse and never execute the fallback, instead the name resolve operation fails.
+
+  Own Id: OTP-20199 Aux Id: [PR-11247]
+
+[PR-11247]: https://github.com/erlang/otp/pull/11247
+
+## Kernel 10.6.3.2
+
+### Fixed Bugs and Malfunctions
+
+- gen_tcp_socket accept should explicitly inherit the same options as plain gen_tcp.
+
+  Own Id: OTP-20057
+
+## Kernel 10.6.3.1
+
+### Fixed Bugs and Malfunctions
+
+- Incorrect TOS format when using gen_udp with socket backend
+
+  Own Id: OTP-20131 Aux Id: OTP-20102, [GH-10968]
+
+- SCTP peeloff of an IPv6 socket, the peeled-off socket does not inherit
+  the parent options as expected.
+
+  Own Id: OTP-20134 Aux Id: [PR-11007]
+
+[GH-10968]: https://github.com/erlang/otp/issues/10968
+[PR-11007]: https://github.com/erlang/otp/pull/11007
+
+## Kernel 10.6.3
+
+### Fixed Bugs and Malfunctions
+
+- On Windows, sockets has to be bound when using 'socket'. Therefor when using gen_tcp with inet_backend = socket, gen_tcp_socket bind even if the caller has not provided an explicit bind address. In that case it attempts to locate a "proper" address on its own. But if the connect address is the loopback address, this could lead to an attempt to bind to an external interface.
+  So, this has now been changed so that if the connect address is the loopback address, the loopback address will also be used when binding.
+
+  Own Id: OTP-20104 Aux Id: [#10968]
+
+[#10968]: https://github.com/erlang/otp/issues/10968
+
+## Kernel 10.6.2
+
+### Fixed Bugs and Malfunctions
+
+- Before this patch, the Erlang/OTP built-in DNS resolver (`inet_res`) used a sequential, process-global 16-bit transaction ID for UDP queries and did not implement source port randomization. Response validation relied almost entirely on this ID. Together, this made DNS cache poisoning practical for an attacker who can observe one query or predict the next ID. The design conflicted with RFC 5452 recommendations for mitigating forged DNS answers.
+  
+  `inet_res` is intended for use in trusted network environments and with trusted recursive resolvers. Earlier documentation did not clearly state this deployment assumption, which could lead users to deploy the resolver in environments where faked DNS responses are possible.
+  
+  Therefore, the documentation is been updated to clarify that `inet_res` should only be used in trusted networks and with trusted recursive resolvers.
+  
+  The implementation is also improved to use strong random DNS transaction IDs and source ports for every DNS transaction. This should give ample protection against brute forcing fake DNS replies, known as DNS cache poisoning, but it still does not protect against, for example, an adversary in the path of the DNS transaction that can observe the random values before faking malicious replies, an attack known as DNS spoofing.
+  
+  For randomization to happen, the Crypto application has to be loaded, which most probably already should be the case for an Erlang node in an exposed network.
+  
+  If performance should become an issue, for applications within safe network environments, the previous light weight behaviour can be configured by setting the resolver option `random` to `false`.
+
+  Own Id: OTP-20037 Aux Id: [CVE-2026-28810], [PR-10864]
+
+[CVE-2026-28810]: https://nvd.nist.gov/vuln/detail/2026-28810
+[PR-10864]: https://github.com/erlang/otp/pull/10864
+
+## Kernel 10.6.1
+
+### Fixed Bugs and Malfunctions
+
+- A vulnerability has been resolved in the (undocumented, unsupported and unused in OTP) inet_dns_tsig module that leads to a validation bypass.
+  
+  If a request contained an error code (forbidden by spec), it was treated as a response and skipped the verification of the MAC. The user of the module would then receive an "all ok" response, depending on the use case, this could lead to such things as AXFR or UPDATE being allowed.
+  
+  The code has also been tightening up of the client side to make sure too large (bad) MAC sizes cannot be selected and the limit is the output size of the algorithm chosen.
+
+  Own Id: OTP-20012 Aux Id: [PR-10825]
+
+[PR-10825]: https://github.com/erlang/otp/pull/10825
+
+## Kernel 10.6
+
+### Fixed Bugs and Malfunctions
+
+- The built in DNS resolver `inet_res` has been fixed to do a final request assuming that the request name is absolute, as customary for many DNS resolver client libraries.
+
+  Own Id: OTP-19937 Aux Id: [GH-10494], [PR-10576]
+
+[GH-10494]: https://github.com/erlang/otp/issues/10494
+[PR-10576]: https://github.com/erlang/otp/pull/10576
+
+### Improvements and New Features
+
+- Added support for `zstd` compression in the `m:file` module.
+
+  Own Id: OTP-19860 Aux Id: [PR-10385]
+
+- Release applications, tests, and documentation are now placed in their respective directories. Source SBOM with more packages.
+  
+  A `make release` application places only the necessary code in the release folder. The main change is that the documentation and examples are not part of the release folder anymore.
+  
+  `make release_docs` places the documentation in the released code under the `doc` folder.
+  
+  `make release_tests` places the tests in their own directory. It used to be the case that some source code was mixed with the tests, and this should not happen anymore.
+  
+  The Software Bill of Materials places the examples folders as if they are part of the `SPDX-otp-<app>-doc` packge, instead of placing examples as if they were running source code.
+  
+  Overall, this change cleans up many things that were not quite correct by definition, and everything should still continue to work as expected. To test a release, one can still run `./Install -minimal \`pwd\`` and add the release to the `PATH`. After that, one can run tests as usual, going into the released tests directory, entering `test_server` and running the emulator.
+  
+  Improves the source Software-Bill-of-Materials
+  
+  - The improvements adds new SPDX relations for `asmjit` and `zlib` to be `optional_components_of` the Erlang/OTP project.
+  - The `autoconf` scripts in `make` and `erts` have now been categorised as `build_tool_of` the Erlang/OTP project.
+  - All remaining `configure`, `configure.ac`, `config.h.in`, `Makefile.in`, `Makefile.src`, `EMakefile`, and `GNUMakefile` are now part of a specific SPDX package with relation `build_tool_of` the Erlang/OTP project.
+
+  Own Id: OTP-19886 Aux Id: [PR-10434]
+
+[PR-10385]: https://github.com/erlang/otp/pull/10385
+[PR-10434]: https://github.com/erlang/otp/pull/10434
 
 ## Kernel 10.5
 
@@ -334,6 +644,27 @@ This document describes the changes made to the Kernel application.
 [PR-8670]: https://github.com/erlang/otp/pull/8670
 [PR-9334]: https://github.com/erlang/otp/pull/9334
 [PR-9604]: https://github.com/erlang/otp/pull/9604
+
+## Kernel 10.2.7.4
+
+### Fixed Bugs and Malfunctions
+
+- Before this patch, the Erlang/OTP built-in DNS resolver (`inet_res`) used a sequential, process-global 16-bit transaction ID for UDP queries and did not implement source port randomization. Response validation relied almost entirely on this ID. Together, this made DNS cache poisoning practical for an attacker who can observe one query or predict the next ID. The design conflicted with RFC 5452 recommendations for mitigating forged DNS answers.
+  
+  `inet_res` is intended for use in trusted network environments and with trusted recursive resolvers. Earlier documentation did not clearly state this deployment assumption, which could lead users to deploy the resolver in environments where faked DNS responses are possible.
+  
+  Therefore, the documentation is been updated to clarify that `inet_res` should only be used in trusted networks and with trusted recursive resolvers.
+  
+  The implementation is also improved to use strong random DNS transaction IDs and source ports for every DNS transaction. This should give ample protection against brute forcing fake DNS replies, known as DNS cache poisoning, but it still does not protect against, for example, an adversary in the path of the DNS transaction that can observe the random values before faking malicious replies, an attack known as DNS spoofing.
+  
+  For randomization to happen, the Crypto application has to be loaded, which most probably already should be the case for an Erlang node in an exposed network.
+  
+  If performance should become an issue, for applications within safe network environments, the previous light weight behaviour can be configured by setting the resolver option `random` to `false`.
+
+  Own Id: OTP-20037 Aux Id: [CVE-2026-28810], [PR-10864]
+
+[CVE-2026-28810]: https://nvd.nist.gov/vuln/detail/2026-28810
+[PR-10864]: https://github.com/erlang/otp/pull/10864
 
 ## Kernel 10.2.7.3
 
@@ -882,6 +1213,24 @@ This document describes the changes made to the Kernel application.
 [PR-8103]: https://github.com/erlang/otp/pull/8103
 [#6724]: https://github.com/erlang/otp/issues/6724
 [PR-8396]: https://github.com/erlang/otp/pull/8396
+
+## Kernel 9.2.4.11
+
+### Fixed Bugs and Malfunctions
+
+* Before this patch, the Erlang/OTP built-in DNS resolver (`inet_res`) used a sequential, process-global 16-bit transaction ID for UDP queries and did not implement source port randomization. Response validation relied almost entirely on this ID. Together, this made DNS cache poisoning practical for an attacker who can observe one query or predict the next ID. The design conflicted with RFC 5452 recommendations for mitigating forged DNS answers.
+
+  `inet_res` is intended for use in trusted network environments and with trusted recursive resolvers. Earlier documentation did not clearly state this deployment assumption, which could lead users to deploy the resolver in environments where faked DNS responses are possible.
+
+  Therefore, the documentation is been updated to clarify that `inet_res` should only be used in trusted networks and with trusted recursive resolvers.
+
+  The implementation is also improved to use strong random DNS transaction IDs and source ports for every DNS transaction. This should give ample protection against brute forcing fake DNS replies, known as DNS cache poisoning, but it still does not protect against, for example, an adversary in the path of the DNS transaction that can observe the random values before faking malicious replies, an attack known as DNS spoofing.
+
+  For randomization to happen, the Crypto application has to be loaded, which most probably already should be the case for an Erlang node in an exposed network.
+
+  If performance should become an issue, for applications within safe network environments, the previous light weight behaviour can be configured by setting the resolver option `random` to `false`.
+
+  Own Id: OTP-20037 Aux Id: CVE-2026-28810, PR-10864
 
 ## Kernel 9.2.4.10
 

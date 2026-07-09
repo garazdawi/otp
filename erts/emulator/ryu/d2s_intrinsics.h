@@ -1,4 +1,6 @@
 // Copyright 2018 Ulf Adams
+// Copyright 2021 Thomas Depierre
+// Copyright 2025 Copyright Ericsson AB 2025. All Rights Reserved.
 //
 // The contents of this file may be used under the terms of the Apache License,
 // Version 2.0.

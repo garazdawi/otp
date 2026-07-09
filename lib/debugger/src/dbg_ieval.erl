@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1998-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -676,7 +676,124 @@ expr({map,Line,E0,Fs0}, Bs0, Ieval0) ->
 			end, E, Fs),
     {value,Value,merge_bindings(Bs2, Bs1, Ieval)};
 
-%% Record update
+%% Native record
+expr({record_field,_Anno,{atom,_,N},V0}, Bs0, Ieval) ->
+    {value,V1,Bs1} = expr(V0, Bs0, Ieval),
+    {value, {N,V1}, Bs1};
+%% Native record field access
+expr({record_field,Line,Src0,{M,N},{atom,_,K}}, Bs0, Ieval) ->
+    {value, Src1, Bs} = expr(Src0, Bs0, Ieval),
+    case is_record(Src1, M, N) andalso records:is_exported(Src1) of
+        true ->
+            try records:get(K, Src1) of
+                Val ->
+                    {value, Val, Bs}
+            catch
+                _:_ ->
+                    exception(error, {badfield,{{M,N},K}}, Bs, Ieval#ieval{line=Line})
+            end;
+        false ->
+            native_record_error(Line, Src0, Src1, Bs, Ieval)
+    end;
+expr({record_field,Line,Src0,[],{atom,_,K}}, Bs0, Ieval) ->
+    {value, Src1, Bs} = expr(Src0, Bs0, Ieval),
+    try records:get(K, Src1) of
+        Val ->
+            {value, Val, Bs}
+    catch
+        _:_ ->
+            case is_record(Src1) of
+                true ->
+                    M = records:get_module(Src1),
+                    N = records:get_name(Src1),
+                    exception(error, {badfield,{{M,N},K}}, Bs, Ieval#ieval{line=Line});
+                false ->
+                    native_record_error(Line, Src0, Src1, Bs, Ieval)
+            end
+    end;
+expr({record_field,Line,Src0,N,{atom,_,K}}, Bs0, #ieval{module=M}=Ieval) ->
+    {value, Src1, Bs} = expr(Src0, Bs0, Ieval),
+    case is_record(Src1, M, N) of
+        true ->
+            try records:get(K, Src1) of
+                Val ->
+                    {value, Val, Bs}
+            catch
+                _:_ ->
+                    exception(error, {badfield,{{M,N},K}}, Bs, Ieval#ieval{line=Line})
+            end;
+        false ->
+            native_record_error(Line, Src0, Src1, Bs, Ieval)
+    end;
+%% Native record creation
+expr({record,Line,{M,N},Es}, Bs0, Ieval) ->
+    try records:get_definition(M, N) of
+        {#{is_exported := false}, _} ->
+            exception(error, {badrecord,{M, N}}, Bs0, Ieval#ieval{line=Line});
+        {Ops, Defs} ->
+            {Vs, Bs} = eval_list(Es, Bs0, Ieval#ieval{line=Line}),
+            case native_record_init(Defs, Vs, []) of
+                {novalue, K} ->
+                    exception(error, {novalue,{{M,N},K}}, Bs0, Ieval#ieval{line=Line});
+                {badfield, F} ->
+                    exception(error, {badfield,{{M,N},F}}, Bs0, Ieval#ieval{line=Line});
+                Acc ->
+                    R = records:create(M, N, Acc, Ops),
+                    {value, R, Bs}
+            end
+    catch
+        _:_ ->
+            exception(error, {badrecord,{M, N}}, Bs0, Ieval#ieval{line=Line})
+    end;
+expr({record,Line,N,Es}, Bs0, #ieval{module=M}=Ieval) when is_atom(N)->
+    {Ops, Defs} = records:get_definition(M, N),
+    {Vs, Bs} = eval_list(Es, Bs0, Ieval#ieval{line=Line}),
+    Acc =  native_record_init(Defs, Vs, []),
+    R = records:create(M, N, Acc, Ops),
+    {value, R, Bs};
+%% Native record update
+expr({record,Line,Src0,{M,N},Es}, Bs0, Ieval) ->
+    {value, Src1, Bs} = expr(Src0, Bs0, Ieval),
+    case is_record(Src1, M, N) andalso records:is_exported(Src1) of
+        true ->
+            {Vs,Bs1} = eval_list(Es, Bs, Ieval#ieval{line=Line}),
+            Updates = #{K => V || {K, V} <:- Vs},
+            R = records:update(Src1, M, N, Updates),
+            {value, R, Bs1};
+        false ->
+            native_record_error(Line, Src0, Src1, Bs, Ieval)
+    end;
+expr({record,Line,Src0,[],Es}, Bs0, #ieval{module=Mod}=Ieval) ->
+    {value, Src1, Bs} = expr(Src0, Bs0, Ieval),
+    case is_record(Src1) of
+        true ->
+            M = records:get_module(Src1),
+            N = records:get_name(Src1),
+            case records:is_exported(Src1) orelse Mod =:= M of
+                true ->
+                    {Vs,Bs} = eval_list(Es, Bs0, Ieval#ieval{line=Line}),
+                    Updates = #{K => V || {K, V} <:- Vs},
+                    R = records:update(Src1, M, N, Updates),
+                    {value, R, Bs};
+                false ->
+                    native_record_error(Line, Src0, Src1, Bs, Ieval)
+            end;
+        false ->
+            native_record_error(Line, Src0, Src1, Bs, Ieval)
+    end;
+expr({record,Line,Src0,N,Es}, Bs0, #ieval{module=M}=Ieval) when is_atom(N) ->
+    {value, Src1, Bs} = expr(Src0, Bs0, Ieval),
+    case is_record(Src1, M, N) of
+        true ->
+            {Vs,Bs} = eval_list(Es, Bs0, Ieval#ieval{line=Line}),
+            Updates = #{K => V || {K, V} <:- Vs},
+            R = records:update(Src1, M, N, Updates),
+            {value, R, Bs};
+        false ->
+            native_record_error(Line, Src0, Src1, Bs, Ieval)
+    end;
+
+%% Tuple record update
 expr({record_update,Line,Es},Bs,#ieval{level=Le}=Ieval0) ->
     %% Incr Level, we don't need to step (next) through temp
     %% variables creation and matching
@@ -1347,6 +1464,37 @@ is_generator_end([]) -> true;
 is_generator_end(<<>>) -> true;
 is_generator_end(Other) -> Other =:= #{}.
 
+native_record_init([{K, V}|Defs], Vs, Acc) ->
+    %% Fill in fields that have default values.
+    case lists:keyfind(K, 1, Vs) of
+        false ->
+            native_record_init(Defs, Vs, [{K, V}|Acc]);
+        Res ->
+            native_record_init(Defs, Vs, [Res|Acc])
+    end;
+native_record_init([K|Defs], Vs, Acc) ->
+    %% Fill in fields with no default values.
+    case lists:keyfind(K, 1, Vs) of
+        false ->
+            {novalue, K};
+        Res ->
+            native_record_init(Defs, Vs, [Res|Acc])
+    end;
+native_record_init([], Vs, Acc) ->
+    %% Report error for fields that don't exist in the definition.
+    case lists:partition(fun({K, _}) -> lists:keyfind(K, 1, Acc) =:= false end, Vs) of
+        {[], _} -> lists:reverse(Acc);
+        {[{F,_}|_], _} ->{badfield, F}
+    end.
+
+native_record_error(Line, Src0, Src1, Bs, Ieval) ->
+    case Src0 of
+        {value, _, Value} ->
+            exception(error, {badrecord,Value}, Bs, Ieval#ieval{line=Line});
+        _ ->
+            exception(error, {badrecord,Src1}, Bs, Ieval#ieval{line=Line})
+    end.
+
 get_vars(Lit) ->
     get_vars(Lit, []).
 
@@ -1851,6 +1999,17 @@ guard_expr({dbg,_,self,[]}, _) ->
 guard_expr({safe_bif,_,erlang,'not',As0}, Bs) ->
     {values,As} = guard_exprs(As0, Bs),
     {value,apply(erlang, 'not', As)};
+guard_expr({record_guard_wildcard_field,K,Src0}, Bs) ->
+    {value,Src1} = guard_expr(Src0, Bs),
+    {value, records:get(K, Src1)};
+guard_expr({record_guard_field,{Mod,Name},K,Src0}, Bs) ->
+    {value,Src1} = guard_expr(Src0, Bs),
+    case is_record(Src1, Mod, Name) of
+        true ->
+            {value, records:get(K, Src1)};
+        false ->
+            error(failed)
+    end;
 guard_expr({safe_bif,_,Mod,Func,As0}, Bs) ->
     {values,As} = guard_exprs(As0, Bs),
     {value,apply(Mod, Func, As)};
@@ -1975,6 +2134,10 @@ match1({tuple,_,Elts}, Tuple, Bs, BBs)
     match_tuple(Elts, Tuple, 1, Bs, BBs);
 match1({map,_,Fields}, Map, Bs, BBs) when is_map(Map) ->
     match_map(Fields, Map, Bs, BBs);
+match1({record,_,_,_}=R, Record, Bs, BBs) when is_record(Record) ->
+    match_record(R, Record, Bs, BBs);
+match1({record_wildcard,_,_,_}=R, Record, Bs, BBs) when is_record(Record) ->
+    match_record(R, Record, Bs, BBs);
 match1({bin,_,Fs}, B, Bs0, BBs) when is_bitstring(B) ->
     try eval_bits:match_bits(Fs, B, Bs0, BBs,
 			     match_fun(BBs),
@@ -2012,6 +2175,46 @@ match_map([{map_field_exact,_,K0,Pat}|Fs], Map, Bs0, BBs) ->
     end;
 match_map([], _, Bs, _BBs) ->
     {match,Bs}.
+
+match_record({record_wildcard, _, Mod, KVs}, R, Bs, BBs) ->
+    case {KVs, records:get_module(R), records:is_exported(R)} of
+        {[], _, _} ->
+            {match, Bs};
+        {_, Mod, _} ->
+            match_record_field(KVs, R, Bs, BBs);
+        {_, _, true} ->
+            match_record_field(KVs, R, Bs, BBs);
+        _ ->
+            throw(nomatch)
+    end;
+match_record({record, _, N, KVs}, R, Bs, BBs) ->
+    case {N, records:get_module(R), records:get_name(R)} of
+        {{Mod, Name}, Mod, Name} -> ok;
+        {N, _, N} -> ok;
+        _ -> throw(nomatch)
+    end,
+    %% Check if it's allowed to match fields.
+    case {KVs, records:is_exported(R), N} of
+        {[], _, _} ->
+            {match, Bs};
+        {_, true, _} ->
+            match_record_field(KVs, R, Bs, BBs);
+        {_, false, {_, _}} ->
+            throw(nomatch);
+        {_, false, _} ->
+            match_record_field(KVs, R, Bs, BBs)
+    end.
+
+match_record_field([{K, V}|KVs], R, Bs0, BBs) ->
+    RV = try
+             records:get(K, R)
+         catch error:_ ->
+             throw(nomatch)
+         end,
+    {match, Bs} = match1(V, RV, Bs0, BBs),
+    match_record_field(KVs, R, Bs, BBs);
+match_record_field([], _, Bs, _) ->
+    {match, Bs}.
 
 head_match([Par|Pars], [Arg|Args], Bs0, BBs) ->
     try match1(Par, Arg, Bs0, BBs) of

@@ -1206,6 +1206,25 @@ handle_event(info, {Proto, Sock, NewData}, StateName,
                 #ssh_msg_channel_failure{}           = Msg -> {keep_state, D2, ?CONNECTION_MSG(Msg)};
                 #ssh_msg_channel_success{}           = Msg -> {keep_state, D2, ?CONNECTION_MSG(Msg)};
 
+                #ssh_msg_userauth_request{} = Msg ->
+                    DecryptedSize = byte_size(DecryptedBytes),
+                    case ?GET_OPT(max_auth_request_size, (D2#data.ssh_params)#ssh.opts) of
+                        MaxAuthRequestSize when DecryptedSize > MaxAuthRequestSize ->
+                            DetailedMsg = io_lib:format("Auth length exceeded, message has ~B bytes"
+                                                        " and the maximum is ~B bytes.",
+                                                       [DecryptedSize, MaxAuthRequestSize]),
+                            {Shutdown, D} =
+                                ?send_disconnect(?SSH_DISCONNECT_PROTOCOL_ERROR,
+                                                 "Auth length exceeded.",
+                                                 DetailedMsg,
+                                                 StateName, D2),
+                            {stop, Shutdown, D};
+                        _ ->
+                            {keep_state, D2, [{next_event, internal, prepare_next_packet},
+                                              {next_event, internal, Msg}
+                                             ]}
+                    end;
+
 		Msg ->
 		    {keep_state, D2, [{next_event, internal, prepare_next_packet},
                                       {next_event, internal, Msg}
@@ -1252,6 +1271,13 @@ handle_event(info, {Proto, Sock, NewData}, StateName,
                 ?send_disconnect(?SSH_DISCONNECT_PROTOCOL_ERROR,
                                  io_lib:format("Bad packet: Size (~p bytes) exceeds max size",
                                                [PacketLen]),
+                                 StateName, D1),
+            {stop, Shutdown, D};
+
+    {error, exceeds_max_decompressed_size} ->
+            {Shutdown, D} =
+                ?send_disconnect(?SSH_DISCONNECT_PROTOCOL_ERROR,
+                                 "Bad packet: Size after decompression exceeds max size",
                                  StateName, D1),
             {stop, Shutdown, D}
     catch
@@ -1806,12 +1832,12 @@ add_request(false, _ChannelId, _From, State) ->
 add_request(true, ChannelId, From, #data{connection_state =
 					     #connection{requests = Requests0} =
 					     Connection} = State) ->
-    Requests = [{ChannelId, From} | Requests0],
+    Requests = Requests0 ++ [{ChannelId, From}],
     State#data{connection_state = Connection#connection{requests = Requests}};
 add_request(Fun, ChannelId, From, #data{connection_state =
                                             #connection{requests = Requests0} =
                                             Connection} = State) when is_function(Fun) ->
-    Requests = [{ChannelId, From, Fun} | Requests0],
+    Requests = Requests0 ++ [{ChannelId, From, Fun}],
     State#data{connection_state = Connection#connection{requests = Requests}}.
 
 new_channel_id(#data{connection_state = #connection{channel_id_seed = Id} =
@@ -2098,6 +2124,8 @@ get_repl({channel_data,undefined,_Data}, Acc) ->
 get_repl({channel_data,Pid,Data}, Acc) ->
     Pid ! {ssh_cm, self(), Data},
     Acc;
+get_repl({channel_request_reply,undefined,_Data}, Acc) ->
+    Acc;
 get_repl({channel_request_reply,From,Data}, {CallRepls,S}) ->
     {[{reply,From,Data}|CallRepls], S};
 get_repl({flow_control,Cache,Channel,From,Msg}, {CallRepls,S}) ->
@@ -2219,7 +2247,7 @@ triggered_alive(StateName, D0 = #data{},
             {stop, Shutdown, D};
         _ ->
             D = send_msg({ssh_msg_global_request,"keepalive@erlang.org", true, <<>>},
-                             D0),
+                             add_request(fun(_,Conn) -> Conn end, make_ref(), undefined, D0)),
             Ssh = D#data.ssh_params,
             Now = erlang:monotonic_time(milli_seconds),
             Ssh1 = Ssh#ssh{alive_probes_sent = SentProbes + 1,

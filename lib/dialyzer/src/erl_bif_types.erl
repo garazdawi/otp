@@ -4,8 +4,8 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2020-2024. All Rights Reserved.
 %% Copyright 2004-2010 held by the authors. All Rights Reserved.
+%% Copyright Ericsson AB 2020-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -82,6 +82,8 @@
 		    t_is_port/1,
 		    t_is_maybe_improper_list/1,
 		    t_is_record/1,
+		    t_is_record/2,
+		    t_is_record/3,
 		    t_is_reference/1,
 		    t_is_subtype/2,
 		    t_is_tuple/1,
@@ -692,9 +694,10 @@ type(erlang, is_record, 1, Xs) ->
   strict(erlang, is_record, 1, Xs, Fun);
 type(erlang, is_record, 2, Xs) ->
   Fun = fun ([X, Y]) ->
-	    case {t_is_tuple(X), t_is_record(X)} of
+	    case {t_is_tuple(X), t_is_record(X, Y)} of
 	      {false, true} ->
-		%% TODO: We must handle native records here.
+		t_atom('true');
+	      {false, unknown} ->
 		t_boolean();
 	      {true, false} ->
 		case t_tuple_subtypes(X) of
@@ -721,7 +724,7 @@ type(erlang, is_record, 3, Xs) ->
                       true -> t_number_vals(Z);
                       false -> -1
 	            end,
-	    case {t_is_tuple(X), t_is_record(X)} of
+	    case {t_is_tuple(X), t_is_record(X, Y, Z)} of
 	      {false, false} when length(Arity) =:= 1 ->
 		[RealArity] = Arity,
 		case t_is_none(t_inf(t_tuple(RealArity), X)) of
@@ -739,7 +742,6 @@ type(erlang, is_record, 3, Xs) ->
 		  unknown -> t_boolean();
 		  [Tuple] ->
 		    case t_tuple_args(Tuple) of
-		      %% any -> t_boolean();
 		      Args when length(Args) =:= RealArity ->
                         check_record_tag(hd(Args), Y);
 		      Args when length(Args) =/= RealArity ->
@@ -751,7 +753,8 @@ type(erlang, is_record, 3, Xs) ->
 	      {true, false} ->
 		t_boolean();
 	      {false, true} ->
-		%% TODO: We must handle native records here.
+		t_atom('true');
+	      {false, unknown} ->
 		t_boolean()
 	    end
 	end,

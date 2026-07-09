@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1999-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -166,7 +166,6 @@ collect({move,S,D})          -> {set,[D],[S],move};
 collect({put_list,S1,S2,D})  -> {set,[D],[S1,S2],put_list};
 collect({put_tuple2,D,{list,Els}}) -> {set,[D],Els,put_tuple2};
 collect({get_tuple_element,S,I,D}) -> {set,[D],[S],{get_tuple_element,I}};
-collect({set_tuple_element,S,D,I}) -> {set,[],[S,D],{set_tuple_element,I}};
 collect({get_hd,S,D})  ->       {set,[D],[S],get_hd};
 collect({get_tl,S,D})  ->       {set,[D],[S],get_tl};
 collect(remove_message)      -> {set,[],[],remove_message};
@@ -182,7 +181,7 @@ collect({swap,D1,D2})        ->
 collect({make_fun3,F,I,U,D,{list,Ss}}) -> {set,[D],Ss,{make_fun3,F,I,U}};
 collect(_)                   -> error.
 
-collect_debug_line({debug_line,_Loc,_Index,_Live,{_,Vars}}=I) ->
+collect_debug_line({debug_line,_Loc,_Index,_Live,#{vars:=Vars}}=I) ->
     Ss = flatmap(fun({_Name,Regs}) -> Regs end, Vars),
     {set,[],Ss,I}.
 

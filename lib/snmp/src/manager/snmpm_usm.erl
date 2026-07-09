@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2004-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -96,7 +96,8 @@ process_incoming_msg(Packet, Data, SecParams, SecLevel) ->
 	false ->
             ?vlog("Unknown USM engine id: "
                   "~n      ~p", [MsgAuthEngineID]),
-	    SecData1 = [MsgUserName],
+            SecData1 = [{msgUserName, MsgUserName},
+                        {msgAuthoritativeEngineID, MsgAuthEngineID}],
 	    error(usmStatsUnknownEngineIDs, 
 		  ?usmStatsUnknownEngineIDs_instance,
 		  undefined, [{sec_data, SecData1}])
@@ -112,7 +113,7 @@ process_incoming_msg(Packet, Data, SecParams, SecLevel) ->
                 ?vlog("Unknown USM user: "
                       "~n      Auth Engine ID: ~p"
                       "~n      User Name:      ~p", [MsgAuthEngineID, MsgUserName]),
-		SecData2 = [MsgUserName],
+                SecData2 = [{msgUserName, MsgUserName}],
 		error(usmStatsUnknownUserNames, 
 		      ?usmStatsUnknownUserNames_instance, %% OTP-3542
 		      undefined, [{sec_data, SecData2}])
@@ -365,7 +366,8 @@ generate_outgoing_msg(Message, SecEngineID, SecName, SecData, SecLevel) ->
                               "~n      Sec Name:      ~p", [SecEngineID, SecName]),
 			error(unknownSecurityName)
 		end;
-	    [MsgUserName] ->
+            [_| _] = Data ->
+                MsgUserName = proplists:get_value(msgUserName, Data, undefined),
 		%% This means the user at the engine is unknown
 		{MsgUserName, usmNoAuthProtocol, "", usmNoPrivProtocol, ""};
 	    _ -> % 3.1.1a

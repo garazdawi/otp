@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2024. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -67,7 +67,7 @@ The functions [`anno_from_term()`](`erl_parse:anno_from_term/1`),
 [`new_anno()`](`erl_parse:new_anno/1`), in the `erl_parse` module can be used
 for manipulating annotations in abstract code.
 
-## See Also
+### See Also
 
 `m:erl_parse`, `m:erl_scan`
 """.

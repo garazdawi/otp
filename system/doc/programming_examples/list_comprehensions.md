@@ -138,7 +138,7 @@ removed:
 Pythagorean triplets are sets of integers `{A,B,C}` such that
 `A**2 + B**2 = C**2`.
 
-The function `pyth(N)` generates a list of all integers `{A,B,C}` such that
+The function `pyth(N)` generates a list of all tuples `{A,B,C}` such that
 `A**2 + B**2 = C**2` and where the sum of the sides is equal to, or less than,
 `N`:
 
@@ -208,7 +208,7 @@ The scope rules for variables that occur in list comprehensions are as follows:
 - Any variables that are defined before the list comprehension, and that are
   used in filters, have the values they had before the list comprehension.
 - Variables cannot be exported from a list comprehension.
-- Within a zip generator, binding of all variables happen at the same time.
+- Within a zip generator, binding of all variables happens at the same time.
 
 As an example of these rules, suppose you want to write the function `select`,
 which selects certain elements from a list of tuples. Suppose you write
@@ -256,7 +256,7 @@ same name bound in a previous generator pattern. For example:
 [{a,a},{b,b},{c,c},{a,a},{b,b},{c,c},{a,a},{b,b},{c,c}]
 ```
 
-A consequence of the rules for importing variables into a list comprehensions is
+A consequence of the rules for importing variables into a list comprehension is
 that certain pattern matching operations must be moved into the filters and
 cannot be written directly in the generators.
 
@@ -305,7 +305,7 @@ linter. It extracts arities from all defined functions. All elements in the
 list `DefinedFuns` are two-tuples, containing name and arity for functions.
 If any of them differs from this pattern, it means that something has added
 an invalid item into the list of defined functions. It is better for the linter
-to crash in the comprehension than skipping the invalid item and continue
+to crash in the comprehension than to skip the invalid item and continue
 running. Using a strict generator here is correct, because the linter should
 not hide the presence of an internal inconsistency.
 
@@ -320,9 +320,9 @@ from the comprehension result.
 
 For example, the following comprehension is from a compiler module that
 transforms normal Erlang code to Core Erlang. It finds all defined functions
-from an abstract form, and output them in two-tuples, each containing name and
+from an abstract form, and outputs them in two-tuples, each containing name and
 arity of a function. Not all forms are function declarations. All the forms
-that are not function declarations should be ignored by this comprehensions.
+that are not function declarations should be ignored by this comprehension.
 Using a relaxed generator here is correct, because the programmer intends to
 exclude all elements with other patterns.
 

@@ -616,7 +616,7 @@ rfc3339_to_system_time_bin(
     Year = -binary_to_integer(Year0),
     Month = binary_to_integer(Month0),
     Day = binary_to_integer(Day0),
-    rfc3339_to_system_time_1(DateTimeBin, Options, Year, Month, Day, Hour, Min, Sec, binary_to_list(TimeStr));
+    rfc3339_to_system_time_1(DateTimeBin, Options, Year, Month, Day, Hour, Min, Sec, 0, binary_to_list(TimeStr));
 rfc3339_to_system_time_bin(
     <<Year0:4/binary, $-, Month0:2/binary, $-, Day0:2/binary, _T,
       Hour0:2/binary, $:, Min0:2/binary, $:, Sec0:2/binary, TimeStr/binary>> = DateTimeBin, Options) ->
@@ -626,7 +626,7 @@ rfc3339_to_system_time_bin(
     Year = binary_to_integer(Year0),
     Month = binary_to_integer(Month0),
     Day = binary_to_integer(Day0),
-    rfc3339_to_system_time_1(DateTimeBin, Options, Year, Month, Day, Hour, Min, Sec, binary_to_list(TimeStr)).
+    rfc3339_to_system_time_1(DateTimeBin, Options, Year, Month, Day, Hour, Min, Sec, 0, binary_to_list(TimeStr)).
 
 %% _T is the character separating the date and the time:
 %% Handle negative years (ISO 8601 extended format: -YYYY-MM-DD)
@@ -639,7 +639,7 @@ rfc3339_to_system_time_list(
     Year = -list_to_integer([Y1, Y2, Y3, Y4]),
     Month = list_to_integer([Mon1, Mon2]),
     Day = list_to_integer([D1, D2]),
-    rfc3339_to_system_time_1(DateTimeString, Options, Year, Month, Day, Hour, Min, Sec, TimeStr);
+    rfc3339_to_system_time_1(DateTimeString, Options, Year, Month, Day, Hour, Min, Sec, 0, TimeStr);
 rfc3339_to_system_time_list(
     [Y1, Y2, Y3, Y4, $-, Mon1, Mon2, $-, D1, D2, _T,
      H1, H2, $:, Min1, Min2, $:, S1, S2 | TimeStr] = DateTimeString, Options) ->
@@ -649,14 +649,17 @@ rfc3339_to_system_time_list(
     Year = list_to_integer([Y1, Y2, Y3, Y4]),
     Month = list_to_integer([Mon1, Mon2]),
     Day = list_to_integer([D1, D2]),
-    rfc3339_to_system_time_1(DateTimeString, Options, Year, Month, Day, Hour, Min, Sec, TimeStr).
+    rfc3339_to_system_time_1(DateTimeString, Options, Year, Month, Day, Hour, Min, Sec, 0, TimeStr).
 
-rfc3339_to_system_time_1(DateTimeIn, Options, Year, Month, Day, Hour, Min, Sec, TimeStr) ->
+rfc3339_to_system_time_1(DateTimeIn, Options, Year, Month, Day, 23, 59, 60, 0, TimeStr) ->
+    rfc3339_to_system_time_1(DateTimeIn, Options, Year, Month, Day, 23, 59, 59, 1, TimeStr);
+rfc3339_to_system_time_1(DateTimeIn, Options, Year, Month, Day, Hour, Min, Sec, LeapSec, TimeStr) ->
     Unit = proplists:get_value(unit, Options, second),
     DateTime = {{Year, Month, Day}, {Hour, Min, Sec}},
     IsFractionChar = fun(C) -> C >= $0 andalso C =< $9 orelse C =:= $. end,
     {FractionStr, UtcOffset} = lists:splitwith(IsFractionChar, TimeStr),
-    Time = datetime_to_system_time(DateTime),
+
+    Time = datetime_to_system_time(DateTime) + LeapSec,
     Secs = Time - offset_string_adjustment(Time, second, UtcOffset),
     check(DateTimeIn, Options, Secs),
     ScaledEpoch = erlang:convert_time_unit(Secs, second, Unit),
@@ -867,7 +870,7 @@ time_difference({{Y1, Mo1, D1}, {H1, Mi1, S1}},
 -doc "Returns the number of seconds since midnight up to the specified time.".
 -spec time_to_seconds(Time) -> secs_per_day() when
       Time :: time().
-time_to_seconds({H, M, S}) when is_integer(H), is_integer(M), is_integer(S) ->
+time_to_seconds({H, M, S}) when is_integer(H, 0, 23), is_integer(M, 0, 59), is_integer(S, 0, 59) ->
     H * ?SECONDS_PER_HOUR +
 	M * ?SECONDS_PER_MINUTE + S.
 

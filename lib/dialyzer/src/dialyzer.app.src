@@ -4,7 +4,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2006-2024. All Rights Reserved.
+%% Copyright Ericsson AB 2006-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -58,4 +58,4 @@
   {env, []},
   {runtime_dependencies, ["syntax_tools-2.0","stdlib-5.0",
 			  "kernel-8.0","erts-12.0",
-			  "compiler-@OTP-19785@"]}]}.
+			  "compiler-10.0"]}]}.

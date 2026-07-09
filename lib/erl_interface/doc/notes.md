@@ -23,6 +23,101 @@ limitations under the License.
 
 This document describes the changes made to the Erl_interface application.
 
+## Erl_Interface 5.8.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed stack overflow in `ei_s_print_term` for very big integer terms (> 2000 hexadecimal digits long).
+
+  Own Id: OTP-20160 Aux Id: [PR-11193], GHSA-xcxj-5pg2-v72j,[CVE-2026-49760]
+
+[PR-11193]: https://github.com/erlang/otp/pull/11193
+[CVE-2026-49760]: https://nvd.nist.gov/vuln/detail/2026-49760
+
+## Erl_Interface 5.8
+
+### Improvements and New Features
+
+- Improved name consistency of EPMD protocol messages in documentation and code. Renamed `PORT_PLEASE2_REQ` to `PORT2_REQ` and added prefix `EPMD_`.
+
+  Own Id: OTP-19734 Aux Id: [GH-10071], [PR-10078]
+
+- Replaced embedded OpenSSL MD5 implementation.
+
+  Own Id: OTP-20045 Aux Id: [PR-10870]
+
+[GH-10071]: https://github.com/erlang/otp/issues/10071
+[PR-10078]: https://github.com/erlang/otp/pull/10078
+[PR-10870]: https://github.com/erlang/otp/pull/10870
+
+### Known Bugs and Problems
+
+- The `ei` API for decoding/encoding terms is not fully 64-bit compatible since terms that have a representation on the external term format larger than 2 GB cannot be handled.
+
+  Own Id: OTP-16607 Aux Id: OTP-16608
+
+## Erl_Interface 5.7.0.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed stack overflow in `ei_s_print_term` for very big integer terms (> 2000 hexadecimal digits long).
+
+  Own Id: OTP-20160 Aux Id: [PR-11193], GHSA-xcxj-5pg2-v72j,[CVE-2026-49760]
+
+[PR-11193]: https://github.com/erlang/otp/pull/11193
+[CVE-2026-49760]: https://nvd.nist.gov/vuln/detail/2026-49760
+
+## Erl_Interface 5.7
+
+### Improvements and New Features
+
+- A new `configure` option [`--{enable,disable}-use-embedded-3pp-alternatives` ](`e:system:install.md#advanced-configuration-and-build-of-erlang-otp_configuring`) has been added. When *enabled*, `configure` is forced to find alternatives, to a subset, of the embedded third-party products (*3pps*) in the runtime system, and when *disabled*, `configure` will use all internal embedded 3pps. Currently this option affects `zstd`, `zlib`, `ryu` (with `STL`), `openssl` and `tcl`. The default is to use all built-in embedded 3pps except for `zlib` which by default will use `zlib` on the OS if available.
+  
+  Requirements for alternatives:
+  - `zstd` - Static library and include files of at least version 1.5.6 needs to be available.
+  - `zlib` - Library and include files of at least version 1.2.5 needs to be available.
+  - `ryu` (with `STL`) - A usable C++ compiler with C++17 support.
+  - `openssl` - No requirements. Our own MD5 implementation will be used.
+  - `tcl` - The `strerrorname_np()` function (introduced in glibc 2.32) mapping errno integers to symbolic names needs to be available.
+  
+  The argument [`embedded_3pps`](`m:erlang#system_info_embedded_3pps`) has been added to `erlang:system_info/1`. It returns a map with information about the use of embedded 3pps in the runtime system.
+
+  Own Id: OTP-20106 Aux Id: [PR-11045]
+
+[PR-11045]: https://github.com/erlang/otp/pull/11045
+
+### Known Bugs and Problems
+
+- The `ei` API for decoding/encoding terms is not fully 64-bit compatible since terms that have a representation on the external term format larger than 2 GB cannot be handled.
+
+  Own Id: OTP-16607 Aux Id: OTP-16608
+
+## Erl_Interface 5.6.4
+
+### Improvements and New Features
+
+- Updated `openssl` from `3.6.0` to `3.6.1`.
+  
+  This change does not perform any changes in the `md5` vendor implementation from `openssl`. The change merges upstream cosmetic changes from `openssl`. This is necessary to automatically migrate cleanly to the next `openssl` version without conflicts with upstream.
+
+  Own Id: OTP-19959 Aux Id: [PR-10630]
+
+[PR-10630]: https://github.com/erlang/otp/pull/10630
+
+### Known Bugs and Problems
+
+- The `ei` API for decoding/encoding terms is not fully 64-bit compatible since terms that have a representation on the external term format larger than 2 GB cannot be handled.
+
+  Own Id: OTP-16607 Aux Id: OTP-16608
+
+## Erl_Interface 5.6.3
+
+### Fixed Bugs and Malfunctions
+
+- Add missing copyrights.
+
+  Own Id: OTP-20008
+
 ## Erl_Interface 5.6.2
 
 ### Improvements and New Features
@@ -97,6 +192,17 @@ This document describes the changes made to the Erl_interface application.
 - The `ei` API for decoding/encoding terms is not fully 64-bit compatible since terms that have a representation on the external term format larger than 2 GB cannot be handled.
 
   Own Id: OTP-16607 Aux Id: OTP-16608
+
+## Erl_Interface 5.5.2.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed stack overflow in `ei_s_print_term` for very big integer terms (> 2000 hexadecimal digits long).
+
+  Own Id: OTP-20160 Aux Id: [PR-11193], GHSA-xcxj-5pg2-v72j,[CVE-2026-49760]
+
+[PR-11193]: https://github.com/erlang/otp/pull/11193
+[CVE-2026-49760]: https://nvd.nist.gov/vuln/detail/2026-49760
 
 ## Erl_Interface 5.5.2
 

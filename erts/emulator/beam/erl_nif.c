@@ -1442,7 +1442,9 @@ int enif_realloc_binary(ErlNifBinary* bin, size_t size)
     else {
 	unsigned char* old_data = bin->data;
 	size_t cpy_sz = (size < bin->size ? size : bin->size);  
-	enif_alloc_binary(size, bin);
+        if (!enif_alloc_binary(size, bin)) {
+            return 0;
+        }
 	sys_memcpy(bin->data, old_data, cpy_sz); 
     }
     return 1;
@@ -1577,6 +1579,11 @@ ErlNifUInt64 enif_hash(ErlNifHash type, Eterm term, ErlNifUInt64 salt)
         default:
             return 0;
     }
+}
+
+size_t enif_term_size(Eterm term)
+{
+    return size_object(term) * sizeof(ERL_NIF_TERM);
 }
 
 int enif_get_tuple(ErlNifEnv* env, Eterm tpl, int* arity, const Eterm** array)
@@ -1947,6 +1954,21 @@ int enif_get_atom_length(ErlNifEnv* env, Eterm atom, unsigned* len,
         return 1;
     }
     return 0;
+}
+
+int enif_get_atom_cache_index(ErlNifEnv* env, ERL_NIF_TERM atom, unsigned* index)
+{
+    if (is_not_atom(atom) || index == NULL) {
+        return 0;
+    }
+
+    *index = (unsigned) erts_debug_atom_to_out_cache_index(atom);
+    return 1;
+}
+
+unsigned enif_max_atom_cache_index(void)
+{
+    return (unsigned) erts_debug_max_atom_out_cache_index();
 }
 
 int enif_get_list_cell(ErlNifEnv* env, Eterm term, Eterm* head, Eterm* tail)

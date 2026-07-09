@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,6 +21,9 @@
 %%
 -module(user_drv).
 -moduledoc false.
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}},
+          {nowarn_unsafe_function, {os, cmd, 1}}]).
 
 %% Basic interface to stdin/stdout.
 %%
@@ -57,6 +60,8 @@
         %% Output raw binary, should only be called if output mode is set to raw
         %% and encoding set to latin1.
         {put_chars_sync, latin1, binary(), {From :: pid(), Reply :: term()}} |
+        %% Print a terminal special character
+        {put_ansi_sync, list(), io_ansi:vts(), Reply :: term()} |
         %% Put text in expansion area
         {put_expand, unicode, binary(), integer()} |
         {move_expand, -32768..32767} |
@@ -94,7 +99,7 @@
         new_prompt.
 
 -export_type([message/0, request/0]).
--export([start/0, start/1, start_shell/0, start_shell/1, whereis_group/0]).
+-export([start/0, start/1, start_shell/0, start_shell/1, whereis_group/0, flush/0]).
 
 %% gen_statem state callbacks
 -behaviour(gen_statem).
@@ -141,6 +146,14 @@ start_shell() ->
 -spec start_shell(arguments()) -> ok | {error, already_started}.
 start_shell(Args) ->
     gen_statem:call(?MODULE, {start_shell, Args}).
+
+-spec flush() -> ok | {error, term()}.
+flush() ->
+    try
+        gen_statem:call(?MODULE, flush, 1000)
+    catch
+        _:_ -> ok
+    end.
 
 -spec whereis_group() -> pid() | undefined.
 whereis_group() ->
@@ -358,8 +371,7 @@ init_shell(State, Slogan) ->
     {next_state, server, State#state{ current_group = gr_cur_pid(State#state.groups) },
      {next_event, info,
       {gr_cur_pid(State#state.groups),
-       {put_chars, unicode,
-        unicode:characters_to_binary(io_lib:format("~ts", [Slogan]))}}}}.
+       {put_chars, unicode, io_lib:bformat("~ts", [Slogan])}}}}.
 
 %% start_user()
 %%  Start a group leader process and register it as 'user', unless,
@@ -453,6 +465,10 @@ server({call, From}, {start_shell, Args},
 server({call, From}, {start_shell, _Args}, _State) ->
     gen_statem:reply(From, {error, already_started}),
     keep_state_and_data;
+server({call, From}, flush, #state{ tty = TTYState, queue = Queue } = State) ->
+    Msg = {{statem_reply, From}, {put_chars_sync, unicode, <<>>, noreply}},
+    {NewTTYState, NewQueue} = handle_req(Msg, TTYState, Queue),
+    {keep_state, State#state{ tty = NewTTYState, queue = NewQueue }};
 server(info, {ReadHandle,{data,UTF8Binary}}, State = #state{ read = ReadHandle })
   when State#state.current_group =:= State#state.user ->
     State#state.current_group ! {self(), {data,UTF8Binary}},
@@ -529,6 +545,12 @@ server(info, Req, State = #state{ user = User, current_group = Curr, editor = un
     {NewTTYState, NewQueue} = handle_req(Req, State#state.tty, State#state.queue),
     {keep_state, State#state{ tty = NewTTYState, queue = NewQueue }};
 server(info, {WriteRef, ok}, State = #state{ write = WriteRef,
+                                             queue = {{{statem_reply, From}, MonitorRef, _Reply}, IOQ} }) ->
+    gen_statem:reply(From, ok),
+    erlang:demonitor(MonitorRef, [flush]),
+    {NewTTYState, NewQueue} = handle_req(next, State#state.tty, {false, IOQ}),
+    {keep_state, State#state{ tty = NewTTYState, queue = NewQueue }};
+server(info, {WriteRef, ok}, State = #state{ write = WriteRef,
                                              queue = {{Origin, MonitorRef, Reply}, IOQ} }) ->
     %% We get this ok from the user_drv_writer, in io_request we store
     %% info about where to send reply at head of queue
@@ -537,6 +559,11 @@ server(info, {WriteRef, ok}, State = #state{ write = WriteRef,
     {NewTTYState, NewQueue} = handle_req(next, State#state.tty, {false, IOQ}),
     {keep_state, State#state{ tty = NewTTYState, queue = NewQueue }};
 server(info, {'DOWN', MonitorRef, _, _, Reason},
+       #state{ queue = {{{statem_reply, From}, MonitorRef, _Reply}, _IOQ} }) ->
+    gen_statem:reply(From, {error, Reason}),
+    ?LOG_INFO("Failed to write to standard out (~p)", [Reason]),
+    stop;
+server(info, {'DOWN', MonitorRef, _, _, Reason},
        #state{ queue = {{Origin, MonitorRef, Reply}, _IOQ} }) ->
     %% The writer process died, we send the correct error to the caller and
     %% then stop this process. This will bring down all linked groups (including 'user').
@@ -544,7 +571,8 @@ server(info, {'DOWN', MonitorRef, _, _, Reason},
     Origin ! {reply, Reply, {error, Reason}},
     ?LOG_INFO("Failed to write to standard out (~p)", [Reason]),
     stop;
-server(info,{Requester, {put_chars_sync, _, _, Reply}}, _State) ->
+server(info,{Requester, {Request, _, _, Reply}}, _State)
+    when Request =:= put_chars_sync; Request =:= put_ansi_sync ->
     %% This is a sync request from an unknown or inactive group.
     %% We need to ack the Req otherwise originating process will hang forever.
     %% We discard the output to non visible shells
@@ -590,15 +618,15 @@ server(info,{'EXIT', Group, Reason}, State) ->
                 Group when Reason =/= die, Reason =/= terminated  ->	% current shell exited
                     Reqs = [if
                                 Reason =/= normal ->
-                                    {put_chars,unicode,<<"*** ERROR: ">>};
+                                    {put_chars,unicode,~"*** ERROR: "};
                                 true -> % exit not caused by error
-                                    {put_chars,unicode,<<"*** ">>}
+                                    {put_chars,unicode,~"*** "}
                             end,
-                            {put_chars,unicode,<<"Shell process terminated! ">>}],
+                            {put_chars,unicode,~"Shell process terminated! "}],
                     Gr1 = gr_del_pid(State#state.groups, Group),
                     case GroupInfo of
                         {Ix,{shell,start,Params}} -> % 3-tuple == local shell
-                            NewTTyState = io_requests(Reqs ++ [{put_chars,unicode,<<"***\n">>}],
+                            NewTTyState = io_requests(Reqs ++ [{put_chars,unicode,~"***\n"}],
                                                       State#state.tty),
                             %% restart group leader and shell, same index
                             NewGroup = group:start(self(), {shell,start,Params}),
@@ -613,7 +641,7 @@ server(info,{'EXIT', Group, Reason}, State) ->
                                 true ->
                                     NewTTYState = io_requests(Reqs,
                                                 State#state.tty),
-                                    _ = io_request({put_chars_sync,unicode,<<"Read EOF ***\n">>, {self(), none}}, NewTTYState),
+                                    _ = io_request({put_chars_sync,unicode,~"Read EOF ***\n", {self(), none}}, NewTTYState),
                                     WriterRef = State#state.write,
                                     receive
                                         {WriterRef, ok} -> ok
@@ -623,7 +651,7 @@ server(info,{'EXIT', Group, Reason}, State) ->
                                     erlang:halt(0, []);
                                 false ->
                                     NewTTYState = io_requests(
-                                                    Reqs ++ [{put_chars,unicode,<<"(^G to start new job) ***\n">>}],
+                                                    Reqs ++ [{put_chars,unicode,~"(^G to start new job) ***\n"}],
                                                     State#state.tty),
                                     {keep_state, State#state{ tty = NewTTYState, groups = Gr1 }}
                             end
@@ -661,13 +689,13 @@ switch_loop(internal, init, State) ->
 			end
 		end,
 	    NewGroup = group:start(self(), {shell,start,[]}),
-            NewTTYState = io_requests([{insert_chars,unicode,<<"\n">>}], State#state.tty),
+            NewTTYState = io_requests([{insert_chars,unicode,~"\n"}], State#state.tty),
             {next_state, server,
              State#state{ tty = NewTTYState,
                           groups = gr_add_cur(Gr1, NewGroup, {shell,start,[]})}};
 	jcl ->
             NewTTYState =
-                io_requests([{insert_chars,unicode,<<"\nUser switch command (enter 'h' for help)\n">>}],
+                io_requests([{insert_chars,unicode,~"\nUser switch command (enter 'h' for help)\n"}],
                             State#state.tty),
 	    %% init edlin used by switch command and have it copy the
 	    %% text buffer from current group process
@@ -688,22 +716,22 @@ switch_loop(internal, {line, Line}, State) ->
                     Curr ! {self(), activate},
                     {next_state, server,
                         State#state{ current_group = Curr, groups = Groups,
-                                     tty = io_requests([{insert_chars, unicode, <<"\n">>},new_prompt], State#state.tty)}};
+                                     tty = io_requests([{insert_chars, unicode, ~"\n"},new_prompt], State#state.tty)}};
                 {retry, Requests} ->
-                    {keep_state, State#state{ tty = io_requests([{insert_chars, unicode, <<"\n">>},new_prompt|Requests], State#state.tty) },
+                    {keep_state, State#state{ tty = io_requests([{insert_chars, unicode, ~"\n"},new_prompt|Requests], State#state.tty) },
                      {next_event, internal, line}};
                 {retry, Requests, Groups} ->
                     Curr = gr_cur_pid(Groups),
                     put(current_group, Curr),
                     {keep_state, State#state{
-                                   tty = io_requests([{insert_chars, unicode, <<"\n">>},new_prompt|Requests], State#state.tty),
+                                   tty = io_requests([{insert_chars, unicode, ~"\n"},new_prompt|Requests], State#state.tty),
                                    current_group = Curr,
                                    groups = Groups },
                      {next_event, internal, line}}
             end;
         {error, _, _} ->
             NewTTYState =
-                io_requests([{insert_chars,unicode,<<"Illegal input\n">>}], State#state.tty),
+                io_requests([{insert_chars,unicode,~"Illegal input\n"}], State#state.tty),
             {keep_state, State#state{ tty = NewTTYState },
              {next_event, internal, line}}
     end;
@@ -745,6 +773,10 @@ switch_loop(info, {Requester, tty_geometry}, {_Cont, #state{ tty = TTYState }}) 
 switch_loop(timeout, _, {_Cont, State}) ->
     {keep_state_and_data,
      {next_event, info, {State#state.read,{data,[]}}}};
+switch_loop({call, From}, flush, {Cont, State = #state{ tty = TTYState, queue = Queue }}) ->
+    Msg = {{statem_reply, From}, {put_chars_sync, unicode, <<>>, noreply}},
+    {NewTTYState, NewQueue} = handle_req(Msg, TTYState, Queue),
+    {keep_state, {Cont, State#state{ tty = NewTTYState, queue = NewQueue }}};
 switch_loop(info, _Unknown, _State) ->
     {keep_state_and_data, postpone}.
 
@@ -771,8 +803,7 @@ switch_cmd({i, I}, Gr, _Dumb) ->
             exit(Pid, interrupt),
 
             {retry, [{put_chars, unicode,
-                      unicode:characters_to_binary(
-                        io_lib:format("Interrupted job ~p, enter 'c' to resume.~n",[I]))}]};
+                        io_lib:bformat("Interrupted job ~p, enter 'c' to resume.~n",[I])}]};
         undefined ->
             unknown_group()
     end;
@@ -809,7 +840,7 @@ switch_cmd(r, Gr0, _Dumb) ->
 	    Gr = gr_add_cur(Gr0, Pid, {Node,shell,start,[]}),
 	    {retry, [], Gr};
 	false ->
-	    {retry, [{put_chars,unicode,<<"Node is not alive\n">>}]}
+            {retry, [{put_chars,unicode,~"Node is not alive\n"}]}
     end;
 switch_cmd({r, Node}, Gr, Dumb) when is_atom(Node)->
     switch_cmd({r, Node, shell}, Gr, Dumb);
@@ -822,17 +853,17 @@ switch_cmd({r,Node,Shell}, Gr0, Dumb) when is_atom(Node), is_atom(Shell) ->
                     Gr = gr_add_cur(Gr0, Pid, {Node,Shell,start,[]}),
                     {retry, [], Gr};
                 false ->
-                    Bin = atom_to_binary(Node),
-                    {retry, [{put_chars,unicode,<<"Could not connect to node ", Bin/binary, "\n">>}]}
+                    {retry, [{put_chars,unicode,<<"Could not connect to node ",
+                                                  (atom_to_binary(Node))/binary, "\n">>}]}
             end;
         false ->
-            {retry, [{put_chars,unicode,"Node is not alive\n"}]}
+            {retry, [{put_chars,unicode,~"Node is not alive\n"}]}
     end;
 
 switch_cmd(q, _Gr, _Dumb) ->
     case erlang:system_info(break_ignored) of
 	true ->					% noop
-	    {retry, [{put_chars,unicode,<<"Unknown command\n">>}]};
+            {retry, [{put_chars,unicode,~"Unknown command\n"}]};
 	false ->
 	    halt()
     end;
@@ -841,26 +872,26 @@ switch_cmd(h, _Gr, _Dumb) ->
 switch_cmd([], _Gr, _Dumb) ->
     {retry,[]};
 switch_cmd(_Ts, _Gr, _Dumb) ->
-    {retry, [{put_chars,unicode,<<"Unknown command\n">>}]}.
+    {retry, [{put_chars,unicode,~"Unknown command\n"}]}.
 
 unknown_group() ->
-    {retry,[{put_chars,unicode,<<"Unknown job\n">>}]}.
+    {retry,[{put_chars,unicode,~"Unknown job\n"}]}.
 
 list_commands() ->
     QuitReq = case erlang:system_info(break_ignored) of
-		  true ->
-		      [];
-		  false ->
-		      [{put_chars, unicode,<<"  q                 - quit erlang\n">>}]
-	      end,
-    [{put_chars, unicode,<<"  c [nn]            - connect to job\n">>},
-     {put_chars, unicode,<<"  i [nn]            - interrupt job\n">>},
-     {put_chars, unicode,<<"  k [nn]            - kill job\n">>},
-     {put_chars, unicode,<<"  j                 - list all jobs\n">>},
-     {put_chars, unicode,<<"  s [shell]         - start local shell\n">>},
-     {put_chars, unicode,<<"  r [node [shell]]  - start remote shell\n">>}] ++
+                  true ->
+                      [];
+                  false ->
+                      [{put_chars, unicode,~"  q                 - quit erlang\n"}]
+              end,
+    [{put_chars, unicode,~"  c [nn]            - connect to job\n"},
+     {put_chars, unicode,~"  i [nn]            - interrupt job\n"},
+     {put_chars, unicode,~"  k [nn]            - kill job\n"},
+     {put_chars, unicode,~"  j                 - list all jobs\n"},
+     {put_chars, unicode,~"  s [shell]         - start local shell\n"},
+     {put_chars, unicode,~"  r [node [shell]]  - start remote shell\n"}] ++
         QuitReq ++
-        [{put_chars, unicode,<<"  ? | h             - this message\n">>}].
+        [{put_chars, unicode,~"  ? | h             - this message\n"}].
 
 group_opts(Node) ->
     VersionString = erpc:call(Node, erlang, system_info, [otp_release]),
@@ -910,6 +941,12 @@ io_request({put_chars_sync, unicode, Chars, Reply}, TTY) ->
     {Output, NewTTY} = prim_tty:handle_request(TTY, {putc, unicode:characters_to_binary(Chars)}),
     {ok, MonitorRef} = prim_tty:write(NewTTY, Output, self()),
     {Reply, MonitorRef, NewTTY};
+io_request({put_ansi_sync, Options, Ansi, Reply}, TTY) ->
+    try io_ansi:format([Ansi], [], [{reset,false}|Options]) of
+        AnsiVTS ->
+            io_request({put_chars_sync, unicode, AnsiVTS, Reply}, TTY)
+    catch _:_ -> {Reply, {error, {put_ansi, unicode, Ansi}}}
+    end;
 io_request({put_expand, unicode, Chars, N}, TTY) ->
     write(prim_tty:handle_request(TTY, {expand, unicode:characters_to_binary(Chars), N}));
 io_request({move_expand, N}, TTY) ->
@@ -1005,7 +1042,7 @@ handle_req(next, TTYState, {false, IOQ} = IOQueue) ->
                 {Reply, MonitorRef, NewTTYState} ->
                     {NewTTYState, {{Origin, MonitorRef, Reply}, ExecQ}};
                 {Reply, {error, Reason}} ->
-                    Origin ! {reply, Reply, {error, Reason}},
+                    _ = reply_to_origin(Origin, Reply, {error, Reason}),
                     handle_req(next, TTYState, {false, ExecQ})
             end
     end;
@@ -1018,12 +1055,17 @@ handle_req(Msg, TTYState, {false, IOQ} = IOQueue) ->
         {Reply, MonitorRef, NewTTYState} ->
             {NewTTYState, {{Origin, MonitorRef, Reply}, IOQ}};
         {Reply, {error, Reason}} ->
-            Origin ! {reply, Reply, {error, Reason}},
+            _ = reply_to_origin(Origin, Reply, {error, Reason}),
             {TTYState, IOQueue}
     end;
 handle_req(Msg,TTYState,{Resp, IOQ}) ->
     %% All requests are queued when we have outstanding sync put_chars
     {TTYState, {Resp, queue:in(Msg,IOQ)}}.
+
+reply_to_origin({statem_reply, From}, _Reply, Resp) ->
+    gen_statem:reply(From, Resp);
+reply_to_origin(Origin, Reply, Resp) ->
+    Origin ! {reply, Reply, Resp}.
 
 %% gr_new()
 %% gr_get_num(Group, Index)
@@ -1096,6 +1138,5 @@ gr_list(#gr{ current = Current, groups = Groups}) ->
          (#group{ index = I, shell = S }) ->
               Marker = ["*" || Current =:= I],
               [{put_chars, unicode,
-                unicode:characters_to_binary(
-                  io_lib:format("~4w~.1ts ~w\n", [I,Marker,S]))}]
+                  io_lib:bformat("~4w~.1ts ~w\n", [I,Marker,S])}]
       end, Groups).

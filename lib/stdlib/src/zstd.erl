@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2023-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2023-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -213,7 +213,7 @@ To reset the context to not use any dictionary use the empty dictionary, that is
 -export([compress/1, compress/2, decompress/1, decompress/2]).
 
 %% Streaming API
--export([context/1, context/2, stream/2, flush/2, finish/2, set_parameter/3,
+-export([context/1, context/2, stream/2, flush/1, finish/2, set_parameter/3,
          get_parameter/2, reset/1, close/1]).
 
 %% Dict API
@@ -517,40 +517,31 @@ Example:
 ```
 1> {ok, CCtx} = zstd:context(compress).
 2> {continue, C1} = zstd:stream(CCtx, ~"hello").
-3> {continue, C2} = zstd:flush(CCtx, ~"").
+3> {continue, C2} = zstd:flush(CCtx).
 4> zstd:decompress([C1, C2]).
 [<<"hello">>]
 ```
 """.
 -doc #{ since => "OTP 29.0" }.
--spec flush(Ctx :: context(), Data :: iodata()) -> Result when
-      Result :: {continue, Remainder :: erlang:iovec(), Output :: binary()} |
-                {continue, Output :: binary()}.
-flush({compress, Ref}, Data) when is_binary(Data) ->
-    case compress_stream_nif(Ref, Data, ?ZSTD_e_flush) of
+-spec flush(Ctx :: context()) -> Result when
+      Result :: {continue, Output :: binary()}.
+flush({compress, Ref} = Ctx) ->
+    %% Note that we don't (yet) support providing arbitrary data here, as it's
+    %% unclear what happens when ?ZSTD_e_flush is called multiple times with
+    %% additional data each time. Adding a flush/2 variant later on is trivial
+    %% and can be done in a minor release.
+    case compress_stream_nif(Ref, <<>>, ?ZSTD_e_flush) of
+        {continue, _} = Res ->
+            Res;
         {done, Output} ->
             {continue, Output};
-        Res ->
-            Res
+        {flush, Output0} ->
+            %% This is a corner case encountered only with the debug emulator,
+            %% which has a much narrower internal buffer.
+            {continue, Output} = flush(Ctx),
+            {continue, iolist_to_binary([Output0, Output])}
     end;
-flush(Ctx, Data) when is_list(Data) ->
-    %% Handle iodata similar to stream/2
-    try erlang:iolist_to_iovec(Data) of
-        [] ->
-            flush(Ctx, <<>>);
-        [H] ->
-            flush(Ctx, H);
-        [H|T] ->
-            case flush(Ctx, H) of
-                {continue, Rem, Out} ->
-                    {continue, [Rem | T], Out};
-                {continue, Out} ->
-                    {continue, T, Out}
-            end
-    catch _:_ ->
-            error(badarg)
-    end;
-flush(Ctx={decompress, _}, _) ->
+flush(Ctx={decompress, _}) ->
     error({badarg, {invalid_context, Ctx}}).
 
 -doc """
@@ -685,7 +676,11 @@ compress(Data, Options) when is_map(Options) ->
         close(Ref)
     end;
 compress(Data, {compress, Ref}) ->
-    IOV = erlang:iolist_to_iovec(Data),
+    IOV = case erlang:iolist_to_iovec(Data) of
+        %% Empty data must still become an empty compressed frame.
+        [] -> [<<>>];
+        IOV0 -> IOV0
+    end,
     ok = set_pledged_src_size_nif(Ref, erlang:iolist_size(IOV)),
     codec_loop(fun compress_stream_nif/3,
                Ref,

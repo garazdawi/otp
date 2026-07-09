@@ -28,7 +28,6 @@ include $(ERL_TOP)/make/$(TARGET)/otp.mk
 # ----------------------------------------------------
 APPLICATION=Erlang/OTP
 VSN=$(shell cat $(ERL_TOP)/OTP_VERSION)
-
 APP_DIR=../../../lib/erl_interface
 INDEX_DIR=.
 HTMLDIR=../../../doc
@@ -44,21 +43,14 @@ TESTING=common_test eunit
 DOCUMENTATION=edoc
 SYSTEM:=$(shell awk -F: '{print $$1}' ../guides)
 
-# The applications skipped by $(ERL_TOP)/configure are not added SKIP-APPLICATIONS.
-# Solution: read both SKIP-APPLICATIONS and names of libraries which contain a lib/*/SKIP file.
-# $(pathsubst %/,%,_) clears trailing slash, $(dir _) = directory name, $(notdir _) = last component of the path
-SKIP_FILE := $(wildcard $(ERL_TOP)/lib/SKIP-APPLICATIONS)
-SKIP_APPLICATIONS=$(if $(SKIP_FILE),$(shell cat $(ERL_TOP)/lib/SKIP-APPLICATIONS),) \
-                  $(foreach f,$(wildcard $(ERL_TOP)/lib/*/SKIP),$(notdir $(patsubst %/,%,$(dir $(f)))))
-
 REDIRECTS=$(foreach guide,$(SYSTEM),system/$(guide).md) \
-	$(foreach app, $(filter-out $(SKIP_APPLICATIONS),$(CORE)),          core/$(app).md) \
-	$(foreach app, $(filter-out $(SKIP_APPLICATIONS),$(DATABASE)),      database/$(app).md) \
-	$(foreach app, $(filter-out $(SKIP_APPLICATIONS),$(OAM)),           oam/$(app).md) \
-	$(foreach app, $(filter-out $(SKIP_APPLICATIONS),$(INTERFACES)),    interfaces/$(app).md) \
-	$(foreach app, $(filter-out $(SKIP_APPLICATIONS),$(TOOLS)),         tools/$(app).md) \
-	$(foreach app, $(filter-out $(SKIP_APPLICATIONS),$(TESTING)),       testing/$(app).md) \
-	$(foreach app, $(filter-out $(SKIP_APPLICATIONS),$(DOCUMENTATION)), documentation/$(app).md)
+	$(foreach app,$(CORE),core/$(app).md) \
+	$(foreach app,$(DATABASE),database/$(app).md) \
+	$(foreach app,$(OAM),oam/$(app).md) \
+	$(foreach app,$(INTERFACES),interfaces/$(app).md) \
+	$(foreach app,$(TOOLS),tools/$(app).md) \
+	$(foreach app,$(TESTING),testing/$(app).md) \
+	$(foreach app,$(DOCUMENTATION),documentation/$(app).md)
 
 # ----------------------------------------------------
 # Targets

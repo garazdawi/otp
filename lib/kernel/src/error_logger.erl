@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -102,7 +102,7 @@ catch-all clause last in the definition of the event handler callback function
 `c:gen_event:handle_info/2`, as the event handler must also take care of some
 system-internal messages.
 
-## See Also
+### See Also
 
 `m:gen_event`, `m:logger`, `m:log_mf_h`, [`kernel`](kernel_app.md),
 [`sasl`](`e:sasl:sasl_app.md`)

@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2010-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2010-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -81,7 +81,9 @@
          match_state_arg/1,
          pid/1,
          id/1,
-         nif_term_type/1
+         nif_term_type/1,
+         nif_term_size/1,
+         nif_atom_out_cache_index/1
 	]).
 
 -export([many_args_100/100]).
@@ -197,6 +199,9 @@
        is_pid_undefined_nif/1,
        compare_pids_nif/2,
        term_type_nif/1,
+       term_size_nif/1,
+       atom_out_cache_index_nif/1,
+       max_atom_out_cache_index_nif/0,
        dynamic_resource_call/4,
        msa_find_y_nif/1
       ]).
@@ -251,7 +256,9 @@ all() ->
      nif_ioq,
      match_state_arg,
      pid,
-     nif_term_type].
+     nif_term_type,
+     nif_term_size,
+     nif_atom_out_cache_index].
 
 init_per_suite(Config) ->
     erts_debug:set_internal_state(available_internal_state, true),
@@ -1314,6 +1321,12 @@ select_steal_child_process(Parent, RFd) ->
 %% @doc Similar to select/1 test, make a double ended pipe. Then try to steal
 %% the socket, see what happens.
 select_steal(Config) when is_list(Config) ->
+    case os:type() of
+        {unix,sunos} -> {skip, "TEMPORARY SKIP"};
+        _ -> select_steal_do(Config)
+    end.
+
+select_steal_do(Config) ->
     ensure_lib_loaded(Config),
 
     Ref = make_ref(),
@@ -2283,6 +2296,11 @@ maps(Config) when is_list(Config) ->
     true = (M6 =:= #{}),
 
     has_duplicate_keys = maps_from_list_nif([{1,1},{1,1}]),
+
+    %% Duplicate keys with > MAP_SMALL_MAP_LIMIT (32) entries must also
+    %% be rejected (GH-#10975)
+    DupPairs = [{I rem 2, I} || I <- lists:seq(0, 33)],
+    has_duplicate_keys = maps_from_list_nif(DupPairs),
 
     verify_tmpmem(TmpMem),
     ok.
@@ -4533,6 +4551,32 @@ nif_term_type(Config) ->
 
     ok.
 
+nif_term_size(Config) ->
+    ensure_lib_loaded(Config),
+    0 = term_size_nif(atom),
+    0 = term_size_nif(42),
+    true = term_size_nif(<<"binary data">>) > 0,
+    true = term_size_nif({tuple,<<"binary data">>,atom,[list]}) > 0.
+
+nif_atom_out_cache_index(Config) ->
+    ensure_lib_loaded(Config),
+
+    Max = erts_debug:get_internal_state(max_atom_out_cache_index),
+    Max = max_atom_out_cache_index_nif(),
+
+    Atoms = [atom, nif_atom_out_cache_index, lists],
+    lists:foreach(
+      fun(Atom) ->
+              Index = atom_out_cache_index_nif(Atom),
+              true = is_integer(Index),
+              true = 0 =< Index andalso Index =< Max,
+              Index = erts_debug:get_internal_state({atom_out_cache_index, Atom})
+      end,
+      Atoms),
+
+    {'EXIT', {badarg, _}} = (catch atom_out_cache_index_nif(42)),
+    ok.
+
 %% Verify match state arguments are not passed to declared NIFs.
 match_state_arg(Config) ->
     ensure_lib_loaded(Config),
@@ -4684,6 +4728,9 @@ is_pid_undefined_nif(_) -> ?nif_stub.
 compare_pids_nif(_, _) -> ?nif_stub.
 
 term_type_nif(_) -> ?nif_stub.
+term_size_nif(_) -> ?nif_stub.
+atom_out_cache_index_nif(_) -> ?nif_stub.
+max_atom_out_cache_index_nif() -> ?nif_stub.
 
 dynamic_resource_call(_,_,_,_) -> ?nif_stub.
 

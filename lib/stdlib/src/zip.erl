@@ -2506,18 +2506,18 @@ file_header_ctime_to_datetime(FH) ->
 dos_date_time_to_datetime(DosDate, DosTime) ->
     <<Hour:5, Min:6, DoubleSec:5>> = <<DosTime:16>>,
     <<YearFrom1980:7, Month:4, Day:5>> = <<DosDate:16>>,
-
-    Datetime = {{YearFrom1980+1980, Month, Day},
-                {Hour, Min, DoubleSec * 2}},
+    Date = {YearFrom1980+1980, Month, Day},
     if DoubleSec > 29 ->
             %% If DoubleSec * 2 > 59, something is broken
             %% with this archive, but unzip wraps the value
             %% so we do the same by converting to greg seconds
             %% and then back again.
-            calendar:gregorian_seconds_to_datetime(
-              calendar:datetime_to_gregorian_seconds(Datetime));
+            Datetime0 = {Date, {Hour, Min, 0}},
+            GSec0 = calendar:datetime_to_gregorian_seconds(Datetime0),
+            GSec = GSec0 + DoubleSec * 2,
+            calendar:gregorian_seconds_to_datetime(GSec);
        true ->
-            Datetime
+            {Date, {Hour, Min, DoubleSec * 2}}
     end.
 
 dos_date_time_from_datetime({{Year, _Month, _Day}, {_Hour, _Min, _Sec}}) when Year < 1980 ->

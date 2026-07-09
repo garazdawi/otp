@@ -3,7 +3,7 @@
 
 SPDX-License-Identifier: Apache-2.0
 
-Copyright Ericsson AB 2023-2025. All Rights Reserved.
+Copyright Ericsson AB 2023-2026. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,6 +22,440 @@ limitations under the License.
 # STDLIB Release Notes
 
 This document describes the changes made to the STDLIB application.
+
+## STDLIB 8.0.2
+
+### Fixed Bugs and Malfunctions
+
+- Several compiler bugs that could crash the compiler or generate incorrect code in rare circumstances have been fixed.
+
+  Own Id: OTP-20222 Aux Id: [PR-11219]
+
+[PR-11219]: https://github.com/erlang/otp/pull/11219
+
+## STDLIB 8.0.1
+
+### Fixed Bugs and Malfunctions
+
+- Fix a bug where a tuple record operation within a native record anonymous update can crash.
+
+  Own Id: OTP-20151 Aux Id: [PR-11141]
+
+- Fixed some bugs in `io_lib:bformat/2` and native record printing.
+
+  Own Id: OTP-20170 Aux Id: [PR-11154]
+
+[PR-11141]: https://github.com/erlang/otp/pull/11141
+[PR-11154]: https://github.com/erlang/otp/pull/11154
+
+## STDLIB 8.0
+
+### Fixed Bugs and Malfunctions
+
+- Fixed an issue in `digraph_utils:roots/1` where roots could be missed in some cases.
+
+  Own Id: OTP-19932 Aux Id: [PR-10510]
+
+- `beam_lib:strip/1` will now retain the Beam debug information chunk produced by the `beam_debug_info` option. The chunk will also be retained when combing the `beam_debug_info` option with the undocumented `slim` option.
+  
+  The runtime system will no longer crash when attempting to load modules that have been compiled with `beam_debug_info` but lack the actual Beam debug info chunk.
+
+  Own Id: OTP-19991 Aux Id: [GH-10557], [PR-10735]
+
+- Fixed a crash when `zstd:compress/2` was asked to compress empty data.
+
+  Own Id: OTP-20001 Aux Id: [PR-10653], [GH-10650]
+
+- Replaced a sleep clause in user_drv shutdown with a flush of the output buffer.
+
+  Own Id: OTP-20124 Aux Id: [PR-10808]
+
+- The `calendar:seconds_to_time/1` function now checks the range for each of the components of a time tuple (`{Hours,Minutes,Seconds}`) and fail with an exception if a component is out of range.
+
+  Own Id: OTP-20125 Aux Id: [PR-11069]
+
+[PR-10510]: https://github.com/erlang/otp/pull/10510
+[GH-10557]: https://github.com/erlang/otp/issues/10557
+[PR-10735]: https://github.com/erlang/otp/pull/10735
+[PR-10653]: https://github.com/erlang/otp/pull/10653
+[GH-10650]: https://github.com/erlang/otp/issues/10650
+[PR-10808]: https://github.com/erlang/otp/pull/10808
+[PR-11069]: https://github.com/erlang/otp/pull/11069
+
+### Improvements and New Features
+
+- Error return values from functions in `m:zip` now also specify which file in the archive the error belongs to.
+
+  Own Id: OTP-19663 Aux Id: [PR-9899]
+
+- The legacy `and` and `or` operators have been replaced with other language constructs.
+
+  Own Id: OTP-19744 Aux Id: [PR-10114], [PR-10554], [PR-10568], [PR-10579], [PR-10585], [PR-10598], [PR-10710], [PR-10718], [PR-10580], [PR-10730]
+
+- The undocumented and unsupported function `lists:zf/2` is now deprecated.
+
+  Own Id: OTP-19783 Aux Id: [PR-10161]
+
+- Native records as described in [EEP-79](https://www.erlang.org/eeps/eep-0079) has been implemented.
+  
+  A native record is a data structure similar to the traditional tuple-based records, except that is a true data type.
+  
+  Native records are considered experimental in Erlang/OTP 29 and possibly also in Erlang/OTP 30, meaning that their behavior may change, potentially requiring updates to applications that use them.
+
+  Own Id: OTP-19785 Aux Id: [PR-10617]
+
+- The new `supervior:stop/1,2` functions can be used to manage the dynamic parts of a supervisor tree in an application from outside the tree but in the same application.
+
+  Own Id: OTP-19800 Aux Id: [PR-9209]
+
+- Added a new constructor `array:from/2`.
+
+  Own Id: OTP-19815 Aux Id: [PR-10304]
+
+- There are new functions for random permutation of a list: `rand:shuffle/1` and `rand:shuffle_s/2`. They are inspired by a suggestion and discussion on ErlangForums.
+
+  Own Id: OTP-19826 Aux Id: [PR-10281]
+
+- The undocumented functions `erl_eval:extended_parse_exprs/1` and `erl_eval:extended_parse_term/1` will now be faster when called with a long list of tokens. (These functions are used by `m:qlc` and the shell.)
+
+  Own Id: OTP-19838 Aux Id: [PR-10338]
+
+- The `m:unicode` module now supports the Unicode 17 standard.
+
+  Own Id: OTP-19853 Aux Id: [PR-10382]
+
+- Added functions to `m:unicode` for recognizing whitespaces and identifiers.
+
+  Own Id: OTP-19858 Aux Id: [PR-10387]
+
+- The `rand:bytes/1` and `rand:bytes_s/2` functions have been optimized by implementing a new internal callback function that `crypto:rand_seed_alg/1` and `crypto:alg_seed_alg_s/1` have been updated to use.
+  
+  A new algorithm `crypto_prng1`, which also takes advantage of this new internal callback, has been added to `crypto:rand_seed_alg/2` and `crypto:rand_seed_alg_s/2`.  It is much faster then the existing `crypto_aes`, in particular for generating bytes.
+
+  Own Id: OTP-19882 Aux Id: OTP-19827, [PR-10453]
+
+- There will now be a warning when exporting variables out of a subexpression. For example:
+  
+  ```
+  case file:open(File, AllOpts = [write,{encoding,utf8}]) of
+      {ok,Fd} ->
+          {Fd,AllOpts}
+  end
+  ```
+  
+  To avoid the warning, this can be rewritten to:
+  
+  ```
+  AllOpts = [write,{encoding,utf8}],
+  case file:open(File, AllOpts) of
+      {ok,Fd} ->
+          {Fd,AllOpts}
+  end
+  ```
+  
+  The warning can be suppressed by giving option `nowarn_export_var_subexpr` to the compiler.
+
+  Own Id: OTP-19898 Aux Id: [PR-9134]
+
+- There are new functions in the shell for returning process information.
+  
+  The `pi/1` function is shortcut for `erlang:process_info/1`. The `pi/3` function takes the three numbers from a pid, constructs a pid, and calls `process_info/1`.
+  
+  Examples:
+  
+  ```
+  1> pi(<0.90.0>).
+  [{current_function,{c,pinfo,1}},
+  {initial_call,{erlang,apply,2}},
+  {status,running},
+  ...
+  2> pi(0, 90, 0).
+  [{current_function,{c,pinfo,1}},
+  {initial_call,{erlang,apply,2}},
+  {status,running},
+  ...
+  ```
+
+  Own Id: OTP-19903 Aux Id: [PR-10422]
+
+- Tools such as the debugger, `m:beam_lib`, and `m:xref` no longer support BEAM files created before OTP 13B.
+
+  Own Id: OTP-19906 Aux Id: [PR-10519]
+
+- The `m:calendar` module has been updated to use the much faster than before Neri-Schneider algorithm for Gregorian calendar calculations, and been extended to handle negative years.
+
+  Own Id: OTP-19912 Aux Id: [PR-10449]
+
+- `graph` is a new module that is a functional equivalent of the `m:digraph` and `m:digraph_utils` modules.
+
+  Own Id: OTP-19922 Aux Id: [PR-10532]
+
+- Before Erlang/OTP 29, attempting to bind variables in a comprehension would compile successfully but fail at runtime. Example:
+  
+  ```
+  1> fh(List) -> [H || E <- List, H = erlang:phash2(E), H rem 10 =:= 0].
+  ok
+  2> fh(lists:seq(1, 10)).
+  * exception error: bad filter 2614250
+  ```
+  
+  In Erlang/OTP 29, attempting to bind a variable in a comprehension will fail by default:
+  
+  ```
+  1> fh(List) -> [H || E <- List, H = erlang:phash2(E), H rem 10 =:= 0].
+  * 5:14: matches using '=' are not allowed in comprehension qualifiers
+  unless the experimental 'compr_assign' language feature is enabled.
+  With 'compr_assign' enabled, a match 'P = E' will behave as a
+  strict generator 'P <-:- [E]'."
+  ```
+  
+  However, this example will work as expected if the `compr_assign` feature is enabled when starting the runtime system:
+  
+  ```
+  $ erl -enable-feature compr_assign
+  . . .
+  1> fh(List) -> [H || E <- List, H = erlang:phash2(E), H rem 10 =:= 0].
+  ok
+  2> fh(lists:seq(1, 10)).
+  [2614250]
+  ```
+  Here is another example how `compr_assign` can be used:
+  
+  ```
+  -module(example).
+  -feature(compr_assign, enable).
+  -export([cat/1]).
+  
+  cat(Files) ->
+      [Char || F <- Files,
+               {ok, Bin} = file:read_file(F),
+               Char <- unicode:characters_to_list(Bin)].
+  ```
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-19927 Aux Id: [PR-9153]
+
+- Removed the undocumented `dyn_erl` utility.
+
+  Own Id: OTP-19933 Aux Id: [PR-10573]
+
+- The functions `erl_tar:add/3` and `erl_tar:add/4` now accepts the `{mode,Mode}` option for setting the permission of the file.
+
+  Own Id: OTP-19934 Aux Id: [PR-10524]
+
+- Added `zstd:flush/2` for flushing compressed data without closing the compression context.
+
+  Own Id: OTP-19936 Aux Id: [GH-10345], [PR-10511]
+
+- There will now be a warning when using the `catch` operator, which has been deprecated for a long time.
+  
+  It is recommended to instead use `try`...`catch`...`end` but is also possible to disable the warning by using the `nowarn_deprecated_catch` option.
+
+  Own Id: OTP-19938 Aux Id: [PR-10421]
+
+- Multi-valued comprehensions according to [EEP 78](https://www.erlang.org/eeps/eep-0078) has been implemented.
+  
+  Example:
+  
+  ```erlang
+  > [I, -I || I <- lists:seq(1, 5)].
+  [1,-1,2,-2,3,-3,4,-4,5,-5]
+  ```
+
+  Own Id: OTP-19942 Aux Id: [PR-9374]
+
+- There will now be a warning for matches that unify constructors, such as the following:
+  
+  ```
+  m({a,B} = {Y,Z}) -> . . .
+  ```
+  
+  Such a match can be rewritten to:
+  
+  ```
+  m({a=Y,B=Y}) -> . . .
+  ```
+  
+  The compiler option `nowarn_match_alias_pats` can be used to disable the warning.
+
+  Own Id: OTP-19943 Aux Id: [PR-10433]
+
+- While the iteration order for maps is undefined, it is now guaranteed that all ways of iterating over maps provides the elements in the same order. That is, all of the following ways of iterating will produce the elements in the same order:
+  
+  * `maps:keys/1`
+  * `maps:values/1`
+  * `maps:to_list/1`
+  * `maps:to_list(maps:iterator(M))`
+  * Map comprehension: `[{K,V} || K := V <- M]`
+
+  Own Id: OTP-19963 Aux Id: [PR-10626]
+
+- The `array` module have been extended with several new functions.
+  The internal representation have been changed to allow the new functionality and optimizations.
+  Arrays serialized with `term_to_binary/1` in previous releases are not compatible.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-20004 Aux Id: [PR-10578]
+
+- `m:erl_tar` will use less memory when extracting large tar entries to disk. Instead of reading each tar entry into memory, `m:erl_tar` will now stream data in chunks of 64KB. The chunk size is settable using the new `{chunks,ChunkSize}` option.
+  
+  The new `{max_size,Size}` option will set a limit on the total size of extracted data to protect against filling up the disk.
+  
+  Checking of symlinks has been improved. Some symlinks that were safe (such as `dir/link -> ../file`) used to be rejected.
+
+  Own Id: OTP-20023 Aux Id: [PR-10814], [PR-10818], [PR-10821]
+
+- Added a new module called `io_ansi` that allows the user to emit Virtual Terminal Sequences (a.k.a. ANSI sequences) to the terminal in order to add colors/styling to text or create fully-fledged terminal applications.
+  
+  `io_ansi` uses the local terminfo database in order to be as cross-platform compatible as possible.
+  
+  It also works across nodes so that if functions on a remote node call `io_ansi:fwrite/1` it will use the destination terminal's terminfo database to determine which sequences to emit. In practice, this means that you can call functions in a remote shell session that use `io_ansi` and it will properly detect the terminal sequences the target terminal can handle and will print using them correctly.
+
+  Own Id: OTP-20028 Aux Id: [PR-9940], [PR-10905]
+
+- Polished the documentation groups, essentially removed groups that did nothing but obscure the documentation.
+
+  Own Id: OTP-20029 Aux Id: [PR-10755]
+
+- The `gb_sets:from_ordset/1` and `gb_trees:from_orddict/1` functions would trust their inputs. If the input contained duplicates or was not properly sorted, the resulting gb_set or gb_tree would be invalid, and any number of interesting problems could occur.
+  
+  In this release, these functions will raise an exception if their input is not valid. That could mean that incorrect programs that **seemed** to work could now stop working altogether.
+  
+  There is also a new `gb_trees:from_list/1` function for directly creating a gb_tree from a list.
+
+  *** POTENTIAL INCOMPATIBILITY ***
+
+  Own Id: OTP-20061 Aux Id: [PR-10910]
+
+- Added support for `-unsafe` attributes, which is used to mark functions as unsafe to use. 
+  
+  This is similar to but separate from deprecation, and the compiler will by default now generate warnings for calls to functions in Erlang/OTP that are known to be always unsafe.
+  
+  Furthermore, `m:xref` can now be used to find calls to functions in another application that lack a `-doc` attribute (`undocumented_function_calls`), calls to functions in another application marked `-doc false.` (`private_function_calls`), as well as calls to unsafe functions (`unsafe_function_calls`).
+
+  Own Id: OTP-20066 Aux Id: [PR-10839]
+
+- The `m:json` module now encodes and decodes quoted strings faster. Improvements of up to 55 percent has been measured when decoding JSON data with long strings.
+  
+  The `string:length/1`, `string:slice/2`, and `string:slice/3` functions have been optimized. For some strings, they can be up to twice as fast.
+
+  Own Id: OTP-20072 Aux Id: [PR-10938], [PR-10948]
+
+[PR-9899]: https://github.com/erlang/otp/pull/9899
+[PR-10114]: https://github.com/erlang/otp/pull/10114
+[PR-10554]: https://github.com/erlang/otp/pull/10554
+[PR-10568]: https://github.com/erlang/otp/pull/10568
+[PR-10579]: https://github.com/erlang/otp/pull/10579
+[PR-10585]: https://github.com/erlang/otp/pull/10585
+[PR-10598]: https://github.com/erlang/otp/pull/10598
+[PR-10710]: https://github.com/erlang/otp/pull/10710
+[PR-10718]: https://github.com/erlang/otp/pull/10718
+[PR-10580]: https://github.com/erlang/otp/pull/10580
+[PR-10730]: https://github.com/erlang/otp/pull/10730
+[PR-10161]: https://github.com/erlang/otp/pull/10161
+[PR-10617]: https://github.com/erlang/otp/pull/10617
+[PR-9209]: https://github.com/erlang/otp/pull/9209
+[PR-10304]: https://github.com/erlang/otp/pull/10304
+[PR-10281]: https://github.com/erlang/otp/pull/10281
+[PR-10338]: https://github.com/erlang/otp/pull/10338
+[PR-10382]: https://github.com/erlang/otp/pull/10382
+[PR-10387]: https://github.com/erlang/otp/pull/10387
+[PR-10453]: https://github.com/erlang/otp/pull/10453
+[PR-9134]: https://github.com/erlang/otp/pull/9134
+[PR-10422]: https://github.com/erlang/otp/pull/10422
+[PR-10519]: https://github.com/erlang/otp/pull/10519
+[PR-10449]: https://github.com/erlang/otp/pull/10449
+[PR-10532]: https://github.com/erlang/otp/pull/10532
+[PR-9153]: https://github.com/erlang/otp/pull/9153
+[PR-10573]: https://github.com/erlang/otp/pull/10573
+[PR-10524]: https://github.com/erlang/otp/pull/10524
+[GH-10345]: https://github.com/erlang/otp/issues/10345
+[PR-10511]: https://github.com/erlang/otp/pull/10511
+[PR-10421]: https://github.com/erlang/otp/pull/10421
+[PR-9374]: https://github.com/erlang/otp/pull/9374
+[PR-10433]: https://github.com/erlang/otp/pull/10433
+[PR-10626]: https://github.com/erlang/otp/pull/10626
+[PR-10578]: https://github.com/erlang/otp/pull/10578
+[PR-10814]: https://github.com/erlang/otp/pull/10814
+[PR-10818]: https://github.com/erlang/otp/pull/10818
+[PR-10821]: https://github.com/erlang/otp/pull/10821
+[PR-9940]: https://github.com/erlang/otp/pull/9940
+[PR-10905]: https://github.com/erlang/otp/pull/10905
+[PR-10755]: https://github.com/erlang/otp/pull/10755
+[PR-10910]: https://github.com/erlang/otp/pull/10910
+[PR-10839]: https://github.com/erlang/otp/pull/10839
+[PR-10938]: https://github.com/erlang/otp/pull/10938
+[PR-10948]: https://github.com/erlang/otp/pull/10948
+
+## STDLIB 7.3
+
+### Fixed Bugs and Malfunctions
+
+- Fixed functions `ets:init_table/2`, [`ets:tab2file/2,3`](`ets:tab2file/2`), [`ets:table/1,2`](`ets:table/1`), [`ets:i/0,1`](`ets:i/0`), `dets:from_ets/2`, and `dets:to_ets/2` to resolve named table arguments only once. This will prevent strange effects if the named table is deleted and recreated by a concurrent process.
+
+  Own Id: OTP-19911 Aux Id: [PR-10536]
+
+- Corrected the `af_zip_generator()` type in the parser and `syntax_tools`.
+
+  Own Id: OTP-19939
+
+- For a function that started with a bracket-only pattern (such as `[]`), the `?FUNCTION_ARITY` macro would evaluate to one less than the actual arity.
+
+  Own Id: OTP-19988 Aux Id: [GH-10705], [PR-10708]
+
+[PR-10536]: https://github.com/erlang/otp/pull/10536
+[GH-10705]: https://github.com/erlang/otp/issues/10705
+[PR-10708]: https://github.com/erlang/otp/pull/10708
+
+### Improvements and New Features
+
+- Added support for `zstd` compression in the `m:file` module.
+
+  Own Id: OTP-19860 Aux Id: [PR-10385]
+
+- Release applications, tests, and documentation are now placed in their respective directories. Source SBOM with more packages.
+  
+  A `make release` application places only the necessary code in the release folder. The main change is that the documentation and examples are not part of the release folder anymore.
+  
+  `make release_docs` places the documentation in the released code under the `doc` folder.
+  
+  `make release_tests` places the tests in their own directory. It used to be the case that some source code was mixed with the tests, and this should not happen anymore.
+  
+  The Software Bill of Materials places the examples folders as if they are part of the `SPDX-otp-<app>-doc` packge, instead of placing examples as if they were running source code.
+  
+  Overall, this change cleans up many things that were not quite correct by definition, and everything should still continue to work as expected. To test a release, one can still run `./Install -minimal \`pwd\`` and add the release to the `PATH`. After that, one can run tests as usual, going into the released tests directory, entering `test_server` and running the emulator.
+  
+  Improves the source Software-Bill-of-Materials
+  
+  - The improvements adds new SPDX relations for `asmjit` and `zlib` to be `optional_components_of` the Erlang/OTP project.
+  - The `autoconf` scripts in `make` and `erts` have now been categorised as `build_tool_of` the Erlang/OTP project.
+  - All remaining `configure`, `configure.ac`, `config.h.in`, `Makefile.in`, `Makefile.src`, `EMakefile`, and `GNUMakefile` are now part of a specific SPDX package with relation `build_tool_of` the Erlang/OTP project.
+
+  Own Id: OTP-19886 Aux Id: [PR-10434]
+
+- The removal of the `m:slave` and `m:slave` modules have been postponed to Erlang/OTP 31.
+  
+  The partial removal of the archive feature has been postponed to Erlang/OTP 30.
+
+  Own Id: OTP-19989 Aux Id: [PR-10714]
+
+[PR-10385]: https://github.com/erlang/otp/pull/10385
+[PR-10434]: https://github.com/erlang/otp/pull/10434
+[PR-10714]: https://github.com/erlang/otp/pull/10714
+
+## STDLIB 7.2.1
+
+### Fixed Bugs and Malfunctions
+
+- Fixed bug in `ets:update_counter/4` and `ets:update_element/4` accepting and inserting a default tuple smaller than the `keypos` of the table. Such a tuple without a key element would make the table internally inconsistent and might lead to bad behavior at table access, like ERTS runtime crash.
+  
+  Now a call to `ets:update_counter/4` or `ets:update_element/4` will fail with `badarg` if the key does not exist in the table and the default tuple is too small.
+
+  Own Id: OTP-19962 Aux Id: [PR-10616]
+
+[PR-10616]: https://github.com/erlang/otp/pull/10616
 
 ## STDLIB 7.2
 
@@ -712,6 +1146,24 @@ This document describes the changes made to the STDLIB application.
 [PR-9705]: https://github.com/erlang/otp/pull/9705
 [PR-9680]: https://github.com/erlang/otp/pull/9680
 
+## STDLIB 6.2.2.3
+
+### Fixed Bugs and Malfunctions
+
+- Fixed bug in `ets:update_counter/4` and `ets:update_element/4` accepting and inserting a default tuple smaller than the `keypos` of the table. Such a tuple without a key element would make the table internally inconsistent and might lead to bad behavior at table access, like ERTS runtime crash.
+  
+  Now a call to `ets:update_counter/4` or `ets:update_element/4` will fail with `badarg` if the key does not exist in the table and the default tuple is too small.
+
+  Own Id: OTP-19962 Aux Id: [PR-10616]
+
+- For a function that started with a bracket-only pattern (such as `[]`), the `?FUNCTION_ARITY` macro would evaluate to one less than the actual arity.
+
+  Own Id: OTP-19988 Aux Id: [GH-10705], [PR-10708]
+
+[PR-10616]: https://github.com/erlang/otp/pull/10616
+[GH-10705]: https://github.com/erlang/otp/issues/10705
+[PR-10708]: https://github.com/erlang/otp/pull/10708
+
 ## STDLIB 6.2.2.2
 
 ### Fixed Bugs and Malfunctions
@@ -1399,6 +1851,19 @@ This document describes the changes made to the STDLIB application.
 [PR-8164]: https://github.com/erlang/otp/pull/8164
 [PR-8205]: https://github.com/erlang/otp/pull/8205
 [PR-8111]: https://github.com/erlang/otp/pull/8111
+
+## STDLIB 5.2.3.6
+
+### Fixed Bugs and Malfunctions
+
+* Fixed bug in `ets:update_counter/4` and `ets:update_element/4` accepting and inserting a default tuple smaller than the `keypos` of the table. Such a tuple without a key element would make the table internally inconsistent and might lead to bad behavior at table access, like ERTS runtime crash.
+
+  Now a call to `ets:update_counter/4` or `ets:update_element/4` will fail with `badarg` if the key does not exist in the table and the default tuple is too small.
+
+  Own Id: OTP-19962 Aux Id: PR-10616
+* For a function that started with a bracket-only pattern (such as `[]`), the `?FUNCTION_ARITY` macro would evaluate to one less than the actual arity.
+
+  Own Id: OTP-19988 Aux Id: GH-10705, PR-10708
 
 ## STDLIB 5.2.3.5
 

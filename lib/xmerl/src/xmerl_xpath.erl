@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2003-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -48,6 +48,7 @@ Some useful shell commands for debugging the XPath parser
 ```
 """.
 
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 %% main API
 -export([string/2,
@@ -93,17 +94,9 @@ Options to customize the behaviour of the XPath scanner.
 
 Possible options are:
 
-<dl>
- <dt><code>{namespace, #xmlNamespace}</code></dt>
-   <dd>Set namespace nodes, from XmlNamspace, in xmlContext</dd>
- <dt><code>{namespace, Nodes}</code></dt>
-   <dd>Set namespace nodes in xmlContext.</dd>
-</dl>
+ - **`{namespace, #xmlNamespace}`** - Set namespace nodes, from XmlNamspace, in xmlContext
+ - **`{namespace, Nodes}`** - Set namespace nodes in xmlContext.
 """.
-%% <dt><code>{bindings, Bs}</code></dt>
-%%  <dd></dd>
-%% <dt><code>{functions, Fs}</code></dt>
-%% <dd></dd>
 -type option_list() :: [{atom(),term()}].
 
 

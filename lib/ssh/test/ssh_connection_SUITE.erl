@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2008-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -112,6 +112,7 @@
          trap_exit_connect/1,
          trap_exit_daemon/1,
          handler_down_before_open/1,
+         replace_options_enable_services/1,
          ssh_exec_echo/2 % called as an MFA
         ]).
 
@@ -187,7 +188,8 @@ all() ->
      no_sensitive_leak,
      start_subsystem_on_closed_channel,
      max_channels_option,
-     handler_down_before_open
+     handler_down_before_open,
+     replace_options_enable_services
     ].
 groups() ->
     [{openssh, [], payload() ++ ptty() ++ sock()}].
@@ -245,6 +247,7 @@ init_per_testcase(_TestCase, Config) ->
     Config.
 
 end_per_testcase(_TestCase, _Config) ->
+    ssh_dbg:stop(),
     ssh:stop().
 
 verify_events(_TestCase, 0) -> ok;
@@ -277,24 +280,41 @@ simple_exec_sock(_Config) ->
 
 %%--------------------------------------------------------------------
 simple_exec_two_socks(_Config) ->
+    ssh_dbg:start(fun ct:log/2),
+    ssh_dbg:on([ssh_messages, tcp]),
     Parent = self(),
-    F = fun() ->
+    F = fun(Id) ->
                 spawn_link(
                   fun() ->
+                          ?CT_LOG("~p: connecting to sshd", [Id]),
                           {ok, Sock} = ssh_test_lib:gen_tcp_connect(?SSH_DEFAULT_PORT, [{active,false}]),
-                          {ok, ConnectionRef} = ssh:connect(Sock, [{save_accepted_host, false},
-                                                                   {silently_accept_hosts, true},
-                                                                   {user_interaction, true}]),
-                          Parent ! {self(),do_simple_exec(ConnectionRef)}
+                          case ssh:connect(Sock, [{save_accepted_host, false},
+                                                  {silently_accept_hosts, true},
+                                                  {user_interaction, true}]) of
+                              {ok, ConnectionRef} ->
+                                  ?CT_LOG("~p: connected ~p", [Id, ConnectionRef]),
+                                  Res = do_simple_exec(ConnectionRef),
+                                  ?CT_LOG("~p: exec result ~p", [Id, Res]),
+                                  Parent ! {self(), Res};
+                              {error, Reason} ->
+                                  ?CT_LOG("~p: ssh:connect failed ~p", [Id, Reason]),
+                                  Parent ! {self(), {error, Reason}}
+                          end
                   end)
         end,
-    Pid1 = F(),
-    Pid2 = F(),
+    Pid1 = F(1),
+    Pid2 = F(2),
+    collect_two_socks_result(Pid1, 1),
+    collect_two_socks_result(Pid2, 2).
+
+collect_two_socks_result(Pid, Id) ->
     receive
-        {Pid1,ok} -> ok
-    end,
-    receive
-        {Pid2,ok} -> ok
+        {Pid, ok} -> ok;
+        {Pid, {error, Reason}} -> ct:fail("~p: failed ~p", [Id, Reason])
+    after 30000 ->
+            ?CT_LOG("~p (~p): timeout waiting for result, process info:~n~p",
+                    [Id, Pid, erlang:process_info(Pid)]),
+            ct:fail("~p: timeout", [Id])
     end.
 
 %%--------------------------------------------------------------------
@@ -427,7 +447,8 @@ daemon_start(Config) ->
     {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, SysDir},
                                              {user_dir, UserDir},
                                              {password, "morot"},
-                                             {exec, fun ssh_exec_echo/1}]),
+                                             {exec, fun ssh_exec_echo/1},
+                                             {shell, {shell, start, []}}]),
     {Pid, Host, Port, UserDir}.
 
 %%--------------------------------------------------------------------
@@ -891,9 +912,10 @@ start_shell_exec(Config) when is_list(Config) ->
     file:make_dir(UserDir),
     SysDir = proplists:get_value(data_dir, Config),
     {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, SysDir},
-					     {user_dir, UserDir},
-					     {password, "morot"},
-					     {exec, {?MODULE,ssh_exec_echo,["foo"]}} ]),
+                                             {user_dir, UserDir},
+                                             {password, "morot"},
+                                             {exec, {?MODULE,ssh_exec_echo,["foo"]}},
+                                             {shell, {shell, start, []}}]),
 
     ConnectionRef = ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
 						      {user, "foo"},
@@ -901,7 +923,7 @@ start_shell_exec(Config) when is_list(Config) ->
 						      {user_interaction, true},
 						      {user_dir, UserDir}]),
     test_shell_is_enabled(ConnectionRef),
-    test_exec_is_enabled(ConnectionRef,  "testing",  <<"echo testing\r\n">>),
+    test_exec_is_enabled(ConnectionRef,  "testing",  <<"echo testing foo\r\n">>),
     ssh:close(ConnectionRef),
     ssh:stop_daemon(Pid).
 
@@ -912,9 +934,10 @@ exec_erlang_term(Config) when is_list(Config) ->
     file:make_dir(UserDir),
     SysDir = proplists:get_value(data_dir, Config),
     {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, SysDir},
-					     {user_dir, UserDir},
-					     {password, "morot"}
-                                            ]),
+                                             {user_dir, UserDir},
+                                             {password, "morot"},
+                                             {shell, {shell, start, []}},
+                                             {exec, erlang_eval}]),
 
     ConnectionRef = ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
 						      {user, "foo"},
@@ -955,10 +978,10 @@ exec_disabled(Config) when is_list(Config) ->
     file:make_dir(UserDir),
     SysDir = proplists:get_value(data_dir, Config),
     {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, SysDir},
-					     {user_dir, UserDir},
-					     {password, "morot"},
-                                             {exec, disabled}
-                                            ]),
+                                             {user_dir, UserDir},
+                                             {password, "morot"},
+                                             {exec, disabled},
+                                             {shell, {shell, start, []}}]),
     ConnectionRef = ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
 						      {user, "foo"},
 						      {password, "morot"},
@@ -978,7 +1001,8 @@ exec_shell_disabled(Config) when is_list(Config) ->
     {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, SysDir},
 					     {user_dir, UserDir},
 					     {password, "morot"},
-                                             {shell, disabled}
+                                             {shell, disabled},
+                                             {exec, erlang_eval}
                                             ]),
     ConnectionRef = ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
 						      {user, "foo"},
@@ -1768,11 +1792,12 @@ max_channels_option(Config) when is_list(Config) ->
     file:make_dir(UserDir),
     SysDir = proplists:get_value(data_dir, Config),
     {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, SysDir},
-					     {user_dir, UserDir},
-					     {password, "morot"},
-					     {max_channels, 3},
-					     {subsystems, [{"echo_n", {ssh_echo_server, [4000000]}}]}
-					    ]),
+                                             {user_dir, UserDir},
+                                             {password, "morot"},
+                                             {max_channels, 3},
+                                             {subsystems, [{"echo_n", {ssh_echo_server, [4000000]}}]},
+                                             {shell, {shell, start, []}},
+                                             {exec, erlang_eval}]),
 
     ConnectionRef = ssh_test_lib:connect(Host, Port, [{silently_accept_hosts, true},
 						      {user, "foo"},
@@ -2063,9 +2088,9 @@ test_shell_is_disabled(ConnectionRef, Expect, NotExpect) ->
         {ssh_cm, ConnectionRef, {data, ChannelId, 0, <<NotExpect:NotExpSz/binary, _/binary>>}} ->
             ct:fail("Could start disabled shell!");
 
-        R ->
-            ct:log("~p:~p Got unexpected ~p~nExpect: ~p~n",
-                   [?MODULE,?LINE,R, {ssh_cm, ConnectionRef, {data, ChannelId, '0|1', Expect}} ]),
+        {ssh_cm, _, _} = Unexpected ->
+            ct:log("~p:~p Got unexpected SSH msg ~p~nExpect: ~p~n",
+                   [?MODULE,?LINE,Unexpected, {ssh_cm, ConnectionRef, {data, ChannelId, '0|1', Expect}} ]),
             ct:fail("Strange shell response")
 
     after 5000 ->
@@ -2079,13 +2104,62 @@ test_exec_is_disabled(ConnectionRef) ->
     receive
         {ssh_cm, ConnectionRef, {data,ChannelId,1,<<"Prohibited.">>}} ->
             flush_msgs();
-        R ->
-            ct:log("~p:~p Got unexpected ~p~nExpect: ~p~n",
-                   [?MODULE,?LINE,R, {ssh_cm, ConnectionRef, {data,ChannelId,1,<<"Prohibited.">>}} ]),
+        {ssh_cm, _, _} = Unexpected ->
+            ct:log("~p:~p Got unexpected SSH msg ~p~nExpect: ~p~n",
+                   [?MODULE,?LINE,Unexpected, {ssh_cm, ConnectionRef, {data,ChannelId,1,<<"Prohibited.">>}} ]),
             ct:fail("Could exec erlang term although non-erlang shell")
     after 5000 ->
             ct:fail("Exec Timeout")
     end.
+
+%%--------------------------------------------------------------------
+replace_options_enable_services(Config) when is_list(Config) ->
+    PrivDir = proplists:get_value(priv_dir, Config),
+    UserDir = filename:join(PrivDir, nopubkey),
+    file:make_dir(UserDir),
+    SysDir = proplists:get_value(data_dir, Config),
+    {Pid, Host, Port} = ssh_test_lib:daemon([{system_dir, SysDir},
+                                             {user_dir, UserDir},
+                                             {password, "morot"}]),
+    ConnOpts = [{silently_accept_hosts, true},
+                {user, "foo"},
+                {password, "morot"},
+                {user_dir, UserDir}],
+
+    %% Verify all services disabled before replace
+    C1 = ssh_test_lib:connect(Host, Port, ConnOpts),
+    ?CT_LOG("Checking shell is disabled before replace", []),
+    test_shell_is_disabled(C1),
+    ?CT_LOG("Checking exec is disabled before replace", []),
+    test_exec_is_disabled(C1),
+    ?CT_LOG("Checking SFTP is unavailable before replace", []),
+    {error, _} = ssh_sftp:start_channel(C1),
+    ?CT_LOG("All services confirmed disabled", []),
+
+    %% Enable shell, exec and SFTP
+    %% Keep C1 open during replace — its connection_sup acts as a
+    %% keepalive preventing auto_shutdown of ssh_system_sup while
+    %% the acceptor is being restarted.
+    ?CT_LOG("Replacing options: enabling shell, exec and SFTP", []),
+    {ok, Pid} = ssh:daemon_replace_options(Pid,
+                    [{shell, {shell, start, []}},
+                     {exec, erlang_eval},
+                     {subsystems, [ssh_sftpd:subsystem_spec([])]}]),
+    ssh:close(C1),
+
+    %% Verify all services work after replace
+    C2 = ssh_test_lib:connect(Host, Port, ConnOpts),
+    ?CT_LOG("Checking shell is enabled after replace", []),
+    test_shell_is_enabled(C2),
+    ?CT_LOG("Checking exec is enabled after replace", []),
+    test_exec_is_enabled(C2),
+    ?CT_LOG("Checking SFTP is available after replace", []),
+    {ok, SftpPid} = ssh_sftp:start_channel(C2),
+    ssh_sftp:stop_channel(SftpPid),
+    ?CT_LOG("All services confirmed enabled after replace", []),
+
+    ssh:close(C2),
+    ssh:stop_daemon(Pid).
 
 %%--------------------------------------------------------------------
 test_shell_is_enabled(ConnectionRef) ->
@@ -2109,9 +2183,9 @@ test_shell_is_enabled(ConnectionRef, Expect, PtyOpts) ->
 	{ssh_cm,ConnectionRef, {data, ChannelId, 0, <<Expect:ExpSz/binary, _/binary>>}} ->
 	    flush_msgs();
 
-        R ->
-            ct:log("~p:~p Got unexpected ~p~nExpect: ~p~n",
-                   [?MODULE,?LINE,R, {ssh_cm, ConnectionRef, {data, ChannelId, 0, Expect}} ]),
+        {ssh_cm, _, _} = Unexpected ->
+            ct:log("~p:~p Got unexpected SSH msg ~p~nExpect: ~p~n",
+                   [?MODULE,?LINE,Unexpected, {ssh_cm, ConnectionRef, {data, ChannelId, 0, Expect}} ]),
             ct:fail("Strange shell response")
 
     after 5000 ->
@@ -2131,12 +2205,11 @@ test_exec_is_enabled(ConnectionRef, Exec, Expect) ->
                                  <<Expect:ExpSz/binary, _/binary>>}} = R ->
             ct:log("~p:~p Got expected ~p",[?MODULE,?LINE,R]);
         Other ->
-            ct:log("~p:~p Got unexpected ~p~nExpect: ~p~n",
-                   [?MODULE,?LINE, Other, {ssh_cm, ConnectionRef,
-                                           {data, ChannelId, 0, Expect}}]),
-            {fail, "Unexpected data"}
+            ct:fail("Got unexpected ~p~nExpect: ~p~n",
+                    [Other, {ssh_cm, ConnectionRef,
+                             {data, ChannelId, 0, Expect}}])
     after 5000 ->
-            {fail,"Exec Timeout"}
+            ct:fail("Exec Timeout")
     end.
 
 %%%----------------------------------------------------------------

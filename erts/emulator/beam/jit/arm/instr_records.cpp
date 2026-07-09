@@ -29,50 +29,96 @@ extern "C"
 
 void BeamModuleAssembler::emit_is_any_native_record(const ArgLabel &Fail,
                                                     const ArgRegister &Src) {
-    auto src = load_source(Src, ARG1);
+    auto src = load_source(Src, ARG3);
 
     emit_is_boxed(resolve_beam_label(Fail, dispUnknown), Src, src.reg);
 
-    a64::Gp boxed_ptr = emit_ptr_val(TMP3, src.reg);
-    a.ldur(TMP3, emit_boxed_val(boxed_ptr));
-    a.and_(TMP3, TMP3, imm(_TAG_HEADER_MASK));
-    a.cmp(TMP3, imm(_TAG_HEADER_RECORD));
-    a.b_ne(resolve_beam_label(Fail, disp1MB));
+    preserve_cache(
+            [&]() {
+                a64::Gp boxed_ptr = emit_ptr_val(TMP3, src.reg);
+                a.ldur(TMP3, emit_boxed_val(boxed_ptr));
+                a.and_(TMP3, TMP3, imm(_TAG_HEADER_MASK));
+                a.cmp(TMP3, imm(_TAG_HEADER_RECORD));
+                a.b_ne(resolve_beam_label(Fail, disp1MB));
+            },
+            TMP3);
 }
 
 void BeamModuleAssembler::emit_is_native_record(const ArgLabel &Fail,
                                                 const ArgRegister &Src,
                                                 const ArgAtom &Module,
                                                 const ArgAtom &Name) {
-    mov_arg(ARG1, Src);
-    mov_arg(ARG2, Module);
-    mov_arg(ARG3, Name);
+    auto src = load_source(Src, ARG3);
 
-    emit_enter_runtime();
-    runtime_call<bool (*)(Eterm, Eterm, Eterm), erl_is_native_record>();
-    emit_leave_runtime();
+    preserve_cache(
+            [&]() {
+                a64::Gp boxed_ptr = emit_ptr_val(TMP1, src.reg);
+                a.ldur(TMP1,
+                       emit_boxed_val(boxed_ptr,
+                                      offsetof(ErtsRecordInstance,
+                                               record_definition)));
+                boxed_ptr = emit_ptr_val(TMP1, TMP1);
+                lea(TMP1,
+                    emit_boxed_val(boxed_ptr,
+                                   offsetof(ErtsRecordDefinition, module)));
+                ERTS_CT_ASSERT_FIELD_PAIR(ErtsRecordDefinition, module, name);
+                a.ldp(TMP2, TMP3, a64::Mem(TMP1));
 
-    a.tbz(ARG1.w(), imm(0), resolve_beam_label(Fail, disp32K));
+                mov_imm(TMP1, Module.get());
+                a.cmp(TMP2, TMP1);
+                mov_imm(TMP1, Name.get());
+                a.ccmp(TMP3, TMP1, imm(NZCV::kNone), imm(arm::CondCode::kEQ));
+                a.b_ne(resolve_beam_label(Fail, disp1MB));
+            },
+            TMP1,
+            TMP2,
+            TMP3);
 }
 
 void BeamModuleAssembler::emit_is_record_accessible(const ArgLabel &Fail,
                                                     const ArgRegister &Src,
                                                     const ArgAtom &Scope) {
-    mov_arg(ARG1, Src);
+    auto src = load_source(Src, ARG3);
 
-    emit_enter_runtime();
-    if (Scope.get() == am_external) {
-        comment("external operation");
-        runtime_call<bool (*)(Eterm), erl_is_record_accessible>();
-    } else {
-        comment("auto_local operation");
-        mov_arg(ARG2, ArgAtom(mod));
-        runtime_call<bool (*)(Eterm, Eterm),
-                     erl_is_wildcard_record_accessible>();
-    }
-    emit_leave_runtime();
+    preserve_cache(
+            [&]() {
+                a64::Gp boxed_ptr = emit_ptr_val(TMP1, src.reg);
+                a.ldur(TMP1,
+                       emit_boxed_val(boxed_ptr,
+                                      offsetof(ErtsRecordInstance,
+                                               record_definition)));
+                boxed_ptr = emit_ptr_val(TMP1, TMP1);
+                a.ldr(TMP2,
+                      emit_boxed_val(
+                              boxed_ptr,
+                              offsetof(ErtsRecordDefinition, is_exported)));
+                if (Scope.get() == am_external) {
+                    const Uint bit_num = _TAG_IMMED2_SIZE;
+                    ERTS_CT_ASSERT(am_false == make_atom(0));
+                    ERTS_CT_ASSERT(am_true == make_atom(1));
+                    ERTS_CT_ASSERT((1 << bit_num) == (am_true - am_false));
 
-    a.tbz(ARG1.w(), imm(0), resolve_beam_label(Fail, disp32K));
+                    comment("external operation");
+                    a.tbz(TMP2,
+                          imm(bit_num),
+                          resolve_beam_label(Fail, disp32K));
+                } else {
+                    comment("auto_local operation");
+                    cmp(TMP2, am_true);
+                    a.ldr(TMP2,
+                          emit_boxed_val(
+                                  TMP1,
+                                  offsetof(ErtsRecordDefinition, module)));
+                    mov_imm(TMP1, mod);
+                    a.ccmp(TMP2,
+                           TMP1,
+                           imm(NZCV::kEqual),
+                           imm(arm::CondCode::kNE));
+                    a.b_ne(resolve_beam_label(Fail, disp1MB));
+                }
+            },
+            TMP1,
+            TMP2);
 }
 
 void BeamModuleAssembler::emit_i_get_record_elements(
@@ -80,19 +126,18 @@ void BeamModuleAssembler::emit_i_get_record_elements(
         const ArgRegister &Src,
         const ArgWord &Size,
         const Span<const ArgVal> &args) {
+    mov_arg(ARG3, Src);
     a.mov(ARG1, c_p);
     load_x_reg_array(ARG2);
-    mov_arg(ARG3, Src);
     mov_imm(ARG4, args.size());
     embed_vararg_rodata(args, ARG5);
 
-    emit_enter_runtime<Update::eHeapAlloc | Update::eXRegs>();
+    emit_enter_runtime<Update::eStack | Update::eXRegs>();
 
     runtime_call<bool (*)(Process *, Eterm *, Eterm, Uint, const Eterm *),
                  erl_get_record_elements>();
 
-    emit_leave_runtime<Update::eHeapAlloc | Update::eXRegs |
-                       Update::eReductions>();
+    emit_leave_runtime<Update::eXRegs>();
 
     a.tbz(ARG1.w(), imm(0), resolve_beam_label(Fail, disp32K));
 }
@@ -169,9 +214,9 @@ void BeamModuleAssembler::emit_i_update_native_record(
         const Span<const ArgVal> &args) {
     Label next = a.new_label();
 
+    mov_arg(ARG3, Src);
     a.mov(ARG1, c_p);
     load_x_reg_array(ARG2);
-    mov_arg(ARG3, Src);
     mov_arg(ARG4, Live);
     mov_imm(ARG5, args.size());
     embed_vararg_rodata(args, ARG6);

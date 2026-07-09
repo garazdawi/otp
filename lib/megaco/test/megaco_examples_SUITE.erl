@@ -2,9 +2,9 @@
 %% %CopyrightBegin%
 %%
 %% SPDX-License-Identifier: Apache-2.0
-%% 
-%% Copyright Ericsson AB 2001-2025. All Rights Reserved.
-%% 
+%%
+%% Copyright Ericsson AB 2001-2026. All Rights Reserved.
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -16,7 +16,7 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 
@@ -299,22 +299,17 @@ load_example_meas() ->
     load_example(meas).
 
 load_example(Example) ->
-    case code:lib_dir(megaco) of
-	{error, Reason} ->
-	    {error, Reason};
-	Dir ->
-	    ExampleDir = filename:join([Dir, examples, Example]),
-	    case code:add_path(ExampleDir) of
-		true ->
-		    ok;
-		{error, What} ->
-		    error_logger:error_msg("failed adding examples ~p path: "
-					   "~n   ~p"
-					   "~n", [Example, What]),
-		    {error, {failed_add_path, Example, What}}
-	    end
+    ModulePath = code:which(?MODULE),
+    ExampleDir = filename:join([filename:dirname(ModulePath), examples, Example]),
+    case code:add_path(ExampleDir) of
+        true ->
+            ok;
+        {error, What} ->
+            error_logger:error_msg("failed adding examples ~p path: "
+                                   "~n   ~p"
+                                   "~n", [Example, What]),
+            {error, {failed_add_path, Example, What}}
     end.
-
 
 example_simple_modules() ->
     [
@@ -349,10 +344,10 @@ example_meas_mstone2_modules() ->
 
 purge_example(Mods) ->
     case code:lib_dir(megaco) of
-	{error, Reason} ->
-	    {error, Reason};
-	_Dir ->
-	    [code:purge(M) || M <- Mods]
+        {error, Reason} ->
+            {error, Reason};
+        _Dir ->
+            [code:purge(M) || M <- Mods]
     end.
 
 

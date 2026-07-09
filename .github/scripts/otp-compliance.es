@@ -5,7 +5,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2024-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2024-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -61,7 +61,9 @@
          test_originator_Ericsson/1, test_versionInfo_not_empty/1, test_package_hasFiles/1,
          test_project_purl/1, test_packages_purl/1, test_download_location/1, 
          test_package_relations/1, test_has_extracted_licenses/1,
-         test_vendor_packages/1, test_erts/1, test_download_vendor_location/1
+         test_vendor_packages/1, test_erts/1, test_download_vendor_location/1,
+         test_package_verification_code_value/1, test_examples/1,
+         test_build_packages/1
          %% test_copyright_format/1, test_files_licenses/1,
         ]).
 
@@ -96,22 +98,19 @@
 %% VEX MACROS
 %%
 -define(VexPath, ~"vex/").
--define(OpenVEXTablePath, "make/openvex.table").
+-define(OpenVEXTablePath, "openvex.table").
 -define(ErlangPURL, "pkg:github/erlang/otp").
 
 -define(FOUND_VENDOR_VULNERABILITY_TITLE, "Vendor vulnerability found").
 -define(FOUND_VENDOR_VULNERABILITY, lists:append(string:replace(?FOUND_VENDOR_VULNERABILITY_TITLE, " ", "+", all))).
 
--define(OTP_GH_URI, "https://raw.githubusercontent.com/" ++ ?GH_ACCOUNT ++ "/refs/heads/master/").
+-define(OTP_GH_URI, "https://raw.githubusercontent.com/" ++ ?GH_ACCOUNT ++ "/refs/heads/openvex/").
 
 %% GH default options
 -define(GH_ADVISORIES_OPTIONS, "state=published&direction=desc&per_page=100&sort=updated").
 
 %% Advisories to download from last X years.
 -define(GH_ADVISORIES_FROM_LAST_X_YEARS, 5).
-
-%% Defines path of script to create PRs for missing openvex/vulnerabilities
--define(CREATE_OPENVEX_PR_SCRIPT_FILE, ".github/scripts/create-openvex-pr.sh").
 
 %% Sets end point account to fetch information from GH
 %% used by `gh` command-line tool.
@@ -120,10 +119,14 @@
 %%
 %%
 
+-define(DEBUG, false).
+
 %% Add more relations if necessary.
 -type spdx_relations() :: #{ 'DOCUMENTATION_OF' => [],
                              'CONTAINS' => [],
                              'TEST_OF' => [],
+                             'BUILD_TOOL_OF' => [],
+                             'DEPENDENCY_MANIFEST_OF' => [],
                              'PACKAGE_OF' => []}.
 
 -record(spdx_package, {'SPDXID'           :: unicode:chardata(),
@@ -144,6 +147,8 @@
                        'relationships' = #{ 'DOCUMENTATION_OF' => [],
                                             'CONTAINS' => [],
                                             'TEST_OF' => [],
+                                            'BUILD_TOOL_OF' => [],
+                                            'DEPENDENCY_MANIFEST_OF' => [],
                                             'PACKAGE_OF' => []} :: spdx_relations()
                       }).
 -type spdx_package() :: #spdx_package{}.
@@ -286,16 +291,25 @@ cli() ->
                        #{"init" =>
                              #{ help =>
                                     """
-                                    Initialise an openvex file.
+                                    Initialise an openvex file. Detailed steps in HOWTO/SBOM.md#gh-advisories-sync.
+
+                                    1. Update the `openvex.table`
+                                    2. Run the command:
+
+                                       > .github/scripts/otp-compliance.es vex init -b otp-33
+
                                     """,
-                                arguments => [ input_option(~"make/openvex.table"), branch_option(), vex_path_option()],
+                                arguments => [ input_option(~"openvex.table"), branch_option()],
                                 handler => fun init_openvex/1},
                          "run" =>
                              #{ help =>
                                     """
-                                    Updates an openvex file.
+                                    Updates OpenVEX files. Detailed steps in HOWTO/SBOM.md#gh-advisories-sync.
+
+                                      > .github/scripts/otp-compliance.es vex run -b otp-33
+
                                     """,
-                                arguments => [ input_option(~"make/openvex.table"), branch_option(), vex_path_option()],
+                                arguments => [ input_option(~"openvex.table"), branch_option()],
                                 handler => fun run_openvex/1},
 
                          "verify" =>
@@ -305,8 +319,10 @@ cli() ->
                                     Download OpenVEX statement from erlang/otp for the selected branch.
                                     Checks that those Advisories are present in OpenVEX statements.
                                     Creates PR for any non-present Github Advisory.
+                                    Detailed steps in HOWTO/SBOM.md#gh-advisories-sync.
 
                                     Example:
+
                                     > .github/scripts/otp-compliance.es vex verify -p
 
                                     """,
@@ -483,14 +499,6 @@ branch_option() ->
       required => true,
       short => $b,
       long => "-branch"}.
-
-vex_path_option() ->
-    #{name => vex_path,
-      type => binary,
-      required => false,
-      default => ?VexPath,
-      help => "Path to folder containing openvex statements, e.g., `vex/`",
-      long => "-vex-path"}.
 
 create_pr() ->
     #{name => create_pr,
@@ -1109,39 +1117,72 @@ create_otp_relationships(Packages, PackageTemplates, Spdx) ->
     create_opt_depency_relationships(PackageTemplates, Spdx2).
 
 -spec add_packages(Packages :: [spdx_package()], Spdx :: map()) -> SpdxResult :: map().
-add_packages(AppPackages, Spdx) ->
-    #{~"packages" := SpdxPackages}=Spdx1 = remove_package_files_from_project(Spdx, AppPackages),
-    Spdx1#{~"packages" := SpdxPackages ++ AppPackages}.
+add_packages(VendorSpdxPackages, Spdx) ->
+    #{~"packages" := SpdxPackages}=Spdx1 = remove_package_files_from_project(Spdx, VendorSpdxPackages),
+    Spdx1#{~"packages" := SpdxPackages ++ VendorSpdxPackages}.
 
 %% Removes duplicate packages and adds a comment for existing vendor Packages in SPDX
-%% it also remove files in top-level directories and they onyly exist  in vendor libraries
+%% it also remove files in top-level directories and they only exist  in vendor libraries
 -spec remove_duplicate_packages(VendorPackages :: map(), Spdx2 :: map()) -> {ResultVendorPackages :: map(), SPDX :: map()}.
 remove_duplicate_packages(VendorPackages, #{~"packages" := Packages}=Spdx) ->
     #{~"vendor" := Vendors, ~"app" := Apps} =
-        lists:foldl(fun (#{~"SPDXID" := VendorId}=Vendor, #{~"vendor" := Vcc, ~"app" := Apc}=Acc) ->
-                            case lists:search(fun (#{~"SPDXID" := Id}) -> VendorId == Id end, Packages) of
-                                {value, P} ->
-                                    Packages1 = Apc -- [P],
-                                    Comment = maps:get(~"comment", P, <<>>),
-                                    Comment1 =
-                                        case Comment of
-                                            <<>> ->
-                                                ~"vendor package";
-                                            _ ->
-                                                <<Comment/binary, " vendor package">>
-                                        end,
-                                    Acc#{~"app" := [P#{~"comment" => Comment1} | Packages1]};
-                                _ ->
-                                    Acc#{~"vendor" := [Vendor | Vcc]}
-                            end
-                    end, #{~"vendor" => [], ~"app" => Packages}, VendorPackages),
+        lists:foldl(
+          fun (#{~"SPDXID" := VendorId}=Vendor, #{~"vendor" := Vcc, ~"app" := Apc}=Acc) ->
+                  case lists:search(fun (#{~"SPDXID" := Id}) -> VendorId == Id end, Packages) of
+                      {value, P} ->
+                          Packages1 = Apc -- [P],
+                          Comment = maps:get(~"comment", P, <<>>),
+                          Comment1 =
+                              case Comment of
+                                  <<>> ->
+                                      ~"vendor package";
+                                  _ ->
+                                      <<Comment/binary, " vendor package">>
+                              end,
+                          Acc#{~"app" := [P#{~"comment" => Comment1} | Packages1]};
+                      _ ->
+                          Acc#{~"vendor" := [Vendor | Vcc]}
+                  end
+          end, #{~"vendor" => [], ~"app" => Packages}, VendorPackages),
 
     %%
     VendorFileIds = lists:flatten(lists:map(fun (#{~"hasFiles" := Fs}) -> Fs end, Vendors)),
-    FixedApps = lists:map(fun (#{~"hasFiles" := SPDXIDs}=AppPackage) ->
-                                  AppPackage#{~"hasFiles" := SPDXIDs -- VendorFileIds}
-                          end, Apps),
+    FixedApps = lists:map(
+                  fun (#{~"hasFiles" := SPDXIDs}=AppPackage) ->
+                          HasFiles = SPDXIDs -- VendorFileIds,
+                          %% calculate licenses in the package, removing vendor licenses,
+                          %% as they are now contained elsewhere.
+                          SpdxFiles = maps:get(~"files", Spdx),
+                          LicenseInfoFromFiles = update_licenseInfoFromFiles(HasFiles, SpdxFiles),
+
+                          %% updates the verification code for the package,
+                          %% considering only the remaining files.
+                          Files = lists:filter(fun (#{~"SPDXID" := Id}) ->
+                                                       lists:member(Id, HasFiles)
+                                               end, SpdxFiles),
+                          PackageVerificationCodeValue = generate_verification_code_value(Files),
+
+                          AppPackage#{~"hasFiles" := HasFiles,
+                                      ~"licenseInfoFromFiles" := LicenseInfoFromFiles,
+                                      ~"packageVerificationCode" =>
+                                          #{~"packageVerificationCodeValue" => PackageVerificationCodeValue}}
+                  end, Apps),
     {Vendors, Spdx#{~"packages" := FixedApps}}.
+
+
+
+
+-spec update_licenseInfoFromFiles(Files :: [binary()], SpdxFilesSection :: [map()]) -> [binary()].
+update_licenseInfoFromFiles(Files, SpdxFilesSection) ->
+    Result = lists:foldl(fun (#{~"SPDXID" := Id, ~"licenseInfoInFiles" := Ls}, Acc) ->
+                                 case lists:member(Id, Files) of
+                                     true ->
+                                         Ls ++ Acc;
+                                     false ->
+                                         Acc
+                                 end
+                         end, [], SpdxFilesSection),
+    lists:uniq(Result).
 
 %% project package contains `hasFiles` fields with all files.
 %% remove all files included in other packages from project package.
@@ -1199,6 +1240,8 @@ create_package_relationships(Packages, Spdx) ->
                             {Key, Ls} = case Pkg#spdx_package.'relationships' of
                                             #{'PACKAGE_OF' := L } -> {'PACKAGE_OF', L};
                                             #{'TEST_OF' := L} -> {'TEST_OF', L};
+                                            #{'BUILD_TOOL_OF' := L} -> {'BUILD_TOOL_OF', L};
+                                            #{'DEPENDENCY_MANIFEST_OF' := L} -> {'DEPENDENCY_MANIFEST_OF', L};
                                             #{'DOCUMENTATION_OF' := L} -> {'DOCUMENTATION_OF', L}
                                         end,
                             lists:foldl(fun ({ElementId, RelatedElement}, Acc1) ->
@@ -1252,12 +1295,34 @@ create_vendor_relations(NewVendorPackages, #{~"packages" := Packages, ~"relation
                                 end,
                           Pkgs = lists:filter(fun (#{~"name" := N}) -> App == generate_spdx_valid_name(N) end, Packages),
                           case Pkgs of
-                              [#{~"SPDXID" := RootId}=_RootPackage] ->
-                                  create_spdx_relation('PACKAGE_OF', ID, RootId);
+                              [#{~"SPDXID" := RootId}] ->
+                                  case ID of
+                                      ~"SPDXRef-otp-erts-ryu" ->
+                                          create_spdx_relation('OPTIONAL_COMPONENT_OF', ID, RootId);
+                                      ~"SPDXRef-otp-ryu-tochars" ->
+                                          create_spdx_relation('OPTIONAL_COMPONENT_OF', ID, RootId);
+                                      ~"SPDXRef-otp-erts-zlib" ->
+                                          create_spdx_relation('OPTIONAL_COMPONENT_OF', ID, RootId);
+                                      ~"SPDXRef-otp-erts-zstd" ->
+                                          create_spdx_relation('OPTIONAL_COMPONENT_OF', ID, RootId);
+                                      ~"SPDXRef-otp-erts-asmjit" ->
+                                          create_spdx_relation('OPTIONAL_COMPONENT_OF', ID, RootId);
+                                      ~"SPDXRef-otp-erts-autoconf" ->
+                                          %% hard-code that erts-autoconf is a build tool of
+                                          create_spdx_relation('BUILD_TOOL_OF', ID, RootId);
+                                      _ ->
+                                          create_spdx_relation('PACKAGE_OF', ID, RootId)
+                                  end;
                               [] ->
-                                  %% Attach to root level package
-                                  create_spdx_relation('PACKAGE_OF', ID, ?spdxref_project_name)
-                              end
+                                  case ID of
+                                      ~"SPDXRef-otp-make-autoconf" ->
+                                          %% hard-code that make-autoconf is a build tool of
+                                          create_spdx_relation('BUILD_TOOL_OF', ID, ?spdxref_project_name);
+                                      _ ->
+                                          %% Attach to root level package
+                                          create_spdx_relation('PACKAGE_OF', ID, ?spdxref_project_name)
+                                  end
+                          end
                   end, NewVendorPackages),
     SpdxWithVendor#{~"relationships" := Relations ++ VendorRelations}.
 
@@ -1570,10 +1635,18 @@ format_vex_statements(OpenVex) ->
               end, [], Stmts).
 
 read_openvex_file(Branch) ->
-    _ = create_dir(?VexPath),
+    _ = download_otp_openvex_file(Branch),
     OpenVexPath = path_to_openvex_filename(Branch),
     OpenVexStr = erlang:binary_to_list(OpenVexPath),
     decode(OpenVexStr).
+
+dbg(Text, Args) ->
+    case ?DEBUG of
+        true ->
+            io:format(Text, Args);
+        false ->
+            ok
+    end.
 
 -spec download_otp_openvex_file(Branch :: binary()) -> Json :: map() | EmptyMap :: #{} | no_return().
 download_otp_openvex_file(Branch) ->
@@ -1582,19 +1655,19 @@ download_otp_openvex_file(Branch) ->
     OpenVexStr = erlang:binary_to_list(OpenVexPath),
     GithubURI = get_gh_download_uri(OpenVexStr),
 
-    io:format("Checking OpenVex statements in '~s' from~n'~s'...~n", [OpenVexPath, GithubURI]),
+    dbg("Checking OpenVex statements in '~s' from~n'~s'...~n", [OpenVexPath, GithubURI]),
 
     ValidURI = "curl -I -Lj --silent " ++ GithubURI ++ " | head -n1 | cut -d' ' -f2",
     case string:trim(os:cmd(ValidURI)) of
         "200" ->
             %% Overrides existing file.
-            io:format("OpenVex file found.~n~n"),
+            dbg("OpenVex file found.~n~n", []),
             Command = "curl -LJ " ++ GithubURI ++ " --output " ++ OpenVexStr,
-            io:format("Proceed to download:~n~s~n~n", [Command]),
+            dbg("Proceed to download:~n~s~n~n", [Command]),
             os:cmd(Command, #{ exception_on_failure => true }),
             decode(OpenVexStr);
         E ->
-            io:format("[~p] No OpenVex statements found for file '~s'.~n~n", [E, OpenVexStr]),
+            dbg("[~p] No OpenVex statements found for file '~s'.~n~n", [E, OpenVexStr]),
             #{}
     end.
 
@@ -1607,7 +1680,7 @@ create_dir(DirName) ->
     case file:make_dir(DirName) of
         Result when Result == ok;
                     Result == {error, eexist} ->
-            io:format("Directory ~s created successfully.~n", [DirName]);
+            dbg("Directory ~s created successfully.~n", [DirName]);
         {error, Reason} ->
             fail("Failed to create directory ~s: ~p~n", [DirName, Reason])
     end.
@@ -1758,7 +1831,7 @@ vendor_by_version(_) ->
 %% any vulnerability. The user should still look into possible
 %% issues with wx if they link to it.
 non_vulnerable_vendor_packages() ->
-    [~"wx-doc-src"].
+    [~"wx-wxwidgets", ~"wx-opengl"].
 
 ignore_non_vulnerable_vendors(Packages) ->
     lists:filter(fun (#{~"ID" := Id}) -> not lists:member(Id, non_vulnerable_vendor_packages())
@@ -1822,11 +1895,17 @@ app_key_to_record(AppKey) ->
 generate_spdx_packages(PackageMappings, #{~"files" := Files,
                                           ~"documentDescribes" := [ProjectName]}=_Spdx) ->
     SystemDocs = generate_spdx_system_docs(Files, ProjectName),
+    OTPBuild = generate_spdx_otp_build(Files, ProjectName),
+    Licenses = generate_spdx_otp_licenses(Files, ProjectName),
     maps:fold(fun (PackageName, {PrefixPath, AppInfo}, Acc) ->
                       SpdxPackageFiles = group_files_by_app(Files, PrefixPath),
                       TestFiles = get_test_files(PackageName, SpdxPackageFiles, PrefixPath),
                       DocFiles = get_doc_files(PackageName, SpdxPackageFiles, PrefixPath),
-                      OTPAppFiles = (SpdxPackageFiles -- TestFiles) -- DocFiles,
+                      BuildFiles = get_build_files(PackageName, SpdxPackageFiles, PrefixPath),
+                      
+                      OTPAppFiles = ((SpdxPackageFiles -- TestFiles) -- DocFiles) -- BuildFiles,
+                      UpdatedTestFiles = TestFiles -- BuildFiles,
+                      UpdatedDocFiles = DocFiles -- BuildFiles,                      
 
                       LicenseOTPApp = otp_app_license_mapping(PackageName),
                       Package = create_spdx_package_record(PackageName, AppInfo#app_info.vsn,
@@ -1836,23 +1915,78 @@ generate_spdx_packages(PackageMappings, #{~"files" := Files,
                       DocPackage = create_spdx_package_record(<<PackageName/binary, "-documentation">>,
                                                               AppInfo#app_info.vsn,
                                                               <<"Documentation of ", PackageName/binary>>,
-                                                              DocFiles, ?spdx_homepage,
+                                                              UpdatedDocFiles, ?spdx_homepage,
                                                               LicenseOTPApp, LicenseOTPApp, false),
                       TestPackage = create_spdx_package_record(<<PackageName/binary, "-test">>,
                                                               AppInfo#app_info.vsn,
                                                               <<"Tests of ", PackageName/binary>>,
-                                                              TestFiles, ?spdx_homepage,
+                                                              UpdatedTestFiles, ?spdx_homepage,
                                                               LicenseOTPApp, LicenseOTPApp, false),
+                      BuildPackage = create_spdx_package_record(<<PackageName/binary, "-build">>,
+                                                                AppInfo#app_info.vsn,
+                                                                <<"Build tools of ", PackageName/binary>>,
+                                                                BuildFiles, ?spdx_homepage,
+                                                                LicenseOTPApp, LicenseOTPApp, false),
 
                       Relations = [ {'PACKAGE_OF', [{ Package#spdx_package.'SPDXID', ProjectName }]},
                                     {'DOCUMENTATION_OF', [{ DocPackage#spdx_package.'SPDXID', Package#spdx_package.'SPDXID' }]},
-                                    {'TEST_OF', [{ TestPackage#spdx_package.'SPDXID', Package#spdx_package.'SPDXID' }]} ],
+                                    {'TEST_OF', [{ TestPackage#spdx_package.'SPDXID', Package#spdx_package.'SPDXID' }]}
+                                  ],
 
                       Packages = lists:zipwith(fun (P, {K, R}) ->
                                                        P#spdx_package { 'relationships' = #{ K => R} }
                                                end, [Package, DocPackage, TestPackage], Relations),
-                      Packages ++ Acc
-               end, [SystemDocs], PackageMappings).
+                      AllPackages = append_build_package(BuildPackage, Package, Packages),
+                      AllPackages ++ Acc
+               end, [SystemDocs, OTPBuild, Licenses], PackageMappings).
+
+append_build_package(#spdx_package{'hasFiles' = []}, _, AllPackages) ->
+    AllPackages;
+append_build_package(#spdx_package{'SPDXID' = BuildID}=BuildPackage,
+                     #spdx_package{'SPDXID' = ID},
+                     AllPackages) ->
+    [BuildPackage#spdx_package { 'relationships' = #{ 'BUILD_TOOL_OF' => [{ BuildID, ID}]} } | AllPackages].
+
+generate_spdx_otp_build(Files, ParentSPDXPackageId) ->
+    PrefixPath = [~"make", ~"bootstrap"],
+    SpdxPackageFiles = lists:flatmap(fun (Prefix) ->
+                                             group_files_by_app(Files, Prefix)
+                                     end, PrefixPath),
+
+    PackageName = ~"build",
+    BuildFiles = lists:flatmap(fun (Prefix) ->
+                                       get_folder_files(SpdxPackageFiles, Prefix)
+                               end, PrefixPath),
+
+    LicenseUpdated = generate_license_info_from_files(BuildFiles),
+    ValidLicense = remove_invalid_spdx_licenses(LicenseUpdated),
+    OneLinerLicense = binary:join(ValidLicense, ~" AND "),
+    BuildPackage = create_spdx_package_record(<<PackageName/binary>>,
+                                              get_otp_version(),
+                                              <<"OTP Build files">>,
+                                              BuildFiles, ?spdx_homepage,
+                                              OneLinerLicense, OneLinerLicense, false),
+    Relations = #{ 'BUILD_TOOL_OF' => [{ BuildPackage#spdx_package.'SPDXID', ParentSPDXPackageId }]},
+    BuildPackage#spdx_package { 'relationships' = Relations }.
+
+generate_spdx_otp_licenses(Files, ParentSPDXPackageId) ->
+    PrefixPath = [~"LICENSES", ~"FILE-HEADERS"],
+    SpdxPackageFiles = lists:flatmap(fun (Prefix) ->
+                                             group_files_by_app(Files, Prefix)
+                                     end, PrefixPath),
+
+    PackageName = ~"license-headers",
+    LicenseFiles = lists:flatmap(fun (Prefix) ->
+                                       get_folder_files(SpdxPackageFiles, Prefix)
+                               end, PrefixPath),
+    LicensingPackage = create_spdx_package_record(<<PackageName/binary>>,
+                                              get_otp_version(),
+                                              <<"OTP License header files">>,
+                                              LicenseFiles, ?spdx_homepage,
+                                              ~"NOASSERTION", ~"NOASSERTION", false),
+    Relations = #{ 'DEPENDENCY_MANIFEST_OF' => [{ LicensingPackage#spdx_package.'SPDXID', ParentSPDXPackageId }]},
+    LicensingPackage#spdx_package { 'relationships' = Relations }.
+
 
 generate_spdx_system_docs(Files, ParentSPDXPackageId) ->
     PrefixPath = ~"system",
@@ -1881,7 +2015,31 @@ get_test_files(_App, SpdxPackageFiles, PrefixPath) ->
 get_doc_files(~"erts", SpdxPackageFiles, PrefixPath) ->
     group_files_by_folder(SpdxPackageFiles, binary_to_list(PrefixPath)++"/**/doc/**");
 get_doc_files(_App, SpdxPackageFiles, PrefixPath) ->
-    group_files_by_folder(SpdxPackageFiles, binary_to_list(PrefixPath)++"/doc/**").
+    Docs = group_files_by_folder(SpdxPackageFiles, binary_to_list(PrefixPath)++"/doc/**"),
+    Examples = group_files_by_folder(SpdxPackageFiles, binary_to_list(PrefixPath)++"/examples/**"),
+    lists:uniq(Docs ++ Examples).
+
+get_build_files(_, SpdxPackageFiles, PrefixPath) ->
+    BuildTools = build_tools_files(),
+    lists:flatmap(fun (Config) ->
+                          group_files_by_folder(SpdxPackageFiles,
+                                                binary_to_list(PrefixPath)++ "/**/" ++ Config)
+                  end, BuildTools).
+
+get_folder_files(SpdxPackageFiles, PrefixPath) ->
+    group_files_by_folder(SpdxPackageFiles, binary_to_list(PrefixPath)++"/**").
+
+build_tools_files() ->
+    [
+      "configure",
+      "configure.ac",
+      "config.h.in",
+      "Makefile.in",
+      "Makefile",
+      "Makefile.src",
+      "Emakefile",
+      "GNUmakefile"
+    ].
 
 create_spdx_package_record(PackageName, Vsn, Description, SpdxPackageFiles,
                            Homepage, LicenseConcluded, LicenseDeclared, Purl) ->
@@ -2081,6 +2239,8 @@ package_generator(Sbom) ->
              test_package_ids,
              test_erts,
              test_verificationCode,
+             test_package_verification_code_value,
+             test_examples,
              test_supplier_Ericsson,
              test_originator_Ericsson,
              test_versionInfo_not_empty,
@@ -2091,7 +2251,8 @@ package_generator(Sbom) ->
              test_download_vendor_location,
              test_package_relations,
              test_has_extracted_licenses,
-             test_vendor_packages],
+             test_vendor_packages,
+             test_build_packages],
     true = ?CALL_TEST_FUNCTIONS(Tests, Sbom),
     ok.
 
@@ -2153,7 +2314,7 @@ root_vendor_packages() ->
 minimum_vendor_packages() ->
     %% self-contained
     root_vendor_packages() ++
-        [~"tcl", ~"STL", ~"json-test-suite", ~"openssl", ~"Autoconf", ~"wx-doc-src", ~"jquery", ~"tablesorter"].
+        [~"STL", ~"json-test-suite", ~"Autoconf", ~"wxwidgets", ~"jquery", ~"jquery-migrate", ~"tablesorter"].
 
 test_copyright_not_empty(#{~"packages" := Packages}) ->
     true = lists:all(fun (#{~"copyrightText" := Copyright}) -> Copyright =/= ~"" end, Packages),
@@ -2329,6 +2490,65 @@ test_verificationCode(#{~"packages" := Packages}) ->
                      end, Packages),
     ok.
 
+test_package_verification_code_value(#{~"packages" := Packages,
+                                       ~"files" := Files}=_Spdx) ->
+    lists:foreach(
+      fun (#{~"hasFiles" := HasFiles,
+             ~"SPDXID" := PackageId,
+            ~"packageVerificationCode" := #{~"packageVerificationCodeValue" := CodeValue}}=_Pkg) ->
+              PackageFiles =
+                  lists:foldl(
+                    fun (#{~"SPDXID" := SPDXId}=File, Acc) ->
+                            Value  = lists:member(SPDXId, HasFiles),
+                            case Value of
+                                true ->
+                                    [File|Acc];
+                                false ->
+                                    Acc
+                            end
+                    end, [], Files),
+              PackageVerificationCodeValue = generate_verification_code_value(PackageFiles),
+              case PackageVerificationCodeValue == CodeValue of
+                  true ->
+                      ok;
+                  false ->
+                      io:format("Error in ~s package verification code: ~s =/= ~s~n",
+                               [PackageId, PackageVerificationCodeValue, CodeValue]),
+                      error(?FUNCTION_NAME)
+              end
+      end, Packages),
+    ok.
+
+
+test_examples(#{~"packages" := Packages,
+                ~"files" := Files,
+                ~"relationships" := Relations}) ->
+    PackageNames = lists:filtermap(fun get_root_packages/1, Relations),
+    Packages1 = lists:filter(fun (#{~"SPDXID" := Id}) -> lists:member(Id, PackageNames) end, Packages),
+    Examples = group_files_by_folder(Files, "**/examples/**"),
+    ExampleFileNames = lists:map(fun (#{~"SPDXID" := Id}) -> Id end, Examples),
+    _ = lists:foreach(fun (#{~"hasFiles" := PackageFileNames,
+                             ~"SPDXID" := Id}) ->
+                                  SetDiff = PackageFileNames -- ExampleFileNames,
+                                  case PackageFileNames == SetDiff of
+                                      true ->
+                                          ok;
+                                      false ->
+                                          SetIntersection = PackageFileNames -- SetDiff,
+                                          io:format("Error, example file(s) ~p exists inside package ~s~n", [SetIntersection, Id])
+                                          %% error(?FUNCTION_NAME)
+                                  end
+                      end, Packages1),
+    ok.
+
+get_root_packages(#{~"relatedSpdxElement" := ~"SPDXRef-Project-OTP",
+                    ~"relationshipType"   := ~"PACKAGE_OF",
+                    ~"spdxElementId"      := PackageName}) ->
+    {true, PackageName};
+get_root_packages(_) ->
+    false.
+
+
 test_supplier_Ericsson(#{~"packages" := Packages}) ->
     true = lists:all(fun (#{~"supplier" := Supplier, ~"name" := Name}) ->
                              %% logical implication (->) expressed in boolean logic (not A or B)
@@ -2361,7 +2581,7 @@ test_download_location(#{~"packages" := Packages}) ->
 %% see generate_osv_query/1.
 test_download_vendor_location(#{~"packages" := Packages}) ->
     %% update list below if new runtime dependencies without git repo appear.
-    KnownExcludedNames = [~"Autoconf", ~"tcl", ~"Unicode Character Database"],
+    KnownExcludedNames = [~"Autoconf", ~"Unicode Character Database"],
     true = lists:all(fun (#{~"downloadLocation" := Loc, ~"name" := Name}) ->
                              lists:member(Name, KnownExcludedNames)
                                  orelse string:prefix(Loc, ~"https://github.com") =/= nomatch
@@ -2440,6 +2660,58 @@ vendor_relations(#{~"packages" := Packages, ~"relationships" := Relations}) ->
                      end, Relations),
     ok.
 
+test_build_packages(Spdx) ->
+    test_build_packages_contents(Spdx),
+    test_build_relations(Spdx),
+    ok.
+
+%% Checks that build packages contain only files from build_tools_files().
+test_build_packages_contents(#{~"packages" := Packages,
+                               ~"files" := Files}) ->
+    BuildPkgs = get_build_packages(Packages),
+    lists:foreach(fun (#{~"hasFiles" := FileIds}=_Pkg) ->
+                          true =
+                              lists:all(fun (#{~"SPDXID" := Id,
+                                               ~"fileName" := F}) ->
+                                            Filename = lists:last(string:split(F, "/", all)),
+                                            %% satisfy both conditions or consider it true (ignore)
+                                            (lists:member(Id, FileIds) andalso
+                                             lists:member(Filename, build_tools_files())) orelse
+                                                true
+                                        end, Files)
+                  end, BuildPkgs).
+
+test_build_relations(#{~"packages" := Packages}=Spdx) ->
+    Relations = get_relations(Spdx),
+    BuildPkgs = get_build_packages(Packages),
+    BuildPkgIds = lists:map(fun (#{~"SPDXID" := Id}) -> Id end, BuildPkgs),
+    BuildRelations = lists:filter(fun (#{~"relationshipType" := Type}) -> Type == ~"BUILD_TOOL_OF" end, Relations),
+    true = lists:all(fun (Id) ->
+                             R = lists:any(fun (M) ->
+                                                   maps:get(~"spdxElementId", M) == Id
+                                           end, BuildRelations),
+                             case R of
+                                 false ->
+                                     io:format("Error: ~p~n", [Id]),
+                                     false;
+                                 true ->
+                                     true
+                             end
+                     end, BuildPkgIds).
+
+get_build_packages(Packages) ->
+    lists:filter(fun (#{~"SPDXID" := Id}) ->
+                         case string:split(Id, "-build") of
+                             [_, _ | _] ->
+                                 true;
+                             _ ->
+                                 false
+                         end
+                 end, Packages).
+
+get_relations(Spdx) ->
+    maps:get(~"relationships", Spdx).
+
 test_package_relations(#{~"packages" := Packages}=Spdx) ->
     PackageIds = lists:map(fun (#{~"SPDXID" := Id}) -> Id end, Packages),
     Relations = maps:get(~"relationships", Spdx),
@@ -2448,25 +2720,25 @@ test_package_relations(#{~"packages" := Packages}=Spdx) ->
                             ~"spdxElementId" := PackageId}=Rel) ->
                              Result =
                                  lists:member(Relation, [~"PACKAGE_OF", ~"DEPENDS_ON", ~"TEST_OF",
-                                                         ~"OPTIONAL_DEPENDENCY_OF", ~"DOCUMENTATION_OF"]) andalso
+                                                         ~"OPTIONAL_DEPENDENCY_OF",
+                                                         ~"DOCUMENTATION_OF", ~"BUILD_TOOL_OF",
+                                                         ~"DEPENDENCY_MANIFEST_OF",
+                                                         ~"OPTIONAL_COMPONENT_OF"]) andalso
                                  lists:member(Related, PackageIds) andalso
                                  lists:member(PackageId, PackageIds) andalso
                                  PackageId =/= Related andalso
                                  PackageId =/= ?spdxref_project_name,
-                            case Result of
-                                false ->
-                                    io:format("Error in relation: ~p~n", [Rel]),
-                                    false;
-                                true ->
-                                    true
-                            end
+                             case Result of
+                                 false ->
+                                     io:format("Error in relation: ~p~n", [Rel]),
+                                     false;
+                                 true ->
+                                     true
+                             end
                      end, Relations),
 
     %% test_known_special_cases(),
-    SpecialCases = [#{~"relatedSpdxElement" => ~"SPDXRef-otp-erlinterface",
-                      ~"relationshipType" => ~"PACKAGE_OF",
-                      ~"spdxElementId" => ~"SPDXRef-otp-erlinterface-openssl"},
-                    #{~"relatedSpdxElement" => ~"SPDXRef-otp-stdlib-test",
+    SpecialCases = [#{~"relatedSpdxElement" => ~"SPDXRef-otp-stdlib-test",
                       ~"relationshipType" => ~"PACKAGE_OF",
                       ~"spdxElementId" => ~"SPDXRef-otp-stdlib-test-json-suite"},
                     #{~"relatedSpdxElement" => ~"SPDXRef-otp-stdlib",
@@ -2477,7 +2749,23 @@ test_package_relations(#{~"packages" := Packages}=Spdx) ->
                       ~"spdxElementId" => ~"SPDXRef-otp-commontest-tablesorter"},
                     #{~"relatedSpdxElement" => ~"SPDXRef-otp-commontest",
                       ~"relationshipType" => ~"PACKAGE_OF",
-                      ~"spdxElementId" => ~"SPDXRef-otp-commontest-jquery"}],
+                      ~"spdxElementId" => ~"SPDXRef-otp-commontest-jquery-migrate"},
+                    #{~"relatedSpdxElement" => ~"SPDXRef-otp-commontest",
+                      ~"relationshipType" => ~"PACKAGE_OF",
+                      ~"spdxElementId" => ~"SPDXRef-otp-commontest-jquery"},
+                    #{~"relatedSpdxElement" => ~"SPDXRef-otp-erts",
+                      ~"relationshipType" => ~"OPTIONAL_COMPONENT_OF",
+                      ~"spdxElementId" => ~"SPDXRef-otp-erts-zlib"},
+                    #{~"relatedSpdxElement" => ~"SPDXRef-otp-erts",
+                      ~"relationshipType" => ~"OPTIONAL_COMPONENT_OF",
+                      ~"spdxElementId" => ~"SPDXRef-otp-erts-asmjit"},
+                    #{~"relatedSpdxElement" => ~"SPDXRef-Project-OTP",
+                      ~"relationshipType" => ~"BUILD_TOOL_OF",
+                      ~"spdxElementId" => ~"SPDXRef-otp-make-autoconf"},
+                    #{~"relatedSpdxElement" => ~"SPDXRef-otp-erts",
+                      ~"relationshipType" => ~"BUILD_TOOL_OF",
+                      ~"spdxElementId" => ~"SPDXRef-otp-erts-autoconf"}
+                   ],
     true = lists:all(fun (Case) -> lists:member(Case, Relations) end, SpecialCases),
     ok.
 
@@ -2486,12 +2774,21 @@ test_has_extracted_licenses(#{~"hasExtractedLicensingInfos" := LicensesInfo,
     LicenseRefsInProject =
         lists:uniq(
           lists:foldl(fun (#{~"licenseInfoFromFiles" := InfoFromFilesInPackage }, Acc) ->
-                              LicenseRefs = lists:filter(fun (<<"LicenseRef-", _/binary>>) -> true ;
-                                                             (_) -> false
-                                                         end, InfoFromFilesInPackage),
+                              LicenseRefs = lists:uniq(
+                                              lists:foldl(
+                                                fun (L, Acc0) when is_binary(L) ->
+                                                        Ls = string:split(L, " AND "),
+                                                        lists:filter(fun (<<"LicenseRef-", _/binary>>) -> true;
+                                                                         (_) -> false
+                                                                     end, Ls) ++ Acc0
+                                                end, [], InfoFromFilesInPackage)),
                               LicenseRefs ++ Acc
                       end, [], Packages)),
-    true = lists:all(fun (#{~"licenseId" := LicenseId}) -> lists:member(LicenseId, LicenseRefsInProject) end, LicensesInfo),
+    LicenseRefsInProject1 = lists:uniq(lists:flatmap(fun (L) -> string:split(L, " AND ") end, LicenseRefsInProject)),
+    RootLicenses = lists:map(fun (#{~"licenseId" := Id}) -> Id end, LicensesInfo),
+
+    [] = RootLicenses -- LicenseRefsInProject1,
+    true = lists:all(fun (#{~"licenseId" := LicenseId}) -> lists:member(LicenseId, LicenseRefsInProject1) end, LicensesInfo),
     ok.
 
 %% Adds LicenseRef licenses where the text is missing.
@@ -2514,14 +2811,12 @@ extracted_license_info() ->
 %% Documentation in HOWTO/SBOM.md
 %%
 
-vex_path(Branch) ->
-    VexPath = ?VexPath,
-    vex_path(VexPath, Branch).
-vex_path(VexPath, Branch) ->
-    <<VexPath/binary, Branch/binary, ".openvex.json">>.
 
-init_openvex(#{input_file := File, branch := Branch, vex_path := VexPath}) ->
-    InitVex = vex_path(VexPath, Branch),
+vex_path(Branch) ->
+    <<Branch/binary, ".openvex.json">>.
+
+init_openvex(#{input_file := File, branch := Branch}) ->
+    InitVex = vex_path(Branch),
     VexStmts = case filelib:is_file(InitVex) of
                    true -> % file exists
                        maps:get(~"statements", decode(InitVex));
@@ -2530,40 +2825,46 @@ init_openvex(#{input_file := File, branch := Branch, vex_path := VexPath}) ->
                        file:write_file(InitVex, json:format(Init)),
                        maps:get(~"statements", Init)
                end,
-    run_openvex1(VexStmts, File, Branch, VexPath).
+    run_openvex1(VexStmts, File, Branch).
 
-run_openvex(#{input_file := File, branch := Branch, vex_path := VexPath}) ->
-    InitVex = vex_path(VexPath, Branch),
+run_openvex(#{input_file := File, branch := Branch}) ->
+    %% Download files from orphan branch into VexPath Folder.
+    _ = download_otp_openvex_file(Branch),
+    InitVex = vex_path(Branch),
     VexStmts = maps:get(~"statements", decode(InitVex)),
-    run_openvex1(VexStmts, File, Branch, VexPath).
+    run_openvex1(VexStmts, File, Branch).
 
-run_openvex1(VexStmts, VexTableFile, Branch, VexPath) ->
-    Statements = calculate_statements(VexStmts, VexTableFile, Branch, VexPath),
+run_openvex1(VexStmts, VexTableFile, Branch) ->
+    Statements = calculate_statements(VexStmts, VexTableFile, Branch),
     lists:foreach(fun (St) -> io:format("~ts", [St]) end, Statements).
 
 verify_openvex(#{create_pr := PR}) ->
     Branches = get_supported_branches(),
     io:format("Sync ~p~n", [Branches]),
-    _ = lists:foreach(
-          fun (Branch) ->
+    ExistsAdvisory =
+        lists:foldl(
+          fun (Branch, NewAdvisory) ->
                   case verify_openvex_advisories(Branch) of
                       [] ->
-                          io:format("No new advisories nor OpenVEX statements created for '~s'.", [Branch]);
+                          io:format("No new advisories nor OpenVEX statements created for '~s'.", [Branch]),
+                          NewAdvisory;
                       MissingAdvisories ->
                           io:format("Missing Advisories:~n~p~n~n", [MissingAdvisories]),
                           case PR of
                               false ->
                                   io:format("To automatically update openvex.table and create a PR run:~n" ++
-                                                ".github/scripts/otp-compliance.es vex verify -b ~s -p~n~n", [Branch]);
+                                                ".github/scripts/otp-compliance.es vex verify -b ~s -p~n~n", [Branch]),
+                                  NewAdvisory;
                               true ->
                                   Advs = create_advisory(MissingAdvisories),
                                   _ = update_openvex_otp_table(Branch, Advs),
                                   BranchStr = erlang:binary_to_list(Branch),
-                                  _ = cmd(".github/scripts/otp-compliance.es vex run -b "++ BranchStr ++ " | bash")
+                                  _ = cmd(".github/scripts/otp-compliance.es vex run -b "++ BranchStr ++ " | bash"),
+                                  true
                           end
                   end
-          end, Branches),
-    case PR of
+          end, false, Branches),
+    case ExistsAdvisory andalso PR of
         true ->
             Result = cmd(".github/scripts/create-openvex-pr.sh " ++ ?GH_ACCOUNT ++ " vex"),
             io:format("~s~n", [unicode:characters_to_binary(Result)]);
@@ -2882,25 +3183,27 @@ openvex_filter_product(Products) ->
 vex_set_inclusion(AdvVEX, OpenVEX) ->
     [VEX || VEX <- AdvVEX, not lists:member(VEX, OpenVEX)].
 
-calculate_statements(VexStmts, VexTableFile, Branch, VexPath) ->
+calculate_statements(VexStmts, VexTableFile, Branch) ->
     VexTable = decode(VexTableFile),
     case maps:get(Branch, VexTable, error) of
         error ->
             fail("Could not find '~ts' in file '~ts'.~nDid you forget to add an entry with name '~ts' into 'openvex.table'?",
                  [Branch, VexTableFile, Branch]);
         CVEs ->
-            calculate_statements_from_cves(VexStmts, CVEs, Branch, VexPath)
+            calculate_statements_from_cves(VexStmts, CVEs, Branch)
     end.
 
 exists_cve_in_openvex(VexStmts, CVE, StatusCVE, Purl) ->
     lists:any(fun (#{~"vulnerability" := #{~"name" := VexCVE}}) when VexCVE =/= CVE ->
                       false;
-                  (#{~"vulnerability" := #{~"name" := VexCVE}, ~"status" := Status}) ->
+                  (#{~"vulnerability" := #{~"name" := VexCVE},
+                     ~"status" := Status,
+                     ~"products" := Products}) ->
+                    VexIds = lists:map(fun(M0) -> maps:get(~"@id", M0) end, Products),
                     Ls = fetch_openvex_table_status(StatusCVE),
-                    lists:member(Status, Ls) andalso CVE == VexCVE;
-                  (#{~"products" := Products}) ->
-                      VexIds = lists:map(fun(M0) -> maps:get(~"@id", M0) end, Products),
-                      lists:member(Purl, VexIds)
+                    lists:member(Status, Ls)         andalso
+                          lists:member(Purl, VexIds) andalso
+                          CVE == VexCVE
               end, VexStmts).
 
 fetch_openvex_table_status(#{~"affected" := _}=Status) when is_map(Status) ->
@@ -2909,7 +3212,7 @@ fetch_openvex_table_status(#{~"fixed" := _}=Status) when is_map(Status) ->
     [~"fixed" | fetch_openvex_table_status(maps:without([~"fixed"], Status))];
 fetch_openvex_table_status(#{~"not_affected" := _}=Status) when is_map(Status) ->
     [~"not_affected" | fetch_openvex_table_status(maps:without([~"not_affected"], Status))];
-fetch_openvex_table_status(Status) when Status == ~"under_investigation" ->
+fetch_openvex_table_status(Status) when Status == ~"under_investigation"; Status == ~"affected" ->
     [Status];
 fetch_openvex_table_status(_) ->
     [].
@@ -2921,7 +3224,7 @@ fetch_openvex_status(M) when is_map(M) ->
 fetch_openvex_status(_) ->
     {false, false}.
 
-calculate_statements_from_cves(VexStmts, CVEs, Branch, VexPath) ->
+calculate_statements_from_cves(VexStmts, CVEs, Branch) ->
     %% make the function idempotent, i.e., can be called consecutive times producing the same input
     lists:foldl(
       fun (#{~"status" := Status}=M, Acc) ->
@@ -2931,7 +3234,7 @@ calculate_statements_from_cves(VexStmts, CVEs, Branch, VexPath) ->
                   true -> %% entry exists, ignore to make operation idempotent
                       Acc;
                   false ->
-                      InitVex = vex_path(VexPath, Branch),
+                      InitVex = vex_path(Branch),
                       {FixedStatus, AffectedStatus} = fetch_openvex_status(Status),
                       case Purl of
                           <<?ErlangPURL, _/binary>> ->
@@ -3010,6 +3313,12 @@ format_vexctl(_VexPath, <<>>, _CVE, _) ->
 format_vexctl(VexPath, Versions, CVE, #{~"not_affected" := ~"vulnerable_code_not_present"}) ->
     io_lib:format("vexctl add --in-place ~ts --product='~ts' --vuln='~ts' --status='~ts' --justification='~ts'~n",
               [VexPath, Versions, CVE, ~"not_affected", ~"vulnerable_code_not_present"]);
+format_vexctl(VexPath, Versions, CVE, #{~"not_affected" := ~"vulnerable_code_not_in_execute_path"}) ->
+    io_lib:format("vexctl add --in-place ~ts --product='~ts' --vuln='~ts' --status='~ts' --justification='~ts'~n",
+              [VexPath, Versions, CVE, ~"not_affected", ~"vulnerable_code_not_in_execute_path"]);
+format_vexctl(VexPath, Versions, CVE, #{~"not_affected" := ~"component_not_present"}) ->
+    io_lib:format("vexctl add --in-place ~ts --product='~ts' --vuln='~ts' --status='~ts' --justification='~ts'~n",
+              [VexPath, Versions, CVE, ~"not_affected", ~"component_not_present"]);
 format_vexctl(VexPath, Versions, CVE, #{~"affected" := Mitigation}) ->
     io_lib:format("vexctl add --in-place ~ts --product='~ts' --vuln='~ts' --status='~ts' --action-statement='~ts'~n",
           [VexPath, Versions, CVE, ~"affected", Mitigation]);
@@ -3252,9 +3561,9 @@ test_openvex(_) ->
 
 
 test_openvex_branched_otp_tree() ->
-    {VexPath,  Branch, VexStmts} = setup_openvex_test(),
+    {_VexPath,  Branch, VexStmts} = setup_openvex_test(),
     CVEs = fixup_openvex_branched_otp_tree(),
-    Result = calculate_statements_from_cves(VexStmts, CVEs, Branch, VexPath),
+    Result = calculate_statements_from_cves(VexStmts, CVEs, Branch),
     Expected = [~"vexctl add --in-place otp-23.openvex.json --product='pkg:github/erlang/otp@OTP-23.0,pkg:github/erlang/otp@OTP-23.0.1,pkg:github/erlang/otp@OTP-23.0.2,pkg:github/erlang/otp@OTP-23.0.3,pkg:github/erlang/otp@OTP-23.0.4,pkg:otp/ssl@10.0,pkg:github/erlang/otp@OTP-23.1,pkg:github/erlang/otp@OTP-23.1.1,pkg:github/erlang/otp@OTP-23.1.2,pkg:github/erlang/otp@OTP-23.1.3,pkg:github/erlang/otp@OTP-23.1.4,pkg:github/erlang/otp@OTP-23.1.4.1,pkg:github/erlang/otp@OTP-23.1.5,pkg:otp/ssl@10.1,pkg:github/erlang/otp@OTP-23.2,pkg:github/erlang/otp@OTP-23.2.1,pkg:otp/ssl@10.2,pkg:github/erlang/otp@OTP-23.2.2,pkg:github/erlang/otp@OTP-23.2.3,pkg:otp/ssl@10.2.1,pkg:github/erlang/otp@OTP-23.2.4,pkg:otp/ssl@10.2.2,pkg:github/erlang/otp@OTP-23.2.5,pkg:github/erlang/otp@OTP-23.2.6,pkg:otp/ssl@10.2.3,pkg:github/erlang/otp@OTP-23.2.7,pkg:otp/ssl@10.2.4,pkg:github/erlang/otp@OTP-23.2.7.1,pkg:otp/ssl@10.2.4.1,pkg:github/erlang/otp@OTP-23.2.7.2,pkg:github/erlang/otp@OTP-23.2.7.3,pkg:otp/ssl@10.2.4.2,pkg:github/erlang/otp@OTP-23.2.7.4,pkg:otp/ssl@10.2.4.3,pkg:github/erlang/otp@OTP-23.2.7.5,pkg:otp/ssl@10.2.4.4,pkg:github/erlang/otp@OTP-23.3,pkg:github/erlang/otp@OTP-23.3.1,pkg:otp/ssl@10.3,pkg:github/erlang/otp@OTP-23.3.2,pkg:github/erlang/otp@OTP-23.3.3,pkg:github/erlang/otp@OTP-23.3.4,pkg:github/erlang/otp@OTP-23.3.4.1,pkg:otp/ssl@10.3.1,pkg:github/erlang/otp@OTP-23.3.4.2,pkg:github/erlang/otp@OTP-23.3.4.3,pkg:github/erlang/otp@OTP-23.3.4.4,pkg:otp/ssl@10.3.1.1,pkg:github/erlang/otp@OTP-23.3.4.5,pkg:github/erlang/otp@OTP-23.3.4.6,pkg:github/erlang/otp@OTP-23.3.4.7,pkg:github/erlang/otp@OTP-23.3.4.8,pkg:github/erlang/otp@OTP-23.3.4.9,pkg:github/erlang/otp@OTP-23.3.4.10,pkg:github/erlang/otp@OTP-23.3.4.11,pkg:github/erlang/otp@OTP-23.3.4.12,pkg:github/erlang/otp@OTP-23.3.4.13,pkg:github/erlang/otp@OTP-23.3.4.14,pkg:otp/ssl@10.3.1.2,pkg:github/erlang/otp@OTP-23.3.4.15,pkg:otp/ssl@10.3.1.3,pkg:github/erlang/otp@OTP-23.3.4.16,pkg:otp/ssl@10.3.1.4,pkg:github/erlang/otp@OTP-23.3.4.17,pkg:github/erlang/otp@OTP-23.3.4.18,pkg:github/erlang/otp@OTP-23.3.4.19,pkg:github/erlang/otp@OTP-23.3.4.20,pkg:otp/ssl@10.3.1.5' --vuln='F00' --status='under_investigation'\n",
 
                 ~"vexctl add --in-place otp-23.openvex.json --product='pkg:github/erlang/otp@OTP-26.0,pkg:otp/erts@14.0,pkg:github/erlang/otp@OTP-26.0.1,pkg:otp/erts@14.0.1,pkg:github/erlang/otp@OTP-26.0.2,pkg:otp/erts@14.0.2,pkg:github/erlang/otp@OTP-26.1,pkg:github/erlang/otp@OTP-26.1.1,pkg:otp/erts@14.1,pkg:github/erlang/otp@OTP-26.1.2,pkg:otp/erts@14.1.1,pkg:github/erlang/otp@OTP-26.2,pkg:otp/erts@14.2,pkg:github/erlang/otp@OTP-26.2.1,pkg:otp/erts@14.2.1,pkg:github/erlang/otp@OTP-26.2.2,pkg:otp/erts@14.2.2,pkg:github/erlang/otp@OTP-26.2.3,pkg:otp/erts@14.2.3,pkg:github/erlang/otp@OTP-26.2.4,pkg:otp/erts@14.2.4,pkg:github/erlang/otp@OTP-26.2.5,pkg:otp/erts@14.2.5,pkg:github/erlang/otp@OTP-26.2.5.1,pkg:otp/erts@14.2.5.1,pkg:github/erlang/otp@OTP-26.2.5.2,pkg:otp/erts@14.2.5.2,pkg:github/erlang/otp@OTP-26.2.5.3,pkg:otp/erts@14.2.5.3,pkg:github/erlang/otp@OTP-26.2.5.4,pkg:github/erlang/otp@OTP-26.2.5.5,pkg:otp/erts@14.2.5.4,pkg:github/erlang/otp@OTP-26.2.5.6,pkg:otp/erts@14.2.5.5,pkg:github/erlang/otp@OTP-26.2.5.7,pkg:otp/erts@14.2.5.6,pkg:github/erlang/otp@OTP-26.2.5.8,pkg:otp/erts@14.2.5.7,pkg:github/erlang/otp@OTP-26.2.5.9,pkg:otp/erts@14.2.5.8,pkg:github/erlang/otp@OTP-26.2.5.10,pkg:github/erlang/otp@OTP-26.2.5.11,pkg:otp/erts@14.2.5.9,pkg:github/erlang/otp@OTP-26.2.5.12,pkg:github/erlang/otp@OTP-26.2.5.13,pkg:otp/erts@14.2.5.10,pkg:github/erlang/otp@OTP-26.2.5.14,pkg:github/erlang/otp@OTP-26.2.5.15,pkg:otp/erts@14.2.5.11' --vuln='CVE-2024-4444' --status='not_affected' --justification='vulnerable_code_not_present'\n",
@@ -3280,9 +3589,9 @@ test_openvex_branched_otp_tree() ->
 %% idempotent: script runs once. if run again, no new vex statements are introduced,
 %% because there was no change.
 test_openvex_branched_otp_tree_idempotent() ->
-    {VexPath,  Branch, VexStmts} = setup_openvex_test(fixup_openvex_branched_otp_tree_stmts()),
+    {_VexPath,  Branch, VexStmts} = setup_openvex_test(fixup_openvex_branched_otp_tree_stmts()),
     CVEs = fixup_openvex_branched_otp_tree(),
-    Result = calculate_statements_from_cves(VexStmts, CVEs, Branch, VexPath),
+    Result = calculate_statements_from_cves(VexStmts, CVEs, Branch),
     true = Result == [],
     ok.
 
@@ -3323,7 +3632,7 @@ fixup_openvex_branched_otp_tree() ->
 
 fixup_openvex_branched_otp_tree_stmts() ->
     [#{ ~"vulnerability"=>
-            #{"name"=> ~"CVE-2025-26618"},
+            #{~"name"=> ~"CVE-2025-26618"},
         ~"products"=>
             [
              #{~"@id"=> ~"pkg:github/erlang/otp@OTP-23.2.2"},
@@ -3459,7 +3768,7 @@ fixup_openvex_branched_otp_tree_stmts() ->
         ~"status" => ~"not_affected",
         ~"justification" => ~"vulnerable_code_not_present" },
 
-     #{ ~"vulnerability"=> #{"name"=> ~"F00"},
+     #{ ~"vulnerability"=> #{~"name"=> ~"F00"},
         ~"products"=>
             [
              #{~"@id"=> ~"pkg:github/erlang/otp@OTP-23.2.2"},
@@ -3467,7 +3776,7 @@ fixup_openvex_branched_otp_tree_stmts() ->
             ],
         ~"status"=> ~"under_investigation"
       },
-     #{ ~"vulnerability"=> #{"name"=> ~"CVE-2025-58050"},
+     #{ ~"vulnerability"=> #{~"name"=> ~"CVE-2025-58050"},
         ~"products"=>
             [
              #{~"@id"=> ~"pkg:github/PCRE2Project/pcre2@2dce7761b1831fd3f82a9c2bd5476259d945da4d"}

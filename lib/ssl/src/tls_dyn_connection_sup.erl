@@ -2,9 +2,9 @@
 %% %CopyrightBegin%
 %%
 %% SPDX-License-Identifier: Apache-2.0
-%% 
-%% Copyright Ericsson AB 2021-2025. All Rights Reserved.
-%% 
+%%
+%% Copyright Ericsson AB 2021-2026. All Rights Reserved.
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -16,7 +16,7 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 
@@ -42,19 +42,28 @@
 %%%=========================================================================
 %%%  API
 %%%=========================================================================
-start_link(SenderArgs, ReciverArgs) ->
-    supervisor:start_link(?MODULE, [SenderArgs, ReciverArgs]).
+start_link(SenderArgs, ReceiverArgs) ->
+    [Role, _Host, _Port, _Socket, {SslOpts, _, _}, _User, _CbInfo] = ReceiverArgs,
+    ReceiverSpawnOpts = maps:get(receiver_spawn_opts, SslOpts, []),
+    case supervisor:start_link(?MODULE, [self(), SenderArgs, ReceiverSpawnOpts]) of
+        {ok, Sup} ->
+            {ok, {_, Receiver, _, _}} = supervisor:which_child(Sup, receiver),
+            Receiver ! {self(), options, [Role, Sup | tl(ReceiverArgs)]},
+            {ok, Sup};
+        Error ->
+            Error
+    end.
 
 %%%=========================================================================
 %%%  Supervisor callback
 %%%=========================================================================
-init([SenderArgs, ReciverArgs]) ->
+init([Parent, SenderArgs, ReceiverSpawnOpts]) ->
     SupFlags = #{strategy      => one_for_all,
                  auto_shutdown => any_significant,
                  intensity     =>    0,
                  period        => 3600
                 },
-    ChildSpecs = [sender(SenderArgs), receiver(ReciverArgs)],
+    ChildSpecs = [sender(SenderArgs), receiver(Parent, ReceiverSpawnOpts)],
     {ok, {SupFlags, ChildSpecs}}.
 
 sender(Args) ->
@@ -65,12 +74,12 @@ sender(Args) ->
       modules     => [tls_sender]
      }.
 
-receiver(Args) ->
+receiver(Parent, SpawnOpts) ->
     #{id          => receiver,
       restart     => temporary,
       type        => worker,
       significant => true,
-      start       => {ssl_gen_statem, tls_start_link, Args},
+      start       => {ssl_gen_statem, tls_start_link, [Parent, SpawnOpts]},
       modules     => [ssl_gen_statem,
                       tls_client_connection,
                       tls_server_connection,

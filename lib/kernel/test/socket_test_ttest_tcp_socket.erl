@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2018-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2018-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -43,6 +43,8 @@
          info/1
 	]).
 
+
+-include("socket_test_ttest.hrl").
 
 -define(LIB, socket_test_lib).
 
@@ -208,7 +210,7 @@ do_connect(LocalSA, ServerSA, Cleanup, #{domain := Domain,
 		ok ->
 		    ok;
 		{error, BReason} ->
-		    (catch socket:close(Sock)),
+		    ?CATCH_AND_IGNORE( socket:close(Sock) ),
                     Cleanup(),
 		    throw({error, {bind, BReason}})
 	    end,
@@ -216,7 +218,7 @@ do_connect(LocalSA, ServerSA, Cleanup, #{domain := Domain,
 		ok ->
 		    ok;
 		{error, CReason} ->
-		    (catch socket:close(Sock)),
+		    ?CATCH_AND_IGNORE( socket:close(Sock) ),
                     Cleanup(),
 		    throw({error, {connect, CReason}})
 	    end,
@@ -306,7 +308,7 @@ do_listen(SA,
 		ok ->
 		    ok;
 		{error, BReason} ->
-		    (catch socket:close(Sock)),
+		    ?CATCH_AND_IGNORE( socket:close(Sock) ),
                     Cleanup(),
 		    throw({error, {bind, BReason}})
 	    end,
@@ -314,7 +316,7 @@ do_listen(SA,
 		ok ->
                     ok;
                 {error, LReason} ->
-		    (catch socket:close(Sock)),
+		    ?CATCH_AND_IGNORE( socket:close(Sock) ),
                     Cleanup(),
                     throw({error, {listen, LReason}})
             end,

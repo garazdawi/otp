@@ -254,7 +254,7 @@ add_signature_algorithms_cert(Extensions, SignAlgsCert) ->
 
 filter_tls13_algs(undefined) -> undefined;
 filter_tls13_algs(Algo) ->
-    lists:foldl(fun(default, Acc) ->
+    lists:foldr(fun(default, Acc) ->
                         Acc;
                    (Atom, Acc) when is_atom(Atom) ->
                         [Atom | Acc];
@@ -367,6 +367,9 @@ certificate_verify(PrivateKey, SignatureScheme,
 %% Upon receiving a message with type server_hello, implementations MUST
 %% first examine the Random value and, if it matches this value, process
 %% it as described in Section 4.1.4).
+maybe_hello_retry_request(#server_hello{random = ?HELLO_RETRY_REQUEST_RANDOM},
+                          #state{protocol_specific = #{hello_retry := true}}) ->
+    {error, ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE)};
 maybe_hello_retry_request(#server_hello{random = ?HELLO_RETRY_REQUEST_RANDOM} = ServerHello, 
                           #state{protocol_specific = PS} = State0) ->
     {error, {State0#state{protocol_specific = PS#{hello_retry => true}}, start, ServerHello}};
@@ -528,10 +531,13 @@ validate_finished(#state{connection_states = ConnectionStates,
     compare_verify_data(ControlData, VerifyData).
 
 
-compare_verify_data(Data, Data) ->
-    ok;
-compare_verify_data(_, _) ->
-    {error, ?ALERT_REC(?FATAL, ?DECRYPT_ERROR, decrypt_error)}.
+compare_verify_data(Data1, Data2) ->
+    case crypto:hash_equals(Data1, Data2) of
+        true ->
+            ok;
+        false ->
+            {error, ?ALERT_REC(?FATAL, ?DECRYPT_ERROR, decrypt_error)}
+    end.
 
 %%====================================================================
 %% Encode handshake
@@ -805,7 +811,9 @@ validate_certificate_chain(CertEntries, CertDbHandle, CertDbRef,
             ssl_handshake:certify(Certs, CertDbHandle,
                                   CertDbRef, SslOptions, CRLDbHandle, Role, Host, ?TLS_1_3,
                                   ExtInfo)
-    catch error:{_,{error, {asn1, Asn1Reason}}}=Reason:ST ->
+    catch throw:#alert{} = Alert ->
+            Alert;
+          error:{_,{error, {asn1, Asn1Reason}}}=Reason:ST ->
             %% ASN-1 decode of certificate somehow failed
             ?SSL_LOG(info, asn1_decode, [Reason, {stacktrace, ST}]),
             ?ALERT_REC(?FATAL, ?CERTIFICATE_UNKNOWN, {failed_to_decode_certificate, Asn1Reason})
@@ -828,13 +836,29 @@ split_cert_entries([#certificate_entry{data = DerCert,
 
     Id = public_key:pkix_subject_id(DerCert),
     Extensions = [ExtValue || {_, ExtValue} <- maps:to_list(Extensions0)],
-    StaplingState = case {maps:get(status_request, Extensions0, undefined),
-                          StaplingConfigured} of
-                        {undefined, _} ->
-                            StaplingState0;
-                        {_, true} ->
-                            StaplingState0#{status => received_staple}
-                    end,
+    StaplingState =
+        case {maps:get(status_request, Extensions0, undefined), StaplingConfigured} of
+            {undefined, _} ->
+                %% No OCSP response in this cert entry.
+                %% For intermediate CA certs this is normal.
+                %% For the peer cert, state stays not_negotiated
+                %% and cert_status_check/5 will hard-fail when
+                %% stapling is configured.
+                StaplingState0;
+            {#certificate_status{}, true} ->
+                %% Server provided OCSP staple and client
+                %% requested it — mark as received. The
+                %% response will be verified later by
+                %% ssl_certificate:verify_cert_extensions/4.
+                StaplingState0#{status => received_staple};
+            {#certificate_status{}, false} ->
+                %% Unsolicited OCSP staple — client did not
+                %% configure stapling. Protocol violation per
+                %% RFC 8446 4.2: server MUST NOT include
+                %% extensions not offered in ClientHello.
+                throw(?ALERT_REC(?FATAL, ?UNSUPPORTED_EXTENSION,
+                                 unexpected_certificate_status))
+        end,
     split_cert_entries(CertEntries, StaplingState, [Cert | Chain],
                        CertExt#{Id => Extensions}).
 
@@ -1773,7 +1797,16 @@ handle_pre_shared_key(#state{ssl_options = #{session_tickets := Tickets},
                                                        OfferedPreSharedKeys}, Cipher) when Tickets =/= disabled ->
     Tracker = proplists:get_value(session_tickets_tracker, Trackers),
     #{prf := CipherHash} = ssl_cipher_format:suite_bin_to_map(Cipher),
-    tls_server_session_ticket:use(Tracker, OfferedPreSharedKeys, CipherHash, HHistory).
+    #offered_psks{
+       identities = Identities,
+       binders = Binders
+      } = OfferedPreSharedKeys,
+    case length(Identities) == length(Binders) of
+        true ->
+            tls_server_session_ticket:use(Tracker, OfferedPreSharedKeys, CipherHash, HHistory);
+        false ->
+            {error, ?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER, illegal_pre_shared_key)}
+    end.
 
 %% If the handshake includes a HelloRetryRequest, the initial
 %% ClientHello and HelloRetryRequest are included in the transcript
@@ -2083,7 +2116,7 @@ select_client_cert_key_pair(Session0, [#{private_key := Key, certs := [Cert| _] 
                                                 CertDbHandle, CertDbRef, CertAuths, Plausible0)
             end;
         {error, _} ->
-            select_client_cert_key_pair(Session0, Rest, ServerSignAlgsCert, ServerSignAlgsCert, ClientSignAlgs,
+            select_client_cert_key_pair(Session0, Rest, ServerSignAlgs, ServerSignAlgsCert, ClientSignAlgs,
                                         CertDbHandle, CertDbRef, CertAuths, Plausible0)
     end.
 

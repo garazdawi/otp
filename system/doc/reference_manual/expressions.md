@@ -48,7 +48,7 @@ wrong type causes a `badarg` runtime error.
 
 ## Terms
 
-The simplest form of expression is a term, that is one of
+The simplest form of expression is a term, that is, one of
 `t:integer/0`, `t:float/0`, `t:atom/0`, `t:string/0`, `t:list/0`,
 `t:map/0`, or `t:tuple/0`. The return value is the term itself.
 
@@ -130,7 +130,7 @@ an `if`, `case`, or `receive` expression must be bound in all branches to have a
 value outside the expression. Otherwise they are regarded as unsafe outside
 the expression.
 
-For the `try` expression variable scoping is limited so that variables bound in
+For the `try` expression, variable scoping is limited so that variables bound in
 the expression are always unsafe outside the expression.
 
 ## Patterns
@@ -204,7 +204,7 @@ An arithmetic expression can be used within a pattern if it meets both of the
 following two conditions:
 
 - It uses only numeric or bitwise operators.
-- Its value can be evaluated to a constant when complied.
+- Its value can be evaluated to a constant when compiled.
 
 _Example:_
 
@@ -260,14 +260,14 @@ PatternN = Temporary,
    .
    .,
 Pattern2 = Temporary,
-Pattern = Temporary
+Pattern1 = Temporary
 ```
 
 ## The Match Operator and the Compound Pattern Operator
 
 > #### Note {: .info }
 >
-> This is an advanced section, which references to topics not yet introduced. It
+> This is an advanced section, which refers to topics not yet introduced. It
 > can safely be skipped on a first reading.
 
 The `=` character is used to denote two similar but distinct operators: the
@@ -322,14 +322,14 @@ first. That is, `M` is matched against `#{key := Key}`, and then the value of
 `M` is matched against pattern `#{Key := Value}`. That is the same evaluation
 order as in _2_; therefore, the parentheses are redundant.
 
-In the expression at prompt `4>` the expression `M` is matched against a pattern
+In the expression at prompt `4>`, the expression `M` is matched against a pattern
 inside parentheses. Since the construct inside the parentheses is a pattern, the
 `=` that separates the two patterns is the compound pattern operator (_not_ the
 match operator). The match fails because the two sub patterns are matched at the
 same time, and the variable `Key` is therefore not bound when matching against
 pattern `#{Key := Value}`.
 
-In the expression at prompt `5>` the expressions inside the
+In the expression at prompt `5>`, the expressions inside the
 [block expression](expressions.md#block-expressions) are evaluated first,
 binding variable `Y` and creating a binary. The binary is then matched against
 pattern `<<X:Y>>` using the value of `Y` as the size of the segment.
@@ -337,8 +337,8 @@ pattern `<<X:Y>>` using the value of `Y` as the size of the segment.
 ## Function Calls
 
 ```
-ExprF(Expr1,...,ExprN)
 ExprM:ExprF(Expr1,...,ExprN)
+ExprF(Expr1,...,ExprN)
 ```
 
 In the first form of function calls, `ExprM:ExprF(Expr1,...,ExprN)`, each of
@@ -383,7 +383,7 @@ Fun1(3).
 Notice that when calling a local function, there is a difference between using
 the implicitly or fully qualified function name. The latter always refers to the
 latest version of the module. See
-[Compilation and Code Loading ](code_loading.md)and
+[Compilation and Code Loading](code_loading.md) and
 [Function Evaluation](ref_man_functions.md#eval).
 
 ### Local Function Names Clashing With Auto-Imported BIFs
@@ -391,7 +391,7 @@ latest version of the module. See
 If a local function has the same name as an auto-imported BIF, the semantics is
 that implicitly qualified function calls are directed to the locally defined
 function, not to the BIF. To avoid confusion, there is a compiler directive
-available, `-compile({no_auto_import,[F/A]})`, that makes a BIF not being
+available, `-compile({no_auto_import,[F/A]})`, that prevents a BIF from being
 auto-imported. In certain situations, such a compile-directive is mandatory.
 
 > #### Change {: .info }
@@ -400,9 +400,9 @@ auto-imported. In certain situations, such a compile-directive is mandatory.
 > function having the same name as an auto-imported BIF always resulted in the
 > BIF being called. In newer versions of the compiler, the local function is
 > called instead. This is to avoid that future additions to the set of
-> auto-imported BIFs do not silently change the behavior of old code.
+> auto-imported BIFs silently change the behavior of old code.
 
-However, to avoid that old (pre R14) code changed its behavior when compiled
+However, to avoid old (pre R14) code changing its behavior when compiled
 with Erlang/OTP version R14A or later, the following restriction applies: If you
 override the name of a BIF that was auto-imported in OTP versions prior to R14A
 (ERTS version 5.8) and have an implicitly qualified call to that function in
@@ -447,7 +447,7 @@ f(X) ->
 
 For auto-imported BIFs added in Erlang/OTP R14A and thereafter, overriding the
 name with a local function or explicit import is always allowed. However, if the
-`-compile({no_auto_import,[F/A])` directive is not used, the compiler issues a
+`-compile({no_auto_import,[F/A]})` directive is not used, the compiler issues a
 warning whenever the function is called in the module using the implicitly
 qualified function name.
 
@@ -525,7 +525,7 @@ is_valid_signal(Signal) ->
 > #### Change {: .info }
 >
 > The `maybe` [feature](`e:system:features.md#features`) was introduced
-> in Erlang/OTP 25. Starting from Erlang/OTP 27 is is enabled by default.
+> in Erlang/OTP 25. Starting from Erlang/OTP 27, it is enabled by default.
 
 ```
 maybe
@@ -641,7 +641,7 @@ end
 
 The `else` clauses translate the failing value from the conditional match
 operators to the value `error`. If the failing value is not one of the
-recognized values, a `else_clause` run-time error occurs.
+recognized values, an `else_clause` run-time error occurs.
 
 ## Send
 
@@ -677,13 +677,13 @@ receive
 end
 ```
 
-The `receive` expression searches for a message in the message queue that match
+The `receive` expression searches for a message in the message queue that matches
 one of the patterns in the clauses of the `receive` expression. The patterns in
-the clauses is matched against a message from top to bottom. The first message,
-from the start of the message queue, that matches will be selected. Messages are
+the clauses are matched against a message from top to bottom. The first message
+from the start of the message queue that matches will be selected. Messages are
 normally
 [enqueued in the message queue](ref_man_processes.md#message-queue-order) in
-order they were received. However,
+the order they were received. However,
 if [reception of priority messages](ref_man_processes.md#enable-prio-msg-recv)
 has been enabled by the receiving process, this is not always the case. When a
 match succeeds and the optional guard sequence `GuardSeq` is true, the matching
@@ -699,17 +699,17 @@ sequence.
 [](){: #selective-receive-warning }
 > #### Warning {: .warning }
 > The time complexity of a `receive` expression is `O(N)` where `N` corresponds
-> to the amount of messages preceeding the matching message in the message queue.
+> to the number of messages preceding the matching message in the message queue.
 > That is, when the combination of patterns of a `receive` expression only match
 > specific messages and the message queue is huge, executing such a `receive`
 > expression might become very expensive.
 >
 > One type of `receive` expressions matching on only specific patterns can,
-> however, be optimized by the compiler and runtime system. This in the scenario
-> where you create a [*reference*](`e:system:data_types.md#reference`) and
+> however, be optimized by the compiler and runtime system, namely when
+> you create a [*reference*](`e:system:data_types.md#reference`) and
 > match on it in all clauses of a `receive` expression *close* to where the
-> reference was created. In this case only the amount of messages received after
-> the reference was created needs to be inspected. For more information see the
+> reference was created. In this case, only the messages received after
+> the reference was created need to be inspected. For more information see the
 > [*Fetching Received Messages* section of the *Efficiency Guide*](`e:system:eff_guide_processes.md#fetching-received-messages`).
 
 _Example:_
@@ -746,7 +746,7 @@ has arrived within `ExprT` milliseconds, then `BodyT` is evaluated instead. The
 return value of `BodyT` then becomes the return value of the `receive...after`
 expression. `ExprT` is to evaluate to an integer, or the atom `infinity`. The
 allowed integer range is from 0 to 4294967295, that is, the longest possible
-timeout is almost 50 days. With a zero value the timeout occurs immediately if
+timeout is almost 50 days. With a zero value, the timeout occurs immediately if
 there is no matching message in the message queue.
 
 > #### Warning {: .warning }
@@ -755,8 +755,8 @@ there is no matching message in the message queue.
 > *not* necessarily the case. If the patterns in the clauses of the `receive`
 > expression only match specific messages and no such messages exist in the
 > message queue, the whole message queue needs to be inspected before the
-> timeout can occur. That is, the same apply as in
-> [the warning above](#selective-receive-warning).
+> timeout can occur. That is, the same caveat as in
+> [the warning above](#selective-receive-warning) applies.
 
 The atom `infinity` will make the process wait indefinitely for a matching
 message. This is the same as not using a timeout. It can be useful for timeout
@@ -810,7 +810,7 @@ timer(Pid) ->
 For more information on timers in Erlang in general, see the
 [*Timers*](`e:erts:time_correction.md#timers`) section of the
 [*Time and Time Correction in Erlang*](`e:erts:time_correction.md`)
-ERTS User's guide.
+ERTS User's Guide.
 
 ## Term Comparisons
 
@@ -840,15 +840,15 @@ number < atom < reference < fun < port < pid < tuple < map < nil < list < bit st
 `nil` in the previous expression represents the empty list (`[]`), which is
 regarded as a separate type from `t:list/0`. That is why `nil < list`.
 
-Lists are compared element by element. Tuples are ordered by size, two tuples
+Lists are compared element by element. Tuples are ordered by size; two tuples
 with the same size are compared element by element.
 
 Bit strings are compared bit by bit. If one bit string is a prefix of the other,
 the shorter bit string is considered smaller.
 
-Maps are ordered by size, two maps with the same size are compared by keys in
-ascending term order and then by values in key order. In maps key order integers
-types are considered less than floats types.
+Maps are ordered by size; two maps with the same size are compared by keys in
+ascending term order and then by values in key order. In map key order, integer
+types are considered less than float types.
 
 Atoms are compared using their string value, codepoint by codepoint.
 
@@ -936,7 +936,7 @@ Expr1 op Expr2
 | `+`      | Addition                  | Number        |
 | `-`      | Subtraction               | Number        |
 | `*`      | Multiplication            | Number        |
-| `/`      | Floating point division   | Number        |
+| `/`      | Floating-point division   | Number        |
 | `bnot`   | Unary bitwise NOT         | Integer       |
 | `div`    | Integer division          | Integer       |
 | `rem`    | Integer remainder of X/Y  | Integer       |
@@ -1057,7 +1057,7 @@ all(_, []) ->
 > #### Change {: .info }
 >
 > Before Erlang/OTP R13A, `Expr2` was required to evaluate to a Boolean value,
-> and as consequence, `andalso` and `orelse` were **not** tail-recursive.
+> and as a consequence, `andalso` and `orelse` were **not** tail-recursive.
 
 ## List Operations
 
@@ -1143,7 +1143,7 @@ two matching keys.
 
 ### Updating Maps
 
-Updating a map has a similar syntax as constructing it.
+Updating a map has a syntax similar to constructing it.
 
 An expression defining the map to be updated is put in front of the expression
 defining the keys to be updated and their respective values:
@@ -1152,7 +1152,7 @@ defining the keys to be updated and their respective values:
 M#{K => V}
 ```
 
-Here `M` is a term of type map and `K` and `V` are any expression.
+Here `M` is a term of type map, and `K` and `V` can be any expression.
 
 If key `K` does not match any existing key in the map, a new association is
 created from key `K` to value `V`.
@@ -1169,7 +1169,7 @@ To only update an existing value, the following syntax is used:
 M#{K := V}
 ```
 
-Here `M` is a term of type map, `V` is an expression and `K` is an expression
+Here `M` is a term of type map, `V` is an expression, and `K` is an expression
 that evaluates to an existing key in `M`.
 
 If key `K` does not match any existing keys in map `M`, an exception of type
@@ -1186,7 +1186,7 @@ M0 = #{},
 M1 = M0#{a => 0},
 M2 = M1#{a => 1, b => 2},
 M3 = M2#{"function" => fun() -> f() end},
-M4 = M3#{a := 2, b := 3}.  % 'a' and 'b' was added in `M1` and `M2`.
+M4 = M3#{a := 2, b := 3}.  % 'a' and 'b' were added in `M1` and `M2`.
 ```
 
 Here `M0` is any map. It follows that `M1` through `M4` are maps as well.
@@ -1251,17 +1251,17 @@ Similarly, multiple values from the map can be matched:
 
 Here keys `K1` through `Kn` are any expressions with literals or bound
 variables. If all key expressions evaluate successfully and all keys
-exist in map `M`, all variables in `V1 .. Vn` is matched to the
+exist in map `M`, all variables in `V1 .. Vn` are matched to the
 associated values of their respective keys.
 
-If the matching conditions are not met the match fails.
+If the matching conditions are not met, the match fails.
 
 Note that when matching a map, only the `:=` operator (not the `=>`) is allowed
 as a delimiter for the associations.
 
 The order in which keys are declared in matching has no relevance.
 
-Duplicate keys are allowed in matching and match each pattern associated to the
+Duplicate keys are allowed in matching and match each pattern associated with the
 keys:
 
 ```
@@ -1274,7 +1274,7 @@ The empty map literal (`#{}`) matches any map when used as a pattern:
 #{} = Expr
 ```
 
-This expression matches if the expression `Expr` is of type map, otherwise it
+This expression matches if the expression `Expr` is of type map; otherwise, it
 fails with an exception `badmatch`.
 
 Here the key to be retrieved is constructed from an expression:
@@ -1287,7 +1287,7 @@ Here the key to be retrieved is constructed from an expression:
 
 #### Matching Syntax
 
-Matching of literals as keys are allowed in function heads:
+Matching of literals as keys is allowed in function heads:
 
 ```
 %% only start if not_started
@@ -1386,7 +1386,7 @@ bytes where each byte's value is its sequence number:
 ```
 
 Bit strings are a later generalization of binaries, so many texts and much
-information about binaries apply just as well for bit strings.
+information about binaries apply just as well to bit strings.
 
 **Example:**
 
@@ -1451,7 +1451,7 @@ When constructing bit strings, if the size of a float segment is too small to
 contain the representation of the given float value, an exception is raised.
 
 When matching bit strings, matching of float segments fails if the bits of the
-segment does not contain the representation of a finite floating point value.
+segment do not contain the representation of a finite floating-point value.
 
 ### Binary segments
 
@@ -1531,7 +1531,7 @@ constructed binary must be at least as large as the size of the binary segment.
 
 ### Unicode segments
 
-The types `utf8`, `utf16`, and `utf32` specifies encoding/decoding of the
+The types `utf8`, `utf16`, and `utf32` specify encoding/decoding of the
 *Unicode Transformation Format*s [UTF-8](https://en.wikipedia.org/wiki/UTF-8),
 [UTF-16](https://en.wikipedia.org/wiki/UTF-16), and
 [UTF-32](https://en.wikipedia.org/wiki/UTF-32), respectively.
@@ -1606,7 +1606,7 @@ _Examples:_
 Notice that bit string patterns cannot be nested.
 
 Notice also that "`B=<<1>>`" is interpreted as "`B =< <1>>`" which is a syntax
-error. The correct way is to write a space after `=`: "`B = <<1>>`.
+error. The correct way is to write a space after `=`: `B = <<1>>`.
 
 More examples are provided in [Programming Examples](`e:system:bit_syntax.md`).
 
@@ -1664,7 +1664,7 @@ specify an existing local function. The expression is syntactic sugar for:
 fun (Arg1,...,ArgN) -> Name(Arg1,...,ArgN) end
 ```
 
-In `Module:Name/Arity`, `Module`, and `Name` are atoms and `Arity` is an
+In `Module:Name/Arity`, `Module` and `Name` are atoms and `Arity` is an
 integer. `Module`, `Name`, and `Arity` can also be variables. A fun defined in
 this way refers to the function `Name` with arity `Arity` in the _latest_
 version of module `Module`. A fun defined in this way is not dependent on the
@@ -1692,7 +1692,7 @@ exception:
 
 - **`exit`** (the code called [`exit(Term)`](`exit/1`)) - `{'EXIT',Term}` is returned.
 
-- **`throw`** (the code called [`throw(Term)`](`throw/1`)): `Term` is returned.
+- **`throw`** (the code called [`throw(Term)`](`throw/1`)) - `Term` is returned.
 
 `Reason` depends on the type of error that occurred, and `Stack` is the stack of
 recent function calls, see [Exit Reasons](errors.md#exit_reasons).
@@ -1757,7 +1757,7 @@ possibility to:
 
 - Distinguish between different exception classes.
 - Choose to handle only the desired ones.
-- Passing the others on to an enclosing `try` or `catch`, or to default error
+- Pass the others on to an enclosing `try` or `catch`, or to default error
   handling.
 
 Notice that although the keyword `catch` is used in the `try` expression, there
@@ -1870,8 +1870,8 @@ end
 
 try Exprs
 catch
-    ExpressionPattern ->
-        ExpressionBody
+    ExceptionPattern ->
+        ExceptionBody
 after
     AfterBody
 end
@@ -1912,10 +1912,10 @@ Variables bound just after the `try` keyword are:
 - unsafe in both the `catch` and `after` sections, as well as after the whole
   construct
 
-Variables bound in `of` section are:
+Variables bound in the `of` section are:
 
 - unbound in the `catch` section
-- unsafe in both the `after` section, as well as after the whole construct
+- unsafe in the `after` section, as well as after the whole construct
 
 Variables bound in the `catch` section are unsafe in the `after` section, as
 well as after the whole construct.
@@ -1994,7 +1994,7 @@ is either a **generator** or a **filter**.
 > Map comprehensions and map generators were introduced in Erlang/OTP 26.
 
 There are four kinds of generators. Three of them have a relaxed and a strict
-variant. The fourth kind of generator, zip generator, is composed by two or
+variant. The fourth kind of generator, zip generator, is composed of two or
 more non-zip generators.
 
 > #### Change {: .info }
@@ -2002,7 +2002,7 @@ more non-zip generators.
 > Strict generators and zip generators were introduced in Erlang/OTP 28.
 > Using strict generators is a better practice when either strict or relaxed
 > generators work. More details are in
-> [Programming Examples.](`e:system:list_comprehensions.md`)
+> [Programming Examples](`e:system:list_comprehensions.md`).
 
 
 A _list generator_ has the following syntax for relaxed:
@@ -2045,7 +2045,7 @@ and strict variant:
 KeyPattern := ValuePattern <:- MapExpression
 ```
 
-where `MapExpr` is an expression that evaluates to a map, or a map iterator
+where `MapExpression` is an expression that evaluates to a map or a map iterator
 obtained by calling `maps:iterator/1` or `maps:iterator/2`.
 
 A _zip generator_ has the following syntax:
@@ -2167,7 +2167,7 @@ out odd numbers:
 
 ```
 1> [{P,Q} || P <:- [a,b,c] && Q <:- [1,2,3], Q rem 2 =:= 0].
-[{a,1},{b,2},{c,3}]
+[{b,2}]
 ```
 
 Filtering out non-matching elements from two lists.
@@ -2178,7 +2178,7 @@ Filtering out non-matching elements from two lists.
 ```
 
 More examples are provided in
-[Programming Examples.](`e:system:list_comprehensions.md`)
+[Programming Examples](`e:system:list_comprehensions.md`).
 
 When there are no generators, a comprehension returns either a term constructed
 from a single element (the result of evaluating `Expr`) if all filters are true,
@@ -2258,8 +2258,8 @@ evaluation of a guard expression must be guaranteed to be free of side effects.
 Valid guard expressions are the following:
 
 - Variables
-- Constants (atoms, integer, floats, lists, tuples, records, binaries, and maps)
-- Expressions that construct atoms, integer, floats, lists, tuples, records,
+- Constants (atoms, integers, floats, lists, tuples, records, binaries, and maps)
+- Expressions that construct atoms, integers, floats, lists, tuples, records,
   binaries, and maps
 - Expressions that update a map
 - The record expressions `Expr#Name.Field` and `#Name.Field`

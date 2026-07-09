@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Copyright Ericsson AB 1996-2025. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2026. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -688,6 +688,12 @@ UWord erts_sys_get_large_page_size(void);
 /* Size of misc memory allocated from system dependent code */
 Uint erts_sys_misc_mem_sz(void);
 
+/* erl_errno_str.c */
+
+/* char *erl_errno_id(int eno); */ /* Prototype in erl_driver.h */
+void erts_errno_init(void);
+void erts_errno_late_init(void);
+
 /* print stuff is declared here instead of in global.h, so sys stuff won't
    have to include global.h */
 #include "erl_printf.h"
@@ -887,6 +893,7 @@ int sys_chars_to_double(char*, double*);
 int sys_double_to_chars(double, char*, size_t);
 int sys_double_to_chars_ext(double, char*, size_t, size_t);
 int sys_double_to_chars_fast(double, char*, int, int, int);
+int sys_double_to_chars_short(double, char*, int);
 void sys_get_pid(char *, size_t);
 int sys_get_hostname(char *buf, size_t size);
 
@@ -1251,6 +1258,18 @@ ERTS_GLB_INLINE size_t sys_strlen(const char *s)
                             ((byte*)(s))[7] = (byte)((Sint64)(i))       & 0xff;\
                            } while (0) 
 
+#define put_little_int64(i, s) \
+    do {\
+        ((byte*)(s))[7] = (byte)((Sint64)(i) >> 56); \
+        ((byte*)(s))[6] = (byte)((Sint64)(i) >> 48); \
+        ((byte*)(s))[5] = (byte)((Sint64)(i) >> 40); \
+        ((byte*)(s))[4] = (byte)((Sint64)(i) >> 32); \
+        ((byte*)(s))[3] = (byte)((Sint64)(i) >> 24); \
+        ((byte*)(s))[2] = (byte)((Sint64)(i) >> 16); \
+        ((byte*)(s))[1] = (byte)((Sint64)(i) >> 8);  \
+        ((byte*)(s))[0] = (byte)((Sint64)(i));       \
+      } while (0)
+
 /* Returns a signed int */
 #define get_int32(s) ((((byte*) (s))[0] << 24) | \
                       (((byte*) (s))[1] << 16) | \
@@ -1269,6 +1288,14 @@ ERTS_GLB_INLINE size_t sys_strlen(const char *s)
                             ((byte*)(s))[2] = (byte)((i) >> 8)  & 0xff;  \
                             ((byte*)(s))[3] = (byte)(i)         & 0xff;} \
                         while (0)
+
+#define put_little_int32(i, s) \
+    do {\
+        ((byte*)(s))[3] = (byte)((i) >> 24); \
+        ((byte*)(s))[2] = (byte)((i) >> 16); \
+        ((byte*)(s))[1] = (byte)((i) >> 8);  \
+        ((byte*)(s))[0] = (byte)(i);         \
+      } while (0)
 
 #define get_int24(s) ((((byte*) (s))[0] << 16) | \
                       (((byte*) (s))[1] << 8)  | \

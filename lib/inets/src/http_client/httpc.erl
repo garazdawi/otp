@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2009-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2009-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -85,6 +85,8 @@ The client can be stopped using [`inets:stop(httpc, Pid)`](`inets:stop/2`) or
 [RFC 2616](http://www.ietf.org/rfc/rfc2616.txt), `m:inets`, `m:gen_tcp`, `m:ssl`
 """.
 -moduledoc(#{since => "OTP R13B04"}).
+
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -behaviour(inets_service).
 
@@ -264,7 +266,7 @@ When `Profile` is `stand_alone` only the pid can be used.
 
 HTTP options:
 
-- **`timeout`** - Time-out time for the request.
+- [](){: #opt_timeout } **`timeout`** - Time-out time for the request.
 
   The clock starts ticking when the request is sent.
 
@@ -272,20 +274,20 @@ HTTP options:
 
   Default is `infinity`.
 
-- **`connect_timeout`** - Connection time-out time, used during the initial
+- [](){: #opt_connect_timeout } **`connect_timeout`** - Connection time-out time, used during the initial
   request, when the client is _connecting_ to the server.
 
   Time is in milliseconds.
 
   Default is the value of option `timeout`.
 
-- **`ssl`** - This is the `SSL/TLS` connecting configuration option.
+- [](){: #opt_ssl } **`ssl`** - This is the `SSL/TLS` connecting configuration option.
 
   Default value is obtained by calling
   [`httpc:ssl_verify_host_options(true)`. ](`ssl_verify_host_options/1`). See
   [ssl:connect/2,3,4](`m:ssl`) for available options.
 
-- **`autoredirect`** - The client automatically retrieves the information from
+- [](){: #opt_autoredirect } **`autoredirect`** - The client automatically retrieves the information from
   the new URI and returns that as the result, instead of a 30X-result code.
 
   For some 30X-result codes, automatic redirect is not allowed. In these cases
@@ -293,7 +295,7 @@ HTTP options:
 
   Default is `true`.
 
-- **`autoretry`** - The client automatically retries the request **once** after receiving
+- [](){: #opt_autoretry } **`autoretry`** - The client automatically retries the request **once** after receiving
   a Retry-After header from the server.
 
   Sometimes servers can suggest a value that is not suitable for application,
@@ -303,28 +305,30 @@ HTTP options:
 
   Default is atom `infinity`.
 
-- **`proxy_auth`** - A proxy-authorization header using a tuple where the first
+  Since OTP 28.4
+
+- [](){: #opt_proxy_auth } **`proxy_auth`** - A proxy-authorization header using a tuple where the first
   element is the `username` and the second element of the tuple is the
   `password` added to the request.
 
-- **`version`** - Can be used to make the client act as an `HTTP/1.0` client. By
+- [](){: #opt_version } **`version`** - Can be used to make the client act as an `HTTP/1.0` client. By
   default this is an `HTTP/1.1` client. When using `HTTP/1.0` persistent
   connections are not used.
 
   Default is the string `"HTTP/1.1"`.
 
-- **`relaxed`** - If set to `true`, workarounds for known server deviations from
+- [](){: #opt_relaxed } **`relaxed`** - If set to `true`, workarounds for known server deviations from
   the HTTP-standard are enabled.
 
   Default is `false`.
 
 Options details:
 
-- **`sync`** - Option for the request to be synchronous or asynchronous.
+- [](){: #opt_sync } **`sync`** - Option for the request to be synchronous or asynchronous.
 
   Default is `true`.
 
-- **`stream`** - Streams the body of a 200 or 206 response to the calling
+- [](){: #opt_stream } **`stream`** - Streams the body of a 200 or 206 response to the calling
   process or to a file. When streaming to the calling process using option
   `self`, the following stream messages are sent to that process:
   `{http, {RequestId, stream_start, Headers}}, {http, {RequestId, stream, BinBodyPart}}, and {http, {RequestId, stream_end, Headers}}`.
@@ -342,18 +346,18 @@ Options details:
 
   Default is `none`.
 
-- **`body_format`** - Defines if the body is to be delivered as a string or
+- [](){: #opt_body_format } **`body_format`** - Defines if the body is to be delivered as a string or
   binary. This option is only valid for the synchronous request.
 
   Default is `string`. Asynchronous requests always use `binary`.
 
-- **`full_result`** - Defines if a "full result" is to be returned to the caller
+- [](){: #opt_full_result } **`full_result`** - Defines if a "full result" is to be returned to the caller
   (that is, the body, the headers, and the entire status line) or not (the body
   and the status code).
 
   Default is `true`.
 
-- **`headers_as_is`** - Defines if the headers provided by the user are to be
+- [](){: #opt_headers_as_is } **`headers_as_is`** - Defines if the headers provided by the user are to be
   made lower case or to be regarded as case sensitive.
 
   The HTTP standard requires them to be case insensitive. Use this feature only
@@ -363,7 +367,7 @@ Options details:
 
   Default is `false`.
 
-- **`socket_opts`** - Socket options to be used for this request.
+- [](){: #opt_socket_opts } **`socket_opts`** - Socket options to be used for this request.
 
   See the options used by `m:gen_tcp` and `m:ssl`
 
@@ -383,7 +387,7 @@ Options details:
   By default the socket options set by function
   [set_options/1,2](`set_options/1`) are used when establishing a connection.
 
-- **`receiver`** - Defines how the client delivers the result of an asynchronous
+- [](){: #opt_receiver } **`receiver`** - Defines how the client delivers the result of an asynchronous
   request (`sync` has the value `false`).
 
   - **`t:pid/0`** - Messages are sent to this process in the format
@@ -560,6 +564,7 @@ cancel_request(RequestId, Profile)
       Options :: [Option],
       Option :: {proxy, {Proxy, NoProxy}}
               | {https_proxy, {Proxy, NoProxy}}
+              | {max_connections_open, MaxConnectionsOpen}
               | {max_sessions, MaxSessions}
               | {max_keep_alive_length, MaxKeepAlive}
               | {keep_alive_timeout, KeepAliveTimeout}
@@ -576,6 +581,7 @@ cancel_request(RequestId, Profile)
       Port :: non_neg_integer(),
       NoProxy :: [DomainDesc | HostName | IpAddressDesc],
       MaxSessions :: integer(),
+      MaxConnectionsOpen :: integer(),
       MaxKeepAlive :: integer(),
       KeepAliveTimeout :: integer(),
       MaxPipeline :: integer(),
@@ -608,25 +614,28 @@ Sets options to be used for subsequent requests.
   `{undefined, []}`, that is, no proxy is configured and `https_proxy` defaults
   to the value of `proxy`.
 
-- **`MaxSessions`** - `MaxSessions` Maximum number of persistent connections to
+- [](){: #opt_max_connections_open } **`MaxConnectionsOpen`** - `MaxConnectionsOpen` Maximum number of handlers that can be
+  opened at the same time. Default is `infinity` which means that it's not limited.
+
+- [](){: #opt_max_sessions } **`MaxSessions`** - `MaxSessions` Maximum number of persistent connections to
   a host. Default is `2`.
 
-- **`MaxKeepAlive`** - `MaxKeepAlive` Maximum number of outstanding requests on
+- [](){: #opt_max_keep_alive_length } **`MaxKeepAlive`** - `MaxKeepAlive` Maximum number of outstanding requests on
   the same connection to a host. Default is `5`.
 
-- **`KeepAliveTimeout`** - `KeepAliveTimeout` If a persistent connection is idle
+- [](){: #opt_keep_alive_timeout } **`KeepAliveTimeout`** - `KeepAliveTimeout` If a persistent connection is idle
   longer than the `keep_alive_timeout` in milliseconds, the client closes the
   connection. The server can also have such a time-out but do not take that for
   granted. Default is `120000` (= 2 min).
 
-- **`MaxPipeline`** - `MaxPipeline` Maximum number of outstanding requests on a
+- [](){: #opt_max_pipeline_length } **`MaxPipeline`** - `MaxPipeline` Maximum number of outstanding requests on a
   pipelined connection to a host. Default is `2`.
 
-- **`PipelineTimeout`** - `PipelineTimeout` If a persistent connection is idle
+- [](){: #opt_pipeline_timeout } **`PipelineTimeout`** - `PipelineTimeout` If a persistent connection is idle
   longer than the `pipeline_timeout` in milliseconds, the client closes the
   connection. Default is `0`, which results in pipelining not being used.
 
-- **`CookieMode`** - If cookies are enabled, all valid cookies are automatically
+- [](){: #opt_cookies } **`CookieMode`** - If cookies are enabled, all valid cookies are automatically
   saved in the cookie database of the client manager. If option `verify` is
   used, function [`store_cookies/2`](`store_cookies/2`) has to be called for the
   cookies to be saved. Default is `disabled`.
@@ -649,7 +658,7 @@ Sets options to be used for subsequent requests.
 
   See the options used by `m:gen_tcp` and `m:ssl`
 
-- **`VerboseMode`** - Default is `false`. This option is used to switch on (or
+- [](){: #opt_verbose } **`VerboseMode`** - Default is `false`. This option is used to switch on (or
   off) different levels of Erlang trace on the client. It is a debug feature.
 
 - **`Profile`** - When started `stand_alone` only the pid can be used.
@@ -680,6 +689,7 @@ Sets options to be used for subsequent requests.
       Options :: [Option],
       Option :: {proxy, {Proxy, NoProxy}}
               | {https_proxy, {Proxy, NoProxy}}
+              | {max_connections_open, MaxConnectionsOpen}
               | {max_sessions, MaxSessions}
               | {max_keep_alive_length, MaxKeepAlive}
               | {keep_alive_timeout, KeepAliveTimeout}
@@ -697,6 +707,7 @@ Sets options to be used for subsequent requests.
       Proxy :: {HostName, Port},
       Port :: non_neg_integer(),
       NoProxy :: [DomainDesc | HostName | IpAddressDesc],
+      MaxConnectionsOpen :: integer() | infinity,
       MaxSessions :: integer(),
       MaxKeepAlive :: integer(),
       KeepAliveTimeout :: integer(),
@@ -713,10 +724,15 @@ Sets options to be used for subsequent requests.
       HostName :: string().
 set_options(Options, Profile) when is_atom(Profile) orelse is_pid(Profile) ->
     maybe
-        {ok, CurrOpts} ?= get_options([ipfamily, unix_socket], Profile),
+        % eqwalizer:ignore get_options can return {error, term()} short-circuiting maybe expr
+        {ok, CurrOpts} ?= get_options([ipfamily, unix_socket,
+                                       max_sessions, max_connections_open], Profile),
         IpFamily = proplists:get_value(ipfamily, CurrOpts),
         UnixSock = proplists:get_value(unix_socket, CurrOpts),
-        {ok, Opts} ?= validate_options(Options, IpFamily, UnixSock),
+        MaxSessions = proplists:get_value(max_sessions, CurrOpts),
+        MaxConnectionsOpen = proplists:get_value(max_connections_open, CurrOpts),
+
+        {ok, Opts} ?= validate_options(Options, IpFamily, UnixSock, MaxSessions, MaxConnectionsOpen),
         try
             httpc_manager:set_options(Opts, profile_name(Profile))
         catch
@@ -747,7 +763,7 @@ get_options() ->
 -doc(#{since => <<"OTP R15B01">>}).
 -spec get_options(OptionItems) -> {ok, Values} | {error, Reason} when
       OptionItems :: all | [OptionItem],
-      OptionItem :: proxy | https_proxy | max_sessions | keep_alive_timeout
+      OptionItem :: proxy | https_proxy | max_sessions | max_connections_open | keep_alive_timeout
                   | max_keep_alive_length | pipeline_timeout | max_pipeline_length | cookies
                   | ipfamily | ip | port | socket_opts | verbose | unix_socket,
       Values :: [{OptionItem, term()}],
@@ -762,7 +778,7 @@ get_options(Options) ->
 -doc(#{since => <<"OTP R15B01">>}).
 -spec get_options(OptionItems, Profile) -> {ok, Values} | {error, Reason} when
       OptionItems :: all | [OptionItem],
-      OptionItem :: proxy | https_proxy | max_sessions | keep_alive_timeout
+      OptionItem :: proxy | https_proxy | max_sessions | max_connections_open | keep_alive_timeout
                   | max_keep_alive_length | pipeline_timeout | max_pipeline_length | cookies
                   | ipfamily | ip | port | socket_opts | verbose | unix_socket,
       Values :: [{OptionItem, term()}],
@@ -1645,8 +1661,15 @@ validate_ipfamily_unix_socket(IpFamily, UnixSocket) ->
     validate_ipfamily(IpFamily),
     validate_unix_socket(UnixSocket).
 
-validate_options(Options0, CurrIpFamily, CurrUnixSock) ->
+validate_max_sessions_max_connections_open(MaxSessions, MaxConnectionsOpen)
+  when is_integer(MaxConnectionsOpen) andalso MaxSessions > MaxConnectionsOpen ->
+    throw({error, {max_sessions_over_max_connections, MaxSessions, MaxConnectionsOpen}});
+validate_max_sessions_max_connections_open(_, _) ->
+    ok.
+
+validate_options(Options0, CurrIpFamily, CurrUnixSock, MaxSessions, MaxConnectionsOpen) ->
     try
+        validate_max_sessions_max_connections_open(MaxSessions, MaxConnectionsOpen),
         validate_ipfamily_unix_socket(Options0, CurrIpFamily, CurrUnixSock),
         validate_options(Options0, [])
     catch
@@ -1667,6 +1690,10 @@ validate_options([{https_proxy, Proxy} = Opt| Tail], Acc) ->
 
 validate_options([{max_sessions, Value} = Opt| Tail], Acc) ->
     validate_max_sessions(Value),
+    validate_options(Tail, [Opt | Acc]);
+
+validate_options([{max_connections_open, Value} = Opt | Tail], Acc) ->
+    validate_max_connections_open(Value),
     validate_options(Tail, [Opt | Acc]);
 
 validate_options([{keep_alive_timeout, Value} = Opt| Tail], Acc) ->
@@ -1743,6 +1770,13 @@ validate_max_sessions(Value) when is_integer(Value) andalso (Value >= 0) ->
     Value;
 validate_max_sessions(BadValue) ->
     bad_option(max_sessions, BadValue).
+
+validate_max_connections_open(Value)
+  when (is_integer(Value) andalso (Value > 0)) orelse
+       Value =:= infinity ->
+    Value;
+validate_max_connections_open(BadValue) ->
+    bad_option(max_connections_open, BadValue).
 
 validate_keep_alive_timeout(Value) when is_integer(Value) andalso (Value >= 0) ->
     Value;

@@ -2,9 +2,9 @@
 %% %CopyrightBegin%
 %%
 %% SPDX-License-Identifier: Apache-2.0
-%% 
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
-%% 
+%%
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
+%%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
@@ -16,7 +16,7 @@
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
-%% 
+%%
 %% %CopyrightEnd%
 %%
 -module(math).
@@ -67,7 +67,7 @@ acosh(_) ->
     erlang:nif_error(undef).
 
 -doc """
-Returns the arc cosine of `X` in radians.
+Returns the arc sine of `X` in radians.
 
 ## Examples
 
@@ -169,7 +169,7 @@ Returns the cosine of `X` in radians.
 ## Examples
 
 ```erlang
-1> math:cos(0.0)
+1> math:cos(0.0).
 1.0
 ```
 """.
@@ -184,7 +184,7 @@ Returns the hyperbolic cosine of `X`.
 ## Examples
 
 ```erlang
-1> math:cosh(0.0)
+1> math:cosh(0.0).
 1.0
 ```
 """.
@@ -255,7 +255,7 @@ Returns the floor of `X`.
 9.0
 2> math:floor(-1.5).
 -2.0
-3> math:floor(1.0)
+3> math:floor(1.0).
 1.0
 ```
 """.
@@ -361,7 +361,7 @@ Returns the sine of `X` in radians.
 ## Examples
 
 ```erlang
-1> math:sin(0.0)
+1> math:sin(0.0).
 0.0
 ```
 """.
@@ -376,7 +376,7 @@ Returns the hyperbolic sine of `X`.
 ## Examples
 
 ```erlang
-1> math:sinh(0.0)
+1> math:sinh(0.0).
 0.0
 ```
 """.
@@ -408,7 +408,7 @@ Returns the tangent of `X` in radians.
 ## Examples
 
 ```erlang
-1> math:tan(0.0)
+1> math:tan(0.0).
 0.0
 ```
 """.
@@ -423,7 +423,7 @@ Returns the hyperbolic tangent of `X`.
 ## Examples
 
 ```erlang
-1> math:tan(0.0)
+1> math:tan(0.0).
 0.0
 ```
 """.

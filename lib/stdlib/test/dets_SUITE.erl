@@ -3,7 +3,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 1996-2025. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -2961,7 +2961,7 @@ create_opened_log(File) ->
     Tab = t,
     file:delete(File),
     {ok, Tab} = dets:open_file(Tab, [{file,File}]),
-    ok = ins(Tab, 60000),
+    ok = ins(Tab, 100_000),
     ok = dets:close(Tab),
     crash(File, ?CLOSED_PROPERLY_POS+3, ?NOT_PROPERLY_CLOSED),
     ok.

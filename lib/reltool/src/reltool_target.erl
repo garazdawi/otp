@@ -942,12 +942,11 @@ spec_escripts(#sys{apps = Apps}, ErtsBin, BinFiles) ->
     lists:flatten(lists:filtermap(Filter, Apps)).
 
 do_spec_escript(File, ErtsBin, BinFiles) ->
-    [{copy_file, EscriptExe}] = safe_lookup_spec("escript", BinFiles),
     EscriptExt = ".escript",
     Base = filename:basename(File, EscriptExt),
-    ExeExt = filename:extension(EscriptExe),
-    [{copy_file, Base ++ EscriptExt, File},
-     {copy_file, Base ++ ExeExt, filename:join([ErtsBin, EscriptExe])}].
+    ExeS = [{copy_file, Base ++ filename:extension(BinF), filename:join([ErtsBin, BinF])}
+            || {copy_file, BinF} <- safe_lookup_spec("escript", BinFiles)],
+    [{copy_file, Base ++ EscriptExt, File} | ExeS].
 
 check_sys(Mandatory, SysFiles) ->
     lists:foreach(fun(M) -> do_check_sys(M, SysFiles) end, Mandatory).

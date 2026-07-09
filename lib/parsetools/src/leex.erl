@@ -3,8 +3,8 @@
 %%
 %% SPDX-License-Identifier: BSD-2-Clause
 %%
+%% Copyright Ericsson AB 2009-2026. All Rights Reserved.
 %% Copyright (c) 2008,2009 Robert Virding. All rights reserved.
-%% Copyright Ericsson AB 2009-2025. All Rights Reserved.
 %%
 %% Redistribution and use in source and binary forms, with or without
 %% modification, are permitted provided that the following conditions
@@ -45,10 +45,6 @@ Lexical analyzer generator for Erlang
 
 A regular expression based lexical analyzer generator for Erlang, similar to
 `lex` or `flex`.
-
-> #### Note {: .info }
->
-> The `leex` module was considered experimental when it was introduced.
 
 ## Default Leex Options
 
@@ -250,7 +246,7 @@ Floats (\+|-)?[0-9]+\.[0-9]+((E|e)(\+|-)?[0-9]+)?
 > current version of `leex` and generates a parse error.
 """.
 
--compile(nowarn_obsolete_bool_op).
+-compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 -export([compile/3,file/1,file/2,format_error/1]).
 
@@ -2140,10 +2136,10 @@ prep_out_actions(As) ->
             ({A,Code,TokenChars,TokenLen,TokenLine,TokenCol,TokenLoc}) ->
                 Vs = [{TokenChars,"TokenChars"},
                       {TokenLen,"TokenLen"},
-                      {TokenLine or TokenLoc,"TokenLine"},
-                      {TokenCol or TokenLoc,"TokenCol"},
+                      {TokenLine orelse TokenLoc,"TokenLine"},
+                      {TokenCol orelse TokenLoc,"TokenCol"},
                       {TokenChars,"YYtcs"},
-                      {TokenLen or TokenChars,"TokenLen"}],
+                      {TokenLen orelse TokenChars,"TokenLen"}],
                 Vars = [if F -> S; true -> "_" end || {F,S} <- Vs],
                 Name = list_to_atom(lists:concat([yyaction_,A])),
                 [Chars,Len,Line,Col,_,_] = Vars,

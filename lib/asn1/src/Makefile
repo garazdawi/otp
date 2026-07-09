@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 1997-2025. All Rights Reserved.
+# Copyright Ericsson AB 1997-2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -161,14 +161,15 @@ release_spec: opt
 	$(INSTALL_DATA) $(TARGET_FILES) $(APP_TARGET) $(APPUP_TARGET) "$(RELSYSDIR)/ebin"
 	$(INSTALL_DIR) "$(RELSYSDIR)/src"
 	$(INSTALL_DATA)  $(ERL_FILES) $(HRL_FILES) $(APP_SRC) $(APPUP_SRC) "$(RELSYSDIR)/src"
-	$(INSTALL_DIR) "$(RELSYSDIR)/examples"
-	$(INSTALL_DATA) $(EXAMPLES) "$(RELSYSDIR)/examples"
+
 
 # there are no include files to be used by the user
 #$(INSTALL_DIR) "$(RELSYSDIR)/include"
 #$(INSTALL_DATA) $(HRL_FILES) "$(RELSYSDIR)/include"
 
-release_docs_spec:
+release_docs_spec: opt
+	$(INSTALL_DIR) "$(RELSYSDIR)/doc/examples"
+	$(INSTALL_DATA) $(EXAMPLES) "$(RELSYSDIR)/doc/examples"
 
 #
 # Run-time library template files.

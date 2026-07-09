@@ -4,7 +4,7 @@
 %%
 %% SPDX-License-Identifier: Apache-2.0
 %%
-%% Copyright Ericsson AB 2013-2025. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2026. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -372,7 +372,6 @@ Some of the available `configure` options are:
 *   `--with-javac=JAVAC` - Specify Java compiler to use
 *   `--{with,without}-javac` - Java compiler (without implies that the
     `jinterface` application won't be built)
-*   `--{enable,disable}-builtin-zlib` - Use the built-in source for zlib.
 *   `--{enable,disable}-dynamic-ssl-lib` - Enable or disable dynamic OpenSSL
     libraries when linking the crypto NIF. By default dynamic linking is
     done unless it does not work or is if it is a Windows system.
@@ -455,6 +454,24 @@ Some of the available `configure` options are:
     flags when compiling Erlang/OTP. This can be useful in some scenarios
     when the flags either causes Erlang/OTP not to build, or unacceptable
     performance degradations.
+*   `--enable-use-embedded-3pp-alternatives` - Use all available alternatives
+    instead of embedded 3pps. Implies all `--disable-builtin-*` options. Can
+    be overridden by individual `--enable-builtin-*` options.
+*   `--disable-use-embedded-3pp-alternatives` - Do not use any alternatives
+    to embedded 3pps. Implies all `--enable-builtin-*` options. Can be overridden
+    by individual `--disable-builtin-*` options.
+*   `--enable-builtin-ryu` - Use our own built-in ryu for float to short string.
+*   `--disable-builtin-ryu` - Use C++17 as an alternative for built-in ryu.
+*   `--enable-builtin-zstd` - Force use of our own built-in zstd.
+*   `--disable-builtin-zstd` - Find a static libzstd on the system to use.
+*   `--enable-builtin-zlib` - Force use of our own built-in zlib.
+*   `--disable-builtin-zlib` - Find a zlib on the system to use.
+*   `--enable-encrypted-crash-dumps` - Enables encrypted crash dumps. See the
+    documentation for the
+    [`ERL_CRASH_DUMP_PUBLIC_KEY`](`e:erts:erl_cmd.md#ERL_CRASH_DUMP_PUBLIC_KEY`)
+    environment variable for more details. Note that, when this configure
+    option is enabled, OTP will refuse to build unless the aforementioned
+    variable has been properly configured.
 
 If you or your system has special requirements please read the `Makefile` for
 additional configuration information.

@@ -37,14 +37,14 @@ IMPORTS
 	mechanisms(5) pkix(7) id-mod(0) id-mod-pkix1-implicit-02(59)}
 
        at-name, at-surname, at-givenName, at-initials, at-generationQualifier,
-       at-x520CommonName, at-x520LocalityName, at-x520StateOrProvinceName,
+       at-x520LocalityName, at-x520StateOrProvinceName,
        at-x520OrganizationName, at-x520OrganizationalUnitName, at-x520Title,
        at-x520dnQualifier, at-x520SerialNumber, at-x520Pseudonym,
        at-domainComponent, at-emailAddress,
-       id-at-countryName, id-emailAddress,
+       id-at-commonName, id-at-countryName, id-emailAddress,
        ub-emailaddress-length,
        Validity, Version, SubjectPublicKeyInfo,
-       UniqueIdentifier,
+       UniqueIdentifier, DirectoryString{},
        id-qt-unotice, id-qt-cps
        FROM PKIX1Explicit-2009
        {iso(1) identified-organization(3) dod(6) internet(1)
@@ -137,7 +137,7 @@ OTPRelativeDistinguishedName  ::=
 
 OTPSupportedAttributes ATTRIBUTE ::= {
     at-name | at-surname | at-givenName | at-initials |
-    at-generationQualifier | at-x520CommonName |
+    at-generationQualifier | otp-at-x520CommonName |
     at-x520LocalityName | at-x520StateOrProvinceName |
     at-x520OrganizationName | at-x520OrganizationalUnitName |
     at-x520Title | at-x520dnQualifier | otp-at-x520countryName |
@@ -150,9 +150,12 @@ otp-at-x520countryName ATTRIBUTE ::= {
 otp-at-emailAddress ATTRIBUTE ::= {
     TYPE OTP-emailAddress IDENTIFIED BY id-emailAddress }
 
- -- We accept utf8String encoding of the US-ASCII
- -- country name code and the mix up with other country code systems
- -- that uses three characters instead of two.
+otp-at-x520CommonName ATTRIBUTE ::= {
+    TYPE OTP-X520CommonName IDENTIFIED BY id-at-commonName }
+
+-- We accept utf8String encoding of the US-ASCII
+-- country name code and the mix up with other country code systems
+-- that uses three characters instead of two.
 
 OTP-X520countryName ::= CHOICE {
     correct           PrintableString (SIZE (2..3)), -- Correct size is 2.
@@ -163,6 +166,13 @@ OTP-emailAddress ::= CHOICE {
     correct IA5String (SIZE (1..ub-emailaddress-length)),
     wrong UTF8String
 }
+
+-- We accept CommonName values longer than the ub-common-name (64)
+-- SIZE constraint. Real-world certificates (e.g. Google Cloud
+-- Memorystore Redis, Tailscale DERP) use CNs exceeding 64 chars.
+-- OpenSSL accepts long CNs when parsing; OTP should too.
+
+OTP-X520CommonName ::= DirectoryString {255}
 
 -- We use this variation of SingleAttribute/AttributeTypeAndValue
 -- when calculating the "short" hash of the certificate issuer.
