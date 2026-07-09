@@ -29,8 +29,8 @@ extern "C"
 #include "code_ix.h"
 #include "export.h"
 
-/* jit/t2/t2_tier.c */
-UWord erts_t2_profile_throwaway_addr(void);
+    /* jit/t2/t2_tier.c */
+    UWord erts_t2_profile_throwaway_addr(void);
 }
 
 #undef x
@@ -93,9 +93,9 @@ void BeamGlobalAssembler::emit_process_main() {
          * the shared throwaway record everywhere else. The register
          * structure just carved from the C stack is uninitialized,
          * so this must be stored before any Erlang code runs. */
-        const a64::Mem redirect_ref = getSchedulerRegRef(
-                offsetof(ErtsSchedulerRegisters,
-                         aux_regs.d.t2_profile_redirect));
+        const a64::Mem redirect_ref =
+                getSchedulerRegRef(offsetof(ErtsSchedulerRegisters,
+                                            aux_regs.d.t2_profile_redirect));
 
         a.ldr(TMP1, a64::Mem(ARG1, offsetof(ErtsSchedulerData, no)));
         mov_imm(TMP2, erts_t2_profile_throwaway_addr());

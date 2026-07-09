@@ -122,8 +122,7 @@ namespace erts_t2 {
          * trampoline pushes; null for the plain shape) -> the BEAM
          * label number of the in-blob trampoline that branches to
          * them. */
-        std::map<std::pair<const void *, const void *>, unsigned>
-                fail_labels;
+        std::map<std::pair<const void *, const void *>, unsigned> fail_labels;
         unsigned next_label;
 
         /* When non-null, emit_all lays down the install entry stub
@@ -143,11 +142,11 @@ namespace erts_t2 {
             Label yield;
             Label anchor;
             Label resume;
-            Label header;         /* the loop header's block label     */
-            const void *demote;   /* tombstone demote: the T1 body the
-                                   * stub branches to (own L_f + yield
-                                   * offset, or the callee body for an
-                                   * intrinsic back edge)              */
+            Label header;       /* the loop header's block label     */
+            const void *demote; /* tombstone demote: the T1 body the
+                                 * stub branches to (own L_f + yield
+                                 * offset, or the callee body for an
+                                 * intrinsic back edge)              */
             uint32_t beam_idx;
             /* Fused-scan region index, or -1: the yield setup first
              * writes the deferred position back into the context
@@ -219,20 +218,20 @@ namespace erts_t2 {
             std::vector<bool> in_region;  /* indexed by block id           */
             std::vector<bool> adv_in;     /* block-entry "read happened"   */
             uint32_t bs_block = T2_LIR_NO_BLOCK;
-            PhysLoc ctx_slot;             /* the match context's X slot    */
-            PhysLoc byte_slot;            /* READ_INT8 dst, or None        */
-            uint32_t adv_bytes = 0;       /* bytes consumed per iteration  */
-            uint32_t ensure_bytes = 0;    /* the ensure_at_least check     */
-            bool read_byte = false;       /* READ_INT8 present             */
+            PhysLoc ctx_slot;          /* the match context's X slot    */
+            PhysLoc byte_slot;         /* READ_INT8 dst, or None        */
+            uint32_t adv_bytes = 0;    /* bytes consumed per iteration  */
+            uint32_t ensure_bytes = 0; /* the ensure_at_least check     */
+            bool read_byte = false;    /* READ_INT8 present             */
             /* The byte's canonical slot is dead outside the region's
              * own guards (no reads anywhere else, no sync-map pin, no
              * phi home): skip the tagged materialization. */
             bool byte_dead = false;
             /* Emission labels. */
-            Label reload;                 /* ctx -> ptr/lim/base           */
-            Label scan_resume;            /* hot back-jump target          */
-            Label scan_body;              /* post-ensure body (rotation)   */
-            Label unaligned;              /* bit-offset context: demote    */
+            Label reload;      /* ctx -> ptr/lim/base           */
+            Label scan_resume; /* hot back-jump target          */
+            Label scan_body;   /* post-ensure body (rotation)   */
+            Label unaligned;   /* bit-offset context: demote    */
             /* Rotated loop: nothing executes between the header and the
              * ensure check, so the back edge carries its own bounds
              * check and branches straight to the post-ensure body —
@@ -257,7 +256,7 @@ namespace erts_t2 {
                 bool uncommit_add = false; /* the op was an add */
             };
             std::vector<WbTramp> wb_tramps;
-            bool emitted = false;         /* region laid down already   */
+            bool emitted = false; /* region laid down already   */
             /* The StartMatch op (generic slow path in a cold stub). */
             const T2LirOp *start_match = nullptr;
             Label cold_start;
@@ -281,23 +280,23 @@ namespace erts_t2 {
          * the pctab/loaded module prescribe). */
         struct EmitFact {
             enum Kind {
-                CpCont,     /* value = the T1 continuation moved into LR  */
-                CallTarget, /* value = local callee T1 entry              */
-                CallExport, /* value = Export* of a remote callee         */
-                TailTarget, /* value = local tail-callee T1 entry         */
-                TailExport, /* value = Export* of a remote tail-callee    */
-                SideExitPc, /* value = unconditional side-exit T1 PC      */
-                FailExitPc, /* value = arith side-exit trampoline T1 PC   */
-                BifExport,  /* value = Export* of a light-BIF callee      */
-                BifSitePc,  /* value = the BIF site's own T1 PC (ARG3:
-                             * yield resume + raise address)              */
-                BifContPc,  /* value = the BIF site's T1 continuation
-                             * (ARG5: trap/trace CP)                      */
+                CpCont,         /* value = the T1 continuation moved into LR  */
+                CallTarget,     /* value = local callee T1 entry              */
+                CallExport,     /* value = Export* of a remote callee         */
+                TailTarget,     /* value = local tail-callee T1 entry         */
+                TailExport,     /* value = Export* of a remote tail-callee    */
+                SideExitPc,     /* value = unconditional side-exit T1 PC      */
+                FailExitPc,     /* value = arith side-exit trampoline T1 PC   */
+                BifExport,      /* value = Export* of a light-BIF callee      */
+                BifSitePc,      /* value = the BIF site's own T1 PC (ARG3:
+                                 * yield resume + raise address)              */
+                BifContPc,      /* value = the BIF site's T1 continuation
+                                 * (ARG5: trap/trace CP)                      */
                 BackEdgeDemote, /* value = the back-edge demote target
                                  * (the function's own T1 entry L_f)      */
-                SpecDeoptPc /* value = a speculative op's deopt PC (its
-                             * own EFFECT site for the boundary shape,
-                             * the T1 entry body for the window shape)   */
+                SpecDeoptPc     /* value = a speculative op's deopt PC (its
+                                 * own EFFECT site for the boundary shape,
+                                 * the T1 entry body for the window shape)   */
             } kind;
             uint32_t beam_idx;
             uint64_t value;
@@ -320,8 +319,7 @@ namespace erts_t2 {
                               int num_labels,
                               const T2LirFunction &fn_)
                 : BeamModuleAssembler(ga, mod, num_labels, t2_synth_beamfile()),
-                  fn(fn_),
-                  next_label((unsigned)fn_.blocks.size() + 1) {
+                  fn(fn_), next_label((unsigned)fn_.blocks.size() + 1) {
             entry_label = a.new_label();
         }
 
@@ -399,13 +397,11 @@ namespace erts_t2 {
 
                 bind_veneer_target(block_label(b.id));
                 cur_block = &b;
-                next_block_id = b.id + 1 < fn.blocks.size()
-                                        ? b.id + 1
-                                        : T2_LIR_NO_BLOCK;
+                next_block_id = b.id + 1 < fn.blocks.size() ? b.id + 1
+                                                            : T2_LIR_NO_BLOCK;
 
-                cur_scan = b.id < scan_of_block.size()
-                                   ? scan_of_block[b.id]
-                                   : -1;
+                cur_scan =
+                        b.id < scan_of_block.size() ? scan_of_block[b.id] : -1;
                 if (cur_scan >= 0) {
                     /* Emit the whole region contiguously in chain
                      * order at the first region block encountered, so
@@ -478,8 +474,8 @@ namespace erts_t2 {
 
                 pt.offset = (uint32_t)((const char *)getCode(st.resume) -
                                        (const char *)exec);
-                pt.t1_demote = st.translate != nullptr ? st.translate
-                                                       : st.demote;
+                pt.t1_demote =
+                        st.translate != nullptr ? st.translate : st.demote;
                 resume_points.push_back(pt);
             }
             std::sort(resume_points.begin(),
@@ -523,8 +519,7 @@ namespace erts_t2 {
 
         /* Get (or create) the ArgLabel number of the trampoline for a T1
          * fail PC. rawLabels must map it so resolve_beam_label() resolves. */
-        unsigned fail_label_num(const void *t1_pc,
-                                const void *cont = nullptr) {
+        unsigned fail_label_num(const void *t1_pc, const void *cont = nullptr) {
             auto key = std::make_pair(t1_pc, cont);
             auto it = fail_labels.find(key);
             if (it != fail_labels.end()) {
@@ -753,8 +748,7 @@ namespace erts_t2 {
                     break;
                 }
                 emit_bs_test_tail2(
-                        ArgLabel(ArgVal(ArgVal::Type::Label,
-                                        1 + op.succ_else)),
+                        ArgLabel(ArgVal(ArgVal::Type::Label, 1 + op.succ_else)),
                         ArgRegister(src_argval(op.srcs[0])),
                         ArgWord((UWord)op.imm));
                 if (!failed()) {
@@ -785,8 +779,7 @@ namespace erts_t2 {
             /* Relaxed placements: Move is the one Phys-capable op; the
              * mov_arg Gp overloads are the documented register seam and
              * keep the T1 register cache coherent. */
-            bool src_phys = !op.srcs[0].is_const &&
-                            op.srcs[0].loc.is_phys();
+            bool src_phys = !op.srcs[0].is_const && op.srcs[0].loc.is_phys();
             bool dst_phys = op.dst.is_phys();
 
             if (src_phys && dst_phys) {
@@ -916,8 +909,8 @@ namespace erts_t2 {
                 return;
             }
 
-            const Label &fl = rawLabels.at(
-                    fail_label_num(op.t1_pc_fail, op.t1_pc_cont));
+            const Label &fl =
+                    rawLabels.at(fail_label_num(op.t1_pc_fail, op.t1_pc_cont));
             fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
 
             a64::Gp vals[T2_LIR_MAX_SRCS];
@@ -931,8 +924,7 @@ namespace erts_t2 {
                 if (op.srcs[i].loc.is_phys()) {
                     vals[i] = phys_gp(op.srcs[i].loc);
                 } else {
-                    vals[i] = load_source(src_argval(op.srcs[i]), hints[i])
-                                      .reg;
+                    vals[i] = load_source(src_argval(op.srcs[i]), hints[i]).reg;
                 }
             }
 
@@ -1000,8 +992,8 @@ namespace erts_t2 {
             a64::Gp out = ARG1;
 
             if (op.srcs[1].is_const) {
-                Uint64 cleared = (Uint64)op.srcs[1].term &
-                                 ~(Uint64)_TAG_IMMED1_MASK;
+                Uint64 cleared =
+                        (Uint64)op.srcs[1].term & ~(Uint64)_TAG_IMMED1_MASK;
 
                 if (cleared <= 0xFFF) {
                     if (is_add) {
@@ -1048,15 +1040,14 @@ namespace erts_t2 {
          * decoded {f,0}). The destination write is conditional on the
          * success edge, exactly as in T1. */
         void emit_lir_start_match(const T2LirOp &op) {
-            unsigned fail_num = op.succ_else != T2_LIR_NO_BLOCK
-                                        ? 1 + op.succ_else
-                                        : 0;
+            unsigned fail_num =
+                    op.succ_else != T2_LIR_NO_BLOCK ? 1 + op.succ_else : 0;
 
-            emit_i_bs_start_match3(ArgRegister(src_argval(op.srcs[0])),
-                                   ArgWord(op.live),
-                                   ArgLabel(ArgVal(ArgVal::Type::Label,
-                                                   fail_num)),
-                                   ArgRegister(loc_argval(op.dst)));
+            emit_i_bs_start_match3(
+                    ArgRegister(src_argval(op.srcs[0])),
+                    ArgWord(op.live),
+                    ArgLabel(ArgVal(ArgVal::Type::Label, fail_num)),
+                    ArgRegister(loc_argval(op.dst)));
             if (op.succ_then != T2_LIR_NO_BLOCK && !failed()) {
                 emit_goto(op.succ_then);
             }
@@ -1157,9 +1148,10 @@ namespace erts_t2 {
                  * but permits 0, where the checked macro asserts > 0. The
                  * emitted header (_make_header(0, ARITYVAL)) is identical
                  * to make_arityval_zero(). */
-                emit_i_test_arity(failL,
-                                  ArgSource(src_argval(op.srcs[0])),
-                                  ArgWord(make_arityval_unchecked((UWord)op.imm)));
+                emit_i_test_arity(
+                        failL,
+                        ArgSource(src_argval(op.srcs[0])),
+                        ArgWord(make_arityval_unchecked((UWord)op.imm)));
                 break;
             case T2LirKind::IsTupleOfArity:
                 emit_i_is_tuple_of_arity(
@@ -1168,11 +1160,11 @@ namespace erts_t2 {
                         ArgWord(make_arityval_unchecked((UWord)op.imm)));
                 break;
             case T2LirKind::IsTaggedTuple:
-                emit_i_is_tagged_tuple(failL,
-                                       ArgSource(src_argval(op.srcs[0])),
-                                       ArgWord(make_arityval((UWord)op.imm)),
-                                       ArgAtom(ArgVal(ArgVal::Type::Immediate,
-                                                      op.imm_term)));
+                emit_i_is_tagged_tuple(
+                        failL,
+                        ArgSource(src_argval(op.srcs[0])),
+                        ArgWord(make_arityval((UWord)op.imm)),
+                        ArgAtom(ArgVal(ArgVal::Type::Immediate, op.imm_term)));
                 break;
             case T2LirKind::CmpEqExact:
                 emit_is_eq_exact(failL,
@@ -1216,8 +1208,7 @@ namespace erts_t2 {
 
         void emit_lir_make_tuple(const T2LirOp &op) {
             std::vector<ArgVal> elems;
-            size_t count = op.num_srcs_ext > 0 ? op.num_srcs_ext
-                                               : op.num_srcs;
+            size_t count = op.num_srcs_ext > 0 ? op.num_srcs_ext : op.num_srcs;
 
             elems.reserve(count);
             for (size_t i = 0; i < count; i++) {
@@ -1281,8 +1272,8 @@ namespace erts_t2 {
          * only delta is ERL_FUN_SIZE heap words per creation, noted in
          * the commit message. */
         void emit_lir_make_fun(const T2LirOp &op) {
-            size_t num_free = op.num_srcs_ext > 0 ? op.num_srcs_ext
-                                                  : op.num_srcs;
+            size_t num_free =
+                    op.num_srcs_ext > 0 ? op.num_srcs_ext : op.num_srcs;
             Uint arity = (Uint)op.imm;
 
             ASSERT((Sint64)num_free == op.imm2);
@@ -1294,8 +1285,9 @@ namespace erts_t2 {
             mov_imm(TMP2, (Uint64)op.target);
             mov_imm(TMP1, MAKE_FUN_HEADER(arity, num_free, 0));
             ERTS_CT_ASSERT_FIELD_PAIR(ErlFunThing, thing_word, entry.fun);
-            a.stp(TMP1, TMP2, a64::Mem(HTOP, offsetof(ErlFunThing,
-                                                      thing_word)));
+            a.stp(TMP1,
+                  TMP2,
+                  a64::Mem(HTOP, offsetof(ErlFunThing, thing_word)));
 
             for (size_t i = 0; i < num_free; i++) {
                 const T2LirSrc &s = op.num_srcs_ext > 0
@@ -1353,8 +1345,7 @@ namespace erts_t2 {
                     }
                     cmp_arg(TMP1,
                             ArgWord(make_arityval(unsigned_val(c.value))));
-                    a.b_eq(resolve_label(rawLabels.at(1 + c.target),
-                                         disp1MB));
+                    a.b_eq(resolve_label(rawLabels.at(1 + c.target), disp1MB));
                 }
 
                 a.b(block_label(op.default_target));
@@ -1446,8 +1437,8 @@ namespace erts_t2 {
                         (unsigned)op.arity);
             }
 
-            mov_imm(ARG8, (Uint64)op.target); /* BIF C function      */
-            mov_imm(ARG4, (Uint64)op.exp);    /* Export*             */
+            mov_imm(ARG8, (Uint64)op.target);     /* BIF C function      */
+            mov_imm(ARG4, (Uint64)op.exp);        /* Export*             */
             mov_imm(ARG3, (Uint64)op.t1_pc_fail); /* T1 site         */
             mov_imm(ARG5, (Uint64)op.t1_pc_cont); /* T1 continuation */
 
@@ -1490,8 +1481,7 @@ namespace erts_t2 {
                      "entry");
                 return;
             }
-            if (callee && (op.target == nullptr ||
-                           op.t1_pc_fail == nullptr ||
+            if (callee && (op.target == nullptr || op.t1_pc_fail == nullptr ||
                            op.t1_pc_cont == nullptr || op.arity == 0)) {
                 fail("callee back-edge with unresolved addresses");
                 return;
@@ -1543,14 +1533,12 @@ namespace erts_t2 {
                 st.mfa_f = op.mfa_f;
                 st.mfa_ar = op.arity;
                 st.cont = op.t1_pc_cont;
-                st.demote =
-                        (const void *)((const char *)op.target +
-                                       erts_t2_test_yield_return_offset());
+                st.demote = (const void *)((const char *)op.target +
+                                           erts_t2_test_yield_return_offset());
                 st.translate = op.t1_pc_fail;
             } else {
-                st.demote =
-                        (const void *)((const char *)op.target +
-                                       erts_t2_test_yield_return_offset());
+                st.demote = (const void *)((const char *)op.target +
+                                           erts_t2_test_yield_return_offset());
             }
             resume_stubs.push_back(st);
 
@@ -1642,8 +1630,7 @@ namespace erts_t2 {
                 a.add(TMP2, TMP2, imm(1));
                 a.str(TMP2, a64::Mem(TMP1));
                 a.adr(ARG3, st.anchor);
-                a.b(resolve_fragment(ga->get_i_test_yield_shared(),
-                                     disp1MB));
+                a.b(resolve_fragment(ga->get_i_test_yield_shared(), disp1MB));
 
                 /* ErtsCodeMFA + anchor gap (data). An intrinsic stub
                  * embeds the CALLEE MFA (P2 commit 8) — introspection
@@ -1748,8 +1735,7 @@ namespace erts_t2 {
                     if (op.kind == T2LirKind::Switch) {
                         for (uint32_t c = 0; c < op.num_cases; c++) {
                             add_edge(b.id,
-                                     fn.switch_cases[op.first_case + c]
-                                             .target);
+                                     fn.switch_cases[op.first_case + c].target);
                         }
                         add_edge(b.id, op.default_target);
                     }
@@ -1908,8 +1894,7 @@ namespace erts_t2 {
                             sl.start_match != nullptr) {
                             return false;
                         }
-                        if (op.srcs[0].is_const ||
-                            !op.srcs[0].loc.is_xreg() ||
+                        if (op.srcs[0].is_const || !op.srcs[0].loc.is_xreg() ||
                             op.dst != op.srcs[0].loc) {
                             return false;
                         }
@@ -1951,8 +1936,7 @@ namespace erts_t2 {
                                     return false;
                                 }
                                 sl.read_byte = true;
-                                if (op.dst.is_none() ||
-                                    op.dst == sl.ctx_slot ||
+                                if (op.dst.is_none() || op.dst == sl.ctx_slot ||
                                     op.dst.is_phys()) {
                                     return false;
                                 }
@@ -1964,8 +1948,7 @@ namespace erts_t2 {
                                 return false;
                             }
                         }
-                        uint32_t ensure =
-                                fn.bs_cmds[op.first_bs_cmd].size;
+                        uint32_t ensure = fn.bs_cmds[op.first_bs_cmd].size;
                         if (consumed == 0 || (consumed % 8) != 0 ||
                             ensure < consumed || (ensure % 8) != 0 ||
                             ensure / 8 > 4095) {
@@ -2035,8 +2018,7 @@ namespace erts_t2 {
                          * write the context or byte slots. */
                         if (op.dst == sl.ctx_slot ||
                             (sl.read_byte && op.dst == sl.byte_slot) ||
-                            op.dst.is_phys() ||
-                            op.t1_pc_fail == nullptr) {
+                            op.dst.is_phys() || op.t1_pc_fail == nullptr) {
                             return false;
                         }
                         for (uint8_t s = 0; s < op.num_srcs; s++) {
@@ -2061,8 +2043,7 @@ namespace erts_t2 {
                          * audited for the region registers. */
                         return false;
                     case T2LirKind::ReductionCheck:
-                        if (bid != sl.latch ||
-                            oi + 2 != b.ops.size() ||
+                        if (bid != sl.latch || oi + 2 != b.ops.size() ||
                             op.sync == nullptr) {
                             return false;
                         }
@@ -2138,8 +2119,7 @@ namespace erts_t2 {
                             }
                         }
                         for (uint32_t s = 0; s < op.num_srcs_ext; s++) {
-                            const T2LirSrc &ps =
-                                    fn.src_pool[op.pool_first + s];
+                            const T2LirSrc &ps = fn.src_pool[op.pool_first + s];
                             if (!ps.is_const && ps.loc == sl.byte_slot) {
                                 dead = false;
                             }
@@ -2259,9 +2239,8 @@ namespace erts_t2 {
                 /* Fall-through elision follows the *chain*, not the
                  * layout: the next emitted block is the next chain
                  * block (the back edge to the header always branches). */
-                next_block_id = ci + 1 < sl.blocks.size()
-                                        ? sl.blocks[ci + 1]
-                                        : T2_LIR_NO_BLOCK;
+                next_block_id = ci + 1 < sl.blocks.size() ? sl.blocks[ci + 1]
+                                                          : T2_LIR_NO_BLOCK;
                 cur_scan_adv = sl.adv_in[b.id];
 
                 /* Range fusion: two adjacent lone byte guards forming
@@ -2274,21 +2253,16 @@ namespace erts_t2 {
 
                     if (g1 != nullptr && g2 != nullptr &&
                         g1->kind == T2LirKind::CmpGe &&
-                        g2->kind == T2LirKind::CmpGe &&
-                        !g1->srcs[0].is_const &&
+                        g2->kind == T2LirKind::CmpGe && !g1->srcs[0].is_const &&
                         g1->srcs[0].loc == sl.byte_slot &&
-                        byte_const(g1->srcs[1], &lo) &&
-                        !g2->srcs[1].is_const &&
+                        byte_const(g1->srcs[1], &lo) && !g2->srcs[1].is_const &&
                         g2->srcs[1].loc == sl.byte_slot &&
                         byte_const(g2->srcs[0], &hi) && lo <= hi &&
                         g1->succ_else == g2->succ_else &&
                         !sl.in_region[g1->succ_else] &&
                         g1->succ_then == sl.blocks[ci + 1]) {
-                        comment("T2 fused scan: range guard %u..%u",
-                                lo,
-                                hi);
-                        bind_veneer_target(
-                                block_label(sl.blocks[ci + 1]));
+                        comment("T2 fused scan: range guard %u..%u", lo, hi);
+                        bind_veneer_target(block_label(sl.blocks[ci + 1]));
                         if (lo != 0) {
                             a.sub(TMP1, SCAN_BYTE, imm(lo));
                             a.cmp(TMP1, imm(hi - lo));
@@ -2342,8 +2316,7 @@ namespace erts_t2 {
                                (ERL_SUB_BITS_FLAG_MASK == _TAG_PRIMARY_MASK));
                 a.bfi(TMP2, TMP3, imm(0), imm(2));
                 a.cmp(TMP2,
-                      imm(HEADER_SUB_BITS |
-                          ERL_SUB_BITS_FLAGS_MATCH_CONTEXT));
+                      imm(HEADER_SUB_BITS | ERL_SUB_BITS_FLAGS_MATCH_CONTEXT));
                 a.b_ne(sl.cold_start);
 
                 /* Reload: hoist position/end/base as byte pointers.
@@ -2403,8 +2376,7 @@ namespace erts_t2 {
                          * the slot, exactly as in the 1:1 emission.
                          * Skipped when the slot is provably dead
                          * outside the region's own byte guards. */
-                        ERTS_CT_ASSERT(_TAG_IMMED1_SMALL ==
-                                       _TAG_IMMED1_MASK);
+                        ERTS_CT_ASSERT(_TAG_IMMED1_SMALL == _TAG_IMMED1_MASK);
                         a.lsl(TMP1, SCAN_BYTE, imm(_TAG_IMMED1_SIZE));
                         a.orr(TMP1, TMP1, imm(_TAG_IMMED1_SMALL));
                         mov_arg(loc_argval(op.dst), TMP1);
@@ -2423,8 +2395,8 @@ namespace erts_t2 {
             case T2LirKind::CmpNeExact:
             case T2LirKind::CmpEq:
             case T2LirKind::CmpNe: {
-                bool byte_lhs = !op.srcs[0].is_const &&
-                                op.srcs[0].loc == sl.byte_slot;
+                bool byte_lhs =
+                        !op.srcs[0].is_const && op.srcs[0].loc == sl.byte_slot;
                 uint32_t k = 0;
 
                 byte_const(op.srcs[byte_lhs ? 1 : 0], &k);
@@ -2457,8 +2429,7 @@ namespace erts_t2 {
                      * one branch. When the first compare misses, ccmp
                      * compares against the second value; when it
                      * hits, ccmp forces Z so the b.eq is taken. */
-                    const T2LirSwitchCase &c0 =
-                            fn.switch_cases[op.first_case];
+                    const T2LirSwitchCase &c0 = fn.switch_cases[op.first_case];
                     const T2LirSwitchCase &c1 =
                             fn.switch_cases[op.first_case + 1];
 
@@ -2498,17 +2469,13 @@ namespace erts_t2 {
                     if (sl.in_region[sc.target]) {
                         a.b_eq(block_label(sc.target));
                     } else {
-                        a.b_eq(scan_exit_label(sl,
-                                               sc.target,
-                                               cur_scan_adv));
+                        a.b_eq(scan_exit_label(sl, sc.target, cur_scan_adv));
                     }
                 }
                 if (sl.in_region[op.default_target]) {
                     emit_goto(op.default_target);
                 } else {
-                    a.b(scan_exit_label(sl,
-                                        op.default_target,
-                                        cur_scan_adv));
+                    a.b(scan_exit_label(sl, op.default_target, cur_scan_adv));
                     mark_unreachable();
                 }
                 break;
@@ -2533,8 +2500,8 @@ namespace erts_t2 {
                 if (!op.srcs[0].is_const && op.srcs[0].loc == op.dst &&
                     op.srcs[1].is_const && op.dst.is_xreg() &&
                     op.dst.num < num_register_backed_xregs) {
-                    Uint64 cleared = (Uint64)op.srcs[1].term &
-                                     ~(Uint64)_TAG_IMMED1_MASK;
+                    Uint64 cleared =
+                            (Uint64)op.srcs[1].term & ~(Uint64)_TAG_IMMED1_MASK;
 
                     if (cleared <= 0xFFF) {
                         a64::Gp dstreg = register_backed_xregs[op.dst.num];
@@ -2636,8 +2603,7 @@ namespace erts_t2 {
                  * end-of-input exit (position raw = the next
                  * iteration's start, i.e. the unadvanced thunk). */
                 const T2LirOp &bs = fn.blocks[sl.bs_block].ops[0];
-                Label fail_thunk =
-                        scan_exit_label(sl, bs.succ_else, false);
+                Label fail_thunk = scan_exit_label(sl, bs.succ_else, false);
 
                 if (sl.ensure_bytes == 1) {
                     a.cmp(SCAN_PTR, SCAN_LIM);
@@ -2681,8 +2647,7 @@ namespace erts_t2 {
                         /* Un-commit the direct flag-checked write:
                          * the wrapped sum minus/plus the addend is
                          * the exact original (two's complement). */
-                        a64::Gp r = register_backed_xregs
-                                [t.uncommit_slot.num];
+                        a64::Gp r = register_backed_xregs[t.uncommit_slot.num];
 
                         if (t.uncommit_add) {
                             a.sub(r, r, imm(t.uncommit_imm));
@@ -2723,15 +2688,13 @@ namespace erts_t2 {
                     a.bind(sl.cold_start);
                     comment("T2 fused scan: start_match slow path");
 
-                    unsigned fail_num =
-                            sm.succ_else != T2_LIR_NO_BLOCK
-                                    ? 1 + sm.succ_else
-                                    : 0;
+                    unsigned fail_num = sm.succ_else != T2_LIR_NO_BLOCK
+                                                ? 1 + sm.succ_else
+                                                : 0;
                     emit_i_bs_start_match3(
                             ArgRegister(src_argval(sm.srcs[0])),
                             ArgWord(sm.live),
-                            ArgLabel(ArgVal(ArgVal::Type::Label,
-                                            fail_num)),
+                            ArgLabel(ArgVal(ArgVal::Type::Label, fail_num)),
                             ArgRegister(loc_argval(sm.dst)));
                     a.b(sl.reload);
                     mark_unreachable();
@@ -2962,7 +2925,7 @@ namespace {
         Eterm str = erts_bld_string_n(&hp, NULL, s, (Sint)sys_strlen(s));
         return TUPLE2(hp, am_error, str);
     }
-}
+} // namespace
 
 extern "C" Eterm erts_t2_debug_exec(Process *p,
                                     Eterm mod,
@@ -3035,13 +2998,15 @@ extern "C" Eterm erts_t2_debug_exec(Process *p,
         return t2_exec_error(p, "not_eligible");
     case T2BuildStatus::Failed:
     default:
-        return t2_exec_error(p, build_err.empty() ? "build_failed"
-                                                   : build_err.c_str());
+        return t2_exec_error(p,
+                             build_err.empty() ? "build_failed"
+                                               : build_err.c_str());
     }
 
     if (blob == NULL) {
-        return t2_exec_error(
-                p, pipe_err.empty() ? "emit_failed" : pipe_err.c_str());
+        return t2_exec_error(p,
+                             pipe_err.empty() ? "emit_failed"
+                                              : pipe_err.c_str());
     }
 
     ErtsT2ReentryFn tramp = t2_get_reentry_trampoline();
@@ -3145,7 +3110,9 @@ extern "C" int erts_t2_emit_selftest(void) {
     ret.srcs[0] = T2LirSrc::slot(PhysLoc::xreg(0));
     b.ops.push_back(ret);
 
-    erts_fprintf(stderr, "T2 emit self-test: LIR:\n%s", t2_lir_dump(fn).c_str());
+    erts_fprintf(stderr,
+                 "T2 emit self-test: LIR:\n%s",
+                 t2_lir_dump(fn).c_str());
 
     std::string err;
     std::string disasm;
@@ -3160,9 +3127,7 @@ extern "C" int erts_t2_emit_selftest(void) {
         return 1;
     }
 
-    erts_fprintf(stderr,
-                 "T2 emit self-test: emitted 1-op blob at %p\n",
-                 code);
+    erts_fprintf(stderr, "T2 emit self-test: emitted 1-op blob at %p\n", code);
     return 0;
 }
 
@@ -3204,14 +3169,14 @@ namespace {
         ctx.ret = ret;
         ctx.code_hdr = (const void *)hdr;
 
-#define T2_STRUCT_CHECK(Cond, What)                                           \
-    do {                                                                      \
-        if (!(Cond)) {                                                        \
-            erts_fprintf(stderr,                                              \
-                         "T2 emit module self-test FAILED: %s\n",             \
-                         (What));                                             \
-            failures++;                                                       \
-        }                                                                     \
+#define T2_STRUCT_CHECK(Cond, What)                                            \
+    do {                                                                       \
+        if (!(Cond)) {                                                         \
+            erts_fprintf(stderr,                                               \
+                         "T2 emit module self-test FAILED: %s\n",              \
+                         (What));                                              \
+            failures++;                                                        \
+        }                                                                      \
     } while (0)
 
         T2BuildStatus status = t2_build_for_debug(
@@ -3256,9 +3221,7 @@ namespace {
                                             "preheader");
                             T2_STRUCT_CHECK(
                                     loop.header ==
-                                            (uint32_t)hir.blocks
-                                                            .size() -
-                                                    1,
+                                            (uint32_t)hir.blocks.size() - 1,
                                     "the synthesized header is the "
                                     "last block");
                             T2_STRUCT_CHECK(loop.latches.size() == 1,
@@ -3282,12 +3245,11 @@ namespace {
                     const ErtsCodeInfo *ci = hdr->functions[hir.fn_index];
                     const void *own_entry =
                             (const void *)erts_codeinfo_to_code(ci);
-                    const void *entry_pc =
-                            (const void *)erts_t2_pc_lookup_kind(
-                                    ret,
-                                    hir.fn_index,
-                                    0,
-                                    ERTS_T2_PC_ENTRY);
+                    const void *entry_pc = (const void *)erts_t2_pc_lookup_kind(
+                            ret,
+                            hir.fn_index,
+                            0,
+                            ERTS_T2_PC_ENTRY);
 
                     /* Locate the HIR call op (diff/2) + its sync map. */
                     const T2Op *hir_call = nullptr;
@@ -3366,8 +3328,7 @@ namespace {
                     {
                         const T2SyncMap *m = hir_call->sync;
                         bool y_ok = m->frame_size >= 0 &&
-                                    y_stores.size() ==
-                                            (size_t)m->frame_size;
+                                    y_stores.size() == (size_t)m->frame_size;
 
                         for (int32_t i = 0; y_ok && i < m->frame_size; i++) {
                             y_ok = y_stores.count((uint16_t)i) != 0;
@@ -3388,11 +3349,11 @@ namespace {
                     }
                     T2_STRUCT_CHECK(lir_add != nullptr, "no Add op in LIR");
                     if (lir_add != nullptr) {
-                        const void *eff = (const void *)
-                                erts_t2_pc_lookup_kind(ret,
-                                                       hir.fn_index,
-                                                       lir_add->beam_idx,
-                                                       ERTS_T2_PC_EFFECT);
+                        const void *eff = (const void *)erts_t2_pc_lookup_kind(
+                                ret,
+                                hir.fn_index,
+                                lir_add->beam_idx,
+                                ERTS_T2_PC_EFFECT);
 
                         T2_STRUCT_CHECK(lir_add->t1_pc_fail != nullptr &&
                                                 lir_add->t1_pc_fail == eff,
@@ -3426,22 +3387,21 @@ namespace {
                                     "shared error exit != func_info "
                                     "ErtsCodeInfo");
                     T2_STRUCT_CHECK(back_edge != nullptr &&
-                                            back_edge->target ==
-                                                    own_entry &&
+                                            back_edge->target == own_entry &&
                                             back_edge->sync != nullptr,
                                     "recovered back edge missing or "
                                     "mis-targeted");
                     T2_STRUCT_CHECK(!any_tail_call,
                                     "a self tail call survived "
                                     "recovery");
-                    T2_STRUCT_CHECK(
-                            !lir.blocks.empty() &&
-                                    lir.blocks.back().phis.size() == 2 &&
-                                    lir.blocks.back().phis[0].home ==
-                                            PhysLoc::xreg(0) &&
-                                    lir.blocks.back().phis[1].home ==
-                                            PhysLoc::xreg(1),
-                            "header phis must be homed X0/X1");
+                    T2_STRUCT_CHECK(!lir.blocks.empty() &&
+                                            lir.blocks.back().phis.size() ==
+                                                    2 &&
+                                            lir.blocks.back().phis[0].home ==
+                                                    PhysLoc::xreg(0) &&
+                                            lir.blocks.back().phis[1].home ==
+                                                    PhysLoc::xreg(1),
+                                    "header phis must be homed X0/X1");
 
                     /* Emit through a fresh assembler and check the same
                      * facts at the emitted-code level. */
@@ -3456,10 +3416,7 @@ namespace {
                     }
 
                     int num_labels = (int)lir.blocks.size() + 1;
-                    BeamT2ModuleAssembler ma(ga,
-                                             lir.module,
-                                             num_labels,
-                                             lir);
+                    BeamT2ModuleAssembler ma(ga, lir.module, num_labels, lir);
                     StringLogger slog;
 
                     ma.set_string_logger(&slog);
@@ -3481,8 +3438,8 @@ namespace {
 
                     T2_STRUCT_CHECK(blob != nullptr, "no blob produced");
 
-                    bool saw_cp = false, saw_side = false,
-                         saw_backedge = false, saw_fail = false;
+                    bool saw_cp = false, saw_side = false, saw_backedge = false,
+                         saw_fail = false;
                     for (const auto &f : ma.facts) {
                         switch (f.kind) {
                         case BeamT2ModuleAssembler::EmitFact::CpCont:
@@ -3500,8 +3457,7 @@ namespace {
                                             "tail-target fact in a "
                                             "recovered function");
                             break;
-                        case BeamT2ModuleAssembler::EmitFact::
-                                BackEdgeDemote:
+                        case BeamT2ModuleAssembler::EmitFact::BackEdgeDemote:
                             saw_backedge = true;
                             T2_STRUCT_CHECK(f.value == (uint64_t)own_entry,
                                             "back-edge demote != own T1 "
@@ -3560,8 +3516,7 @@ extern "C" void erts_t2_emit_selftest_module(
         const void *code_hdr) {
     ERTS_DECL_AM(t2_mvp);
 
-    if (!erts_t2_emit_selftest_enabled() || ret == NULL ||
-        code_hdr == NULL) {
+    if (!erts_t2_emit_selftest_enabled() || ret == NULL || code_hdr == NULL) {
         return;
     }
 

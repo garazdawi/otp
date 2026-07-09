@@ -152,15 +152,14 @@ namespace erts_t2 {
 
 extern "C"
 {
+    /* True iff T2_EMIT_SELFTEST is set (read once). */
+    int erts_t2_emit_selftest_enabled(void);
 
-/* True iff T2_EMIT_SELFTEST is set (read once). */
-int erts_t2_emit_selftest_enabled(void);
-
-/* Hand-builds a 1-op LIR (a Move + Return), emits it through a fresh
- * BeamT2ModuleAssembler, and disassembles it. Returns 0 on success,
- * non-zero on failure. Wired into beamasm_init() behind
- * T2_EMIT_SELFTEST. */
-int erts_t2_emit_selftest(void);
+    /* Hand-builds a 1-op LIR (a Move + Return), emits it through a fresh
+     * BeamT2ModuleAssembler, and disassembles it. Returns 0 on success,
+     * non-zero on failure. Wired into beamasm_init() behind
+     * T2_EMIT_SELFTEST. */
+    int erts_t2_emit_selftest(void);
 
 } /* extern "C" */
 

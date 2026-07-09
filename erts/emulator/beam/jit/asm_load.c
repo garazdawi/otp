@@ -36,9 +36,9 @@
 
 #include "beam_asm.h"
 #ifdef ERTS_ENABLE_JIT_T2
-#include "t2_retain.h"
-#include "t2_pctab.h"
-#include "t2_install.h"
+#    include "t2_retain.h"
+#    include "t2_pctab.h"
+#    include "t2_install.h"
 #endif
 
 #ifdef ADDRESS_SANITIZER
@@ -75,8 +75,7 @@ int beam_load_prepare_emit(LoaderState *stp) {
      * finalize. */
     if (erts_t2_enabled()) {
         stp->t2_retained = erts_t2_prepare(&stp->beam);
-        if (stp->t2_retained != NULL &&
-            stp->t2_retained->profiles != NULL) {
+        if (stp->t2_retained != NULL && stp->t2_retained->profiles != NULL) {
             beamasm_set_t2_profiles(stp->ba,
                                     stp->t2_retained->profiles,
                                     stp->beam.code.function_count);
@@ -1331,8 +1330,7 @@ void beam_load_finalize_code(LoaderState *stp,
          * patch it out; T2_TIER_DISARM=1 (the tax-measurement lever)
          * patches them all right now, while the module is unsealed. */
         beamasm_t2_fill_profile_seqs(stp->ba,
-                                     (const char *)beamasm_get_base(
-                                             stp->ba));
+                                     (const char *)beamasm_get_base(stp->ba));
         if (erts_t2_tier_disarm_forced()) {
             erts_t2_disarm_module_profiles(inst_p, committed);
         }
@@ -1341,8 +1339,8 @@ void beam_load_finalize_code(LoaderState *stp,
          * function as a load-time corpus test (plus isel coverage with
          * T2_ISEL=1, which consults the pctab just built). */
         if (erts_t2_build_enabled()) {
-            int failures = erts_t2_build_all(committed,
-                                             (const void *)stp->code_hdr);
+            int failures =
+                    erts_t2_build_all(committed, (const void *)stp->code_hdr);
 
             if (failures != 0) {
                 erts_fprintf(stderr,

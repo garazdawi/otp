@@ -111,9 +111,7 @@ namespace erts_t2 {
                 return false;
             }
 
-            bool check_src(const T2LirSrc &s,
-                           const char *what,
-                           bool phys_ok) {
+            bool check_src(const T2LirSrc &s, const char *what, bool phys_ok) {
                 if (s.is_const) {
                     return true;
                 }
@@ -150,8 +148,7 @@ namespace erts_t2 {
                                         std::to_string(i) + ")");
                         }
 
-                        bool phys_ok = allow_phys &&
-                                       op.kind == T2LirKind::Move;
+                        bool phys_ok = allow_phys && op.kind == T2LirKind::Move;
 
                         for (uint8_t s = 0; s < op.num_srcs; s++) {
                             if (!check_src(op.srcs[s], name, phys_ok)) {
@@ -359,8 +356,7 @@ namespace erts_t2 {
             PhysLoc assigned_phys = PhysLoc::none();
 
             bool empty() const {
-                return ranges.empty() && uses.empty() &&
-                       def_pos == UINT32_MAX;
+                return ranges.empty() && uses.empty() && def_pos == UINT32_MAX;
             }
 
             bool covers(uint32_t pos) const {
@@ -394,8 +390,8 @@ namespace erts_t2 {
             size_t words = 0;
 
             /* Linearized positions. */
-            std::vector<uint32_t> entry_pos, exit_pos;   /* per block   */
-            std::vector<std::vector<uint32_t>> op_pos;   /* [block][op] */
+            std::vector<uint32_t> entry_pos, exit_pos; /* per block   */
+            std::vector<std::vector<uint32_t>> op_pos; /* [block][op] */
 
             /* CFG successors per block. */
             std::vector<std::vector<uint32_t>> succs;
@@ -546,10 +542,9 @@ namespace erts_t2 {
                                 mention(s.value);
                             }
                         });
-                        for_each_sync_pin(op.sync,
-                                          [&](uint32_t v, PhysLoc) {
-                                              mention(v);
-                                          });
+                        for_each_sync_pin(op.sync, [&](uint32_t v, PhysLoc) {
+                            mention(v);
+                        });
                         if (op.dst_value != T2_NO_VALUE) {
                             bs_set(def, op.dst_value);
                         }
@@ -733,20 +728,18 @@ namespace erts_t2 {
 
                             iv.value_id = v;
                             iv.def_pos = entry_pos[0];
-                            iv.def_loc = PhysLoc::xreg(
-                                    (uint16_t)lir.param_x[v]);
+                            iv.def_loc =
+                                    PhysLoc::xreg((uint16_t)lir.param_x[v]);
                             if (bs_test(live, v)) {
                                 iv.ranges.back().from = entry_pos[0];
                                 bs_clear(live, v);
                             }
                         }
-                        for_each_sync_pin(lir.entry_sync,
-                                          [&](uint32_t v, PhysLoc loc) {
-                                              add_use(v,
-                                                      entry_pos[0],
-                                                      loc,
-                                                      true);
-                                          });
+                        for_each_sync_pin(
+                                lir.entry_sync,
+                                [&](uint32_t v, PhysLoc loc) {
+                                    add_use(v, entry_pos[0], loc, true);
+                                });
                     }
                 }
 
@@ -762,10 +755,8 @@ namespace erts_t2 {
                               });
                     std::vector<T2Range> merged;
                     for (const T2Range &r : iv.ranges) {
-                        if (!merged.empty() &&
-                            r.from <= merged.back().to + 1) {
-                            merged.back().to =
-                                    std::max(merged.back().to, r.to);
+                        if (!merged.empty() && r.from <= merged.back().to + 1) {
+                            merged.back().to = std::max(merged.back().to, r.to);
                         } else {
                             merged.push_back(r);
                         }
@@ -826,10 +817,8 @@ namespace erts_t2 {
                                  * walk, so a miss is a real bug (e.g. a
                                  * value read across a barrier that
                                  * cleared it), never adopted. */
-                                return fail(std::string(what) +
-                                            " in block " +
-                                            std::to_string(b.id) +
-                                            " reads v" +
+                                return fail(std::string(what) + " in block " +
+                                            std::to_string(b.id) + " reads v" +
                                             std::to_string(v) +
                                             " from a dead Phys register");
                             }
@@ -923,9 +912,8 @@ namespace erts_t2 {
                                 uint32_t idx = e.first & 0xFFFF;
 
                                 if (idx >= drop) {
-                                    ns[loc_key(PhysLoc::yreg(
-                                            (uint16_t)(idx - drop)))] =
-                                            e.second;
+                                    ns[loc_key(PhysLoc::yreg((
+                                            uint16_t)(idx - drop)))] = e.second;
                                 }
                             }
                             state = std::move(ns);
@@ -959,20 +947,18 @@ namespace erts_t2 {
                                 bool has_y = false;
                                 for (const auto &e2 : state) {
                                     if ((e2.first >> 16) ==
-                                                (uint32_t)PhysLoc::Kind::
-                                                        YReg &&
+                                                (uint32_t)PhysLoc::Kind::YReg &&
                                         e2.second == v) {
                                         has_y = true;
                                         break;
                                     }
                                 }
                                 if (!has_y) {
-                                    return fail(
-                                            "v" + std::to_string(v) +
-                                            " is live across a call in "
-                                            "block " +
-                                            std::to_string(b.id) +
-                                            " with no frame home");
+                                    return fail("v" + std::to_string(v) +
+                                                " is live across a call in "
+                                                "block " +
+                                                std::to_string(b.id) +
+                                                " with no frame home");
                                 }
                             }
                             clobber_x();
@@ -1038,8 +1024,7 @@ namespace erts_t2 {
                                     pin.value == T2_NO_VALUE) {
                                     continue;
                                 }
-                                if (have_cond_write &&
-                                    phi.home == cond_loc) {
+                                if (have_cond_write && phi.home == cond_loc) {
                                     /* The conditional write applies on
                                      * the then edge only; an ambiguous
                                      * edge (then == else) is skipped,
@@ -1056,12 +1041,10 @@ namespace erts_t2 {
                                                     " then-edge: phi home "
                                                     "gets the conditional "
                                                     "write v" +
-                                                    std::to_string(
-                                                            cond_value) +
+                                                    std::to_string(cond_value) +
                                                     ", the merge expects "
                                                     "v" +
-                                                    std::to_string(
-                                                            pin.value));
+                                                    std::to_string(pin.value));
                                         }
                                         continue;
                                     }
@@ -1073,11 +1056,9 @@ namespace erts_t2 {
                                 if (it != state.end() &&
                                     it->second != pin.value) {
                                     return fail(
-                                            "block " +
-                                            std::to_string(b.id) +
+                                            "block " + std::to_string(b.id) +
                                             " exit: phi home of block " +
-                                            std::to_string(sid) +
-                                            " holds v" +
+                                            std::to_string(sid) + " holds v" +
                                             std::to_string(it->second) +
                                             ", the merge expects v" +
                                             std::to_string(pin.value));
@@ -1098,8 +1079,7 @@ namespace erts_t2 {
                         continue;
                     }
                     if (iv.def_loc.is_slot()) {
-                        return fail("untagged v" +
-                                    std::to_string(iv.value_id) +
+                        return fail("untagged v" + std::to_string(iv.value_id) +
                                     " defined into an X/Y slot");
                     }
                     for (const T2Use &u : iv.uses) {
@@ -1266,8 +1246,7 @@ namespace erts_t2 {
                                 use_mentions++;
                             }
                         });
-                        if ((defs || uses) &&
-                            op.kind != T2LirKind::Move) {
+                        if ((defs || uses) && op.kind != T2LirKind::Move) {
                             ok = false;
                             break;
                         }
@@ -1298,8 +1277,9 @@ namespace erts_t2 {
                     /* Interference: overlapping intervals must not
                      * touch the candidate's aliased X slot (their
                      * canonical placements) nor hold the same Phys. */
-                    for (uint32_t o = 0; o < nvals && banned !=
-                                 (((uint32_t)1 << T2_PHYS_POOL) - 1);
+                    for (uint32_t o = 0;
+                         o < nvals &&
+                         banned != (((uint32_t)1 << T2_PHYS_POOL) - 1);
                          o++) {
                         const T2Interval &ov = intervals[o];
 
@@ -1361,14 +1341,12 @@ namespace erts_t2 {
                             op.dst = PhysLoc::phys(k);
                         }
                         for (uint8_t s = 0; s < op.num_srcs; s++) {
-                            if (!op.srcs[s].is_const &&
-                                op.srcs[s].value == v) {
+                            if (!op.srcs[s].is_const && op.srcs[s].value == v) {
                                 op.srcs[s].loc = PhysLoc::phys(k);
                             }
                         }
                         for (uint32_t s = 0; s < op.num_srcs_ext; s++) {
-                            T2LirSrc &ps =
-                                    lir.src_pool[op.pool_first + s];
+                            T2LirSrc &ps = lir.src_pool[op.pool_first + s];
 
                             if (!ps.is_const && ps.value == v) {
                                 ps.loc = PhysLoc::phys(k);
@@ -1409,8 +1387,7 @@ namespace erts_t2 {
                         }
                     }
                     if (iv.assigned_phys.is_phys()) {
-                        line += " -> p" +
-                                std::to_string(iv.assigned_phys.num);
+                        line += " -> p" + std::to_string(iv.assigned_phys.num);
                     }
                     erts_fprintf(stderr, "%s\n", line.c_str());
                 }

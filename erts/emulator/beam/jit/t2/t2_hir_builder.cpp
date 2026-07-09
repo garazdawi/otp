@@ -1107,8 +1107,7 @@ namespace erts_t2 {
                 }
 
                 auto it = label_frame.find(label);
-                if (it == label_frame.end() ||
-                    it->second == FRAME_UNKNOWN) {
+                if (it == label_frame.end() || it->second == FRAME_UNKNOWN) {
                     label_frame[label] = f;
                     *changed = true;
                 } else if (it->second != f && it->second != FRAME_CONFLICT) {
@@ -1140,9 +1139,8 @@ namespace erts_t2 {
                             }
                             {
                                 auto it = label_frame.find(label);
-                                frame = it != label_frame.end()
-                                                ? it->second
-                                                : FRAME_UNKNOWN;
+                                frame = it != label_frame.end() ? it->second
+                                                                : FRAME_UNKNOWN;
                             }
                             live = true;
                             continue;
@@ -1242,10 +1240,9 @@ namespace erts_t2 {
                     if (s.v == nullptr) {
                         return;
                     }
-                    write_dst_new(dop.args[1],
-                                  emit_result_op(T2OpKind::Copy,
-                                                 {s},
-                                                 s.v->type));
+                    write_dst_new(
+                            dop.args[1],
+                            emit_result_op(T2OpKind::Copy, {s}, s.v->type));
                 } else {
                     /* Constant move: the materialization op itself is the
                      * write; its home is the destination register. */
@@ -1653,8 +1650,7 @@ namespace erts_t2 {
                     return;
                 }
 
-                const BeamFile_ImportEntry &mfa =
-                        ret->imports[import_index];
+                const BeamFile_ImportEntry &mfa = ret->imports[import_index];
                 T2OpKind kind;
 
                 if (mfa.module != am_erlang || mfa.arity != 2) {
@@ -1704,7 +1700,7 @@ namespace erts_t2 {
                 translate_error_exit(dop, false);
                 break;
 
-            /* --- the byte-aligned binary scan subset (P2 commit 7) --- */
+                /* --- the byte-aligned binary scan subset (P2 commit 7) --- */
 
             case genop_bs_start_match3_4: {
                 /* Fail Bin Live Dst. May GC (fresh context): sync
@@ -2065,8 +2061,7 @@ namespace erts_t2 {
         for (size_t j = 0; j < n; j++) {
             size_t i = fn_indices[j];
 
-            if (i >= md.functions.size() ||
-                i >= (size_t)ret->function_count ||
+            if (i >= md.functions.size() || i >= (size_t)ret->function_count ||
                 !(ret->eligible_bitmap[i / 32] & (((Uint32)1) << (i % 32)))) {
                 continue;
             }

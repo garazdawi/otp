@@ -226,8 +226,7 @@ namespace erts_t2 {
 
                 for_each_succ(fn.blocks[b]->terminator,
                               [&](T2BasicBlock *succ) {
-                                  if (succ != nullptr &&
-                                      !in_body[succ->id]) {
+                                  if (succ != nullptr && !in_body[succ->id]) {
                                       is_exit = true;
                                   }
                               });
@@ -396,8 +395,7 @@ namespace erts_t2 {
         T2Op *last_param = nullptr;
         T2Op *first_moved = b0->ops_head;
 
-        while (first_moved != nullptr &&
-               first_moved->kind == T2OpKind::Param) {
+        while (first_moved != nullptr && first_moved->kind == T2OpKind::Param) {
             if (first_moved->index >= fn.arity ||
                 params[first_moved->index] != nullptr) {
                 return fail("malformed parameter run");
@@ -653,8 +651,7 @@ namespace erts_t2 {
             const T2BasicBlock *b0 = fn.blocks[0];
             bool dirty = false;
 
-            for (const T2Op *op = b0->ops_head; op != nullptr;
-                 op = op->next) {
+            for (const T2Op *op = b0->ops_head; op != nullptr; op = op->next) {
                 if (op_is_window_guard(op)) {
                     if (dirty) {
                         return fail(0,
@@ -687,8 +684,7 @@ namespace erts_t2 {
             uint32_t arity_eff = fn.arity;
 
             for (uint32_t bid : loop.body) {
-                for (const T2Op *op = fn.blocks[bid]->ops_head;
-                     op != nullptr;
+                for (const T2Op *op = fn.blocks[bid]->ops_head; op != nullptr;
                      op = op->next) {
                     if (op->kind == T2OpKind::ReductionCheck &&
                         (op->flags & T2_OP_RC_CALLEE) != 0) {
@@ -771,7 +767,7 @@ using namespace erts_t2;
     do {                                                                       \
         if (!(Cond)) {                                                         \
             erts_fprintf(stderr,                                               \
-                         "t2 loop selftest failure at %s:%d: %s\n",           \
+                         "t2 loop selftest failure at %s:%d: %s\n",            \
                          __FILE__,                                             \
                          __LINE__,                                             \
                          #Cond);                                               \
@@ -845,8 +841,7 @@ static int t2_loop_selftest_window(bool guard_after) {
     T2_LOOP_CHECK(li.loops[0].latches.size() == 1 &&
                   li.loops[0].latches[0] == 2);
     T2_LOOP_CHECK(li.loops[0].body.size() == 2);
-    T2_LOOP_CHECK(li.loops[0].exits.size() == 1 &&
-                  li.loops[0].exits[0] == 1);
+    T2_LOOP_CHECK(li.loops[0].exits.size() == 1 && li.loops[0].exits[0] == 1);
 
     bool ok = t2_validate_windows(fn, li, &err);
 

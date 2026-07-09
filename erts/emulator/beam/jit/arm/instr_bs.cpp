@@ -274,11 +274,13 @@ void BeamModuleAssembler::emit_bs_scan(const ArgRegister &Ctx,
     const Uint kind = Kind.get();
     const Uint range = Range.get(), vpack = VPack.get();
     const Uint lo = range & 0xff, hi = (range >> 8) & 0xff, nv = vpack >> 32;
-    const Uint vals[4] = {vpack & 0xff, (vpack >> 8) & 0xff,
-                          (vpack >> 16) & 0xff, (vpack >> 24) & 0xff};
+    const Uint vals[4] = {vpack & 0xff,
+                          (vpack >> 8) & 0xff,
+                          (vpack >> 16) & 0xff,
+                          (vpack >> 24) & 0xff};
 
     Label loop = a.new_label();     /* SWAR 8-byte loop */
-    Label bytewise = a.new_label();  /* scalar tail / fallback */
+    Label bytewise = a.new_label(); /* scalar tail / fallback */
     Label done = a.new_label();
 
     auto ctx = load_source(Ctx, TMP1);
@@ -307,8 +309,8 @@ void BeamModuleAssembler::emit_bs_scan(const ArgRegister &Ctx,
      * partial chunk) falls through to the bytewise loop, which finds
      * the exact stop position. SWAR may over-report stops (false
      * positives are re-checked bytewise) but never misses one. */
-    const bool swar = (kind == 0 && hi <= 0x7F) ||
-                      (kind == 2 && hi == 0x7F && nv <= 2);
+    const bool swar =
+            (kind == 0 && hi <= 0x7F) || (kind == 2 && hi == 0x7F && nv <= 2);
 
     if (swar) {
         const Uint64 ONES = 0x0101010101010101ull;
@@ -428,7 +430,7 @@ void BeamModuleAssembler::emit_bs_scan(const ArgRegister &Ctx,
     auto ctxd = load_source(Ctx, TMP1);
     a.stur(pos, emit_boxed_val(ctxd.reg, start_offset));
 
-    a.sub(TMP2, pos, pos0);   /* consumed bits */
+    a.sub(TMP2, pos, pos0);    /* consumed bits */
     a.lsr(TMP2, TMP2, imm(3)); /* -> bytes */
     a.lsl(TMP2, TMP2, imm(_TAG_IMMED1_SIZE));
     auto dst = init_destination(Dst, TMP3);

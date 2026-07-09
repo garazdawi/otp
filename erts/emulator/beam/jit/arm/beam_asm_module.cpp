@@ -1096,8 +1096,7 @@ void BeamModuleAssembler::emit_t2_are_all_limited_2(
 
     const Eterm atom_any =
             erts_atom_put((byte *)"any", 3, ERTS_ATOM_ENC_LATIN1, 1);
-    const Eterm atom_c =
-            erts_atom_put((byte *)"c", 1, ERTS_ATOM_ENC_LATIN1, 1);
+    const Eterm atom_c = erts_atom_put((byte *)"c", 1, ERTS_ATOM_ENC_LATIN1, 1);
     const Eterm atom_tag_atom =
             erts_atom_put((byte *)"atom", 4, ERTS_ATOM_ENC_LATIN1, 1);
     const Eterm atom_tag_number =
@@ -1386,7 +1385,7 @@ void BeamModuleAssembler::emit_t2_json_scan(const T2FunctionEntry &entry,
     a.sub(TMP1, pos, pos0); /* consumed bits */
     mov_arg(TMP2, ArgXRegister(6));
     a.adds(TMP3, TMP2, TMP1, a64::lsl(1)); /* Len + k, still tagged */
-    a.b_vs(entry.side_exit); /* Len + k overflows: redo in T1 */
+    a.b_vs(entry.side_exit);               /* Len + k overflows: redo in T1 */
     a.str(pos, a64::Mem(ctxu, offsetof(ErlSubBits, start)));
     mov_arg(ArgXRegister(6), TMP3);
     a.b(entry.side_exit);
@@ -1404,8 +1403,7 @@ void BeamModuleAssembler::emit_t2_json_scan(const T2FunctionEntry &entry,
     a.b(resolve_fragment(ga->get_i_test_yield_shared(), disp1MB));
 }
 
-void BeamModuleAssembler::emit_t2_g31_dispatch_2(
-        const T2FunctionEntry &entry) {
+void BeamModuleAssembler::emit_t2_g31_dispatch_2(const T2FunctionEntry &entry) {
     /* G3 subject 1: cold-arm-pruned t2_g31:dispatch/2. Only the hot
      * arm is emitted, with its guards fused:
      *
@@ -1575,7 +1573,7 @@ void BeamModuleAssembler::emit_t2_gmap_sum_scores_2(
      * handles it); production must guard the keys-tuple *pointer*
      * recorded by runtime feedback (02 §7.6), never positions
      * assumed at codegen time. */
-    a.ldr(TMP5, a64::Mem(TMP1, sizeof(flatmap_t)));                   /* A */
+    a.ldr(TMP5, a64::Mem(TMP1, sizeof(flatmap_t)));                     /* A */
     a.ldr(TMP6, a64::Mem(TMP1, sizeof(flatmap_t) + 3 * sizeof(Eterm))); /* S */
 
     mov_imm(SUPER_TMP, am_true);

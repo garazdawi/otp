@@ -195,8 +195,8 @@ namespace erts_t2 {
         struct Serializer {
             Atoms atoms;
 
-            Eterm *hp;    /* build pass */
-            Uint *szp;    /* size pass; nullptr during build */
+            Eterm *hp; /* build pass */
+            Uint *szp; /* size pass; nullptr during build */
 
             void init_atoms() {
                 atoms.init();
@@ -314,9 +314,7 @@ namespace erts_t2 {
                 switch (op->kind) {
                 case T2OpKind::Allocate:
                     tail = prop(atoms.frame, uint_term(op->index), tail);
-                    tail = prop(atoms.heap,
-                                uint_term((Uint)op->imm_int),
-                                tail);
+                    tail = prop(atoms.heap, uint_term((Uint)op->imm_int), tail);
                     tail = prop(atoms.live, uint_term(op->live), tail);
                     break;
                 case T2OpKind::Deallocate:
@@ -390,9 +388,8 @@ namespace erts_t2 {
 
                     for (uint32_t i = op->num_cases; i > 0; i--) {
                         const T2SwitchCase &c = op->cases[i - 1];
-                        Eterm entry =
-                                tuple2(safe_value(c.value),
-                                       uint_term(c.target->id));
+                        Eterm entry = tuple2(safe_value(c.value),
+                                             uint_term(c.target->id));
                         clist = cons(entry, clist);
                     }
                     tail = prop(atoms.cases, clist, tail);
@@ -426,9 +423,8 @@ namespace erts_t2 {
 
             Eterm build_op(const T2Op *op) {
                 Eterm kind = kind_atom(op->kind);
-                Eterm result = op->result != NULL
-                                       ? make_small(op->result->id)
-                                       : atoms.none;
+                Eterm result = op->result != NULL ? make_small(op->result->id)
+                                                  : atoms.none;
                 Eterm type = build_type(op->type);
                 Eterm operands = build_operands(op);
                 Eterm attrs = build_attrs(op);
@@ -457,7 +453,8 @@ namespace erts_t2 {
                 case T2OpKind::Jump:
                     return cons(make_small(term->succ_then->id), NIL);
                 case T2OpKind::Switch: {
-                    Eterm list = cons(make_small(term->default_target->id), NIL);
+                    Eterm list =
+                            cons(make_small(term->default_target->id), NIL);
 
                     for (uint32_t i = term->num_cases; i > 0; i--) {
                         list = cons(make_small(term->cases[i - 1].target->id),
@@ -614,7 +611,9 @@ extern "C" Eterm erts_t2_debug_build_ssa(Process *p,
             ret,
             func,
             (unsigned)ar,
-            [&](T2Function &fn) { result = serialize(p, fn); },
+            [&](T2Function &fn) {
+                result = serialize(p, fn);
+            },
             &err);
 
     switch (status) {

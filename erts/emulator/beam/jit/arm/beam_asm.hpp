@@ -847,7 +847,7 @@ protected:
 #include "beam_asm_global.hpp"
 
 namespace erts_t2 {
-class BeamT2ModuleAssembler;
+    class BeamT2ModuleAssembler;
 }
 
 class BeamModuleAssembler : public BeamAssembler,
@@ -1131,9 +1131,9 @@ public:
     struct T2FunctionEntry {
         Eterm function;
         unsigned arity;
-        Label fn_entry;     /* public function entry (where callers land) */
-        Label t2_entry;     /* start of T2 specialized code for this fn  */
-        Label side_exit;    /* T1 fallback (T1 body emits right after)   */
+        Label fn_entry;  /* public function entry (where callers land) */
+        Label t2_entry;  /* start of T2 specialized code for this fn  */
+        Label side_exit; /* T1 fallback (T1 body emits right after)   */
     };
     std::vector<T2FunctionEntry> t2_entries;
 
@@ -1190,8 +1190,7 @@ public:
 
     /* Record a re-entry point for the current function. */
     void t2_pc_record(uint32_t offset, uint8_t kind) {
-        t2_pc_raw.push_back(
-                {offset, (uint32_t)(functions.size() - 1), kind});
+        t2_pc_raw.push_back({offset, (uint32_t)(functions.size() - 1), kind});
     }
 
     /* Classify a just-emitted specific op into a re-entry kind and record

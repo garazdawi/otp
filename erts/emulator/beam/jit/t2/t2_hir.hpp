@@ -518,7 +518,7 @@ namespace erts_t2 {
          * was read from (T2_REG_NONE for constants); the array is null
          * when no operand came from a register. */
         int32_t dst_reg = T2_REG_NONE; /* NSDMI: arena zero-init would be x0 */
-        int32_t *operand_regs; /* arena array [num_operands] or null */
+        int32_t *operand_regs;         /* arena array [num_operands] or null */
 
         uint16_t flags; /* T2_OP_* bits */
 

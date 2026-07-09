@@ -42,8 +42,8 @@
  * will start using once it demotes non-sync-point boundaries.
  *
  * The structure the map prescribes: a flat vector of
- *   T2LirOp { kind; PhysLoc dst; PhysLoc srcs[]; imm; mfa; t1_pc_fail; beam_idx }
- * grouped into blocks so terminators keep their CFG edges.
+ *   T2LirOp { kind; PhysLoc dst; PhysLoc srcs[]; imm; mfa; t1_pc_fail; beam_idx
+ * } grouped into blocks so terminators keep their CFG edges.
  */
 
 #ifndef _JIT_T2_LIR_HPP
@@ -293,8 +293,10 @@ namespace erts_t2 {
         Kind kind;
         uint16_t num; /* X/Y index, or abstract physical-register id */
 
-        constexpr PhysLoc() : kind(Kind::None), num(0) {}
-        constexpr PhysLoc(Kind k, uint16_t n) : kind(k), num(n) {}
+        constexpr PhysLoc() : kind(Kind::None), num(0) {
+        }
+        constexpr PhysLoc(Kind k, uint16_t n) : kind(k), num(n) {
+        }
 
         static constexpr PhysLoc none() {
             return PhysLoc(Kind::None, 0);
@@ -350,8 +352,8 @@ namespace erts_t2 {
      */
     struct T2LirSrc {
         bool is_const;
-        PhysLoc loc;   /* when !is_const */
-        Eterm term;    /* when is_const: a tagged immediate (small/atom/nil) */
+        PhysLoc loc; /* when !is_const */
+        Eterm term;  /* when is_const: a tagged immediate (small/atom/nil) */
 
         /* The SSA value read (P2 allocator annotation), or T2_NO_VALUE for
          * constants and runtime-defined slots (e.g. a BIF result in X0
@@ -359,7 +361,8 @@ namespace erts_t2 {
         uint32_t value;
 
         constexpr T2LirSrc()
-                : is_const(false), loc(), term(0), value(T2_NO_VALUE) {}
+                : is_const(false), loc(), term(0), value(T2_NO_VALUE) {
+        }
 
         static T2LirSrc slot(PhysLoc l, uint32_t v = T2_NO_VALUE) {
             T2LirSrc s;
@@ -382,26 +385,26 @@ namespace erts_t2 {
     struct T2LirOp {
         T2LirKind kind;
 
-        PhysLoc dst;                 /* result slot, or None            */
-        PhysLoc dst2;                /* second result (GetList tl, Swap) */
+        PhysLoc dst;  /* result slot, or None            */
+        PhysLoc dst2; /* second result (GetList tl, Swap) */
         T2LirSrc srcs[T2_LIR_MAX_SRCS];
         uint8_t num_srcs;
 
         /* Op-specific immediates. */
-        Sint64 imm;    /* raw immediate (tuple/element index, arity,
-                        * frame slots, ...)                               */
-        Sint64 imm2;   /* second immediate (Allocate heap words, Trim
-                        * remaining)                                      */
-        Eterm imm_term;/* tagged immediate (Move of const / switch key)    */
+        Sint64 imm;     /* raw immediate (tuple/element index, arity,
+                         * frame slots, ...)                               */
+        Sint64 imm2;    /* second immediate (Allocate heap words, Trim
+                         * remaining)                                      */
+        Eterm imm_term; /* tagged immediate (Move of const / switch key)    */
 
         /* Call target (Call/TailCall/CallExt/TailCallExt and arith BIF
          * provenance). */
         Eterm mfa_m;
         Eterm mfa_f;
-        uint32_t arity;      /* call arity                                  */
-        uint32_t live;       /* decoded GC live count (arith/GcTest/Alloc)  */
-        const void *exp;     /* resolved Export* for a remote call          */
-        const void *target;  /* resolved ErtsCodePtr for a local call/tail  */
+        uint32_t arity;     /* call arity                                  */
+        uint32_t live;      /* decoded GC live count (arith/GcTest/Alloc)  */
+        const void *exp;    /* resolved Export* for a remote call          */
+        const void *target; /* resolved ErtsCodePtr for a local call/tail  */
 
         /* The T1 PC this op side-exits to on failure (arith with a {f,0}
          * fail — the op's own EFFECT site) or unconditionally (SideExit:
@@ -453,22 +456,22 @@ namespace erts_t2 {
         const T2SyncMap *sync;
 
         T2LirOp()
-                : kind(T2LirKind::Invalid), dst(), dst2(), num_srcs(0),
-                  imm(0), imm2(0), imm_term(0), mfa_m(0), mfa_f(0), arity(0),
-                  live(0), exp(nullptr), target(nullptr), t1_pc_fail(nullptr),
-                  t1_pc_cont(nullptr), beam_idx(0),
-                  succ_then(T2_LIR_NO_BLOCK), succ_else(T2_LIR_NO_BLOCK),
-                  first_case(0), num_cases(0),
+                : kind(T2LirKind::Invalid), dst(), dst2(), num_srcs(0), imm(0),
+                  imm2(0), imm_term(0), mfa_m(0), mfa_f(0), arity(0), live(0),
+                  exp(nullptr), target(nullptr), t1_pc_fail(nullptr),
+                  t1_pc_cont(nullptr), beam_idx(0), succ_then(T2_LIR_NO_BLOCK),
+                  succ_else(T2_LIR_NO_BLOCK), first_case(0), num_cases(0),
                   default_target(T2_LIR_NO_BLOCK), pool_first(0),
                   num_srcs_ext(0), first_bs_cmd(0), num_bs_cmds(0),
-                  dst_value(T2_NO_VALUE),
-                  dst2_value(T2_NO_VALUE), sync(nullptr) {}
+                  dst_value(T2_NO_VALUE), dst2_value(T2_NO_VALUE),
+                  sync(nullptr) {
+        }
     };
 
     /* One arm of a Switch terminator. */
     struct T2LirSwitchCase {
-        Eterm value;         /* matched term (small / atom / literal)   */
-        uint32_t target;     /* block id                                */
+        Eterm value;     /* matched term (small / atom / literal)   */
+        uint32_t target; /* block id                                */
     };
 
     /* One decoded bs_match command (a mirror of ErtsT2BsCmd's kinds:
@@ -489,8 +492,8 @@ namespace erts_t2 {
      * An input value of T2_NO_VALUE marks an input the allocator does
      * not track (never occurs today; defensive). */
     struct T2LirPhi {
-        uint32_t value;   /* the phi's SSA value                        */
-        PhysLoc home;     /* canonical home slot (Xn/Yn)                */
+        uint32_t value; /* the phi's SSA value                        */
+        PhysLoc home;   /* canonical home slot (Xn/Yn)                */
         struct In {
             uint32_t pred_block; /* LIR block id of the incoming edge   */
             uint32_t value;      /* SSA value on that edge              */
@@ -500,7 +503,7 @@ namespace erts_t2 {
 
     struct T2LirBlock {
         uint32_t id;
-        std::vector<T2LirOp> ops; /* flat vector, terminator last */
+        std::vector<T2LirOp> ops;   /* flat vector, terminator last */
         std::vector<T2LirPhi> phis; /* allocator-only; emit no code */
     };
 
@@ -539,7 +542,8 @@ namespace erts_t2 {
 
         T2LirFunction()
                 : module(0), function(0), arity(0), t1_entry(nullptr),
-                  num_values(0), entry_sync(nullptr) {}
+                  num_values(0), entry_sync(nullptr) {
+        }
 
         T2LirBlock &new_block() {
             T2LirBlock b;

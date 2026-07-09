@@ -175,7 +175,8 @@ void BeamModuleAssembler::emit_gc_test(const ArgWord &Ns,
         /* Per-function site counter: resolve a stable counter address
          * for the function being compiled and increment it inline. */
         if (is_atom(mod) && is_atom(current_function)) {
-            Uint *site = erts_galloc_get_counter(mod, current_function,
+            Uint *site = erts_galloc_get_counter(mod,
+                                                 current_function,
                                                  current_arity);
             mov_imm(TMP1, (Uint64)site);
             a.ldr(TMP3, a64::Mem(TMP1));
@@ -3284,9 +3285,8 @@ void BeamModuleAssembler::emit_t2_profile_sequence() {
     /* Self-disarm bookkeeping (P2 commit 10): once this function's
      * tier-up outcome is terminal, the whole sequence is patched to a
      * single `b` over it. */
-    t2_profile_seqs.push_back({(uint32_t)ordinal,
-                               seq_start,
-                               (uint32_t)(a.offset() - seq_start)});
+    t2_profile_seqs.push_back(
+            {(uint32_t)ordinal, seq_start, (uint32_t)(a.offset() - seq_start)});
 }
 
 /* Trip path of the profiling sequence: ARG1 = the profile record;

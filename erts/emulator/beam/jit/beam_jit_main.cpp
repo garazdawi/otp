@@ -22,9 +22,9 @@
 
 #include "beam_asm.hpp"
 #ifdef ERTS_ENABLE_JIT_T2
-#include "t2_hir.hpp"
-#include "t2_loop.hpp"
-#include "t2_emit.hpp"
+#    include "t2_hir.hpp"
+#    include "t2_loop.hpp"
+#    include "t2_emit.hpp"
 #endif
 
 extern "C"
@@ -35,9 +35,9 @@ extern "C"
 #include "export.h"
 #include "erl_threads.h"
 #ifdef ERTS_ENABLE_JIT_T2
-#include "t2_retain.h"
-#include "t2_pctab.h"
-#include "t2_ranges.h"
+#    include "t2_retain.h"
+#    include "t2_pctab.h"
+#    include "t2_ranges.h"
 #endif
 
 #if defined(__APPLE__)
@@ -466,7 +466,9 @@ void beamasm_init() {
 
         res = erts_t2_ranges_selftest();
         if (res != 0) {
-            erts_exit(ERTS_ABORT_EXIT, "T2 ranges self-test failed (%d)\n", res);
+            erts_exit(ERTS_ABORT_EXIT,
+                      "T2 ranges self-test failed (%d)\n",
+                      res);
         }
 
         res = erts_t2_loop_selftest();
@@ -770,8 +772,7 @@ extern "C"
         if (profiles == nullptr) {
             return;
         }
-        for (const BeamModuleAssembler::T2ProfileSeq &s :
-             ba->t2_profile_seqs) {
+        for (const BeamModuleAssembler::T2ProfileSeq &s : ba->t2_profile_seqs) {
             if ((int)s.ordinal >= ba->t2_profile_count) {
                 continue;
             }
