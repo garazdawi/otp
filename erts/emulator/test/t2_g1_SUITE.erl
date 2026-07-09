@@ -218,13 +218,22 @@ start_t2_peer() ->
             peer:start(#{name => peer:random_name(?MODULE),
                          env => [{"T2_RETAIN", "1"}],
                          args => ["-pa", PA]}),
-        %% Confirm the reconstruction BIF is actually reachable; if this
-        %% emulator predates the commit-5 wiring, skip rather than error.
+        %% The whole tier-2 subsystem is gated to aarch64; on every other
+        %% arch each T2 introspection query returns 'undefined'. t2_stats is
+        %% a global tuple exactly when T2 is built into this emulator, so it
+        %% distinguishes "T2 present" from "T2 absent" -- unlike the
+        %% module-scoped t2_build_ssa probe, which is 'undefined' for a
+        %% missing module too and so cannot tell the two apart. (It also
+        %% still errors, and is caught below, if the BIF is entirely absent.)
         _ = erpc:call(Node, erts_debug, set_internal_state,
                       [available_internal_state, true]),
-        undefined = erpc:call(Node, erts_debug, get_internal_state,
-                              [{t2_build_ssa, '$nomod$', f, 0}]),
-        {ok, Peer, Node}
+        case erpc:call(Node, erts_debug, get_internal_state, [t2_stats]) of
+            Stats when is_tuple(Stats) ->
+                {ok, Peer, Node};
+            _ ->
+                catch peer:stop(Peer),
+                {error, no_tier2_support}
+        end
     catch
         Class:CaughtReason ->
             {error, {Class, CaughtReason}}
