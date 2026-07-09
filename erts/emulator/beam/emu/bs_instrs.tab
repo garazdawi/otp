@@ -1201,7 +1201,11 @@ bs_scan(Ctx, Kind, Range, VPack, Dst) {
         Uint pos = start >> 3;
         Uint endpos = sb->end >> 3;
         Uint kind = $Kind, range = $Range, vpack = $VPack;
-        Uint lo = range & 0xff, hi = (range >> 8) & 0xff, nv = vpack >> 32;
+        /* vpack packs nv into bits 32+; cast through Uint64 so the shift is
+         * well-defined when Uint is 32-bit (this op is 64-bit-only and never
+         * emitted on 32-bit, but its handler is still compiled everywhere). */
+        Uint lo = range & 0xff, hi = (range >> 8) & 0xff;
+        Uint nv = (Uint) ((Uint64) vpack >> 32);
         Uint v0 = vpack & 0xff, v1 = (vpack >> 8) & 0xff;
         Uint v2 = (vpack >> 16) & 0xff, v3 = (vpack >> 24) & 0xff;
 
