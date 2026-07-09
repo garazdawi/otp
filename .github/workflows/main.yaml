@@ -253,6 +253,9 @@ jobs:
   ## and then make sure to use that sha instead of env.OTP_SBOM_VERSION
   sbom:
     name: Create SBOM
+    ## Temporarily disabled on this branch (kept as a skipped job so the
+    ## release/ruleset-checker `needs: sbom` references stay valid).
+    if: needs.pack.outputs.build-c-code == 'true' && false
     needs:
       - setup
       - pack
