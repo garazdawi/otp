@@ -1200,8 +1200,14 @@ bs_scan(Ctx, Kind, Range, VPack, Dst) {
         const byte *base = erl_sub_bits_get_base(sb);
         Uint pos = start >> 3;
         Uint endpos = sb->end >> 3;
-        Uint kind = $Kind, range = $Range, vpack = $VPack;
-        Uint lo = range & 0xff, hi = (range >> 8) & 0xff, nv = vpack >> 32;
+        Uint kind = $Kind, range = $Range;
+        /* vpack packs v0..v3 (low 32 bits) and nv (from bit 32); it is a
+         * 64-bit immediate built by the aarch64 producer. Carry it as Uint64
+         * so `vpack >> 32` is well-defined on ILP32 (i686), where bs_scan is
+         * never generated (the JIT/T2 tier is aarch64-only) but this emu body
+         * must still compile under -Werror=shift-count-overflow. */
+        Uint64 vpack = $VPack;
+        Uint lo = range & 0xff, hi = (range >> 8) & 0xff, nv = (Uint)(vpack >> 32);
         Uint v0 = vpack & 0xff, v1 = (vpack >> 8) & 0xff;
         Uint v2 = (vpack >> 16) & 0xff, v3 = (vpack >> 24) & 0xff;
 
