@@ -41,6 +41,7 @@ first. Backend open — evaluated in [`04_backend.md`](04_backend.md).
 | [`06_phases.md`](06_phases.md) | The roadmap: **M0 measurement phase** (prices the two pools the thesis rests on) → P0–P2 loop tier (shippable) → P3 general inlining → P4 classic opts → P5 allocation elimination → P6 ship → P7 x86_64 port. Gates, effort (~60–68 weeks aarch64), risks, open questions. **Top banner = PROGRAM STATUS (consolidating as specialist tier); P3+ decided-against.** |
 | [`10`](10_p26_install_gate.md)–[`14`](14_real_service_value.md) | **The measurement/de-risk memos** that drove the landing: P2.6 install gate (10), body-recursion prize (11), rung-2 correctness spike GO (12), rung-2 value FALLS SHORT (13), real-service value ~0 %/SPECIALIST (14). |
 | [`15_scope_and_disposition.md`](15_scope_and_disposition.md) | **⟹ START HERE for the conclusion.** What T2-Full actually is (measured), what it does not deliver and why, the hole-free install gate, and the disposition (specialist tier; P3+ decided-against). |
+| [`16_retrospective.md`](16_retrospective.md) | **After-action review.** What could have been done cheaper/better (technical + process), the verified eligible-opcode set (why services are ineligible), latent risks still in the tree, and the prioritized closeout (P0 harden / P1 strip dead weight / P2 disposition — Option A / P3 redirect ambition to the GC/VM-internal track). |
 
 ## Reading paths
 
