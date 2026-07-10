@@ -120,8 +120,11 @@ namespace erts_t2 {
             const ErtsT2RetainedCode *ret = nullptr;
             std::vector<FunctionCode> functions;
 
-            /* label -> function index, for both entry and func_info labels. */
-            std::unordered_map<UWord, size_t> label_fn;
+            /* label -> function index, for both entry and func_info labels.
+             * Key is a plain uint64_t, not UWord: UWord carries an alignment
+             * attribute (sys.h) that GCC rejects as a template argument
+             * (-Werror=ignored-attributes). */
+            std::unordered_map<uint64_t, size_t> label_fn;
 
             void init(const ErtsT2RetainedCode *ret_) {
                 ret = ret_;
@@ -316,7 +319,7 @@ namespace erts_t2 {
 
             std::unique_ptr<T2Function> fn;
 
-            std::unordered_map<UWord, T2BasicBlock *> label_block;
+            std::unordered_map<uint64_t, T2BasicBlock *> label_block;
             T2BasicBlock *error_block = nullptr;
             T2BasicBlock *cur = nullptr;
             const DecodedOp *cur_op = nullptr;
@@ -324,7 +327,7 @@ namespace erts_t2 {
             /* Stack-frame size at the current translation point, and the
              * per-label frame-in map from the pre-pass. */
             int32_t cur_frame = T2_NO_FRAME;
-            std::unordered_map<UWord, int32_t> label_frame;
+            std::unordered_map<uint64_t, int32_t> label_frame;
 
             /* Braun state, indexed by block id. */
             std::vector<std::unordered_map<uint32_t, T2Value *>> defs;

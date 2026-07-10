@@ -3574,9 +3574,11 @@ extern "C" void erts_t2_emit_selftest_module(
 /* ------------------------------------------------------------------ *
  * Non-aarch64 stubs. The T2 tier never emits or installs off aarch64  *
  * (see the note at the #if above); these exist only so the arch-      *
- * independent mid-end and the common JIT/BIF code link. Two of them   *
- * (test_yield_return_offset, profile_throwaway_addr) are provided by   *
- * arm/*.cpp on aarch64 — here they get their non-aarch64 definition.  *
+ * independent mid-end and the common JIT/BIF code link. One of them    *
+ * (test_yield_return_offset) is defined by the arm per-arch source     *
+ * (arm/instr_common.cpp) on aarch64 — here it gets its non-aarch64     *
+ * definition. (profile_throwaway_addr is NOT stubbed here: t2_tier.c   *
+ * defines it unconditionally on every arch.)                           *
  * ------------------------------------------------------------------ */
 
 namespace erts_t2 {
@@ -3645,10 +3647,6 @@ void erts_t2_emit_selftest_module(const struct ErtsT2RetainedCode *ret,
 }
 
 Uint erts_t2_test_yield_return_offset(void) {
-    return 0;
-}
-
-UWord erts_t2_profile_throwaway_addr(void) {
     return 0;
 }
 

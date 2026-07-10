@@ -268,7 +268,7 @@ namespace erts_t2 {
             static const void *find_lf(const BeamCodeHeader *hdr,
                                        Eterm f,
                                        uint32_t arity) {
-                for (Sint i = 0; i < hdr->num_functions; i++) {
+                for (Uint i = 0; i < hdr->num_functions; i++) {
                     const ErtsCodeInfo *ci = hdr->functions[i];
 
                     if (ci->mfa.function == f && ci->mfa.arity == arity) {

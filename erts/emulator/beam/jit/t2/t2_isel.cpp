@@ -274,7 +274,7 @@ namespace erts_t2 {
             const void *local_target(Eterm f, uint32_t arity) {
                 const BeamCodeHeader *hdr = code_hdr();
 
-                for (Sint i = 0; i < hdr->num_functions; i++) {
+                for (Uint i = 0; i < hdr->num_functions; i++) {
                     const ErtsCodeInfo *ci = hdr->functions[i];
 
                     if (ci->mfa.function == f && ci->mfa.arity == arity) {

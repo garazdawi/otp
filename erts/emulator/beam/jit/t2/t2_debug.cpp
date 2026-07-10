@@ -563,8 +563,9 @@ namespace erts_t2 {
             (void)s.build_function(fn);
             sz += 3; /* {ok, Fn} tuple */
 
-            /* Build pass. */
-            Eterm *hp = HAlloc(p, sz);
+            /* Build pass. (HAlloc compares the word count against the
+             * signed HeapWordsLeft; cast so GCC's -Wsign-compare is happy.) */
+            Eterm *hp = HAlloc(p, (Sint)sz);
             s.hp = hp;
             s.szp = NULL;
             Eterm fn_term = s.build_function(fn);
@@ -637,7 +638,7 @@ extern "C" Eterm erts_t2_debug_build_ssa(Process *p,
 
         (void)erts_bld_string_n(NULL, &sz, err.c_str(), (Sint)err.size());
         sz += 4; /* {error, build_failed, Reason} */
-        hp = HAlloc(p, sz);
+        hp = HAlloc(p, (Sint)sz);
         rbin = erts_bld_string_n(&hp, NULL, err.c_str(), (Sint)err.size());
         reason = TUPLE3(hp, am_error, Atoms::intern("build_failed"), rbin);
         return reason;

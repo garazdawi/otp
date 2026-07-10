@@ -80,7 +80,7 @@ namespace erts_t2 {
 
     namespace {
 
-        bool op_is_effect_boundary(const T2Op *op) {
+        [[maybe_unused]] bool op_is_effect_boundary(const T2Op *op) {
             switch (op->kind) {
             case T2OpKind::Call:
             case T2OpKind::CallExt:
@@ -91,7 +91,7 @@ namespace erts_t2 {
             }
         }
 
-        bool op_is_frame_op(const T2Op *op) {
+        [[maybe_unused]] bool op_is_frame_op(const T2Op *op) {
             switch (op->kind) {
             case T2OpKind::Allocate:
             case T2OpKind::Deallocate:

@@ -36,15 +36,34 @@
  * error, never an aborted load.
  */
 
-#include <ctime>
-#include <string>
-
-extern "C"
-{
+/* config.h first: it defines the HAVE_* feature macros the headers below
+ * rely on. */
 #ifdef HAVE_CONFIG_H
 #    include "config.h"
 #endif
 
+/* C++ standard headers MUST precede the ERTS headers below. erl_term.h
+ * defines function-like macros make_boxed/make_list/make_tuple (the term
+ * constructors); once those are in scope they collide with and corrupt
+ * libstdc++'s std::make_tuple / std::make_pair declarations pulled in by
+ * <functional>/<tuple>. Including the C++ headers -- and the t2 .hpp files
+ * that transitively include them -- first keeps the std names intact before
+ * the macros are defined. (This is the same ordering the other t2 .cpp files
+ * use, e.g. t2_isel.cpp including t2_isel.hpp ahead of its extern "C" block.) */
+#include <ctime>
+#include <string>
+
+#include "t2_hir.hpp"
+#include "t2_isel.hpp"
+#include "t2_loop.hpp"
+#include "t2_lir.hpp"
+#include "t2_emit.hpp"
+#include "t2_spec.hpp"
+#include "t2_inline.hpp"
+#include "t2_intrinsics.hpp"
+
+extern "C"
+{
 #include "sys.h"
 #include "global.h"
 #include "big.h"
@@ -58,15 +77,6 @@ extern "C"
 #include "t2_install.h"
 #include "t2_ranges.h"
 }
-
-#include "t2_hir.hpp"
-#include "t2_isel.hpp"
-#include "t2_loop.hpp"
-#include "t2_lir.hpp"
-#include "t2_emit.hpp"
-#include "t2_spec.hpp"
-#include "t2_inline.hpp"
-#include "t2_intrinsics.hpp"
 
 using namespace erts_t2;
 
