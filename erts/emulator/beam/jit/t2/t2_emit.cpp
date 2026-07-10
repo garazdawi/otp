@@ -74,6 +74,16 @@ using namespace asmjit;
 BeamGlobalAssembler *erts_t2_global_assembler(void);
 JitAllocator *erts_t2_jit_allocator(void);
 
+/* The T2 emitter is aarch64 codegen: it subclasses the arm
+ * BeamModuleAssembler and emits a64:: asmjit. The T2 mid-end, by contrast,
+ * is architecture-independent and is built for every JIT arch (see
+ * erts/emulator/Makefile.in). So on non-aarch64 targets the whole emitter
+ * below is compiled out and replaced (at the #else near EOF) with linkable
+ * stubs for every symbol the mid-end and common code reference — none of
+ * which run there, since erts_t2_enabled() drives no real T2 install off
+ * aarch64. */
+#if defined(__aarch64__)
+
 namespace erts_t2 {
 
     namespace {
@@ -3558,3 +3568,90 @@ extern "C" void erts_t2_emit_selftest_module(
 
     erts_fprintf(stderr, "T2 emit module self-test passed\n");
 }
+
+#else /* !defined(__aarch64__) */
+
+/* ------------------------------------------------------------------ *
+ * Non-aarch64 stubs. The T2 tier never emits or installs off aarch64  *
+ * (see the note at the #if above); these exist only so the arch-      *
+ * independent mid-end and the common JIT/BIF code link. Two of them   *
+ * (test_yield_return_offset, profile_throwaway_addr) are provided by   *
+ * arm/*.cpp on aarch64 — here they get their non-aarch64 definition.  *
+ * ------------------------------------------------------------------ */
+
+namespace erts_t2 {
+
+    const void *t2_emit_blob(const T2LirFunction &fn,
+                             std::string *err,
+                             std::string *disasm,
+                             T2EmitResult *out) {
+        (void)fn;
+        (void)disasm;
+        (void)out;
+        if (err != nullptr) {
+            *err = "T2 emit is aarch64-only";
+        }
+        return nullptr;
+    }
+
+    bool t2_emit_blob_install(const T2LirFunction &fn,
+                              const void *install_entry,
+                              T2EmitResult *out,
+                              std::string *err,
+                              std::string *disasm) {
+        (void)fn;
+        (void)install_entry;
+        (void)out;
+        (void)disasm;
+        if (err != nullptr) {
+            *err = "T2 emit is aarch64-only";
+        }
+        return false;
+    }
+
+    ErtsT2ReentryFn t2_get_reentry_trampoline(void) {
+        return nullptr;
+    }
+
+} /* namespace erts_t2 */
+
+extern "C" {
+
+Eterm erts_t2_debug_exec(Process *p,
+                         Eterm mod,
+                         Eterm func,
+                         Eterm arity,
+                         Eterm args) {
+    (void)p;
+    (void)mod;
+    (void)func;
+    (void)arity;
+    (void)args;
+    return am_undefined;
+}
+
+int erts_t2_emit_selftest_enabled(void) {
+    return 0;
+}
+
+int erts_t2_emit_selftest(void) {
+    return 0;
+}
+
+void erts_t2_emit_selftest_module(const struct ErtsT2RetainedCode *ret,
+                                  const void *code_hdr) {
+    (void)ret;
+    (void)code_hdr;
+}
+
+Uint erts_t2_test_yield_return_offset(void) {
+    return 0;
+}
+
+UWord erts_t2_profile_throwaway_addr(void) {
+    return 0;
+}
+
+} /* extern "C" */
+
+#endif /* defined(__aarch64__) */

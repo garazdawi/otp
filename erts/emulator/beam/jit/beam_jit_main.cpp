@@ -733,7 +733,17 @@ extern "C"
         return (char *)ba->getBaseAddress();
     }
 
-    /* T2-Full P0 (PLAN/T2FULL/07 §4): PC side-table collection bridges. */
+    /* T2-Full P0 (PLAN/T2FULL/07 §4): PC side-table collection bridges.
+     *
+     * The T2 tier emits on aarch64 only, so the assembler-side T2 state
+     * (t2_pc_collect / t2_profiles / t2_profile_seqs / t2_pc_raw and their
+     * types) lives only on the aarch64 BeamModuleAssembler. The T2 mid-end
+     * itself is architecture-independent and is built for every JIT arch
+     * (see erts/emulator/Makefile.in), and asm_load.c calls these bridges
+     * unconditionally, so they must compile and link everywhere. On non-
+     * aarch64 targets erts_t2_enabled() never drives a real T2 install, so
+     * the bridges are safe no-ops there. */
+#if defined(__aarch64__)
     void beamasm_set_t2_collect(void *instance, int on) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
         ba->t2_pc_collect = (on != 0);
@@ -790,6 +800,42 @@ extern "C"
         *fn_index = e.fn_index;
         *kind = e.kind;
     }
+#else  /* !__aarch64__ — T2 does not emit here; bridges are no-ops. */
+    void beamasm_set_t2_collect(void *instance, int on) {
+        (void)instance;
+        (void)on;
+    }
+
+    void beamasm_set_t2_profiles(void *instance,
+                                 struct ErtsT2Profile *profiles,
+                                 int function_count) {
+        (void)instance;
+        (void)profiles;
+        (void)function_count;
+    }
+
+    void beamasm_t2_fill_profile_seqs(void *instance, const char *base) {
+        (void)instance;
+        (void)base;
+    }
+
+    size_t beamasm_t2_pc_raw_count(void *instance) {
+        (void)instance;
+        return 0;
+    }
+
+    void beamasm_t2_pc_raw_get(void *instance,
+                               size_t i,
+                               Uint32 *offset,
+                               Uint32 *fn_index,
+                               byte *kind) {
+        (void)instance;
+        (void)i;
+        (void)offset;
+        (void)fn_index;
+        (void)kind;
+    }
+#endif
 
     size_t beamasm_get_offset(void *instance) {
         BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
