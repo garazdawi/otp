@@ -1367,7 +1367,10 @@ namespace erts_t2 {
 
                 while (!work.empty()) {
                     const T2BasicBlock *b = work.back();
-                    int32_t out;
+                    /* Always set by frame_transfer() before use below; the
+                     * sentinel init only silences -Werror=maybe-uninitialized
+                     * on GCC builds that can't see through the callee. */
+                    int32_t out = FRAME_UNKNOWN;
 
                     work.pop_back();
                     if (!frame_transfer(b, frame_in[b->id], &out)) {
