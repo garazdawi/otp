@@ -42,6 +42,7 @@ first. Backend open — evaluated in [`04_backend.md`](04_backend.md).
 | [`10`](10_p26_install_gate.md)–[`14`](14_real_service_value.md) | **The measurement/de-risk memos** that drove the landing: P2.6 install gate (10), body-recursion prize (11), rung-2 correctness spike GO (12), rung-2 value FALLS SHORT (13), real-service value ~0 %/SPECIALIST (14). |
 | [`15_scope_and_disposition.md`](15_scope_and_disposition.md) | **⟹ START HERE for the conclusion.** What T2-Full actually is (measured), what it does not deliver and why, the hole-free install gate, and the disposition (specialist tier; P3+ decided-against). |
 | [`16_retrospective.md`](16_retrospective.md) | **After-action review.** What could have been done cheaper/better (technical + process), the verified eligible-opcode set (why services are ineligible), latent risks still in the tree, and the prioritized closeout (P0 harden / P1 strip dead weight / P2 disposition — Option A / P3 redirect ambition to the GC/VM-internal track). |
+| [`17_more_opcodes_value_census.md`](17_more_opcodes_value_census.md) | **"Should we implement more opcodes to find the service value?" — no, measure first.** What memo 14 measured vs. argued; why building the opcodes is the wrong experiment (entangled/non-stageable classes, eligible≠win, the map win needs an unbuilt profiler); the cheap **frontend-only addressable-share census** that prices the pool in days; the byte-slinging corpus gap (add a map/term-heavy service); build/no-build decision rule. |
 
 ## Reading paths
 
