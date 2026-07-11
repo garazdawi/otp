@@ -37,8 +37,12 @@ RUN cd /buildroot && tar -xzf ./otp.tar.gz
 
 WORKDIR /buildroot/otp/
 
+## -Wno-error=unused-command-line-argument: the makefiles pass CFLAGS on
+## link lines, and configure-probed compile-only flags (aarch64's
+## -mbranch-protection=standard) make clang's link steps fatal under
+## -Werror. Keep the diagnostic visible but non-fatal.
 ENV CC=clang CXX=clang++ \
-        CFLAGS="-O2 -g -Werror -DwxSTC_DISABLE_MACRO_DEPRECATIONS=1"
+        CFLAGS="-O2 -g -Werror -Wno-error=unused-command-line-argument -DwxSTC_DISABLE_MACRO_DEPRECATIONS=1"
 
 ## Configure, check that no application are disabled and then make
 # We need --with-ssl-lib-subdir=lib/<multiarch-triplet> since clang does not
