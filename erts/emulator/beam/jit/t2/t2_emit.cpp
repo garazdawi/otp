@@ -595,6 +595,13 @@ namespace erts_t2 {
         /* ---- op dispatch --------------------------------------------- */
 
         void emit_op(const T2LirOp &op) {
+            /* Mirror T1's emit(): every op gives pending veneers and
+             * constants a chance to flush, so no more than one op's
+             * worth of code can pass between checks (a long straight-
+             * line block would otherwise let pending stubs drift out
+             * of their displacement range). */
+            check_pending_stubs();
+
             switch (op.kind) {
             case T2LirKind::Move:
                 emit_lir_move(op);
@@ -1330,6 +1337,14 @@ namespace erts_t2 {
                     const T2LirSwitchCase &c =
                             fn.switch_cases[op.first_case + i];
 
+                    /* Unbounded straight-line emission: give pending
+                     * stubs a chance to flush, as T1's long emitters
+                     * do (the pool is branched around, so the chain's
+                     * fall-through is preserved). */
+                    if (i != 0 && (i % 128) == 0) {
+                        check_pending_stubs();
+                    }
+
                     if (!is_small(c.value)) {
                         fail("arity switch case is not a small");
                         return;
@@ -1349,6 +1364,14 @@ namespace erts_t2 {
              * case, then the default). */
             for (uint32_t i = 0; i < op.num_cases; i++) {
                 const T2LirSwitchCase &c = fn.switch_cases[op.first_case + i];
+
+                /* Huge selects (e.g. unicode_util's generated tables)
+                 * emit more than the stub displacement window in this
+                 * one op: flush pending stubs periodically, as T1's
+                 * long emitters do. */
+                if (i != 0 && (i % 128) == 0) {
+                    check_pending_stubs();
+                }
 
                 cmp_arg(TMP1, ArgVal(ArgVal::Type::Immediate, c.value));
                 a.b_eq(resolve_label(rawLabels.at(1 + c.target), disp1MB));
