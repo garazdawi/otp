@@ -120,6 +120,7 @@ extern "C"
 #include "global.h"
 #include "erl_alloc.h"
 #include "erl_vm.h"
+#include "erl_bits.h"
 #include "beam_types.h"
 #include "code_ix.h"
 #include "module.h"
@@ -643,4 +644,112 @@ extern "C" Eterm erts_t2_debug_build_ssa(Process *p,
         return reason;
     }
     }
+}
+
+/* ==================================================================== *
+ * The addressable-share census term serializer (PLAN/T2FULL/17 §3 +     *
+ * 19 §2 S0). Reached through                                            *
+ *                                                                       *
+ *     erts_debug:get_internal_state({t2_census, BeamBinary})            *
+ *                                                                       *
+ * BeamBinary is a raw .beam (e.g. from code:get_object_code/1). A         *
+ * throwaway BeamFile is parsed, the census scan is run over it, and one  *
+ * tuple per function is returned:                                        *
+ *                                                                        *
+ *   [ {Name, Arity, Size, Eligible, LoopShaped, Classes} ]              *
+ *   Classes = [ {ClassAtom, Total, InLoop, OutLoop} ]  (Total>0 only)   *
+ *                                                                        *
+ * ClassAtom in call_fun | maps | bs_construction | bs_position |        *
+ *   exceptions | recv | float_reg | general_bif | other. Everything is  *
+ * an immediate or a fresh cons/tuple on the caller's heap, so nothing   *
+ * dangles once the transient BeamFile decode is freed. Returns badarg   *
+ * for a non-binary and {error, bad_beam} for an unparseable one.        *
+ * ==================================================================== */
+extern "C" Eterm erts_t2_debug_census(Process *p, Eterm bin) {
+    const byte *temp_alloc = NULL;
+    const byte *code;
+    Uint size;
+    BeamFile beam;
+    enum beamfile_read_result rr;
+    ErtsT2CensusFn *fns = NULL;
+    int nfns = 0;
+    int i, c;
+    Eterm class_atoms[ERTS_T2_BLK__COUNT];
+    static const char *const class_names[ERTS_T2_BLK__COUNT] = {
+            "call_fun",   "maps",      "bs_construction",
+            "bs_position", "exceptions", "recv",
+            "float_reg",  "general_bif", "other"};
+    Uint sz;
+    Uint *szp;
+    Eterm *hp;
+    Eterm result;
+
+    code = erts_get_aligned_binary_bytes(bin, &size, &temp_alloc);
+    if (code == NULL) {
+        return am_badarg;
+    }
+
+    rr = beamfile_read(code, size, &beam);
+    if (rr != BEAMFILE_READ_SUCCESS) {
+        Eterm *ehp = HAlloc(p, 3);
+        erts_free_aligned_binary_bytes(temp_alloc);
+        return TUPLE2(ehp, am_error, Atoms::intern("bad_beam"));
+    }
+
+    (void)erts_t2_census_scan(&beam, &fns, &nfns);
+
+    for (c = 0; c < ERTS_T2_BLK__COUNT; c++) {
+        class_atoms[c] = Atoms::intern(class_names[c]);
+    }
+
+    /* Two-pass build: size (szp set, hpp NULL), HAlloc, then materialize
+     * (szp NULL, hpp set), exactly the erts_bld_* idiom used above. */
+    sz = 0;
+    szp = &sz;
+    hp = NULL;
+    result = NIL;
+    for (;;) {
+        Eterm **hpp = szp ? NULL : &hp;
+        Eterm list = NIL;
+
+        for (i = nfns - 1; i >= 0; i--) {
+            ErtsT2CensusFn *f = &fns[i];
+            Eterm classes = NIL;
+            Eterm ar, szt, fnt;
+
+            for (c = ERTS_T2_BLK__COUNT - 1; c >= 0; c--) {
+                Eterm t, il, ol, tup;
+                if (f->total[c] == 0) {
+                    continue;
+                }
+                t = erts_bld_uint(hpp, szp, f->total[c]);
+                il = erts_bld_uint(hpp, szp, f->in_loop[c]);
+                ol = erts_bld_uint(hpp, szp, f->out_loop[c]);
+                tup = erts_bld_tuple(hpp, szp, 4, class_atoms[c], t, il, ol);
+                classes = erts_bld_cons(hpp, szp, tup, classes);
+            }
+
+            ar = erts_bld_uint(hpp, szp, f->arity);
+            szt = erts_bld_uint(hpp, szp, f->size);
+            fnt = erts_bld_tuple(hpp, szp, 6, f->name, ar, szt,
+                                 f->eligible ? am_true : am_false,
+                                 f->loop_shaped ? am_true : am_false, classes);
+            list = erts_bld_cons(hpp, szp, fnt, list);
+        }
+
+        if (szp) {
+            hp = HAlloc(p, sz);
+            szp = NULL;
+        } else {
+            result = list;
+            break;
+        }
+    }
+
+    if (fns != NULL) {
+        erts_free(ERTS_ALC_T_T2_CODE, fns);
+    }
+    beamfile_free(&beam);
+    erts_free_aligned_binary_bytes(temp_alloc);
+    return result;
 }

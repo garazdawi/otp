@@ -444,3 +444,287 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
 
     return bitmap;
 }
+
+/* ==================================================================== *
+ * The addressable-share census (PLAN/T2FULL/17 §3 + 19 §2 S0).          *
+ *                                                                       *
+ * A measurement-only sibling of erts_t2_eligibility_scan: the same walk *
+ * and the same oracle, but where the eligibility scan drops a function  *
+ * on its first unsupported op, the census records the whole *set* of    *
+ * blocking classes a function trips, and splits each blocker in-loop vs *
+ * out-of-loop by the terminator of the basic block it sits in.          *
+ * ==================================================================== */
+
+/* Bucket one generic op into a blocker class. Only meaningful for ops the
+ * oracle rejects; the caller asks only once an op is known unsupported. */
+int erts_t2_blocker_class(BeamFile *beam, const BeamOp *op) {
+    (void)beam;
+    switch (op->op) {
+    case genop_call_fun_1:
+    case genop_call_fun2_3:
+    case genop_apply_1:
+    case genop_apply_last_2:
+        return ERTS_T2_BLK_CALL_FUN;
+
+    case genop_get_map_elements_3:
+    case genop_put_map_assoc_5:
+    case genop_put_map_exact_5:
+    case genop_has_map_fields_3:
+    case genop_is_map_2:
+        return ERTS_T2_BLK_MAPS;
+
+    case genop_bs_create_bin_6:
+    case genop_bs_init_writable_0:
+        return ERTS_T2_BLK_BS_CONSTRUCTION;
+
+    /* General bit matching + match-context position ops. A rejecting
+     * bs_match/3 (outside the byte-aligned subset) lands here too. */
+    case genop_bs_match_3:
+    case genop_bs_get_integer2_7:
+    case genop_bs_get_float2_7:
+    case genop_bs_get_binary2_7:
+    case genop_bs_skip_bits2_5:
+    case genop_bs_test_unit_3:
+    case genop_bs_match_string_4:
+    case genop_bs_get_utf8_5:
+    case genop_bs_skip_utf8_4:
+    case genop_bs_get_utf16_5:
+    case genop_bs_skip_utf16_4:
+    case genop_bs_get_utf32_5:
+    case genop_bs_skip_utf32_4:
+    case genop_bs_get_position_3:
+    case genop_bs_set_position_2:
+    case genop_bs_start_match4_4:
+    case genop_bs_scan_5:
+        return ERTS_T2_BLK_BS_POSITION;
+
+    case genop_catch_2:
+    case genop_catch_end_1:
+    case genop_try_2:
+    case genop_try_end_1:
+    case genop_try_case_1:
+    case genop_try_case_end_1:
+    case genop_raise_2:
+    case genop_raw_raise_0:
+    case genop_build_stacktrace_0:
+    case genop_badrecord_1:
+        return ERTS_T2_BLK_EXCEPTIONS;
+
+    case genop_send_0:
+    case genop_remove_message_0:
+    case genop_timeout_0:
+    case genop_loop_rec_2:
+    case genop_loop_rec_end_1:
+    case genop_wait_1:
+    case genop_wait_timeout_2:
+    case genop_recv_marker_bind_2:
+    case genop_recv_marker_clear_1:
+    case genop_recv_marker_reserve_1:
+    case genop_recv_marker_use_1:
+        return ERTS_T2_BLK_RECEIVE;
+
+    case genop_fmove_2:
+    case genop_fconv_2:
+    case genop_fadd_4:
+    case genop_fsub_4:
+    case genop_fmul_4:
+    case genop_fdiv_4:
+    case genop_fnegate_3:
+        return ERTS_T2_BLK_FLOAT_REG;
+
+    case genop_bif0_2:
+    case genop_bif1_4:
+    case genop_bif2_5:
+    case genop_bif3_6:
+        return ERTS_T2_BLK_GENERAL_BIF;
+
+    default:
+        return ERTS_T2_BLK_OTHER;
+    }
+}
+
+/* Is this generic op a basic-block terminator, for the placement split? */
+static int census_is_terminator(int genop) {
+    switch (genop) {
+    case genop_return_0:
+    case genop_jump_1:
+    case genop_select_val_3:
+    case genop_select_tuple_arity_3:
+    case genop_call_only_2:
+    case genop_call_last_3:
+    case genop_call_ext_only_2:
+    case genop_call_ext_last_3:
+    case genop_apply_last_2:
+    case genop_badmatch_1:
+    case genop_if_end_0:
+    case genop_case_end_1:
+    case genop_raise_2:
+    case genop_raw_raise_0:
+    case genop_badrecord_1:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Move the current block's buffered blockers to the in- or out-of-loop
+ * tally and clear the accumulator (a no-op when the block is empty). */
+static void census_flush_block(ErtsT2CensusFn *f, Uint32 *block_cnt, int out) {
+    int c;
+    for (c = 0; c < ERTS_T2_BLK__COUNT; c++) {
+        if (out) {
+            f->out_loop[c] += block_cnt[c];
+        } else {
+            f->in_loop[c] += block_cnt[c];
+        }
+        block_cnt[c] = 0;
+    }
+}
+
+int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
+    BeamOpAllocator op_alloc;
+    BeamCodeReader *reader;
+    BeamOp *op;
+
+    ErtsT2CensusFn *fns;
+    int nfns = beam->code.function_count;
+    int fn_idx = -1;
+    int expect_entry = 0;
+    UWord entry_label = 0;
+    int done = 0;
+    int c;
+
+    /* Per-basic-block blocker accumulator, distributed to in/out-loop at
+     * the block terminator. The default (in-loop) is the conservative
+     * choice: it never overstates the region-compilation opportunity. */
+    Uint32 block_cnt[ERTS_T2_BLK__COUNT];
+
+    *out = NULL;
+    *count_out = 0;
+    if (nfns <= 0) {
+        return 0;
+    }
+
+    fns = erts_alloc(ERTS_ALC_T_T2_CODE,
+                     (size_t)nfns * sizeof(ErtsT2CensusFn));
+    sys_memset(fns, 0, (size_t)nfns * sizeof(ErtsT2CensusFn));
+    for (c = 0; c < ERTS_T2_BLK__COUNT; c++) {
+        block_cnt[c] = 0;
+    }
+
+    beamopallocator_init(&op_alloc);
+    reader = beamfile_get_code(beam, &op_alloc);
+
+    while (!done && beamcodereader_next(reader, &op)) {
+        int in_fn = (fn_idx >= 0 && fn_idx < nfns);
+
+        switch (op->op) {
+        case genop_int_func_start_5:
+            /* A body always ends in a terminator, so block_cnt is
+             * normally already zero here; flush defensively (in-loop). */
+            if (in_fn) {
+                census_flush_block(&fns[fn_idx], block_cnt, 0);
+            }
+            fn_idx++;
+            expect_entry = 1;
+            entry_label = 0;
+            if (fn_idx >= 0 && fn_idx < nfns) {
+                fns[fn_idx].name = (Eterm)op->a[3].val;
+                fns[fn_idx].arity = (Uint32)op->a[4].val;
+                fns[fn_idx].eligible = 1;
+            }
+            break;
+
+        case genop_int_func_end_2:
+            if (in_fn) {
+                census_flush_block(&fns[fn_idx], block_cnt, 0);
+            }
+            break;
+
+        case genop_int_code_end_0:
+            done = 1;
+            break;
+
+        case genop_label_1:
+            if (expect_entry) {
+                entry_label = op->a[0].val;
+                expect_entry = 0;
+            }
+            /* A label starts a new block; any un-terminated fall-through
+             * blockers are flushed conservatively as in-loop. */
+            if (in_fn) {
+                census_flush_block(&fns[fn_idx], block_cnt, 0);
+            }
+            break;
+
+        default:
+            if (in_fn) {
+                ErtsT2CensusFn *f = &fns[fn_idx];
+                int supported;
+
+                f->size++;
+
+                /* The exact 3-way eligibility predicate (kept in lockstep
+                 * with erts_t2_eligibility_scan). */
+                if (op->op == genop_bif2_5) {
+                    supported = t2_bif2_op_supported(beam, op);
+                } else if (op->op == genop_bs_match_3) {
+                    supported = bs_match_op_supported(beam, op);
+                } else {
+                    supported = erts_t2_genop_supported(op->op);
+                }
+
+                if (!supported) {
+                    int cls = erts_t2_blocker_class(beam, op);
+                    f->eligible = 0;
+                    f->total[cls]++;
+                    block_cnt[cls]++;
+                }
+            }
+            break;
+        }
+
+        /* Terminator: pick a placement and flush the block. Calls and
+         * returns pass through `default` first (size/blocker accounting),
+         * so a rejecting terminator (raise/badrecord) is counted before
+         * it is flushed here. */
+        if (in_fn && census_is_terminator(op->op)) {
+            int placement_out;
+
+            if (op->op == genop_return_0 || op->op == genop_call_ext_only_2 ||
+                op->op == genop_call_ext_last_3 ||
+                op->op == genop_apply_last_2 || op->op == genop_badmatch_1 ||
+                op->op == genop_if_end_0 || op->op == genop_case_end_1 ||
+                op->op == genop_raise_2 || op->op == genop_raw_raise_0 ||
+                op->op == genop_badrecord_1) {
+                /* Returns, tail calls away, and cold error exits leave the
+                 * function's loop. */
+                placement_out = 1;
+            } else if (op->op == genop_call_only_2 ||
+                       op->op == genop_call_last_3) {
+                if (op->a[1].type == TAG_f && op->a[1].val == entry_label &&
+                    entry_label != 0) {
+                    fns[fn_idx].loop_shaped = 1;
+                    placement_out = 0; /* the recursion edge: in-loop */
+                } else {
+                    placement_out = 1; /* tail call away: leaves the loop */
+                }
+            } else {
+                /* jump / select: intra-function control flow, kept in-loop
+                 * (conservative). */
+                placement_out = 0;
+            }
+
+            census_flush_block(&fns[fn_idx], block_cnt, placement_out);
+        }
+
+        beamopallocator_free_op(&op_alloc, op);
+    }
+
+    beamcodereader_close(reader);
+    beamopallocator_dtor(&op_alloc);
+
+    *out = fns;
+    *count_out = nfns;
+    return 1;
+}

@@ -267,6 +267,56 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                                  Uint32 *sizes_out);
 
 /* --------------------------------------------------------------------
+ * The addressable-share census (PLAN/T2FULL/17 §3 + 19 §2 S0).
+ *
+ * Measurement-only. Where the eligibility scan drops a function on its
+ * first unsupported op, the census records the *whole set* of blocking
+ * opcode classes a function's body contains, split by whether each
+ * blocker sits inside the hot-loop body or outside it (base case / cold
+ * clause / error path). Joined offline with eprof own-time it prices,
+ * per class and for the union, the addressable ceiling from adding
+ * frontend opcode classes, and the region-compilation opportunity. It
+ * reuses the exact eligibility oracle (erts_t2_genop_supported plus the
+ * bif2 / bs_match subset predicates), so its "eligible" column agrees
+ * bit-for-bit with erts_t2_eligibility_scan. Reached through
+ *   erts_debug:get_internal_state({t2_census, BeamBinary}).
+ * ------------------------------------------------------------------ */
+
+typedef enum {
+    ERTS_T2_BLK_CALL_FUN = 0,   /* call_fun / call_fun2 / apply           */
+    ERTS_T2_BLK_MAPS,           /* get_map_elements / put_map_* / is_map  */
+    ERTS_T2_BLK_BS_CONSTRUCTION,/* bs_create_bin / bs_init_writable       */
+    ERTS_T2_BLK_BS_POSITION,    /* general bit matching + position ops    */
+    ERTS_T2_BLK_EXCEPTIONS,     /* try/catch/raise/build_stacktrace       */
+    ERTS_T2_BLK_RECEIVE,        /* send/loop_rec/wait/timeout/recv_marker */
+    ERTS_T2_BLK_FLOAT_REG,      /* fmove/fconv/fadd/... (float registers) */
+    ERTS_T2_BLK_GENERAL_BIF,    /* bif0/bif1/bif3 + non-compare bif2      */
+    ERTS_T2_BLK_OTHER,          /* records, exotic type tests, etc.       */
+    ERTS_T2_BLK__COUNT
+} ErtsT2BlockerClass;
+
+typedef struct {
+    Eterm name;        /* function-name atom (stable; atoms never move)   */
+    Uint32 arity;
+    Uint32 size;       /* generic-op count (the threshold size term)      */
+    int eligible;      /* 1 iff zero blockers (== eligibility bitmap bit) */
+    int loop_shaped;   /* 1 iff a self-recursive tail call to the entry   */
+    Uint32 total[ERTS_T2_BLK__COUNT];    /* blocking ops per class        */
+    Uint32 in_loop[ERTS_T2_BLK__COUNT];  /* ... in a loop-body block      */
+    Uint32 out_loop[ERTS_T2_BLK__COUNT]; /* ... in a base/cold/error block*/
+} ErtsT2CensusFn;
+
+/* t2_eligible.c: bucket one unsupported generic op into a blocker class.
+ * Only meaningful for ops the oracle rejects. */
+int erts_t2_blocker_class(BeamFile *beam, const BeamOp *op);
+
+/* t2_eligible.c: run the census over every function of \p beam. On success
+ * returns 1 and sets \p *out to a caller-freed (ERTS_ALC_T_T2_CODE) array
+ * of \p *count_out ErtsT2CensusFn, one per function in load order; returns
+ * 0 (with *out=NULL, *count_out=0) for a module with no functions. */
+int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out);
+
+/* --------------------------------------------------------------------
  * Profile-driven tier-up (P2 commit 9; PLAN/T2FULL/09 §1,
  * PLAN/T2/02 §§7.1-7.4, PLAN/T2/05 §15).
  *

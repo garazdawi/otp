@@ -76,6 +76,7 @@ Eterm erts_t2_debug_in_blob(Process *p, Eterm pid);
 Eterm erts_t2_debug_yield_stats(Process *p);
 Eterm erts_t2_tier_stats_term(Process *p);
 Eterm erts_t2_profile_census_term(Process *p);
+Eterm erts_t2_debug_census(Process *p, Eterm beam_binary);
 #endif
 
 #ifdef ERTS_ENABLE_LOCK_COUNT
@@ -4612,6 +4613,18 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 		   a recovered loop's back edge, to resume INTO T2)? */
 #ifdef BEAMASM
 		BIF_RET(erts_t2_debug_in_blob(BIF_P, tp[2]));
+#else
+		BIF_RET(am_undefined);
+#endif
+	    }
+	    else if (ERTS_IS_ATOM_STR("t2_census", tp[1])) {
+		/* PLAN/T2FULL/17 §3 + 19 §2 S0: the addressable-share
+		   census. tp[2] is a raw .beam binary (e.g. from
+		   code:get_object_code/1); returns the per-function
+		   blocker-class breakdown (frontend-only, no compile,
+		   no retention needed -- works for any module). */
+#ifdef BEAMASM
+		BIF_RET(erts_t2_debug_census(BIF_P, tp[2]));
 #else
 		BIF_RET(am_undefined);
 #endif
