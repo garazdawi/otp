@@ -45,8 +45,12 @@ static constexpr bool isInt13(T value) {
  * both the source value and the values to be compared.
  *
  * This function finds the `base` and `shift` that result in the most number
- * of elements fitting in a 13-bit immediate. */
-static std::pair<UWord, int> plan_untag(const Span<const ArgVal> &args) {
+ * of elements fitting in a 13-bit immediate.
+ *
+ * (The pair's first member is uint64_t rather than UWord: UWord carries an
+ * alignment attribute that is dropped on template arguments, which GCC
+ * rejects under -Werror=ignored-attributes.) */
+static std::pair<uint64_t, int> plan_untag(const Span<const ArgVal> &args) {
     auto left = args.begin(), right = args.begin();
     auto best_left = left, best_right = right;
     int count, shift;
