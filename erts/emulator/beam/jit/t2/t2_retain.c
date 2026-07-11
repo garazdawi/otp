@@ -58,11 +58,20 @@ int erts_t2_enabled(void) {
 }
 
 int erts_t2_tier_enabled(void) {
+#if !defined(__aarch64__)
+    /* The T2 backend emits on aarch64 only: off it, tier-up could
+     * only arm counters and queue work with no possible install
+     * (PLAN/T2FULL/16 §5 latent risk). Retention itself stays
+     * available everywhere for the arch-independent mid-end
+     * (reconstruction/build/isel testing). */
+    return 0;
+#else
     /* Counter-triggered tier-up is the tier's default mode
      * (PLAN/T2FULL/09 §1): on whenever the tier is enabled, except
      * under +JT2enable, which is the forced compile-everything mode
      * and needs no counters. */
     return erts_t2_enabled() && !erts_jit_t2_force;
+#endif
 }
 
 Uint32 erts_t2_tier_threshold(void) {
