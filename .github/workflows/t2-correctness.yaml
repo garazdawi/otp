@@ -336,7 +336,7 @@ jobs:
           ## and has zero involvement in the halt/crash-dump machinery, so a
           ## failure in one of these is never a codegen signal. They still RUN
           ## (full coverage) -- they just don't gate. Format: "suite:case".
-          ENV_FRAGILE="bif_SUITE:erlang_halt bif_SUITE:erl_crash_dump_bytes"
+          ENV_FRAGILE="bif_SUITE:erlang_halt bif_SUITE:erl_crash_dump_bytes bif_SUITE:halt_flush_timeout"
           RC=0
           for app in emulator stdlib; do
             r="$ERL_TOP/t2-results/${app}_rc"
