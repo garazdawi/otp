@@ -1263,8 +1263,7 @@ namespace erts_t2 {
                                     m->x_live,
                                     op->live);
                     }
-                    if (op->mfa_m == 0 || op->mfa_f == 0 ||
-                        op->imm_int == 0) {
+                    if (op->mfa_m == 0 || op->mfa_f == 0 || op->imm_int == 0) {
                         return fail("block %u: demote-callee without a "
                                     "resolved callee",
                                     op->block->id);
@@ -1445,15 +1444,14 @@ namespace erts_t2 {
                             if (it == state.end()) {
                                 state[r] = op->operands[i];
                             } else if (it->second != op->operands[i]) {
-                                return fail(
-                                        "block %u: op %s reads %c%u as v%u "
-                                        "but the register holds v%u",
-                                        b->id,
-                                        t2_op_kind_name(op->kind),
-                                        t2_reg_is_y(r) ? 'y' : 'x',
-                                        t2_reg_index(r),
-                                        op->operands[i]->id,
-                                        it->second->id);
+                                return fail("block %u: op %s reads %c%u as v%u "
+                                            "but the register holds v%u",
+                                            b->id,
+                                            t2_op_kind_name(op->kind),
+                                            t2_reg_is_y(r) ? 'y' : 'x',
+                                            t2_reg_index(r),
+                                            op->operands[i]->id,
+                                            it->second->id);
                             }
                         }
                         return true;
@@ -1464,8 +1462,7 @@ namespace erts_t2 {
                         case T2OpKind::Allocate:
                             frame = (int32_t)op->index;
                             /* Fresh frame: all Y slots are garbage. */
-                            for (auto it = state.begin();
-                                 it != state.end();) {
+                            for (auto it = state.begin(); it != state.end();) {
                                 if (t2_reg_is_y(it->first)) {
                                     it = state.erase(it);
                                 } else {
@@ -1475,8 +1472,7 @@ namespace erts_t2 {
                             break;
                         case T2OpKind::Deallocate:
                             frame = T2_NO_FRAME;
-                            for (auto it = state.begin();
-                                 it != state.end();) {
+                            for (auto it = state.begin(); it != state.end();) {
                                 if (t2_reg_is_y(it->first)) {
                                     it = state.erase(it);
                                 } else {
@@ -1545,8 +1541,7 @@ namespace erts_t2 {
                             }
                         }
                         for (int32_t i = 0;
-                             m->frame_size != T2_NO_FRAME &&
-                             i < m->frame_size;
+                             m->frame_size != T2_NO_FRAME && i < m->frame_size;
                              i++) {
                             auto it = state.find(t2_yreg((uint32_t)i));
 
@@ -1584,8 +1579,7 @@ namespace erts_t2 {
                         if (!sync_checks(op) || !read_checks(op)) {
                             return false;
                         }
-                        if (pair_tail != nullptr &&
-                            !read_checks(pair_tail)) {
+                        if (pair_tail != nullptr && !read_checks(pair_tail)) {
                             return false;
                         }
 
@@ -1600,8 +1594,7 @@ namespace erts_t2 {
                             b->terminator != nullptr &&
                             b->terminator->kind == T2OpKind::Branch &&
                             b->terminator->num_operands == 1 &&
-                            b->terminator->operands[0] ==
-                                    op->next->result) {
+                            b->terminator->operands[0] == op->next->result) {
                             then_write[b->id].reg = op->dst_reg;
                             then_write[b->id].val = op->result;
                             /* Frame effects (none for gc_bifs) would still
@@ -1654,15 +1647,14 @@ namespace erts_t2 {
 
                                 if (is_then && !is_else) {
                                     if (pw.val != phi->operands[i]) {
-                                        return fail(
-                                                "block %u: phi home holds "
-                                                "the conditional write v%u "
-                                                "on the then-edge from "
-                                                "block %u, expected v%u",
-                                                b->id,
-                                                pw.val->id,
-                                                pred->id,
-                                                phi->operands[i]->id);
+                                        return fail("block %u: phi home holds "
+                                                    "the conditional write v%u "
+                                                    "on the then-edge from "
+                                                    "block %u, expected v%u",
+                                                    b->id,
+                                                    pw.val->id,
+                                                    pred->id,
+                                                    phi->operands[i]->id);
                                     }
                                     continue;
                                 }
@@ -1819,7 +1811,9 @@ namespace erts_t2 {
             }
 
             bool spec_check_op(const T2Op *op, const SpecFacts &f) {
-                auto need = [&](uint16_t i, bool small_ok, bool raw_ok,
+                auto need = [&](uint16_t i,
+                                bool small_ok,
+                                bool raw_ok,
                                 const char *what) -> bool {
                     const T2Value *v = op->operands[i];
                     bool is_small = sf_test(f.small, v->id) ||
@@ -1861,8 +1855,7 @@ namespace erts_t2 {
                 bool any = false;
 
                 for (const T2BasicBlock *b : fn.blocks) {
-                    for (const T2Op *op = b->ops_head;
-                         op != nullptr && !any;
+                    for (const T2Op *op = b->ops_head; op != nullptr && !any;
                          op = op->next) {
                         any = op_is_speculative(op->kind);
                     }
@@ -1890,8 +1883,7 @@ namespace erts_t2 {
                 auto block_in = [&](const T2BasicBlock *b) {
                     SpecFacts in;
 
-                    in.small.assign(vwords,
-                                    b->id == 0 ? 0 : ~uint64_t(0));
+                    in.small.assign(vwords, b->id == 0 ? 0 : ~uint64_t(0));
                     in.raw.assign(vwords, b->id == 0 ? 0 : ~uint64_t(0));
                     if (b->id == 0) {
                         return in;
@@ -2113,8 +2105,8 @@ namespace erts_t2 {
     }
 
     bool t2_type_proves_small(const T2Type &t) {
-        return t.integer_only() && t.has_min && t.has_max &&
-               IS_SSMALL(t.min) && IS_SSMALL(t.max);
+        return t.integer_only() && t.has_min && t.has_max && IS_SSMALL(t.min) &&
+               IS_SSMALL(t.max);
     }
 
     /* ------------------------------------------------------------------ *
@@ -2521,20 +2513,13 @@ namespace erts_t2 {
 
             T2BasicBlock *b0 = fn.new_block();
             T2Value *p0 = fn.emit_param(b0, 0, T2Type::any());
-            T2Op *spec = fn.new_op(b0,
-                                   T2OpKind::SpeculateType,
-                                   T2Type::none());
+            T2Op *spec = fn.new_op(b0, T2OpKind::SpeculateType, T2Type::none());
 
             fn.set_operands(spec, {p0});
 
-            T2Value *u = fn.emit_unary(b0,
-                                       T2OpKind::UntagInt,
-                                       p0,
-                                       T2Type::any());
-            T2Value *t = fn.emit_unary(b0,
-                                       T2OpKind::TagInt,
-                                       u,
-                                       T2Type::any());
+            T2Value *u =
+                    fn.emit_unary(b0, T2OpKind::UntagInt, p0, T2Type::any());
+            T2Value *t = fn.emit_unary(b0, T2OpKind::TagInt, u, T2Type::any());
 
             fn.emit_return(b0, t);
             fn.finalize();
@@ -2556,14 +2541,9 @@ namespace erts_t2 {
 
             T2BasicBlock *b0 = fn.new_block();
             T2Value *p0 = fn.emit_param(b0, 0, T2Type::any());
-            T2Value *u = fn.emit_unary(b0,
-                                       T2OpKind::UntagInt,
-                                       p0,
-                                       T2Type::any());
-            T2Value *t = fn.emit_unary(b0,
-                                       T2OpKind::TagInt,
-                                       u,
-                                       T2Type::any());
+            T2Value *u =
+                    fn.emit_unary(b0, T2OpKind::UntagInt, p0, T2Type::any());
+            T2Value *t = fn.emit_unary(b0, T2OpKind::TagInt, u, T2Type::any());
 
             fn.emit_return(b0, t);
             fn.finalize();
@@ -2592,17 +2572,15 @@ namespace erts_t2 {
             fn.emit_branch(b0, cond, b1, b2);
 
             {
-                T2Op *spec = fn.new_op(b1,
-                                       T2OpKind::SpeculateType,
-                                       T2Type::none());
+                T2Op *spec =
+                        fn.new_op(b1, T2OpKind::SpeculateType, T2Type::none());
                 fn.set_operands(spec, {p0});
             }
             fn.emit_jump(b1, b3);
 
             if (guarded_both) {
-                T2Op *spec = fn.new_op(b2,
-                                       T2OpKind::SpeculateType,
-                                       T2Type::none());
+                T2Op *spec =
+                        fn.new_op(b2, T2OpKind::SpeculateType, T2Type::none());
                 fn.set_operands(spec, {p0});
             }
             fn.emit_jump(b2, b3);
@@ -2616,10 +2594,7 @@ namespace erts_t2 {
                                        T2OpKind::UntagInt,
                                        phi->result,
                                        T2Type::any());
-            T2Value *t = fn.emit_unary(b3,
-                                       T2OpKind::TagInt,
-                                       u,
-                                       T2Type::any());
+            T2Value *t = fn.emit_unary(b3, T2OpKind::TagInt, u, T2Type::any());
             fn.emit_return(b3, t);
             fn.finalize();
 

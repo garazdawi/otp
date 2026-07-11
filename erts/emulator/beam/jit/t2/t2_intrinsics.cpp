@@ -229,8 +229,8 @@ namespace erts_t2 {
                             m->x[i] = to;
                         }
                     }
-                    for (int32_t i = 0; m->frame_size != T2_NO_FRAME &&
-                                        i < m->frame_size;
+                    for (int32_t i = 0;
+                         m->frame_size != T2_NO_FRAME && i < m->frame_size;
                          i++) {
                         if (m->y[i] == from) {
                             m->y[i] = to;
@@ -280,8 +280,8 @@ namespace erts_t2 {
 
             bool resolve_callee(const IntrinsicKind &k, Callee *out) {
                 Eterm am_lists_mod = ERTS_MAKE_AM("lists");
-                Module *lm = erts_get_module(am_lists_mod,
-                                             erts_active_code_ix());
+                Module *lm =
+                        erts_get_module(am_lists_mod, erts_active_code_ix());
 
                 if (lm == nullptr || lm->curr.code_hdr == nullptr) {
                     return false;
@@ -302,8 +302,7 @@ namespace erts_t2 {
                 out->wrapper_lf = find_lf(hdr, out->wrapper_f, k.call_arity);
                 out->helper_lf = find_lf(hdr, out->helper_f, k.call_arity);
                 out->lists_hdr = (const void *)hdr;
-                return out->wrapper_lf != nullptr &&
-                       out->helper_lf != nullptr;
+                return out->wrapper_lf != nullptr && out->helper_lf != nullptr;
             }
 
             /* ---- fun body admission + clone --------------------------- */
@@ -335,12 +334,11 @@ namespace erts_t2 {
             }
 
             static bool fun_op_ok(const T2Op *op) {
-                if ((op->flags &
-                     (T2_OP_ERR_EXIT_OP | T2_OP_GARBAGE_DEALLOC)) != 0) {
+                if ((op->flags & (T2_OP_ERR_EXIT_OP | T2_OP_GARBAGE_DEALLOC)) !=
+                    0) {
                     return false;
                 }
-                if (op->dst_reg != T2_REG_NONE &&
-                    !t2_reg_is_x(op->dst_reg)) {
+                if (op->dst_reg != T2_REG_NONE && !t2_reg_is_x(op->dst_reg)) {
                     return false;
                 }
                 switch (op->kind) {
@@ -470,8 +468,7 @@ namespace erts_t2 {
                             return false;
                         }
                         if (op->operand_regs != nullptr) {
-                            for (uint16_t j = 0; j < op->num_operands;
-                                 j++) {
+                            for (uint16_t j = 0; j < op->num_operands; j++) {
                                 if (op->operand_regs[j] != T2_REG_NONE &&
                                     !t2_reg_is_x(op->operand_regs[j])) {
                                     return false;
@@ -482,12 +479,10 @@ namespace erts_t2 {
                          * non-small constant operand. */
                         if (op->kind == T2OpKind::Add ||
                             op->kind == T2OpKind::Sub) {
-                            for (uint16_t j = 0; j < op->num_operands;
-                                 j++) {
+                            for (uint16_t j = 0; j < op->num_operands; j++) {
                                 const T2Value *v = op->operands[j];
 
-                                if (is_const_def(v) &&
-                                    !const_is_small(v)) {
+                                if (is_const_def(v) && !const_is_small(v)) {
                                     return false;
                                 }
                             }
@@ -502,8 +497,7 @@ namespace erts_t2 {
                     switch (t->kind) {
                     case T2OpKind::Return:
                         any_return = true;
-                        if (need_bool_returns &&
-                            !ret_is_bool(t->operands[0])) {
+                        if (need_bool_returns && !ret_is_bool(t->operands[0])) {
                             return false;
                         }
                         break;
@@ -565,8 +559,7 @@ namespace erts_t2 {
                             return false;
                         }
                         if (op->operand_regs != nullptr) {
-                            for (uint16_t j = 0; j < op->num_operands;
-                                 j++) {
+                            for (uint16_t j = 0; j < op->num_operands; j++) {
                                 if (op->operand_regs[j] != T2_REG_NONE &&
                                     !t2_reg_is_x(op->operand_regs[j])) {
                                     return false;
@@ -595,8 +588,7 @@ namespace erts_t2 {
                 }
 
                 /* Pass 2: create the clone blocks. */
-                std::unordered_map<const T2BasicBlock *, T2BasicBlock *>
-                        bmap;
+                std::unordered_map<const T2BasicBlock *, T2BasicBlock *> bmap;
 
                 for (size_t i = 0; i < callee.blocks.size(); i++) {
                     if (kind[i] == 0) {
@@ -729,17 +721,14 @@ namespace erts_t2 {
                         /* Operand homes: the mapped values' homes at
                          * the splice point (constants have none). */
                         if (op->num_operands > 0) {
-                            cl->operand_regs =
-                                    fn.arena.alloc_array<int32_t>(
-                                            op->num_operands);
-                            for (uint16_t j = 0; j < op->num_operands;
-                                 j++) {
+                            cl->operand_regs = fn.arena.alloc_array<int32_t>(
+                                    op->num_operands);
+                            for (uint16_t j = 0; j < op->num_operands; j++) {
                                 auto hit = fb.home.find(cl->operands[j]);
 
-                                cl->operand_regs[j] =
-                                        hit != fb.home.end()
-                                                ? hit->second
-                                                : T2_REG_NONE;
+                                cl->operand_regs[j] = hit != fb.home.end()
+                                                              ? hit->second
+                                                              : T2_REG_NONE;
                             }
                         }
 
@@ -785,13 +774,11 @@ namespace erts_t2 {
                             return fail("fun switch value escapes the "
                                         "map");
                         }
-                        T2Op *sw = fn.new_op(nb,
-                                             T2OpKind::Switch,
-                                             T2Type::none());
+                        T2Op *sw =
+                                fn.new_op(nb, T2OpKind::Switch, T2Type::none());
 
                         fn.set_operands(sw, {v});
-                        sw->operand_regs =
-                                fn.arena.alloc_array<int32_t>(1);
+                        sw->operand_regs = fn.arena.alloc_array<int32_t>(1);
                         {
                             auto hit = fb.home.find(v);
 
@@ -805,8 +792,7 @@ namespace erts_t2 {
                                 t->num_cases);
                         for (uint32_t c = 0; c < t->num_cases; c++) {
                             sw->cases[c].value = t->cases[c].value;
-                            sw->cases[c].target =
-                                    target_of(t->cases[c].target);
+                            sw->cases[c].target = target_of(t->cases[c].target);
                         }
                         sw->default_target = target_of(t->default_target);
                         sw->beam_idx = 0;
@@ -848,8 +834,7 @@ namespace erts_t2 {
                         fn.set_operands(cp, {vals[j]});
                         cp->dst_reg = pp.clone->dst_reg;
                         cp->flags = T2_OP_INLINED;
-                        cp->operand_regs =
-                                fn.arena.alloc_array<int32_t>(1);
+                        cp->operand_regs = fn.arena.alloc_array<int32_t>(1);
                         {
                             auto hit = fb.home.find(vals[j]);
 
@@ -890,8 +875,7 @@ namespace erts_t2 {
                         fn.set_operands(cp, {re.val});
                         cp->dst_reg = rp->dst_reg;
                         cp->flags = T2_OP_INLINED;
-                        cp->operand_regs =
-                                fn.arena.alloc_array<int32_t>(1);
+                        cp->operand_regs = fn.arena.alloc_array<int32_t>(1);
                         {
                             auto hit = fb.home.find(re.val);
 
@@ -944,8 +928,7 @@ namespace erts_t2 {
                     const T2Op *rp = fb.ret_phi->def;
 
                     for (uint16_t i = 0; i < rp->num_operands; i++) {
-                        const T2Value *root =
-                                resolve_copies(rp->operands[i]);
+                        const T2Value *root = resolve_copies(rp->operands[i]);
 
                         bool ok = const_is_small(root) ||
                                   (root->def != nullptr &&
@@ -993,8 +976,8 @@ namespace erts_t2 {
                                             T2Type::none());
 
                         fn.set_operands(g, guards);
-                        g->operand_regs = fn.arena.alloc_array<int32_t>(
-                                guards.size());
+                        g->operand_regs =
+                                fn.arena.alloc_array<int32_t>(guards.size());
                         for (size_t j = 0; j < guards.size(); j++) {
                             auto hit = fb.home.find(guards[j]);
 
@@ -1013,9 +996,8 @@ namespace erts_t2 {
                         move_before(op->block, op, g);
                     }
 
-                    op->kind = op->kind == T2OpKind::Add
-                                       ? T2OpKind::AddSmall
-                                       : T2OpKind::SubSmall;
+                    op->kind = op->kind == T2OpKind::Add ? T2OpKind::AddSmall
+                                                         : T2OpKind::SubSmall;
                     op->sync = nullptr;
                     op->flags |= T2_OP_INLINED | T2_OP_WINDOW_CALLEE;
                     op->imm_int = (Sint64)(UWord)helper_lf;
@@ -1028,9 +1010,7 @@ namespace erts_t2 {
 
             /* Move `op` (freshly appended at b's tail by new_op) to sit
              * directly before `before` in the same block. */
-            static void move_before(T2BasicBlock *b,
-                                    T2Op *before,
-                                    T2Op *op) {
+            static void move_before(T2BasicBlock *b, T2Op *before, T2Op *op) {
                 ASSERT(b->ops_tail == op && op->next == nullptr);
                 unlink_op(b, op);
                 op->prev = before->prev;
@@ -1069,9 +1049,8 @@ namespace erts_t2 {
                          uint32_t charge,
                          T2SyncMap *map,
                          uint32_t beam_idx) {
-                T2Op *rc = fn.new_op(b,
-                                     T2OpKind::ReductionCheck,
-                                     T2Type::none());
+                T2Op *rc =
+                        fn.new_op(b, T2OpKind::ReductionCheck, T2Type::none());
 
                 fn.set_operands(rc, {});
                 rc->flags = T2_OP_RC_CALLEE;
@@ -1092,9 +1071,7 @@ namespace erts_t2 {
                             uint32_t arity,
                             T2SyncMap *map,
                             uint32_t beam_idx) {
-                T2Op *dm = fn.new_op(b,
-                                     T2OpKind::DemoteCallee,
-                                     T2Type::none());
+                T2Op *dm = fn.new_op(b, T2OpKind::DemoteCallee, T2Type::none());
 
                 fn.set_operands(dm, {});
                 dm->mfa_m = ce.mfa_m;
@@ -1170,8 +1147,9 @@ namespace erts_t2 {
 
                 if (mf == nullptr || mf->kind != T2OpKind::MakeFun ||
                     mf->live != 0 /* num_free */ || mf->imm_int < 0) {
-                    trace_reject(call, "fun arg is not an env-free "
-                                       "SSA-constant MakeFun");
+                    trace_reject(call,
+                                 "fun arg is not an env-free "
+                                 "SSA-constant MakeFun");
                     return true;
                 }
                 if (ret->lambdas == NULL ||
@@ -1182,8 +1160,7 @@ namespace erts_t2 {
                 {
                     const ErtsT2Lambda *lam = &ret->lambdas[mf->index];
 
-                    if ((uint32_t)(lam->arity - lam->num_free) !=
-                        k.fun_arity) {
+                    if ((uint32_t)(lam->arity - lam->num_free) != k.fun_arity) {
                         trace_reject(call, "fun arity mismatch");
                         return true;
                     }
@@ -1215,8 +1192,9 @@ namespace erts_t2 {
                 }
 
                 if (!resolve_callee(k, &ce)) {
-                    trace_reject(call, "lists wrapper/helper not "
-                                       "resolvable");
+                    trace_reject(call,
+                                 "lists wrapper/helper not "
+                                 "resolvable");
                     return true;
                 }
 
@@ -1255,10 +1233,8 @@ namespace erts_t2 {
                 /* Vector values + homes at the boundary. */
                 T2Value *fv = cmap->x[0];
                 T2Value *a0 = k.cls == IClass::Foldl ? cmap->x[1] : nullptr;
-                T2Value *l0 = k.cls == IClass::Foldl ? cmap->x[2]
-                                                     : cmap->x[1];
-                int32_t lx = k.cls == IClass::Foldl ? t2_xreg(2)
-                                                    : t2_xreg(1);
+                T2Value *l0 = k.cls == IClass::Foldl ? cmap->x[2] : cmap->x[1];
+                int32_t lx = k.cls == IClass::Foldl ? t2_xreg(2) : t2_xreg(1);
 
                 /* ---- blocks ------------------------------------------ */
 
@@ -1293,8 +1269,7 @@ namespace erts_t2 {
                             if (phi->phi_blocks == nullptr) {
                                 continue;
                             }
-                            for (uint16_t i = 0; i < phi->num_operands;
-                                 i++) {
+                            for (uint16_t i = 0; i < phi->num_operands; i++) {
                                 if (phi->phi_blocks[i] == b_pre) {
                                     phi->phi_blocks[i] = b_join;
                                 }
@@ -1305,9 +1280,8 @@ namespace erts_t2 {
                     unlink_op(b_pre, call);
                 }
 
-                T2BasicBlock *b_preb = k.cls == IClass::Foreach
-                                               ? fn.new_block()
-                                               : nullptr;
+                T2BasicBlock *b_preb =
+                        k.cls == IClass::Foreach ? fn.new_block() : nullptr;
                 T2BasicBlock *b_chk = fn.new_block();
                 T2BasicBlock *b_chk2 = fn.new_block();
                 T2BasicBlock *b_grd = fn.new_block();
@@ -1327,8 +1301,7 @@ namespace erts_t2 {
                        1,
                        cmap,
                        bi);
-                fn.emit_jump(b_pre,
-                             b_preb != nullptr ? b_preb : b_chk);
+                fn.emit_jump(b_pre, b_preb != nullptr ? b_preb : b_chk);
                 b_pre->terminator->beam_idx = bi;
 
                 if (b_preb != nullptr) {
@@ -1375,9 +1348,8 @@ namespace erts_t2 {
                      * phi's own home — every deopt needing the old
                      * list value fires before it. */
                     uint32_t first_free = k.call_arity;
-                    T2Op *gh = fn.new_op(b_body,
-                                         T2OpKind::GetHd,
-                                         T2Type::any());
+                    T2Op *gh =
+                            fn.new_op(b_body, T2OpKind::GetHd, T2Type::any());
 
                     fn.set_operands(gh, {l_phi_op->result});
                     gh->dst_reg = t2_xreg(first_free);
@@ -1415,8 +1387,7 @@ namespace erts_t2 {
                                                &tmp)) {
                                     fb = std::move(tmp);
                                     spliced = true;
-                                } else if (err != nullptr &&
-                                           !err->empty()) {
+                                } else if (err != nullptr && !err->empty()) {
                                     splice_hard_err = true;
                                 }
                             },
@@ -1427,8 +1398,7 @@ namespace erts_t2 {
                          * split already happened, so degrade the whole
                          * function loudly. */
                         if (err != nullptr && err->empty()) {
-                            *err = "intrinsics: fun body build failed: " +
-                                   berr;
+                            *err = "intrinsics: fun body build failed: " + berr;
                         }
                         return false;
                     }
@@ -1449,9 +1419,8 @@ namespace erts_t2 {
                 bool need_acc_guard = false;
 
                 if (!convert_arith(fb,
-                                   acc_phi_op != nullptr
-                                           ? acc_phi_op->result
-                                           : nullptr,
+                                   acc_phi_op != nullptr ? acc_phi_op->result
+                                                         : nullptr,
                                    &need_acc_guard,
                                    ce.helper_lf,
                                    bi)) {
@@ -1632,9 +1601,8 @@ namespace erts_t2 {
                 }
 
                 {
-                    T2Op *gt = fn.new_op(b_cont,
-                                         T2OpKind::GetTl,
-                                         T2Type::any());
+                    T2Op *gt =
+                            fn.new_op(b_cont, T2OpKind::GetTl, T2Type::any());
 
                     fn.set_operands(gt, {l_phi_op->result});
                     gt->dst_reg = lx;
@@ -1702,24 +1670,20 @@ namespace erts_t2 {
                                       {a0, rv_next},
                                       {b_grd, b_lat2});
                 }
-                fn.set_phi_inputs(l_phi_op,
-                                  {l0, t_next},
-                                  {b_grd, b_lat2});
+                fn.set_phi_inputs(l_phi_op, {l0, t_next}, {b_grd, b_lat2});
 
                 /* ---- exits + result join ------------------------------ */
 
                 std::vector<T2Value *> join_vals;
                 std::vector<T2BasicBlock *> join_preds;
-                int32_t res_home = call->dst_reg != T2_REG_NONE
-                                           ? call->dst_reg
-                                           : t2_xreg(0);
+                int32_t res_home = call->dst_reg != T2_REG_NONE ? call->dst_reg
+                                                                : t2_xreg(0);
 
                 /* Every non-demote exit pays the wrapper/helper
                  * chain's single return dispatch, as T1 does. */
                 auto exit_charge = [&](T2BasicBlock *b) {
-                    T2Op *cr = fn.new_op(b,
-                                         T2OpKind::ChargeReds,
-                                         T2Type::none());
+                    T2Op *cr =
+                            fn.new_op(b, T2OpKind::ChargeReds, T2Type::none());
 
                     fn.set_operands(cr, {});
                     cr->imm_int = 1;
@@ -1737,17 +1701,13 @@ namespace erts_t2 {
                     fn.set_operands(c, {});
                     c->imm_term = atom;
                     c->beam_idx = bi;
-                    return new_copy(b, c->result, T2_REG_NONE, res_home,
-                                    bi);
+                    return new_copy(b, c->result, T2_REG_NONE, res_home, bi);
                 };
 
                 switch (k.cls) {
                 case IClass::Foldl:
-                    join_vals.push_back(new_copy(b_exit0,
-                                                 a0,
-                                                 t2_xreg(1),
-                                                 res_home,
-                                                 bi));
+                    join_vals.push_back(
+                            new_copy(b_exit0, a0, t2_xreg(1), res_home, bi));
                     join_preds.push_back(b_exit0);
                     join_vals.push_back(new_copy(b_exit1,
                                                  rv_next,
@@ -1767,8 +1727,7 @@ namespace erts_t2 {
                     join_preds.push_back(b_exit0);
                     join_vals.push_back(exit_const(b_exit1, am_true));
                     join_preds.push_back(b_exit1);
-                    join_vals.push_back(exit_const(b_exit_early,
-                                                   am_false));
+                    join_vals.push_back(exit_const(b_exit_early, am_false));
                     join_preds.push_back(b_exit_early);
                     break;
                 case IClass::Any:
@@ -1776,8 +1735,7 @@ namespace erts_t2 {
                     join_preds.push_back(b_exit0);
                     join_vals.push_back(exit_const(b_exit1, am_false));
                     join_preds.push_back(b_exit1);
-                    join_vals.push_back(exit_const(b_exit_early,
-                                                   am_true));
+                    join_vals.push_back(exit_const(b_exit_early, am_true));
                     join_preds.push_back(b_exit_early);
                     break;
                 }
@@ -1828,8 +1786,7 @@ namespace erts_t2 {
             }
 
             bool run() {
-                if (fn.blocks.empty() || !fn.sync_complete ||
-                    ret == nullptr) {
+                if (fn.blocks.empty() || !fn.sync_complete || ret == nullptr) {
                     return true;
                 }
 
@@ -1842,21 +1799,18 @@ namespace erts_t2 {
                 Eterm am_lists_mod = ERTS_MAKE_AM("lists");
 
                 for (T2BasicBlock *b : fn.blocks) {
-                    for (T2Op *op = b->ops_head; op != nullptr;
-                         op = op->next) {
-                        if (op->kind != T2OpKind::CallExt ||
-                            op->flags != 0 ||
+                    for (T2Op *op = b->ops_head; op != nullptr; op = op->next) {
+                        if (op->kind != T2OpKind::CallExt || op->flags != 0 ||
                             op->mfa_m != am_lists_mod) {
                             continue;
                         }
                         for (const IntrinsicKind &k : t2_intrinsic_kinds) {
                             if (op->index == k.call_arity &&
                                 op->mfa_f ==
-                                        erts_atom_put(
-                                                (const byte *)k.wrapper,
-                                                sys_strlen(k.wrapper),
-                                                ERTS_ATOM_ENC_LATIN1,
-                                                1)) {
+                                        erts_atom_put((const byte *)k.wrapper,
+                                                      sys_strlen(k.wrapper),
+                                                      ERTS_ATOM_ENC_LATIN1,
+                                                      1)) {
                                 sites.push_back({op, &k});
                                 break;
                             }

@@ -146,8 +146,8 @@ namespace erts_t2 {
                             m->x[i] = to;
                         }
                     }
-                    for (int32_t i = 0; m->frame_size != T2_NO_FRAME &&
-                                        i < m->frame_size;
+                    for (int32_t i = 0;
+                         m->frame_size != T2_NO_FRAME && i < m->frame_size;
                          i++) {
                         if (m->y[i] == from) {
                             m->y[i] = to;
@@ -201,7 +201,7 @@ namespace erts_t2 {
             struct Site {
                 const T2Loop *loop = nullptr;
                 T2Op *call = nullptr;
-                T2Op *alloc = nullptr;   /* may be null (frame-free)     */
+                T2Op *alloc = nullptr; /* may be null (frame-free)     */
                 T2Op *dealloc = nullptr;
             };
 
@@ -229,8 +229,7 @@ namespace erts_t2 {
                 for (uint32_t bid : loop.body) {
                     T2BasicBlock *b = fn.blocks[bid];
 
-                    for (T2Op *op = b->ops_head; op != nullptr;
-                         op = op->next) {
+                    for (T2Op *op = b->ops_head; op != nullptr; op = op->next) {
                         if (op_is_call_class(op)) {
                             calls.push_back(op);
                         }
@@ -260,14 +259,13 @@ namespace erts_t2 {
                             return false;
                         }
                         if (op->operand_regs != nullptr) {
-                            for (uint16_t i = 0; i < op->num_operands;
-                                 i++) {
+                            for (uint16_t i = 0; i < op->num_operands; i++) {
                                 if (op->operand_regs[i] == T2_REG_NONE ||
                                     !t2_reg_is_y(op->operand_regs[i])) {
                                     continue;
                                 }
-                                const T2Value *root = resolve_copy_defs(
-                                        op->operands[i]);
+                                const T2Value *root =
+                                        resolve_copy_defs(op->operands[i]);
 
                                 if (is_const_def(root)) {
                                     continue;
@@ -316,8 +314,7 @@ namespace erts_t2 {
                 }
 
                 if (calls.size() != 1 || calls[0]->kind != T2OpKind::Call ||
-                    calls[0]->flags != 0 ||
-                    calls[0]->mfa_m != fn.module ||
+                    calls[0]->flags != 0 || calls[0]->mfa_m != fn.module ||
                     calls[0]->sync == nullptr) {
                     return false;
                 }
@@ -361,8 +358,7 @@ namespace erts_t2 {
                             state = 2;
                         } else if (op == site->dealloc && state == 2) {
                             state = 3;
-                        } else if (op == site->alloc ||
-                                   op == site->call ||
+                        } else if (op == site->alloc || op == site->call ||
                                    op == site->dealloc) {
                             return false;
                         }
@@ -423,8 +419,8 @@ namespace erts_t2 {
                     fn.set_operands(cl, ins);
 
                     if (op->operand_regs != nullptr) {
-                        cl->operand_regs = fn.arena.alloc_array<int32_t>(
-                                op->num_operands);
+                        cl->operand_regs =
+                                fn.arena.alloc_array<int32_t>(op->num_operands);
                         for (uint16_t i = 0; i < op->num_operands; i++) {
                             cl->operand_regs[i] = op->operand_regs[i];
                         }
@@ -462,14 +458,12 @@ namespace erts_t2 {
                 }
                 T2Value *retval = rit->second;
 
-                T2Op *cp = fn.new_op(call->block, T2OpKind::Copy,
-                                     retval->type);
+                T2Op *cp = fn.new_op(call->block, T2OpKind::Copy, retval->type);
 
                 move_before(call->block, call, cp);
                 fn.set_operands(cp, {retval});
-                cp->dst_reg = call->dst_reg != T2_REG_NONE
-                                      ? call->dst_reg
-                                      : t2_xreg(0);
+                cp->dst_reg = call->dst_reg != T2_REG_NONE ? call->dst_reg
+                                                           : t2_xreg(0);
                 cp->operand_regs = fn.arena.alloc_array<int32_t>(1);
                 {
                     int32_t home = T2_REG_NONE;
@@ -539,8 +533,7 @@ namespace erts_t2 {
                             }
                         }
                         for (int32_t i = 0;
-                             m->frame_size != T2_NO_FRAME &&
-                             i < m->frame_size;
+                             m->frame_size != T2_NO_FRAME && i < m->frame_size;
                              i++) {
                             if (m->y[i] == v) {
                                 n++;
@@ -559,8 +552,7 @@ namespace erts_t2 {
                 for (uint32_t bid : loop.body) {
                     T2BasicBlock *b = fn.blocks[bid];
 
-                    for (T2Op *op = b->ops_head; op != nullptr;
-                         op = op->next) {
+                    for (T2Op *op = b->ops_head; op != nullptr; op = op->next) {
                         if (op->operand_regs == nullptr) {
                             continue;
                         }
@@ -569,18 +561,16 @@ namespace erts_t2 {
                                 !t2_reg_is_y(op->operand_regs[i])) {
                                 continue;
                             }
-                            const T2Value *root = resolve_copy_defs(
-                                    op->operands[i]);
+                            const T2Value *root =
+                                    resolve_copy_defs(op->operands[i]);
 
-                            op->operands[i] =
-                                    const_cast<T2Value *>(root);
+                            op->operands[i] = const_cast<T2Value *>(root);
                             if (is_const_def(root)) {
                                 op->operand_regs[i] = T2_REG_NONE;
                             } else {
                                 ASSERT(root->def != nullptr &&
                                        t2_reg_is_x(root->def->dst_reg));
-                                op->operand_regs[i] =
-                                        root->def->dst_reg;
+                                op->operand_regs[i] = root->def->dst_reg;
                             }
                         }
                     }
@@ -596,8 +586,7 @@ namespace erts_t2 {
                 for (uint32_t bid : loop.body) {
                     T2BasicBlock *b = fn.blocks[bid];
 
-                    for (T2Op *op = b->ops_head; op != nullptr;
-                         op = op->next) {
+                    for (T2Op *op = b->ops_head; op != nullptr; op = op->next) {
                         if ((op->kind == T2OpKind::Add ||
                              op->kind == T2OpKind::Sub) &&
                             op->sync != nullptr) {
@@ -643,8 +632,7 @@ namespace erts_t2 {
 
                     for_each_op(fn, [&](T2Op *op) {
                         if (op->kind == T2OpKind::Phi) {
-                            for (uint16_t i = 0; i < op->num_operands;
-                                 i++) {
+                            for (uint16_t i = 0; i < op->num_operands; i++) {
                                 pinned.insert(op->operands[i]);
                             }
                         }
@@ -654,18 +642,16 @@ namespace erts_t2 {
                             for (uint32_t i = 0; i < m->x_live; i++) {
                                 pinned.insert(m->x[i]);
                             }
-                            for (int32_t i = 0;
-                                 m->frame_size != T2_NO_FRAME &&
-                                 i < m->frame_size;
+                            for (int32_t i = 0; m->frame_size != T2_NO_FRAME &&
+                                                i < m->frame_size;
                                  i++) {
                                 pinned.insert(m->y[i]);
                             }
                         }
                     });
 
-                    std::unordered_set<uint32_t> in_loop(
-                            loop.body.begin(),
-                            loop.body.end());
+                    std::unordered_set<uint32_t> in_loop(loop.body.begin(),
+                                                         loop.body.end());
 
                     for (uint32_t bid : loop.body) {
                         T2BasicBlock *b = fn.blocks[bid];
@@ -687,15 +673,13 @@ namespace erts_t2 {
                             std::vector<std::pair<T2Op *, uint16_t>> uses;
 
                             for_each_op(fn, [&](T2Op *use) {
-                                for (uint16_t i = 0;
-                                     i < use->num_operands;
+                                for (uint16_t i = 0; i < use->num_operands;
                                      i++) {
                                     if (use->operands[i] != op->result) {
                                         continue;
                                     }
                                     if (use->block == nullptr ||
-                                        in_loop.count(use->block->id) ==
-                                                0 ||
+                                        in_loop.count(use->block->id) == 0 ||
                                         t2_op_is_terminator(use->kind)) {
                                         ok = false;
                                     } else {
@@ -704,16 +688,14 @@ namespace erts_t2 {
                                 }
                             });
                             if (ok) {
-                                int32_t src_reg =
-                                        op->operand_regs != nullptr
-                                                ? op->operand_regs[0]
-                                                : T2_REG_NONE;
+                                int32_t src_reg = op->operand_regs != nullptr
+                                                          ? op->operand_regs[0]
+                                                          : T2_REG_NONE;
 
                                 for (auto &u : uses) {
                                     u.first->operands[u.second] =
                                             op->operands[0];
-                                    if (u.first->operand_regs !=
-                                        nullptr) {
+                                    if (u.first->operand_regs != nullptr) {
                                         u.first->operand_regs[u.second] =
                                                 src_reg;
                                     }
@@ -741,25 +723,22 @@ namespace erts_t2 {
                 for (uint32_t bid : loop.body) {
                     T2BasicBlock *b = fn.blocks[bid];
 
-                    for (T2Op *op = b->ops_head; op != nullptr;
-                         op = op->next) {
+                    for (T2Op *op = b->ops_head; op != nullptr; op = op->next) {
                         if (op->dst_reg != T2_REG_NONE &&
                             t2_reg_is_x(op->dst_reg)) {
                             used_x.insert(t2_reg_index(op->dst_reg));
                         }
                         if (op->operand_regs != nullptr) {
-                            for (uint16_t i = 0; i < op->num_operands;
-                                 i++) {
+                            for (uint16_t i = 0; i < op->num_operands; i++) {
                                 if (op->operand_regs[i] != T2_REG_NONE &&
                                     t2_reg_is_x(op->operand_regs[i])) {
-                                    used_x.insert(t2_reg_index(
-                                            op->operand_regs[i]));
+                                    used_x.insert(
+                                            t2_reg_index(op->operand_regs[i]));
                                 }
                             }
                         }
                         if (op->sync != nullptr) {
-                            for (uint32_t i = 0; i < op->sync->x_live;
-                                 i++) {
+                            for (uint32_t i = 0; i < op->sync->x_live; i++) {
                                 used_x.insert(i);
                             }
                         }
@@ -768,16 +747,13 @@ namespace erts_t2 {
 
                 {
                     const T2BasicBlock *h = fn.blocks[loop.header];
-                    std::unordered_set<uint32_t> latches(
-                            loop.latches.begin(),
-                            loop.latches.end());
+                    std::unordered_set<uint32_t> latches(loop.latches.begin(),
+                                                         loop.latches.end());
 
                     for (const T2Op *phi = h->phis_head; phi != nullptr;
                          phi = phi->next) {
-                        for (uint16_t i = 0; i < phi->num_operands;
-                             i++) {
-                            if (latches.count(
-                                        phi->phi_blocks[i]->id) != 0) {
+                        for (uint16_t i = 0; i < phi->num_operands; i++) {
+                            if (latches.count(phi->phi_blocks[i]->id) != 0) {
                                 latch_mat.insert(phi->operands[i]);
                             }
                         }
@@ -834,8 +810,7 @@ namespace erts_t2 {
                         }
                     }
 
-                    for (T2Op *op = b->ops_head; op != nullptr;
-                         op = op->next) {
+                    for (T2Op *op = b->ops_head; op != nullptr; op = op->next) {
                         if (op->dst_reg == T2_REG_NONE ||
                             !t2_reg_is_x(op->dst_reg) ||
                             t2_reg_index(op->dst_reg) >= fn.arity) {
@@ -853,11 +828,9 @@ namespace erts_t2 {
 
                         if (op->result != nullptr) {
                             for_each_op(fn, [&](T2Op *use) {
-                                for (uint16_t i = 0;
-                                     i < use->num_operands;
+                                for (uint16_t i = 0; i < use->num_operands;
                                      i++) {
-                                    if (use->operands[i] ==
-                                                op->result &&
+                                    if (use->operands[i] == op->result &&
                                         use->block != b) {
                                         local = false;
                                     }
@@ -873,8 +846,7 @@ namespace erts_t2 {
                              * fine: the op reads before it writes). */
                             uint32_t p = pos[op];
 
-                            for (uint32_t k = protected_x;
-                                 k < REG_BACKED_XREGS;
+                            for (uint32_t k = protected_x; k < REG_BACKED_XREGS;
                                  k++) {
                                 bool touched = false;
 
@@ -930,17 +902,14 @@ namespace erts_t2 {
                         for (uint32_t bid2 : loop.body) {
                             T2BasicBlock *b2 = fn.blocks[bid2];
 
-                            for (T2Op *use = b2->ops_head;
-                                 use != nullptr;
+                            for (T2Op *use = b2->ops_head; use != nullptr;
                                  use = use->next) {
                                 if (use->operand_regs == nullptr) {
                                     continue;
                                 }
-                                for (uint16_t i = 0;
-                                     i < use->num_operands;
+                                for (uint16_t i = 0; i < use->num_operands;
                                      i++) {
-                                    if (use->operands[i] ==
-                                        op->result) {
+                                    if (use->operands[i] == op->result) {
                                         use->operand_regs[i] = nr;
                                     }
                                 }
@@ -970,9 +939,8 @@ namespace erts_t2 {
 
                     /* Shape: B = [... IsTuple v] Branch(C, E);
                      *        C = [TestArity v N] Branch(D, E), preds{B}. */
-                    if (test == nullptr ||
-                        test->kind != T2OpKind::IsTuple || br == nullptr ||
-                        br->kind != T2OpKind::Branch ||
+                    if (test == nullptr || test->kind != T2OpKind::IsTuple ||
+                        br == nullptr || br->kind != T2OpKind::Branch ||
                         br->num_operands != 1 ||
                         br->operands[0] != test->result) {
                         continue;
@@ -1041,10 +1009,8 @@ namespace erts_t2 {
                             car,
                             [&](T2Function &callee) {
                                 if (callee.blocks.size() != 1 ||
-                                    callee.blocks[0]->phis_head !=
-                                            nullptr ||
-                                    callee.blocks[0]->terminator ==
-                                            nullptr ||
+                                    callee.blocks[0]->phis_head != nullptr ||
+                                    callee.blocks[0]->terminator == nullptr ||
                                     callee.blocks[0]->terminator->kind !=
                                             T2OpKind::Return) {
                                     return;

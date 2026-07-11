@@ -49,7 +49,8 @@
  * <functional>/<tuple>. Including the C++ headers -- and the t2 .hpp files
  * that transitively include them -- first keeps the std names intact before
  * the macros are defined. (This is the same ordering the other t2 .cpp files
- * use, e.g. t2_isel.cpp including t2_isel.hpp ahead of its extern "C" block.) */
+ * use, e.g. t2_isel.cpp including t2_isel.hpp ahead of its extern "C" block.)
+ */
 #include <ctime>
 #include <string>
 
@@ -219,7 +220,8 @@ namespace {
             }
         }
 
-        s->calls_inlined = (leaf_inlined ? 1u : 0u) + (intrinsic_loop ? 1u : 0u);
+        s->calls_inlined =
+                (leaf_inlined ? 1u : 0u) + (intrinsic_loop ? 1u : 0u);
     }
 
     /* T2_INSTALL_GATE=0 disables the gate (install everything, the pre-B
@@ -247,8 +249,8 @@ namespace {
          * real scan-run here is memo 10's original intent; the drift to
          * bs_scan >= 1 was the false-accept. */
         bool bs_unfused = s.bs_scan >= 1 && s.scan_runs == 0;
-        bool eliminated = s.calls_inlined >= 1 || s.fused_arith >= 2 ||
-                          s.scan_runs >= 1;
+        bool eliminated =
+                s.calls_inlined >= 1 || s.fused_arith >= 2 || s.scan_runs >= 1;
         /* An un-fused per-byte bs loop is a *tax*, not merely a missing
          * win: it can trip the eliminated-work arm on the side (its
          * mutually-exclusive per-clause increments over-count fused_arith
@@ -309,13 +311,13 @@ namespace {
      * (the module decode is still alive). `profile` (may be null) is
      * the function's tier-up record, plugged into the speculation
      * inserter as its fact source. */
-    T2CompileStatus t2_compile_install_one(T2Function &hir,
-                                           const ErtsT2RetainedCode *ret,
-                                           const BeamCodeHeader *code_hdr,
-                                           struct erl_module_instance *mi,
-                                           std::string *diag,
-                                           const ErtsT2Profile *profile =
-                                                   nullptr) {
+    T2CompileStatus t2_compile_install_one(
+            T2Function &hir,
+            const ErtsT2RetainedCode *ret,
+            const BeamCodeHeader *code_hdr,
+            struct erl_module_instance *mi,
+            std::string *diag,
+            const ErtsT2Profile *profile = nullptr) {
         T2IselContext ctx;
         T2LirFunction lir;
         T2EmitResult blob;
@@ -420,8 +422,7 @@ namespace {
                             have |= d == (const void *)code_hdr;
                         }
                         if (!have) {
-                            hir.dep_hdrs.push_back(
-                                    (const void *)code_hdr);
+                            hir.dep_hdrs.push_back((const void *)code_hdr);
                         }
                         rewritten = true;
                         leaf_inlined = true;
@@ -550,9 +551,11 @@ namespace {
             T2InstallSignals sig;
             const char *reason = "";
 
-            t2_collect_install_signals(lir, leaf_inlined,
+            t2_collect_install_signals(lir,
+                                       leaf_inlined,
                                        blob.scan_runs,
-                                       (unsigned)blob.size, &sig);
+                                       (unsigned)blob.size,
+                                       &sig);
 
             if (!t2_install_gate_accept(sig, &reason)) {
                 if (getenv("T2_DEBUG") != NULL ||
@@ -593,18 +596,17 @@ namespace {
             rpoints.push_back(e);
         }
 
-        ErtsT2InstallResult res =
-                erts_t2_install(mi,
-                                ci,
-                                blob.entry,
-                                blob.base,
-                                blob.size,
-                                blob.rw_base,
-                                rpoints.empty() ? NULL : rpoints.data(),
-                                (Uint32)rpoints.size(),
-                                hir.dep_hdrs.empty() ? NULL
-                                                     : hir.dep_hdrs.data(),
-                                (Uint32)hir.dep_hdrs.size());
+        ErtsT2InstallResult res = erts_t2_install(
+                mi,
+                ci,
+                blob.entry,
+                blob.base,
+                blob.size,
+                blob.rw_base,
+                rpoints.empty() ? NULL : rpoints.data(),
+                (Uint32)rpoints.size(),
+                hir.dep_hdrs.empty() ? NULL : hir.dep_hdrs.data(),
+                (Uint32)hir.dep_hdrs.size());
 
         if (res != ERTS_T2_INSTALL_OK) {
             /* The blob was never reachable by anyone, but its emission
@@ -688,8 +690,7 @@ extern "C" void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
     std::string err;
     int build_failures = 0;
 
-    if (!erts_jit_t2_force || ret == NULL || code_hdr == NULL ||
-        mi == NULL) {
+    if (!erts_jit_t2_force || ret == NULL || code_hdr == NULL || mi == NULL) {
         return;
     }
 

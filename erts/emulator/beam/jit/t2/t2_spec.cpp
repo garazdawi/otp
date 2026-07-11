@@ -157,8 +157,8 @@ namespace erts_t2 {
              * proofs), and whether the assumption was consumed. */
             struct PhiInfo {
                 T2Op *phi;
-                T2Value *entry_val;      /* input on the preheader edge */
-                bool entry_needs_guard;  /* guard vs already proven     */
+                T2Value *entry_val;     /* input on the preheader edge */
+                bool entry_needs_guard; /* guard vs already proven     */
                 bool assumed = false;
                 bool used = false;
             };
@@ -216,8 +216,7 @@ namespace erts_t2 {
             }
 
             bool boundary_available(const T2Op *op) {
-                if (op->sync == nullptr ||
-                    (op->flags & T2_OP_INLINED) != 0 ||
+                if (op->sync == nullptr || (op->flags & T2_OP_INLINED) != 0 ||
                     op->beam_idx == 0 || ret == nullptr) {
                     return false;
                 }
@@ -235,9 +234,9 @@ namespace erts_t2 {
                     op->dst_reg == T2_REG_NONE) {
                     return false;
                 }
-                if ((op->flags &
-                     (T2_OP_ERR_EXIT_OP | T2_OP_ERR_EXIT_SHARED |
-                      T2_OP_GARBAGE_DEALLOC | T2_OP_PAIR_HEAD)) != 0) {
+                if ((op->flags & (T2_OP_ERR_EXIT_OP | T2_OP_ERR_EXIT_SHARED |
+                                  T2_OP_GARBAGE_DEALLOC | T2_OP_PAIR_HEAD)) !=
+                    0) {
                     return false;
                 }
                 /* A decoded fail edge (Succeeded consumer) means the op
@@ -277,8 +276,7 @@ namespace erts_t2 {
                             const T2BasicBlock *b = fn.blocks[bid];
                             uint8_t flag = dirty_in[bid];
 
-                            for (const T2Op *op = b->ops_head;
-                                 op != nullptr;
+                            for (const T2Op *op = b->ops_head; op != nullptr;
                                  op = op->next) {
                                 if (op_dirties_window(op, fn.arity)) {
                                     flag = 1;
@@ -287,8 +285,7 @@ namespace erts_t2 {
 
                             const T2Op *t = b->terminator;
                             auto push = [&](T2BasicBlock *succ) {
-                                if (succ == nullptr ||
-                                    !in_loop[succ->id] ||
+                                if (succ == nullptr || !in_loop[succ->id] ||
                                     succ->id == loop.header) {
                                     return;
                                 }
@@ -404,8 +401,7 @@ namespace erts_t2 {
                         /* Every non-entry (latch) input must be small
                          * by proof, by another assumed phi, or as the
                          * committed result of a converting candidate. */
-                        for (uint16_t i = 0;
-                             ok && i < pi.phi->num_operands;
+                        for (uint16_t i = 0; ok && i < pi.phi->num_operands;
                              i++) {
                             const T2Value *v = pi.phi->operands[i];
 
@@ -476,8 +472,7 @@ namespace erts_t2 {
                                     const std::vector<T2Value *> &vals,
                                     const std::vector<int32_t> &regs) {
                 fn.set_operands(g, vals);
-                g->operand_regs =
-                        fn.arena.alloc_array<int32_t>(vals.size());
+                g->operand_regs = fn.arena.alloc_array<int32_t>(vals.size());
                 for (size_t i = 0; i < regs.size(); i++) {
                     g->operand_regs[i] = regs[i];
                 }
@@ -535,8 +530,7 @@ namespace erts_t2 {
                                 const T2Value *r = resolve_copies(v);
 
                                 if (r->def != nullptr &&
-                                    cand_of.find(r->def) !=
-                                            cand_of.end()) {
+                                    cand_of.find(r->def) != cand_of.end()) {
                                     cand_deps.push_back(r);
                                 }
                             }
@@ -575,9 +569,8 @@ namespace erts_t2 {
                         }
                     }
 
-                    op->kind = op->kind == T2OpKind::Add
-                                       ? T2OpKind::AddSmall
-                                       : T2OpKind::SubSmall;
+                    op->kind = op->kind == T2OpKind::Add ? T2OpKind::AddSmall
+                                                         : T2OpKind::SubSmall;
                     if (c.window) {
                         /* Window ops deopt to the iteration re-call
                          * boundary; the boundary map is not part of
@@ -635,8 +628,7 @@ namespace erts_t2 {
                     std::unordered_set<const T2Value *> seen;
 
                     for (PhiInfo &pi : phis) {
-                        if (!pi.assumed || !pi.used ||
-                            !pi.entry_needs_guard) {
+                        if (!pi.assumed || !pi.used || !pi.entry_needs_guard) {
                             continue;
                         }
                         const T2Value *root = resolve_copies(pi.entry_val);
@@ -653,8 +645,7 @@ namespace erts_t2 {
                         regs.push_back(t2_xreg(root->def->index));
                     }
 
-                    for (size_t i = 0; i < vals.size();
-                         i += T2_LIR_MAX_SRCS) {
+                    for (size_t i = 0; i < vals.size(); i += T2_LIR_MAX_SRCS) {
                         size_t n = std::min(vals.size() - i,
                                             (size_t)T2_LIR_MAX_SRCS);
                         std::vector<T2Value *> gv(vals.begin() + i,

@@ -457,7 +457,9 @@ void beamasm_init() {
 
         res = erts_t2_ranges_selftest();
         if (res != 0) {
-            erts_exit(ERTS_ABORT_EXIT, "T2 ranges self-test failed (%d)\n", res);
+            erts_exit(ERTS_ABORT_EXIT,
+                      "T2 ranges self-test failed (%d)\n",
+                      res);
         }
 
         res = erts_t2_loop_selftest();
@@ -769,8 +771,7 @@ extern "C"
         if (profiles == nullptr) {
             return;
         }
-        for (const BeamModuleAssembler::T2ProfileSeq &s :
-             ba->t2_profile_seqs) {
+        for (const BeamModuleAssembler::T2ProfileSeq &s : ba->t2_profile_seqs) {
             if ((int)s.ordinal >= ba->t2_profile_count) {
                 continue;
             }
@@ -800,7 +801,7 @@ extern "C"
         *fn_index = e.fn_index;
         *kind = e.kind;
     }
-#else  /* !__aarch64__ — T2 does not emit here; bridges are no-ops. */
+#else /* !__aarch64__ — T2 does not emit here; bridges are no-ops. */
     void beamasm_set_t2_collect(void *instance, int on) {
         (void)instance;
         (void)on;

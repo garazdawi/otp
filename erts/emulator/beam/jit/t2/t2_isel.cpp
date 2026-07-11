@@ -53,19 +53,32 @@ namespace erts_t2 {
          * is not a generic arithmetic op. */
         T2LirKind arith_kind(T2OpKind k) {
             switch (k) {
-            case T2OpKind::Add: return T2LirKind::Add;
-            case T2OpKind::Sub: return T2LirKind::Sub;
-            case T2OpKind::Mul: return T2LirKind::Mul;
-            case T2OpKind::IDiv: return T2LirKind::IDiv;
-            case T2OpKind::Rem: return T2LirKind::Rem;
-            case T2OpKind::Band: return T2LirKind::Band;
-            case T2OpKind::Bor: return T2LirKind::Bor;
-            case T2OpKind::Bxor: return T2LirKind::Bxor;
-            case T2OpKind::Bsl: return T2LirKind::Bsl;
-            case T2OpKind::Bsr: return T2LirKind::Bsr;
-            case T2OpKind::Bnot: return T2LirKind::Bnot;
-            case T2OpKind::Neg: return T2LirKind::Neg;
-            default: return T2LirKind::Invalid;
+            case T2OpKind::Add:
+                return T2LirKind::Add;
+            case T2OpKind::Sub:
+                return T2LirKind::Sub;
+            case T2OpKind::Mul:
+                return T2LirKind::Mul;
+            case T2OpKind::IDiv:
+                return T2LirKind::IDiv;
+            case T2OpKind::Rem:
+                return T2LirKind::Rem;
+            case T2OpKind::Band:
+                return T2LirKind::Band;
+            case T2OpKind::Bor:
+                return T2LirKind::Bor;
+            case T2OpKind::Bxor:
+                return T2LirKind::Bxor;
+            case T2OpKind::Bsl:
+                return T2LirKind::Bsl;
+            case T2OpKind::Bsr:
+                return T2LirKind::Bsr;
+            case T2OpKind::Bnot:
+                return T2LirKind::Bnot;
+            case T2OpKind::Neg:
+                return T2LirKind::Neg;
+            default:
+                return T2LirKind::Invalid;
             }
         }
 
@@ -73,32 +86,58 @@ namespace erts_t2 {
          * T1 emitter with Fail redirected to the in-blob else-block). */
         T2LirKind guard_kind(T2OpKind k) {
             switch (k) {
-            case T2OpKind::IsInteger: return T2LirKind::IsInteger;
-            case T2OpKind::IsFloat: return T2LirKind::IsFloat;
-            case T2OpKind::IsNumber: return T2LirKind::IsNumber;
-            case T2OpKind::IsAtom: return T2LirKind::IsAtom;
-            case T2OpKind::IsBoolean: return T2LirKind::IsBoolean;
-            case T2OpKind::IsTuple: return T2LirKind::IsTuple;
-            case T2OpKind::IsList: return T2LirKind::IsList;
-            case T2OpKind::IsNonemptyList: return T2LirKind::IsNonemptyList;
-            case T2OpKind::IsNil: return T2LirKind::IsNil;
-            case T2OpKind::IsBinary: return T2LirKind::IsBinary;
-            case T2OpKind::IsBitstring: return T2LirKind::IsBitstring;
-            case T2OpKind::IsMap: return T2LirKind::IsMap;
-            case T2OpKind::IsPid: return T2LirKind::IsPid;
-            case T2OpKind::IsPort: return T2LirKind::IsPort;
-            case T2OpKind::IsReference: return T2LirKind::IsReference;
-            case T2OpKind::IsTaggedTuple: return T2LirKind::IsTaggedTuple;
-            case T2OpKind::TestArity: return T2LirKind::TestArity;
-            case T2OpKind::CmpEqExact: return T2LirKind::CmpEqExact;
-            case T2OpKind::CmpNeExact: return T2LirKind::CmpNeExact;
-            case T2OpKind::CmpEq: return T2LirKind::CmpEq;
-            case T2OpKind::CmpNe: return T2LirKind::CmpNe;
-            case T2OpKind::CmpLt: return T2LirKind::CmpLt;
-            case T2OpKind::CmpLe: return T2LirKind::CmpLe;
-            case T2OpKind::CmpGt: return T2LirKind::CmpGt;
-            case T2OpKind::CmpGe: return T2LirKind::CmpGe;
-            default: return T2LirKind::Invalid;
+            case T2OpKind::IsInteger:
+                return T2LirKind::IsInteger;
+            case T2OpKind::IsFloat:
+                return T2LirKind::IsFloat;
+            case T2OpKind::IsNumber:
+                return T2LirKind::IsNumber;
+            case T2OpKind::IsAtom:
+                return T2LirKind::IsAtom;
+            case T2OpKind::IsBoolean:
+                return T2LirKind::IsBoolean;
+            case T2OpKind::IsTuple:
+                return T2LirKind::IsTuple;
+            case T2OpKind::IsList:
+                return T2LirKind::IsList;
+            case T2OpKind::IsNonemptyList:
+                return T2LirKind::IsNonemptyList;
+            case T2OpKind::IsNil:
+                return T2LirKind::IsNil;
+            case T2OpKind::IsBinary:
+                return T2LirKind::IsBinary;
+            case T2OpKind::IsBitstring:
+                return T2LirKind::IsBitstring;
+            case T2OpKind::IsMap:
+                return T2LirKind::IsMap;
+            case T2OpKind::IsPid:
+                return T2LirKind::IsPid;
+            case T2OpKind::IsPort:
+                return T2LirKind::IsPort;
+            case T2OpKind::IsReference:
+                return T2LirKind::IsReference;
+            case T2OpKind::IsTaggedTuple:
+                return T2LirKind::IsTaggedTuple;
+            case T2OpKind::TestArity:
+                return T2LirKind::TestArity;
+            case T2OpKind::CmpEqExact:
+                return T2LirKind::CmpEqExact;
+            case T2OpKind::CmpNeExact:
+                return T2LirKind::CmpNeExact;
+            case T2OpKind::CmpEq:
+                return T2LirKind::CmpEq;
+            case T2OpKind::CmpNe:
+                return T2LirKind::CmpNe;
+            case T2OpKind::CmpLt:
+                return T2LirKind::CmpLt;
+            case T2OpKind::CmpLe:
+                return T2LirKind::CmpLe;
+            case T2OpKind::CmpGt:
+                return T2LirKind::CmpGt;
+            case T2OpKind::CmpGe:
+                return T2LirKind::CmpGe;
+            default:
+                return T2LirKind::Invalid;
             }
         }
 
@@ -178,13 +217,11 @@ namespace erts_t2 {
              * register when it came from one, otherwise the operand must
              * be an inline-able constant. */
             bool src_of(const T2Op *op, uint16_t i, T2LirSrc *out) {
-                int32_t reg = op->operand_regs != nullptr
-                                      ? op->operand_regs[i]
-                                      : T2_REG_NONE;
+                int32_t reg = op->operand_regs != nullptr ? op->operand_regs[i]
+                                                          : T2_REG_NONE;
 
                 if (reg != T2_REG_NONE) {
-                    *out = T2LirSrc::slot(reg_loc(reg),
-                                          op->operands[i]->id);
+                    *out = T2LirSrc::slot(reg_loc(reg), op->operands[i]->id);
                     return true;
                 }
 
@@ -207,9 +244,10 @@ namespace erts_t2 {
                      * that need term-deep semantics (exact/ordering compares)
                      * reject boxed operands separately (guard_reject_boxed). */
                     if (!safe_literal_term(def, &term)) {
-                        return fail_op(op,
-                                       "boxed literal operand unsupported in P1 "
-                                       "commit-3 isel");
+                        return fail_op(
+                                op,
+                                "boxed literal operand unsupported in P1 "
+                                "commit-3 isel");
                     }
                 }
                 *out = T2LirSrc::immediate(term);
@@ -327,8 +365,7 @@ namespace erts_t2 {
                 if ((op->flags & T2_OP_WINDOW_CALLEE) == 0) {
                     return true;
                 }
-                lop->t1_pc_cont = pc_lookup(op->beam_idx,
-                                            ERTS_T2_PC_CONT);
+                lop->t1_pc_cont = pc_lookup(op->beam_idx, ERTS_T2_PC_CONT);
                 return lop->t1_pc_cont != nullptr;
             }
 
@@ -369,8 +406,7 @@ namespace erts_t2 {
                 static const Eterm on_load_fn =
                         ERTS_MAKE_AM("call_on_load_function");
                 static const Eterm os_mod = ERTS_MAKE_AM("os");
-                static const Eterm perf_counter =
-                        ERTS_MAKE_AM("perf_counter");
+                static const Eterm perf_counter = ERTS_MAKE_AM("perf_counter");
 
                 if (m == am_erlang) {
                     if ((f == am_yield && arity == 0) ||
@@ -403,18 +439,14 @@ namespace erts_t2 {
                                ExtTarget *kind) {
                 const Export *ep;
 
-                if (is_transformed_call_ext(op->mfa_m,
-                                            op->mfa_f,
-                                            op->index)) {
+                if (is_transformed_call_ext(op->mfa_m, op->mfa_f, op->index)) {
                     return fail_op(op,
                                    "call_ext to a loader-transformed "
                                    "special (i_yield/i_hibernate/...) "
                                    "unsupported in P1 isel");
                 }
 
-                ep = erts_active_export_entry(op->mfa_m,
-                                              op->mfa_f,
-                                              op->index);
+                ep = erts_active_export_entry(op->mfa_m, op->mfa_f, op->index);
 
                 if (ep == nullptr) {
                     /* Not-yet-loaded remote callee: mirror T1's load-time
@@ -434,15 +466,13 @@ namespace erts_t2 {
                      * -1 and the check below passes it through as a normal
                      * remote call. */
                     if (!ctx.allow_stub) {
-                        return fail_op(op,
-                                       "no export entry for remote target");
+                        return fail_op(op, "no export entry for remote target");
                     }
                     ep = erts_export_get_or_make_stub(op->mfa_m,
                                                       op->mfa_f,
                                                       op->index);
                     if (ep == nullptr) {
-                        return fail_op(op,
-                                       "no export entry for remote target");
+                        return fail_op(op, "no export entry for remote target");
                     }
                 }
                 if (ep->bif_number >= 0) {
@@ -536,8 +566,7 @@ namespace erts_t2 {
                     const T2Op *succ = op->next;
                     if (succ != nullptr && succ->kind == T2OpKind::Succeeded &&
                         succ->num_operands == 1 &&
-                        succ->operands[0] == op->result &&
-                        feeds_branch(succ)) {
+                        succ->operands[0] == op->result && feeds_branch(succ)) {
                         const T2Op *term = op->block->terminator;
 
                         lop.succ_then = term->succ_then->id;
@@ -640,9 +669,9 @@ namespace erts_t2 {
                     const T2Op *term = op->block->terminator;
 
                     lop.kind = gk;
-                    lop.imm = (Sint64)op->index;   /* arity for TestArity /
-                                                    * IsTaggedTuple      */
-                    lop.imm_term = op->imm_term;   /* IsTaggedTuple tag  */
+                    lop.imm = (Sint64)op->index; /* arity for TestArity /
+                                                  * IsTaggedTuple      */
+                    lop.imm_term = op->imm_term; /* IsTaggedTuple tag  */
                     if (!fill_srcs(op, &lop)) {
                         return false;
                     }
@@ -679,8 +708,7 @@ namespace erts_t2 {
                                              ? make_small(op->imm_int)
                                              : op->imm_term;
 
-                        if (!is_immed(term) &&
-                            !safe_literal_term(op, &term)) {
+                        if (!is_immed(term) && !safe_literal_term(op, &term)) {
                             return fail_op(op,
                                            "boxed literal move unsupported "
                                            "in P1 commit-3 isel");
@@ -818,8 +846,9 @@ namespace erts_t2 {
                     if (ctx.ret->lambdas == NULL ||
                         op->index >= (uint32_t)ctx.ret->lambda_count ||
                         ctx.ret->lambdas[op->index].fun_entry == NULL) {
-                        return fail_op(op, "make_fun3 without a resolved "
-                                           "fun entry");
+                        return fail_op(op,
+                                       "make_fun3 without a resolved "
+                                       "fun entry");
                     }
                     lop.kind = T2LirKind::MakeFun;
                     lop.dst = reg_loc(op->dst_reg);
@@ -973,11 +1002,9 @@ namespace erts_t2 {
                     }
 
                     const T2Op *succ = op->next;
-                    if (succ != nullptr &&
-                        succ->kind == T2OpKind::Succeeded &&
+                    if (succ != nullptr && succ->kind == T2OpKind::Succeeded &&
                         succ->num_operands == 1 &&
-                        succ->operands[0] == op->result &&
-                        feeds_branch(succ)) {
+                        succ->operands[0] == op->result && feeds_branch(succ)) {
                         const T2Op *term = op->block->terminator;
 
                         lop.succ_then = term->succ_then->id;
@@ -1025,19 +1052,16 @@ namespace erts_t2 {
                     for (uint16_t i = 0; i < op->num_bs_cmds; i++) {
                         const ErtsT2BsCmd &c = op->bs_cmds[i];
 
-                        lir.bs_cmds.push_back(
-                                T2LirBsCmd{(uint8_t)c.kind,
-                                           (uint32_t)c.size,
-                                           (uint32_t)c.unit,
-                                           (uint32_t)c.live});
+                        lir.bs_cmds.push_back(T2LirBsCmd{(uint8_t)c.kind,
+                                                         (uint32_t)c.size,
+                                                         (uint32_t)c.unit,
+                                                         (uint32_t)c.live});
                     }
 
                     const T2Op *succ = op->next;
-                    if (succ != nullptr &&
-                        succ->kind == T2OpKind::Succeeded &&
+                    if (succ != nullptr && succ->kind == T2OpKind::Succeeded &&
                         succ->num_operands == 1 &&
-                        succ->operands[0] == op->result &&
-                        feeds_branch(succ)) {
+                        succ->operands[0] == op->result && feeds_branch(succ)) {
                         const T2Op *term = op->block->terminator;
 
                         lop.succ_then = term->succ_then->id;
@@ -1169,8 +1193,9 @@ namespace erts_t2 {
                      * attached above) is the fresh-call vector the
                      * yield saves. */
                     if (op->sync == nullptr) {
-                        return fail_op(op, "back-edge without a sync "
-                                           "map");
+                        return fail_op(op,
+                                       "back-edge without a sync "
+                                       "map");
                     }
                     if (op->flags & T2_OP_RC_CALLEE) {
                         /* Intrinsic back edge (P2 commit 8): callee
@@ -1181,10 +1206,10 @@ namespace erts_t2 {
                         lop.mfa_f = op->mfa_f;
                         lop.arity = op->live;
                         lop.target = (const void *)(UWord)op->imm_int;
-                        lop.t1_pc_fail = pc_lookup(op->beam_idx,
-                                                   ERTS_T2_PC_CALL);
-                        lop.t1_pc_cont = pc_lookup(op->beam_idx,
-                                                   ERTS_T2_PC_CONT);
+                        lop.t1_pc_fail =
+                                pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
+                        lop.t1_pc_cont =
+                                pc_lookup(op->beam_idx, ERTS_T2_PC_CONT);
                         if (lop.target == nullptr ||
                             lop.t1_pc_fail == nullptr ||
                             lop.t1_pc_cont == nullptr) {
@@ -1343,11 +1368,10 @@ namespace erts_t2 {
                     lop.mfa_m = t->mfa_m;
                     lop.mfa_f = t->mfa_f;
                     lop.arity = t->live;
-                    lop.target = (const void
-                                          *)((const char *)(UWord)t->imm_int +
-                                             erts_t2_test_yield_return_offset());
-                    lop.t1_pc_cont = pc_lookup(t->beam_idx,
-                                               ERTS_T2_PC_CONT);
+                    lop.target =
+                            (const void *)((const char *)(UWord)t->imm_int +
+                                           erts_t2_test_yield_return_offset());
+                    lop.t1_pc_cont = pc_lookup(t->beam_idx, ERTS_T2_PC_CONT);
                     if (t->imm_int == 0 || lop.t1_pc_cont == nullptr) {
                         return fail("demote-callee without a resolved "
                                     "callee/continuation");
@@ -1373,9 +1397,9 @@ namespace erts_t2 {
                             return fail("boxed switch value unsupported in "
                                         "P1 commit-3 isel");
                         }
-                        lir.switch_cases.push_back(T2LirSwitchCase{
-                                t->cases[i].value,
-                                t->cases[i].target->id});
+                        lir.switch_cases.push_back(
+                                T2LirSwitchCase{t->cases[i].value,
+                                                t->cases[i].target->id});
                     }
                     lop.default_target = t->default_target->id;
                     b.ops.push_back(lop);
@@ -1562,9 +1586,9 @@ namespace erts_t2 {
                         lp.value = phi->result->id;
                         lp.home = reg_loc(phi->dst_reg);
                         for (uint16_t i = 0; i < phi->num_operands; i++) {
-                            lp.ins.push_back(T2LirPhi::In{
-                                    phi->phi_blocks[i]->id,
-                                    phi->operands[i]->id});
+                            lp.ins.push_back(
+                                    T2LirPhi::In{phi->phi_blocks[i]->id,
+                                                 phi->operands[i]->id});
                         }
                         lb.phis.push_back(std::move(lp));
                     }
@@ -1573,7 +1597,9 @@ namespace erts_t2 {
                          op = op->next) {
                         const T2Op *skip_until = nullptr;
 
-                        if (!emit_op(lb, op, &skip_until,
+                        if (!emit_op(lb,
+                                     op,
+                                     &skip_until,
                                      &consumed_terminator)) {
                             return false;
                         }
