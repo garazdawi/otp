@@ -2932,7 +2932,7 @@ namespace {
         Eterm *hp;
         (void)erts_bld_string_n(NULL, &sz, s, (Sint)sys_strlen(s));
         sz += 3;
-        hp = HAlloc(p, sz);
+        hp = HAlloc(p, Sint(sz));
         Eterm str = erts_bld_string_n(&hp, NULL, s, (Sint)sys_strlen(s));
         return TUPLE2(hp, am_error, str);
     }
