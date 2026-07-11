@@ -109,7 +109,7 @@ jobs:
           set -eux
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential autoconf m4 libncurses-dev libssl-dev ccache
+            build-essential autoconf m4 libncurses-dev libssl-dev ccache gdb
           ## Put ccache's compiler shims first on PATH for every later step, so
           ## a plain ./configure && make transparently uses ccache.
           echo "/usr/lib/ccache" >> "$GITHUB_PATH"
@@ -191,6 +191,34 @@ jobs:
             exit 1
           fi
 
+      - name: Install suite watchdog
+        ## A wedged emulator (e.g. an unkillable process stuck in a T2 blob)
+        ## otherwise burns the whole job timeout with zero diagnostics: cap
+        ## each suite run at 45 min and, on expiry, attach gdb to every test
+        ## emulator and save all-thread stacks into the artifact before
+        ## killing them. The recorded rc (124) then fails the run via the
+        ## result-check step.
+        run: |
+          cat > "$RUNNER_TEMP/run_with_watchdog.sh" <<'EOF'
+          #!/bin/bash
+          # usage: run_with_watchdog.sh <rc-file> <log-file> <command...>
+          set -ux
+          rcfile=$1; log=$2; shift 2
+          timeout -k 30 2700 "$@" 2>&1 | tee "$log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" = "124" ]; then
+            echo "WATCHDOG: suite run exceeded 45 min - collecting emulator stacks" | tee -a "$log"
+            for pid in $(pgrep -f 'beam\.(debug|asan)'); do
+              sudo gdb -p "$pid" -batch -ex 'set pagination off' \
+                -ex 'thread apply all bt' \
+                > "$ERL_TOP/t2-results/hang_stacks_$pid.txt" 2>&1 || true
+            done
+            pkill -9 -f 'beam\.(debug|asan)' || true
+          fi
+          echo "$rc" > "$rcfile"
+          EOF
+          chmod +x "$RUNNER_TEMP/run_with_watchdog.sh"
+
       - name: Run erts (emulator_test) T2 slice
         ## +JT2enable + gate-off in the env so every erl the tests spawn runs
         ## eager and installs even the loser blobs. TYPE selects the sanitizer
@@ -214,12 +242,13 @@ jobs:
           ## failing make doesn't abort the step before we record its exit code
           ## (the "Check test results" step below is the single gate).
           set +e
-          make emulator_test \
+          "$RUNNER_TEMP/run_with_watchdog.sh" \
+            "$ERL_TOP/t2-results/emulator_rc" \
+            "$ERL_TOP/t2-results/10_emulator_test.log" \
+            make emulator_test \
             ARGS="$SUITES" \
             EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"$ERL_TOP/t2-results/emulator_junit.xml\"}]" \
-            TYPE="$BUILD_TYPE" \
-            2>&1 | tee "$ERL_TOP/t2-results/10_emulator_test.log"
-          echo "${PIPESTATUS[0]}" > "$ERL_TOP/t2-results/emulator_rc"
+            TYPE="$BUILD_TYPE"
           exit 0
 
       - name: Run stdlib (stdlib_test) T2 slice
@@ -237,12 +266,13 @@ jobs:
           ## failing make doesn't abort the step before we record its exit code
           ## (the "Check test results" step below is the single gate).
           set +e
-          make stdlib_test \
+          "$RUNNER_TEMP/run_with_watchdog.sh" \
+            "$ERL_TOP/t2-results/stdlib_rc" \
+            "$ERL_TOP/t2-results/11_stdlib_test.log" \
+            make stdlib_test \
             ARGS="$SUITES" \
             EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"$ERL_TOP/t2-results/stdlib_junit.xml\"}]" \
-            TYPE="$BUILD_TYPE" \
-            2>&1 | tee "$ERL_TOP/t2-results/11_stdlib_test.log"
-          echo "${PIPESTATUS[0]}" > "$ERL_TOP/t2-results/stdlib_rc"
+            TYPE="$BUILD_TYPE"
           exit 0
 
       - name: Collect ct logs
