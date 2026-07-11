@@ -738,7 +738,10 @@ extern "C" Eterm erts_t2_debug_census(Process *p, Eterm bin) {
         }
 
         if (szp) {
-            hp = HAlloc(p, sz);
+            /* HAlloc compares the word count against the signed
+             * HeapWordsLeft; cast so GCC's -Wsign-compare is happy
+             * (same as erts_t2_debug_build_ssa above). */
+            hp = HAlloc(p, (Sint)sz);
             szp = NULL;
         } else {
             result = list;
