@@ -9,13 +9,20 @@ Mix.install([
 defmodule Api do
   import Plug.Conn
   def init(o), do: o
+
   def call(conn, _) do
     {:ok, body, conn} = read_body(conn)
     %{"items" => items, "user" => user} = Jason.decode!(body)
     total = Enum.reduce(items, 0, fn %{"qty" => q, "price" => p}, acc -> acc + q * p end)
     names = Enum.map(items, fn %{"name" => n} -> String.upcase(n) end)
-    resp = %{"user" => Map.put(user, "active", true), "total" => total,
-             "names" => names, "count" => length(items)}
+
+    resp = %{
+      "user" => Map.put(user, "active", true),
+      "total" => total,
+      "names" => names,
+      "count" => length(items)
+    }
+
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, Jason.encode!(resp))
@@ -28,10 +35,14 @@ Logger.configure(level: :error)
 IO.puts("server up")
 
 :erts_debug.set_internal_state(:available_internal_state, true)
-:timer.sleep(4000)                            # let the driver connect + warm
-:erts_debug.set_internal_state(:recv_stats, true)   # reset
-:timer.sleep(12000)                           # measured window
+# let the driver connect + warm
+:timer.sleep(4000)
+# reset
+:erts_debug.set_internal_state(:recv_stats, true)
+# measured window
+:timer.sleep(12000)
 stats = :erts_debug.get_internal_state(:recv_stats)
 IO.puts("RECV_STATS " <> inspect(stats))
-:timer.sleep(12000)                           # outlive the driver so it can print
+# outlive the driver so it can print
+:timer.sleep(12000)
 System.halt(0)
