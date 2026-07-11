@@ -758,7 +758,7 @@ void BeamModuleAssembler::emit_put_list_deallocate(const ArgSource &Hd,
     a64::Gp hd_reg, tl_reg;
     auto dst = init_destination(Dst, TMP3);
 
-    ASSERT(dealloc < MAX_REG * sizeof(Eterm));
+    ASSERT(dealloc < (Sint)(MAX_REG * sizeof(Eterm)));
 
     if (Hd.isYRegister() && !Tl.isYRegister() && dealloc > 0) {
         auto hd_index = Hd.as<ArgYRegister>().get();
