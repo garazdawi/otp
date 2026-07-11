@@ -84,7 +84,7 @@ env:
   ## sync with the workflow_dispatch defaults above. (BUILD_TYPE is job-level:
   ## it comes from the matrix.)
   ERTS_SUITES: ${{ inputs.erts_suites || 'num_bif_SUITE bif_SUITE bs_match_int_SUITE bs_match_misc_SUITE bs_construct_SUITE binary_SUITE map_SUITE hash_SUITE t2_smoke_SUITE t2_parity_SUITE' }}
-  STDLIB_SUITES: ${{ inputs.stdlib_suites || 'lists_SUITE binary_module_SUITE string_SUITE maps_SUITE re_SUITE base64_SUITE unicode_SUITE gb_trees_SUITE queue_SUITE proplists_SUITE' }}
+  STDLIB_SUITES: ${{ inputs.stdlib_suites || 'lists_SUITE binary_module_SUITE string_SUITE maps_SUITE re_SUITE base64_SUITE unicode_SUITE dict_SUITE queue_SUITE proplists_SUITE' }}
   INSTALL_FLOOR: ${{ inputs.install_floor || '500' }}
 
 jobs:
@@ -106,6 +106,15 @@ jobs:
     timeout-minutes: 330
     env:
       BUILD_TYPE: ${{ matrix.build_type }}
+      ## Job-wide ASan runtime default. gcc-13's default
+      ## detect_stack_use_after_return=1 installs a fake stack that breaks
+      ## the ethr stack-limit guards (ets match compile / re), boot-killing
+      ## the asan emulator with system_limit before the first test. Every
+      ## step that runs the emulator needs it off; the verify + any future
+      ## bare `cerl` step inherits this, and the test steps override it with
+      ## their own log_path variant (a later export wins). Harmless for the
+      ## debug matrix (a non-asan build ignores ASAN_OPTIONS).
+      ASAN_OPTIONS: halt_on_error=0:detect_leaks=0:abort_on_error=0:detect_stack_use_after_return=0
 
     steps:
       - name: Checkout
