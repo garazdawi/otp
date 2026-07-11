@@ -182,6 +182,11 @@ static erts_lc_lock_order_t erts_lock_order[] = {
      * (erl_process.c:erts_galloc_*). */
     {"t2_ranges",				NULL},
     {"alloc_profile",				NULL},
+    /* The T2-Full compile-queue lock (jit/t2/t2_tier.c) is a leaf: it is
+     * taken only to push/pop the compile ring and never nests another
+     * lock. The tier worker holds code_mod_permission while taking it, so
+     * it must order after that; it does not allocate while held. */
+    {"t2_tier_queue",				NULL},
     LEVEL,
     {"alcu_allocator",			        "index"},
     LEVEL,
