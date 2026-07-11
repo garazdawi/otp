@@ -119,6 +119,7 @@ MODULES= \
 	system_info_SUITE \
 	system_profile_SUITE \
 	t2_g1_SUITE \
+	t2_parity_SUITE \
 	t2_smoke_SUITE \
 	time_SUITE \
 	timer_bif_SUITE \
