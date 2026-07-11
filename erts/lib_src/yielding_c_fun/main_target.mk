@@ -41,9 +41,13 @@ YCF_OBJECTS = $(addprefix $(YCF_OBJ_DIR)/,$(notdir $(YCF_SOURCES:.c=.o)))
 # YCF is a short lived tool leaking memory deliberately. Disable all sanitizers.
 YCF_CFLAGS = $(filter-out -Wstrict-prototypes -Wdeclaration-after-statement -Wmissing-prototypes -fsanitize%,$(CFLAGS))
 YCF_LDFLAGS = $(filter-out -fsanitize%,$(LDFLAGS))
+# Compile-only hardening flags make clang's link step fail with
+# -Werror,-Wunused-command-line-argument (e.g. -mbranch-protection on
+# aarch64): keep them out of the link line.
+YCF_LINK_CFLAGS = $(filter-out -mbranch-protection% -fcf-protection%,$(YCF_CFLAGS))
 
 $(YCF_EXECUTABLE): $(YCF_OBJECTS)
-	$(V_LD) $(YCF_CFLAGS) $(YCF_LDFLAGS) $(YCF_OBJECTS) -o $@
+	$(V_LD) $(YCF_LINK_CFLAGS) $(YCF_LDFLAGS) $(YCF_OBJECTS) -o $@
 
 $(YCF_OBJ_DIR)/%.o: $(YCF_SOURCE_DIR)/%.c $(YCF_HEADERS)
 	$(V_CC) $(YCF_CFLAGS) $(YCF_INCLUDE_DIRS) -c $< -o $@
