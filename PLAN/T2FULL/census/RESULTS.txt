@@ -1,0 +1,121 @@
+T2-Full S0 addressable-share census — captured output (whole-workload denominator)
+Reproduce: erlc -o /tmp PLAN/T2FULL/census/*.erl && cerl -jit -noshell -pa /tmp -eval 'census_run:all(),halt().'
+Built from branch lukas/erts/beamjit2, aarch64 opt/jit. call_time own-time tracing.
+========================================================================
+
+
+
+===== census: json (service) =====
+total own-time: 455.1 ms across 39 profiled functions
+eligible (compiles as-is): 0.0%
+  (0.7% own-time in functions with no census join -- BIF/NIF/uncensused)
+
+-- per class: gross (any fn touching C) vs marginal (C is the SOLE blocker) --
+  call_fun         gross 53.8%   marginal 18.0%  
+  maps             gross 8.7%    marginal 0.0%   
+  bs_construction  gross 12.9%   marginal 0.0%   
+  bs_position      gross 66.1%   marginal 31.1%  
+  exceptions       gross 0.3%    marginal 0.0%   
+  recv             gross 0.0%    marginal 0.0%   
+  float_reg        gross 0.0%    marginal 0.0%   
+  general_bif      gross 24.8%   marginal 0.0%   
+  other            gross 15.1%   marginal 2.4%   
+
+-- UNION {call_fun,maps,bs_construction,bs_position} --
+  union addressable coverage: 59.0%  (rule: >=15% funds a service frontend)
+
+-- region compilation (loop-shaped, union-blocked) --
+  blockers OUT of loop (region-compilable): 14.3%
+  blockers IN loop (region cannot help):     31.6%
+
+-- top own-time functions (blocker class sets) --
+  14.3%   json:'-do_encode_map/2-lc$^0/1-0-'/2  blocked  [call_fun]
+  12.9%   json:string/7  blocked  [call_fun,bs_construction,bs_position,
+                                   general_bif]
+  12.0%   json:escape_binary/5  blocked  [bs_position,general_bif]
+  8.7%    json:do_encode/2  blocked  [call_fun,maps,other]
+  8.2%    json:continue/7  blocked  [bs_position]
+  5.7%    json:string_ascii/7  blocked  [bs_position]
+  5.6%    json:escape_binary_ascii/5  blocked  [bs_position]
+  4.8%    json:value/6  blocked  [bs_position]
+  4.6%    json:object_push/8  blocked  [call_fun,bs_position]
+  3.8%    json:list_loop/2  blocked  [call_fun]
+  3.7%    json:key/2  blocked  [call_fun,other]
+  3.4%    json:object_value/7  blocked  [bs_position]
+
+
+
+===== census: mapwl (map/term-heavy service) =====
+total own-time: 51.3 ms across 23 profiled functions
+eligible (compiles as-is): 19.7%
+  (55.3% own-time in functions with no census join -- BIF/NIF/uncensused)
+
+-- per class: gross (any fn touching C) vs marginal (C is the SOLE blocker) --
+  call_fun         gross 0.0%    marginal 0.0%   
+  maps             gross 25.0%   marginal 19.6%  
+  bs_construction  gross 0.0%    marginal 0.0%   
+  bs_position      gross 0.0%    marginal 0.0%   
+  exceptions       gross 0.0%    marginal 0.0%   
+  recv             gross 0.0%    marginal 0.0%   
+  float_reg        gross 0.0%    marginal 0.0%   
+  general_bif      gross 5.3%    marginal 0.0%   
+  other            gross 0.0%    marginal 0.0%   
+
+-- UNION {call_fun,maps,bs_construction,bs_position} --
+  union addressable coverage: 19.6%  (rule: >=15% funds a service frontend)
+
+-- region compilation (loop-shaped, union-blocked) --
+  blockers OUT of loop (region-compilable): 0.0%
+  blockers IN loop (region cannot help):     11.5%
+
+-- top own-time functions (blocker class sets) --
+  26.7%   maps:fold_1/4  (no-join)  []
+  11.5%   mapwl:decode_pairs/2  blocked  [maps]
+  8.1%    mapwl:'-route/2-fun-0-'/3  ELIGIBLE  []
+  8.1%    maps:try_next/2  (no-join)  []
+  5.3%    mapwl:decode/1  blocked  [maps,general_bif]
+  4.9%    maps:fold/3  (no-join)  []
+  4.9%    mapwl:decode_loop/2  ELIGIBLE  []
+  4.8%    mapwl:route/2  blocked  [maps]
+  4.3%    maps:merge/2  (no-join)  []
+  3.4%    mapwl:route_loop/3  ELIGIBLE  []
+  3.3%    mapwl:rec_to_map/1  blocked  [maps]
+  3.3%    mapwl:transform_loop/2  ELIGIBLE  []
+
+
+
+===== census: compiler (analysis) =====
+total own-time: 2081.5 ms across 421 profiled functions
+eligible (compiles as-is): 43.1%
+
+-- per class: gross (any fn touching C) vs marginal (C is the SOLE blocker) --
+  call_fun         gross 25.7%   marginal 18.1%  
+  maps             gross 22.1%   marginal 12.4%  
+  bs_construction  gross 0.2%    marginal 0.0%   
+  bs_position      gross 5.8%    marginal 0.0%   
+  exceptions       gross 2.9%    marginal 0.7%   
+  recv             gross 0.0%    marginal 0.0%   
+  float_reg        gross 0.0%    marginal 0.0%   
+  general_bif      gross 8.5%    marginal 1.4%   
+  other            gross 15.9%   marginal 0.9%   
+
+-- UNION {call_fun,maps,bs_construction,bs_position} --
+  union addressable coverage: 30.7%  (rule: >=15% funds a service frontend)
+
+-- region compilation (loop-shaped, union-blocked) --
+  blockers OUT of loop (region-compilable): 0.5%
+  blockers IN loop (region cannot help):     10.8%
+
+-- top own-time functions (blocker class sets) --
+  7.4%    lists:foldl_1/3  blocked  [call_fun]
+  6.6%    sets:is_element/2  blocked  [maps,general_bif]
+  6.4%    lists:mapfoldl_1/3  blocked  [call_fun]
+  6.1%    lists:foldl/3  blocked  [call_fun,other]
+  5.6%    string:trim_t/3  blocked  [bs_position,other]
+  5.2%    sets:add_element/2  blocked  [maps]
+  2.8%    ordsets:union/2  ELIGIBLE  []
+  2.8%    maps:remove/2  ELIGIBLE  []
+  2.7%    lists:reverse/1  ELIGIBLE  []
+  2.4%    lists:member/2  ELIGIBLE  []
+  2.0%    sets:union/2  blocked  [maps]
+  1.8%    lists:foldr_1/3  blocked  [call_fun]
