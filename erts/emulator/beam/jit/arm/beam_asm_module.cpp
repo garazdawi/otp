@@ -643,7 +643,7 @@ void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
 
     /* Light-BIF call sites (P1): every call_ext-family genop to a
      * non-heavy, non-loader-transformed BIF lowers to exactly one
-     * call_light_bif (the *_last/*_only variants keep it plus their
+     * call_light_bif (the _last/_only variants keep it plus their
      * own deallocate/return; the is_exit_bif tails drop those but
      * keep the call). `before` is the yield resume PC — a yield fires
      * before the BIF has run, so re-executing the whole site at T1 is
