@@ -419,10 +419,10 @@ jobs:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: pack
     if: needs.pack.outputs.build-c-code == 'true'
-    ## aarch64 is unproven -> non-blocking. Evaluates to false on x86_64
-    ## (the default), so the x86_64 path is unchanged. Delete this line to make
-    ## arm blocking once green.
-    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    ## arm64 builds proved deterministic-green (2026-07-11 rounds 3-4)
+    ## and are now blocking, same as x86_64. The arm64 *test* legs stay
+    ## continue-on-error until their environmental flake set is
+    ## annotated (gen_statem timing set, send_timeout_active).
 
     strategy:
       matrix:
@@ -557,8 +557,8 @@ jobs:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: pack
     if: needs.pack.outputs.build-c-code == 'true'
-    ## aarch64 is unproven -> non-blocking (false on x86_64, i.e. unchanged).
-    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    ## arm64 builds proved deterministic-green (2026-07-11 rounds 3-4)
+    ## and are now blocking, same as x86_64.
 
     strategy:
       matrix:
