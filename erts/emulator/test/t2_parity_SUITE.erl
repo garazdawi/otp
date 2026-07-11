@@ -73,7 +73,9 @@ kernel_parity(_Config) ->
     PA = filename:dirname(code:which(?MODULE)),
     {ok, CtrlPeer, CtrlNode} =
         peer:start(#{name => peer:random_name(?MODULE),
-                     args => ["-pa", PA]}),
+                     %% Pin plain T1: ambient ERL_AFLAGS (the CI fuzzer
+                     %% leg's +JT2enable true) must not tier the control.
+                     args => ["-pa", PA, "+JT2enable", "false"]}),
     {ok, T2Peer, T2Node} =
         peer:start(#{name => peer:random_name(?MODULE),
                      env => [{"T2_INSTALL_GATE", "0"}],

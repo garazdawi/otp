@@ -102,7 +102,11 @@ selftests(_Config) ->
     {ok, Peer, Node} =
         peer:start(#{name => peer:random_name(?MODULE),
                      env => [{"T2_SELFTEST", "1"},
-                             {"T2_EMIT_SELFTEST", "1"}]}),
+                             {"T2_EMIT_SELFTEST", "1"}],
+                     %% Pin the tier mode: ambient ERL_AFLAGS (e.g. the
+                     %% CI fuzzer leg's +JT2enable true) must not leak
+                     %% into the case's contract.
+                     args => ["+JT2enable", "false"]}),
     try
         4 = erpc:call(Node, erlang, '+', [2, 2]),
         jit = erpc:call(Node, erlang, system_info, [emu_flavor])
@@ -122,7 +126,7 @@ build_isel_sweep(_Config) ->
                      env => [{"T2_RETAIN", "1"},
                              {"T2_BUILD", "1"},
                              {"T2_ISEL", "1"}],
-                     args => ["-pa", PA]}),
+                     args => ["-pa", PA, "+JT2enable", "false"]}),
     try
         _ = erpc:call(Node, erts_debug, set_internal_state,
                       [available_internal_state, true]),
@@ -149,7 +153,8 @@ build_isel_sweep(_Config) ->
 retain_noop(_Config) ->
     {ok, Peer, Node} =
         peer:start(#{name => peer:random_name(?MODULE),
-                     env => [{"T2_RETAIN", "1"}]}),
+                     env => [{"T2_RETAIN", "1"}],
+                     args => ["+JT2enable", "false"]}),
     try
         _ = erpc:call(Node, erts_debug, set_internal_state,
                       [available_internal_state, true]),
@@ -185,7 +190,9 @@ organic_tier_up_run() ->
         peer:start(#{name => peer:random_name(?MODULE),
                      env => [{"T2_RETAIN", "1"},
                              {"T2_TIER_THRESHOLD", "50"}],
-                     args => ["-pa", PA]}),
+                     %% Counter tier-up is force-mode-disabled, so an
+                     %% inherited +JT2enable true would defeat the case.
+                     args => ["-pa", PA, "+JT2enable", "false"]}),
     try
         _ = erpc:call(Node, erts_debug, set_internal_state,
                       [available_internal_state, true]),
