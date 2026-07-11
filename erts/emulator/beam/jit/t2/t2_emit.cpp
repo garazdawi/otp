@@ -1144,14 +1144,18 @@ namespace erts_t2 {
                 emit_i_is_tuple(failL, ArgSource(src_argval(op.srcs[0])));
                 break;
             case T2LirKind::TestArity:
-                emit_i_test_arity(failL,
-                                  ArgSource(src_argval(op.srcs[0])),
-                                  ArgWord(make_arityval((UWord)op.imm)));
+                /* Matching the empty tuple {} is legal, so the arity can
+                 * be 0 here (make_arityval() asserts > 0). */
+                emit_i_test_arity(
+                        failL,
+                        ArgSource(src_argval(op.srcs[0])),
+                        ArgWord(make_arityval_unchecked((UWord)op.imm)));
                 break;
             case T2LirKind::IsTupleOfArity:
-                emit_i_is_tuple_of_arity(failL,
-                                         ArgSource(src_argval(op.srcs[0])),
-                                         ArgWord(make_arityval((UWord)op.imm)));
+                emit_i_is_tuple_of_arity(
+                        failL,
+                        ArgSource(src_argval(op.srcs[0])),
+                        ArgWord(make_arityval_unchecked((UWord)op.imm)));
                 break;
             case T2LirKind::IsTaggedTuple:
                 emit_i_is_tagged_tuple(
