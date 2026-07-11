@@ -957,8 +957,8 @@ namespace erts_t2 {
                     }
 
                     if (is_ext) {
-                        const Export *ep;
-                        ExtTarget kind;
+                        const Export *ep = nullptr;
+                        ExtTarget kind = ExtTarget::Erlang;
 
                         if (!export_target(op, &ep, &kind)) {
                             return false;
@@ -1457,8 +1457,8 @@ namespace erts_t2 {
                     lop.mfa_f = t->mfa_f;
                     lop.arity = t->index;
                     if (is_ext) {
-                        const Export *ep;
-                        ExtTarget kind;
+                        const Export *ep = nullptr;
+                        ExtTarget kind = ExtTarget::Erlang;
 
                         if (!export_target(t, &ep, &kind)) {
                             return false;

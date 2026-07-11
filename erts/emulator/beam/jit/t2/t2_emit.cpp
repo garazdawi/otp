@@ -2260,7 +2260,7 @@ namespace erts_t2 {
                 if (ci + 1 < sl.blocks.size()) {
                     const T2LirOp *g1 = scan_lone_guard(sl.blocks[ci]);
                     const T2LirOp *g2 = scan_lone_guard(sl.blocks[ci + 1]);
-                    uint32_t lo, hi;
+                    uint32_t lo = 0, hi = 0;
 
                     if (g1 != nullptr && g2 != nullptr &&
                         g1->kind == T2LirKind::CmpGe &&
