@@ -423,6 +423,10 @@ erts_bs_get_binary_2(Process *p, Uint num_bits, ErlSubBits *sb)
     return result;
 }
 
+#if !((SIZEOF__FLOAT16 == 2) && defined(FLOAT16_IS_CONVERTIBLE))
+/* Software fp16 conversion, only used when the compiler has no native
+ * _Float16 (see the erlfp16 typedef above); guarded so a native-fp16
+ * build does not trip -Werror=unused-function. */
 static ERTS_INLINE Uint16 f32_to_f16(float fp)
 {
     union {
@@ -531,6 +535,7 @@ static ERTS_INLINE float f16_to_f32(Uint16 fp)
     u.u32 = res;
     return u.f32;
 }
+#endif /* software fp16 */
 
 Eterm
 erts_bs_get_float_2(Process *p, Uint num_bits, unsigned flags, ErlSubBits *sb)
