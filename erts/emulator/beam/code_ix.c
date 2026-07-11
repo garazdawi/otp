@@ -466,10 +466,17 @@ void erts_schedule_code_barrier_cleanup(ErtsCodeBarrier *barrier,
     /* Issue instruction barriers on all normal schedulers, ensuring that they
      * won't execute old code.
      *
-     * The last scheduler to run the barrier gets the honor of scheduling a
-     * thread progress op to run the `later_function`. */
+     * The last thread to run the barrier gets the honor of scheduling a
+     * thread progress op to run the `later_function`.
+     *
+     * A caller that is not itself one of the normal schedulers (e.g. the
+     * early-boot main thread loading a module) is not skipped by the
+     * ignore-self scheduling below yet still issues the direct barrier
+     * underneath, so it decrements the count once more than a normal
+     * scheduler does. */
     erts_refc_init(&barrier->pending_schedulers,
-                   (erts_aint_t)erts_no_schedulers);
+                   (erts_aint_t)erts_no_schedulers +
+                           (erts_get_scheduler_id() > 0 ? 0 : 1));
     erts_schedule_multi_misc_aux_work(1, 1, erts_no_schedulers,
                                       issue_instruction_barrier,
                                       barrier);
