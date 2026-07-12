@@ -47,6 +47,7 @@ extern "C"
 #include "module.h"
 #include "erl_binary.h"
 #include "erl_bits.h"
+#include "erl_map.h"
 
 #include "t2_retain.h"
 #include "t2_pctab.h"
@@ -129,10 +130,14 @@ namespace erts_t2 {
         Label entry_label;
 
         /* Distinct T1 fail PCs (keyed with the CP a callee-window
-         * trampoline pushes; null for the plain shape) -> the BEAM
+         * trampoline pushes — null for the plain shape — and the
+         * callsite-deopt marker, which makes the trampoline bump the
+         * erts_t2_callsite_deopts monitoring counter) -> the BEAM
          * label number of the in-blob trampoline that branches to
          * them. */
-        std::map<std::pair<const void *, const void *>, unsigned> fail_labels;
+        std::map<std::pair<std::pair<const void *, const void *>, bool>,
+                 unsigned>
+                fail_labels;
         unsigned next_label;
 
         /* When non-null, emit_all lays down the install entry stub
@@ -519,9 +524,13 @@ namespace erts_t2 {
         }
 
         /* Get (or create) the ArgLabel number of the trampoline for a T1
-         * fail PC. rawLabels must map it so resolve_beam_label() resolves. */
-        unsigned fail_label_num(const void *t1_pc, const void *cont = nullptr) {
-            auto key = std::make_pair(t1_pc, cont);
+         * fail PC. rawLabels must map it so resolve_beam_label() resolves.
+         * `callsite` marks a callsite-class deopt (maps:fold Stage 1):
+         * its trampoline additionally bumps the monitoring counter. */
+        unsigned fail_label_num(const void *t1_pc,
+                                const void *cont = nullptr,
+                                bool callsite = false) {
+            auto key = std::make_pair(std::make_pair(t1_pc, cont), callsite);
             auto it = fail_labels.find(key);
             if (it != fail_labels.end()) {
                 return it->second;
@@ -534,6 +543,10 @@ namespace erts_t2 {
 
         void emit_fail_trampolines() {
             for (const auto &pair : fail_labels) {
+                const void *t1_pc = pair.first.first.first;
+                const void *cont = pair.first.first.second;
+                bool callsite = pair.first.second;
+
                 reg_cache.invalidate();
                 bind_veneer_target(rawLabels.at(pair.second));
                 /* Absolute branch to the T1 PC. mov_imm materializes the
@@ -542,12 +555,21 @@ namespace erts_t2 {
                  * A callee-window trampoline (P2 commit 8) first pushes
                  * the intrinsic call site's continuation — the CP the
                  * skipped callee prologue would have pushed — so the T1
-                 * helper returns to the caller's own T1 continuation. */
-                if (pair.first.second != nullptr) {
-                    mov_imm(TMP1, (Uint64)pair.first.second);
+                 * helper returns to the caller's own T1 continuation.
+                 * A callsite-class trampoline (maps:fold Stage 1) bumps
+                 * the deopt counter (racy, monitoring only) so deopt
+                 * storms are visible. */
+                if (callsite) {
+                    mov_imm(TMP2, (Uint64)&erts_t2_callsite_deopts);
+                    a.ldr(TMP3, a64::Mem(TMP2));
+                    a.add(TMP3, TMP3, imm(1));
+                    a.str(TMP3, a64::Mem(TMP2));
+                }
+                if (cont != nullptr) {
+                    mov_imm(TMP1, (Uint64)cont);
                     a.str(TMP1, a64::Mem(E, -8).pre());
                 }
-                mov_imm(TMP1, (Uint64)pair.first.first);
+                mov_imm(TMP1, (Uint64)t1_pc);
                 a.br(TMP1);
                 mark_unreachable();
             }
@@ -738,6 +760,19 @@ namespace erts_t2 {
                 a.br(TMP1);
                 mark_unreachable();
                 break;
+            case T2LirKind::IsFlatmapBounded:
+                emit_lir_is_flatmap_bounded(op);
+                break;
+            case T2LirKind::FlatmapSize:
+                emit_lir_flatmap_size(op);
+                break;
+            case T2LirKind::FlatmapKeyAt:
+            case T2LirKind::FlatmapValAt:
+                emit_lir_flatmap_at(op);
+                break;
+            case T2LirKind::FoldBudget:
+                emit_lir_fold_budget(op);
+                break;
             case T2LirKind::StartMatch:
                 emit_lir_start_match(op);
                 break;
@@ -917,8 +952,9 @@ namespace erts_t2 {
                 return;
             }
 
-            const Label &fl =
-                    rawLabels.at(fail_label_num(op.t1_pc_fail, op.t1_pc_cont));
+            const Label &fl = rawLabels.at(fail_label_num(op.t1_pc_fail,
+                                                          op.t1_pc_cont,
+                                                          op.spec_callsite));
             fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
 
             a64::Gp vals[T2_LIR_MAX_SRCS];
@@ -972,7 +1008,8 @@ namespace erts_t2 {
                     fail_override != nullptr
                             ? *fail_override
                             : rawLabels.at(fail_label_num(op.t1_pc_fail,
-                                                          op.t1_pc_cont));
+                                                          op.t1_pc_cont,
+                                                          op.spec_callsite));
             if (fail_override == nullptr) {
                 fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
             }
@@ -1567,6 +1604,129 @@ namespace erts_t2 {
         void emit_lir_charge_reds(const T2LirOp &op) {
             ASSERT(op.imm >= 1 && op.imm < 4096);
             a.sub(FCALLS, FCALLS, imm(op.imm));
+        }
+
+        /* ---- maps:fold flatmap specialization (Stage 1) --------------- */
+
+        /* The fused flatmap shape guard (design §"shape guard"; T1
+         * precedent: instr_map.cpp's simplified multi-element lookup):
+         * boxed ∧ header subtag == flatmap ∧ size <=
+         * MAP_SMALL_MAP_LIMIT. Both edges stay in the blob — the else
+         * edge is the general case (hashmap/iterator/non-map), which
+         * runs the original call. */
+        void emit_lir_is_flatmap_bounded(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const ||
+                op.succ_then == T2_LIR_NO_BLOCK ||
+                op.succ_else == T2_LIR_NO_BLOCK) {
+                fail("malformed flatmap guard");
+                return;
+            }
+
+            const Label &else_l = block_label(op.succ_else);
+            a64::Gp map = load_source(src_argval(op.srcs[0]), TMP1).reg;
+
+            comment("T2 is_flatmap_bounded");
+            emit_is_boxed(resolve_label(else_l, disp1MB), map);
+            emit_untag_ptr(TMP1, map);
+            ERTS_CT_ASSERT_FIELD_PAIR(flatmap_t, thing_word, size);
+            a.ldp(TMP2, TMP3, a64::Mem(TMP1, offsetof(flatmap_t, thing_word)));
+            a.and_(TMP2, TMP2, imm(_HEADER_MAP_SUBTAG_MASK));
+            a.cmp(TMP2, imm(HAMT_SUBTAG_HEAD_FLATMAP));
+            a.b_ne(resolve_label(else_l, disp1MB));
+            a.cmp(TMP3, imm(MAP_SMALL_MAP_LIMIT));
+            a.b_hi(resolve_label(else_l, disp1MB));
+            emit_goto(op.succ_then);
+        }
+
+        /* The flatmap's raw size word, tagged as a small. Never fails
+         * (dominated by the shape guard). */
+        void emit_lir_flatmap_size(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const || op.dst.is_none()) {
+                fail("malformed flatmap_size");
+                return;
+            }
+
+            a64::Gp map = load_source(src_argval(op.srcs[0]), TMP1).reg;
+
+            comment("T2 flatmap_size");
+            /* emit_untag_ptr, not emit_boxed_val's folded -2: a literal
+             * map term carries the literal tag bit as well. */
+            emit_untag_ptr(TMP1, map);
+            a.ldr(TMP2, a64::Mem(TMP1, offsetof(flatmap_t, size)));
+            a.lsl(TMP2, TMP2, imm(_TAG_IMMED1_SIZE));
+            a.orr(TMP2, TMP2, imm(_TAG_IMMED1_SMALL));
+            mov_arg(loc_argval(op.dst), TMP2);
+        }
+
+        /* K_i / V_i of a flatmap, indexed by a TAGGED small (provably
+         * < size by the loop bound, so no checks). Keys live in the
+         * separate keys tuple (skip its arity word); values are inline
+         * after the flatmap header. */
+        void emit_lir_flatmap_at(const T2LirOp &op) {
+            bool is_key = op.kind == T2LirKind::FlatmapKeyAt;
+
+            if (op.num_srcs != 2 || op.srcs[0].is_const ||
+                op.srcs[1].is_const || op.dst.is_none()) {
+                fail("malformed flatmap access");
+                return;
+            }
+
+            a64::Gp map = load_source(src_argval(op.srcs[0]), TMP1).reg;
+            a64::Gp idx = load_source(src_argval(op.srcs[1]), TMP2).reg;
+
+            comment(is_key ? "T2 flatmap_key_at" : "T2 flatmap_val_at");
+            a.lsr(TMP3, idx, imm(_TAG_IMMED1_SIZE));
+            /* emit_untag_ptr throughout (a literal map / literal keys
+             * tuple carries the literal tag bit too). */
+            emit_untag_ptr(TMP1, map);
+            if (is_key) {
+                /* keys tuple term -> untagged ptr -> element 1 + i. */
+                a.ldr(TMP1, a64::Mem(TMP1, offsetof(flatmap_t, keys)));
+                emit_untag_ptr(TMP1, TMP1);
+                a.add(TMP1, TMP1, imm(sizeof(Eterm)));
+            } else {
+                /* Values are inline right after the flatmap_t header. */
+                a.add(TMP1, TMP1, imm(sizeof(flatmap_t)));
+            }
+            mov_arg(loc_argval(op.dst), a64::Mem(TMP1, TMP3, a64::lsl(3)));
+        }
+
+        /* The whole-fold reduction batch: charge = imm2 + imm *
+         * untag(n). When FCALLS does not cover it, side-exit UNCHARGED
+         * to the erased call's own T1 PC (the callsite-class
+         * trampoline, which also bumps the deopt counter) — T1 then
+         * re-executes the fold, charging and yielding exactly as it
+         * always does. Otherwise pay the batch and run the fast loop,
+         * which cannot yield (<= MAP_SMALL_MAP_LIMIT iterations). */
+        void emit_lir_fold_budget(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const ||
+                op.t1_pc_fail == nullptr || op.imm <= 0 || op.imm2 <= 0 ||
+                op.imm2 >= 4096) {
+                fail("malformed fold budget");
+                return;
+            }
+
+            const Label &fl =
+                    rawLabels.at(fail_label_num(op.t1_pc_fail, nullptr, true));
+
+            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+            a64::Gp n = load_source(src_argval(op.srcs[0]), TMP1).reg;
+
+            comment("T2 fold budget (%ld + %ld*n)",
+                    (long)op.imm2,
+                    (long)op.imm);
+            a.lsr(TMP2, n, imm(_TAG_IMMED1_SIZE));
+            mov_imm(TMP3, (Uint64)op.imm);
+            a.mul(TMP2, TMP2, TMP3);
+            a.add(TMP2, TMP2, imm(op.imm2));
+            /* FCALLS is the 32-bit w22 (beam_asm.hpp); the operand
+             * widths must match or asmjit rejects the encoding. The
+             * charge fits: n <= MAP_SMALL_MAP_LIMIT by the dominating
+             * shape guard, so imm2 + imm*n is at most a few hundred. */
+            a.cmp(FCALLS, TMP2.w());
+            a.b_le(resolve_label(fl, disp1MB));
+            a.sub(FCALLS, FCALLS, TMP2.w());
         }
 
         /* Terminator: demote the invocation to a T1 CALLEE body (P2

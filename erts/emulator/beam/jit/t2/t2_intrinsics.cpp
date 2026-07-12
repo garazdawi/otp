@@ -142,6 +142,14 @@ namespace erts_t2 {
             return off;
         }
 
+        /* The maps:fold flatmap specialization (Stage 1;
+         * PLAN/T2FULL/census/mapsfold_design.md) has its own lever so
+         * the lists intrinsics stay unaffected by A/B runs. */
+        bool maps_intrin_disabled() {
+            static const bool off = getenv("T2_NO_MAPS_INTRIN") != nullptr;
+            return off;
+        }
+
         bool intrin_trace() {
             static const bool on = getenv("T2_INTRIN_TRACE") != nullptr;
             return on;
@@ -198,6 +206,20 @@ namespace erts_t2 {
             op->prev = op->next = nullptr;
         }
 
+        /* Append a detached op (unlinked, or a former terminator) to
+         * the tail of b's body list. */
+        void append_op(T2BasicBlock *b, T2Op *op) {
+            op->block = b;
+            op->prev = b->ops_tail;
+            op->next = nullptr;
+            if (b->ops_tail != nullptr) {
+                b->ops_tail->next = op;
+            } else {
+                b->ops_head = op;
+            }
+            b->ops_tail = op;
+        }
+
         template<typename F>
         void for_each_op(T2Function &fn, F f) {
             for (T2BasicBlock *b : fn.blocks) {
@@ -214,8 +236,17 @@ namespace erts_t2 {
             }
         }
 
-        void replace_value(T2Function &fn, T2Value *from, T2Value *to) {
+        /* Replace every use of `from` (operands + sync maps) with `to`.
+         * `except` skips one op — the result phi whose own input must
+         * keep referencing the original value. */
+        void replace_value(T2Function &fn,
+                           T2Value *from,
+                           T2Value *to,
+                           const T2Op *except = nullptr) {
             for_each_op(fn, [&](T2Op *op) {
+                if (op == except) {
+                    return;
+                }
                 for (uint16_t i = 0; i < op->num_operands; i++) {
                     if (op->operands[i] == from) {
                         op->operands[i] = to;
@@ -909,10 +940,18 @@ namespace erts_t2 {
              * validator re-proves all of it). Returns false when some
              * operand cannot be proven or guarded — the site is then
              * abandoned (caller discards the expansion attempt). */
+            /* spec_flags/spec_imm/spec_sync select the deopt CLASS of
+             * the converted ops: the lists intrinsics pass
+             * T2_OP_WINDOW_CALLEE with the helper L_f (re-execute the
+             * iteration as a fresh helper call, no sync map); the
+             * maps:fold expansion passes T2_OP_SPEC_CALLSITE with the
+             * call-boundary sync map (re-execute the erased call). */
             bool convert_arith(FunBody &fb,
                                T2Value *acc_phi, /* null for arity-1 funs */
                                bool *need_acc_entry_guard,
-                               const void *helper_lf,
+                               uint16_t spec_flags,
+                               Sint64 spec_imm,
+                               T2SyncMap *spec_sync,
                                uint32_t call_beam_idx) {
                 std::unordered_set<const T2Value *> proven;
 
@@ -987,8 +1026,9 @@ namespace erts_t2 {
                             g->operand_regs[j] = hit->second;
                             proven.insert(guards[j]);
                         }
-                        g->flags = T2_OP_INLINED | T2_OP_WINDOW_CALLEE;
-                        g->imm_int = (Sint64)(UWord)helper_lf;
+                        g->flags = T2_OP_INLINED | spec_flags;
+                        g->imm_int = spec_imm;
+                        g->sync = spec_sync;
                         g->beam_idx = call_beam_idx;
 
                         /* new_op appended g at the block tail; move it
@@ -998,9 +1038,9 @@ namespace erts_t2 {
 
                     op->kind = op->kind == T2OpKind::Add ? T2OpKind::AddSmall
                                                          : T2OpKind::SubSmall;
-                    op->sync = nullptr;
-                    op->flags |= T2_OP_INLINED | T2_OP_WINDOW_CALLEE;
-                    op->imm_int = (Sint64)(UWord)helper_lf;
+                    op->sync = spec_sync;
+                    op->flags |= T2_OP_INLINED | spec_flags;
+                    op->imm_int = spec_imm;
                     op->beam_idx = call_beam_idx;
                     proven.insert(op->result);
                 }
@@ -1120,11 +1160,12 @@ namespace erts_t2 {
             void trace_reject(const T2Op *call, const char *why) {
                 if (intrin_trace()) {
                     erts_fprintf(stderr,
-                                 "t2_intrinsics: %T:%T/%u lists:%T/%u "
+                                 "t2_intrinsics: %T:%T/%u callee %T:%T/%u "
                                  "rejected: %s\n",
                                  fn.module,
                                  fn.function,
                                  (unsigned)fn.arity,
+                                 call->mfa_m,
                                  call->mfa_f,
                                  (unsigned)call->index,
                                  why);
@@ -1422,7 +1463,9 @@ namespace erts_t2 {
                                    acc_phi_op != nullptr ? acc_phi_op->result
                                                          : nullptr,
                                    &need_acc_guard,
-                                   ce.helper_lf,
+                                   T2_OP_WINDOW_CALLEE,
+                                   (Sint64)(UWord)ce.helper_lf,
+                                   nullptr,
                                    bi)) {
                     if (err != nullptr) {
                         *err = "intrinsics: fun arithmetic not "
@@ -1785,6 +1828,580 @@ namespace erts_t2 {
                 return true;
             }
 
+            /* ---- maps:fold flatmap specialization (Stage 1) ----------- *
+             *
+             * Expansion template (design §2.4). The slow edge is the
+             * ORIGINAL call moved to b_slow — non-flatmap is the
+             * general case, not an error — and every fast-path deopt
+             * re-executes that call via its own T1 PC
+             * (ERTS_T2_PC_CALL, class T2_OP_SPEC_CALLSITE) from the
+             * call-boundary sync map, which the fast path provably
+             * leaves intact (effect-free, alloc-free, no write below
+             * cmap->x_live nor to any Y slot). The fun's error edges
+             * jump to b_slow directly: re-running the whole fold on T1
+             * raises the byte-identical exception (the fast path had
+             * no observable effects).
+             *
+             *   b_pre:  ...orig ops, call removed
+             *           IsFlatmapBounded(Map) -> b_fast | b_slow
+             *   b_slow: <the original CallExt/TailCallExt, orig cmap>
+             *           [jump b_join   (non-tail only)]
+             *   b_fast: n = FlatmapSize(Map)          @nx (invariant)
+             *           FoldBudget(n)  [uncharged deopt -> CALL PC]
+             *           [SpeculateType(A0) if induction applies]
+             *           acc0 = Copy A0                @x3
+             *           i0   = 0                      @x4
+             *           jump b_head
+             *   b_head: acc = phi(acc0, acc')         @x3
+             *           i   = phi(i0, i')             @x4
+             *           CmpLt(i, n) -> b_body | b_exit
+             *   b_body: k = FlatmapKeyAt(Map, i)      @x5
+             *           v = FlatmapValAt(Map, i)      @x6
+             *           <spliced fun body, args (k, v, acc), fresh
+             *            homes from x7; converted arith + guards are
+             *            callsite-class; error edges -> b_slow>
+             *   b_ret:  acc' = ret (committed @x3)
+             *           i'   = AddSmall(i, 1)         @x4
+             *           jump b_head
+             *   b_exit: res_f = Copy acc              @res_home
+             *           Return res_f       (tail)  |  jump b_join
+             *   b_join: res = phi(res_s, res_f)       @res_home
+             *           ...orig post-call ops         (non-tail only)
+             *
+             * Reductions: T1's whole fold->iterator->next chain costs
+             * a + b*n (measured; see the constants below), charged as
+             * ONE FoldBudget batch — legal because the fast loop is
+             * bounded by MAP_SMALL_MAP_LIMIT and cannot yield, exactly
+             * like T1's map_next materializing all n elements in one
+             * non-yielding BIF. A deopt AFTER the budget was paid
+             * re-charges on the T1 side (accepted, documented
+             * deviation — reduction accounting only, term results are
+             * unaffected; the fast path re-executes from the original
+             * arguments, so the partial fold is simply discarded). */
+
+            /* T1 charge model for maps:fold/3 over a flatmap of size n
+             * (measured via process_info(reductions) deltas around a
+             * tail-wrapped call = 10 + 5n; asserted by the
+             * reduction-identity test). Decomposed: the wrapper's own
+             * entry charge (1) — which the T2 entry stub also pays —
+             * leaves the erased call's CHAIN cost at 9 + 5n (callee
+             * entry through the chain's final return). A body site's
+             * budget is exactly that chain cost; a tail site charges
+             * one less, because the blob's own dispatch_return (1)
+             * replaces the chain's final return. Verified empirically
+             * for both shapes (mapsfold_cal): T1 tail 10+5n / body
+             * 11+5n == T2 with these constants. */
+            static constexpr Sint64 T2_MAPS_FOLD_R_CHAIN_CONST = 9;
+            static constexpr Sint64 T2_MAPS_FOLD_R_PER_ELEM = 5;
+
+            bool expand_maps_fold_site(T2Op *call) {
+                bool is_tail = call->kind == T2OpKind::TailCallExt;
+
+                if (call->sync == nullptr || call->sync->x_live != 3) {
+                    trace_reject(call, "no call-shaped sync map");
+                    return true; /* leave the site alone */
+                }
+
+                /* The fun argument: an SSA-constant, env-free MakeFun
+                 * of this module (same admission as the lists
+                 * intrinsics). */
+                const T2Value *froot = resolve_copies(call->operands[0]);
+                const T2Op *mf = froot->def;
+
+                if (mf == nullptr || mf->kind != T2OpKind::MakeFun ||
+                    mf->live != 0 /* num_free */ || mf->imm_int < 0) {
+                    trace_reject(call,
+                                 "fun arg is not an env-free "
+                                 "SSA-constant MakeFun");
+                    return true;
+                }
+                if (ret->lambdas == NULL ||
+                    mf->index >= (uint32_t)ret->lambda_count) {
+                    trace_reject(call, "lambda out of range");
+                    return true;
+                }
+                {
+                    const ErtsT2Lambda *lam = &ret->lambdas[mf->index];
+
+                    if ((uint32_t)(lam->arity - lam->num_free) != 3) {
+                        trace_reject(call, "fun arity mismatch");
+                        return true;
+                    }
+                }
+                {
+                    uint32_t idx = (uint32_t)mf->imm_int;
+
+                    if (idx >= (uint32_t)ret->function_count ||
+                        (ret->eligible_bitmap[idx / 32] &
+                         (((Uint32)1) << (idx % 32))) == 0) {
+                        trace_reject(call, "fun impl not eligible");
+                        return true;
+                    }
+                }
+
+                /* Cross-tier addresses. Every deopt branches to the
+                 * site's own T1 CALL PC; a non-tail slow edge also
+                 * needs the CONT (isel requires it to lower the
+                 * retained CallExt). Tail sites record CALL only. */
+                if (erts_t2_pc_lookup_kind(ret,
+                                           fn.fn_index,
+                                           call->beam_idx,
+                                           ERTS_T2_PC_CALL) == 0) {
+                    trace_reject(call, "no CALL pctab entry");
+                    return true;
+                }
+                if (!is_tail && erts_t2_pc_lookup_kind(ret,
+                                                       fn.fn_index,
+                                                       call->beam_idx,
+                                                       ERTS_T2_PC_CONT) == 0) {
+                    trace_reject(call, "no CONT pctab entry");
+                    return true;
+                }
+
+                /* A fused call_ext_last decodes as Deallocate +
+                 * TailCallExt, but its T1 CALL PC names the FUSED
+                 * instruction (which deallocates again) — deopting
+                 * there after our Deallocate ran would pop the frame
+                 * twice. Only the frameless call_ext_only shape is
+                 * admitted for tail sites. */
+                if (is_tail) {
+                    const T2Op *last = call->block->ops_tail;
+
+                    if (call->sync->frame_size != T2_NO_FRAME ||
+                        (last != nullptr &&
+                         last->kind == T2OpKind::Deallocate &&
+                         last->beam_idx == call->beam_idx)) {
+                        trace_reject(call,
+                                     "call_ext_last shape (fused "
+                                     "dealloc) unsupported");
+                        return true;
+                    }
+                }
+
+                /* Pre-admit the fun body BEFORE any rewrite. */
+                {
+                    uint32_t impl_idx = (uint32_t)mf->imm_int;
+                    bool admitted = false;
+                    std::string berr;
+
+                    if (!t2_build_selected(
+                                ret,
+                                &impl_idx,
+                                1,
+                                [&](T2Function &callee) {
+                                    admitted = admit_fun(callee, 3, false);
+                                },
+                                &berr)) {
+                        return true; /* decode trouble: leave alone */
+                    }
+                    if (!admitted) {
+                        trace_reject(call, "fun body not admissible");
+                        return true;
+                    }
+                }
+
+                uint32_t bi = call->beam_idx;
+                T2SyncMap *cmap = call->sync;
+                T2Value *a0 = cmap->x[1];
+                T2Value *mapv = cmap->x[2];
+
+                /* ---- CFG surgery -------------------------------------- */
+
+                T2BasicBlock *b_pre = call->block;
+                T2BasicBlock *b_join = nullptr;
+
+                if (!is_tail) {
+                    b_join = fn.new_block();
+
+                    /* Split: everything after the call moves to b_join,
+                     * the original terminator too (mirrors the lists
+                     * expansion's split). */
+                    T2Op *after = call->next;
+
+                    if (after != nullptr) {
+                        after->prev = nullptr;
+                        b_join->ops_head = after;
+                        b_join->ops_tail = b_pre->ops_tail;
+                        for (T2Op *q = after; q != nullptr; q = q->next) {
+                            q->block = b_join;
+                        }
+                        call->next = nullptr;
+                        b_pre->ops_tail = call;
+                    }
+                    b_join->terminator = b_pre->terminator;
+                    if (b_join->terminator != nullptr) {
+                        b_join->terminator->block = b_join;
+                    }
+                    b_pre->terminator = nullptr;
+
+                    for (T2BasicBlock *b : fn.blocks) {
+                        for (T2Op *phi = b->phis_head; phi != nullptr;
+                             phi = phi->next) {
+                            if (phi->phi_blocks == nullptr) {
+                                continue;
+                            }
+                            for (uint16_t i = 0; i < phi->num_operands; i++) {
+                                if (phi->phi_blocks[i] == b_pre) {
+                                    phi->phi_blocks[i] = b_join;
+                                }
+                            }
+                        }
+                    }
+
+                    unlink_op(b_pre, call);
+                } else {
+                    /* The call IS the terminator; no successors, no
+                     * post-call ops. */
+                    ASSERT(b_pre->terminator == call);
+                    b_pre->terminator = nullptr;
+                }
+
+                T2BasicBlock *b_slow = fn.new_block();
+                T2BasicBlock *b_fast = fn.new_block();
+                T2BasicBlock *b_head = fn.new_block();
+                T2BasicBlock *b_body = fn.new_block();
+                T2BasicBlock *b_exit = fn.new_block();
+
+                /* The original call, verbatim, on the slow edge. */
+                if (is_tail) {
+                    call->block = b_slow;
+                    b_slow->terminator = call;
+                } else {
+                    append_op(b_slow, call);
+                    fn.emit_jump(b_slow, b_join);
+                    b_slow->terminator->beam_idx = bi;
+                }
+
+                /* b_pre: the shape guard dispatching fast | slow. */
+                {
+                    T2Op *g = fn.new_op(b_pre,
+                                        T2OpKind::IsFlatmapBounded,
+                                        T2Type::of(BEAM_TYPE_ATOM));
+
+                    fn.set_operands(g, {mapv});
+                    g->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                    g->operand_regs[0] = t2_xreg(2);
+                    g->beam_idx = bi;
+                    fn.emit_branch(b_pre, g->result, b_fast, b_slow);
+                    b_pre->terminator->beam_idx = bi;
+                }
+
+                /* b_fast: the invariant size + the whole-fold budget.
+                 * (The loop-entry copies land below, after the splice
+                 * fixes the free-X frontier.) */
+                T2Op *size_op;
+                T2Op *budget;
+
+                {
+                    size_op = fn.new_op(b_fast,
+                                        T2OpKind::FlatmapSize,
+                                        T2Type::any());
+                    fn.set_operands(size_op, {mapv});
+                    size_op->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                    size_op->operand_regs[0] = t2_xreg(2);
+                    size_op->beam_idx = bi;
+
+                    budget = fn.new_op(b_fast,
+                                       T2OpKind::FoldBudget,
+                                       T2Type::none());
+                    fn.set_operands(budget, {size_op->result});
+                    budget->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                    budget->sync = cmap;
+                    budget->flags = T2_OP_SPEC_CALLSITE;
+                    budget->imm_int =
+                            T2_MAPS_FOLD_R_CHAIN_CONST - (is_tail ? 1 : 0);
+                    budget->index = (uint32_t)T2_MAPS_FOLD_R_PER_ELEM;
+                    budget->beam_idx = bi;
+                }
+
+                /* ---- loop phis (values needed by the fun splice) ------ */
+
+                T2Op *acc_phi = fn.new_phi(b_head, T2Type::any());
+                T2Op *i_phi = fn.new_phi(b_head, T2Type::any());
+
+                acc_phi->dst_reg = t2_xreg(3);
+                acc_phi->beam_idx = bi;
+                i_phi->dst_reg = t2_xreg(4);
+                i_phi->beam_idx = bi;
+
+                /* b_head: bound check (i and n are always smalls; the
+                 * generic emit_is_lt takes its small-small fast path). */
+                T2Op *cmp;
+
+                {
+                    cmp = fn.new_op(b_head,
+                                    T2OpKind::CmpLt,
+                                    T2Type::of(BEAM_TYPE_ATOM));
+                    fn.set_operands(cmp, {i_phi->result, size_op->result});
+                    cmp->operand_regs = fn.arena.alloc_array<int32_t>(2);
+                    cmp->operand_regs[0] = t2_xreg(4);
+                    cmp->beam_idx = bi;
+                    fn.emit_branch(b_head, cmp->result, b_body, b_exit);
+                    b_head->terminator->beam_idx = bi;
+                }
+
+                /* b_body: element loads + the spliced fun body. */
+                T2Value *kv;
+                T2Value *vv;
+
+                {
+                    T2Op *k_op = fn.new_op(b_body,
+                                           T2OpKind::FlatmapKeyAt,
+                                           T2Type::any());
+
+                    fn.set_operands(k_op, {mapv, i_phi->result});
+                    k_op->operand_regs = fn.arena.alloc_array<int32_t>(2);
+                    k_op->operand_regs[0] = t2_xreg(2);
+                    k_op->operand_regs[1] = t2_xreg(4);
+                    k_op->dst_reg = t2_xreg(5);
+                    k_op->beam_idx = bi;
+                    kv = k_op->result;
+
+                    T2Op *v_op = fn.new_op(b_body,
+                                           T2OpKind::FlatmapValAt,
+                                           T2Type::any());
+
+                    fn.set_operands(v_op, {mapv, i_phi->result});
+                    v_op->operand_regs = fn.arena.alloc_array<int32_t>(2);
+                    v_op->operand_regs[0] = t2_xreg(2);
+                    v_op->operand_regs[1] = t2_xreg(4);
+                    v_op->dst_reg = t2_xreg(6);
+                    v_op->beam_idx = bi;
+                    vv = v_op->result;
+                }
+
+                FunBody fb;
+                bool spliced = false;
+                bool splice_hard_err = false;
+
+                {
+                    std::vector<T2Value *> args = {kv, vv, acc_phi->result};
+                    std::vector<int32_t> arg_homes = {t2_xreg(5),
+                                                      t2_xreg(6),
+                                                      t2_xreg(3)};
+                    uint32_t impl_idx = (uint32_t)mf->imm_int;
+                    std::string berr;
+
+                    bool built = t2_build_selected(
+                            ret,
+                            &impl_idx,
+                            1,
+                            [&](T2Function &callee) {
+                                FunBody tmp;
+
+                                if (splice_fun(callee,
+                                               args,
+                                               arg_homes,
+                                               b_slow, /* error edges */
+                                               7,
+                                               &tmp)) {
+                                    fb = std::move(tmp);
+                                    spliced = true;
+                                } else if (err != nullptr && !err->empty()) {
+                                    splice_hard_err = true;
+                                }
+                            },
+                            &berr);
+
+                    if (!built || splice_hard_err) {
+                        if (err != nullptr && err->empty()) {
+                            *err = "maps intrinsic: fun body build "
+                                   "failed: " +
+                                   berr;
+                        }
+                        return false;
+                    }
+                    if (!spliced) {
+                        if (err != nullptr) {
+                            *err = "maps intrinsic: fun body not "
+                                   "admissible (site abandoned "
+                                   "post-split)";
+                        }
+                        return false;
+                    }
+                }
+
+                /* Speculation conversion: callsite class — every guard
+                 * and flag-checked arith deopts by re-executing the
+                 * erased call from cmap. */
+                bool need_acc_guard = false;
+
+                if (!convert_arith(fb,
+                                   acc_phi->result,
+                                   &need_acc_guard,
+                                   T2_OP_SPEC_CALLSITE,
+                                   0,
+                                   cmap,
+                                   bi)) {
+                    if (err != nullptr) {
+                        *err = "maps intrinsic: fun arithmetic not "
+                               "convertible (site abandoned post-split)";
+                    }
+                    return false;
+                }
+
+                fn.emit_jump(b_body, fb.entry);
+                b_body->terminator->beam_idx = bi;
+
+                /* The invariant size's home: the first X slot past the
+                 * spliced body's frontier — written once in b_fast,
+                 * never touched by the loop. */
+                int32_t nx = t2_xreg(fb.next_x);
+
+                size_op->dst_reg = nx;
+                budget->operand_regs[0] = nx;
+                cmp->operand_regs[1] = nx;
+
+                /* b_fast tail: optional accumulator entry guard, then
+                 * the loop-entry copies. */
+                if (need_acc_guard) {
+                    T2Op *g = fn.new_op(b_fast,
+                                        T2OpKind::SpeculateType,
+                                        T2Type::none());
+
+                    fn.set_operands(g, {a0});
+                    g->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                    g->operand_regs[0] = t2_xreg(1);
+                    g->flags = T2_OP_SPEC_CALLSITE;
+                    g->sync = cmap;
+                    g->beam_idx = bi;
+                }
+
+                T2Value *acc_in =
+                        new_copy(b_fast, a0, t2_xreg(1), t2_xreg(3), bi);
+                T2Value *i0 = fn.emit_const_int(b_fast, 0);
+
+                i0->def->dst_reg = t2_xreg(4);
+                i0->def->beam_idx = bi;
+
+                T2Value *one = fn.emit_const_int(b_fast, 1);
+
+                one->def->beam_idx = bi;
+
+                fn.emit_jump(b_fast, b_head);
+                b_fast->terminator->beam_idx = bi;
+
+                /* b_ret (= fb.ret_join): commit acc', bump i', loop.
+                 * The accumulator commits straight into its loop home
+                 * when the fun's single return value is a flag-checked
+                 * arith result ending the block that feeds ret_join
+                 * (same direct-commit rule as the lists expansion);
+                 * otherwise one Copy. */
+                T2Value *acc_next;
+
+                {
+                    T2Op *rd = fb.ret_phi->def;
+
+                    if (rd != nullptr &&
+                        (rd->kind == T2OpKind::AddSmall ||
+                         rd->kind == T2OpKind::SubSmall) &&
+                        rd->block->ops_tail == rd &&
+                        rd->block->terminator != nullptr &&
+                        rd->block->terminator->kind == T2OpKind::Jump &&
+                        rd->block->terminator->succ_then == fb.ret_join) {
+                        rd->dst_reg = t2_xreg(3);
+                        acc_next = fb.ret_phi;
+                    } else {
+                        auto hit = fb.home.find(fb.ret_phi);
+                        int32_t src_home = hit != fb.home.end()
+                                                   ? hit->second
+                                                   : fb.ret_phi->def->dst_reg;
+
+                        acc_next = new_copy(fb.ret_join,
+                                            fb.ret_phi,
+                                            src_home,
+                                            t2_xreg(3),
+                                            bi);
+                    }
+                }
+
+                T2Value *i_next;
+
+                {
+                    T2Op *inc = fn.new_op(fb.ret_join,
+                                          T2OpKind::AddSmall,
+                                          T2Type::any());
+
+                    fn.set_operands(inc, {i_phi->result, one});
+                    inc->operand_regs = fn.arena.alloc_array<int32_t>(2);
+                    inc->operand_regs[0] = t2_xreg(4);
+                    inc->operand_regs[1] = T2_REG_NONE;
+                    inc->dst_reg = t2_xreg(4);
+                    inc->flags = T2_OP_SPEC_CALLSITE;
+                    inc->sync = cmap;
+                    inc->beam_idx = bi;
+                    i_next = inc->result;
+                }
+                fn.emit_jump(fb.ret_join, b_head);
+                fb.ret_join->terminator->beam_idx = bi;
+
+                fn.set_phi_inputs(acc_phi,
+                                  {acc_in, acc_next},
+                                  {b_fast, fb.ret_join});
+                fn.set_phi_inputs(i_phi, {i0, i_next}, {b_fast, fb.ret_join});
+
+                /* b_exit: the fast result, joined with the slow edge. */
+                int32_t res_home = !is_tail && call->dst_reg != T2_REG_NONE
+                                           ? call->dst_reg
+                                           : t2_xreg(0);
+                T2Value *res_f = new_copy(b_exit,
+                                          acc_phi->result,
+                                          t2_xreg(3),
+                                          res_home,
+                                          bi);
+
+                if (is_tail) {
+                    T2Op *ret_op =
+                            fn.new_op(b_exit, T2OpKind::Return, T2Type::none());
+
+                    fn.set_operands(ret_op, {res_f});
+                    ret_op->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                    ret_op->operand_regs[0] = res_home;
+                    ret_op->sync = make_map({res_f}, cmap);
+                    ret_op->beam_idx = bi;
+                } else {
+                    fn.emit_jump(b_exit, b_join);
+                    b_exit->terminator->beam_idx = bi;
+
+                    T2Op *res = fn.new_phi(b_join, T2Type::any());
+
+                    res->dst_reg = res_home;
+                    res->beam_idx = bi;
+                    fn.set_phi_inputs(res,
+                                      {call->result, res_f},
+                                      {b_slow, b_exit});
+                    replace_value(fn, call->result, res->result, res);
+                }
+
+                /* Only the own-module dep (the inlined fun body): the
+                 * slow edge dispatches through the maps export at
+                 * runtime, so nothing of the maps module is baked in. */
+                {
+                    bool have = false;
+
+                    for (const void *d : fn.dep_hdrs) {
+                        have |= d == own_code_hdr;
+                    }
+                    if (!have) {
+                        fn.dep_hdrs.push_back(own_code_hdr);
+                    }
+                }
+
+                if (intrin_trace()) {
+                    erts_fprintf(stderr,
+                                 "t2_intrinsics: %T:%T/%u expanded "
+                                 "maps:fold/3 (%s site, beam_idx %u)\n",
+                                 fn.module,
+                                 fn.function,
+                                 (unsigned)fn.arity,
+                                 is_tail ? "tail" : "body",
+                                 (unsigned)bi);
+                }
+
+                changed = true;
+                return true;
+            }
+
             bool run() {
                 if (fn.blocks.empty() || !fn.sync_complete || ret == nullptr) {
                     return true;
@@ -1796,12 +2413,23 @@ namespace erts_t2 {
                     const IntrinsicKind *k;
                 };
                 std::vector<Site> sites;
+                std::vector<T2Op *> maps_sites;
                 Eterm am_lists_mod = ERTS_MAKE_AM("lists");
+                Eterm am_maps_mod = ERTS_MAKE_AM("maps");
+                Eterm am_fold_fn = ERTS_MAKE_AM("fold");
 
                 for (T2BasicBlock *b : fn.blocks) {
                     for (T2Op *op = b->ops_head; op != nullptr; op = op->next) {
-                        if (op->kind != T2OpKind::CallExt || op->flags != 0 ||
-                            op->mfa_m != am_lists_mod) {
+                        if (op->kind != T2OpKind::CallExt || op->flags != 0) {
+                            continue;
+                        }
+                        if (op->mfa_m == am_maps_mod &&
+                            op->mfa_f == am_fold_fn && op->index == 3 &&
+                            !maps_intrin_disabled()) {
+                            maps_sites.push_back(op);
+                            continue;
+                        }
+                        if (op->mfa_m != am_lists_mod) {
                             continue;
                         }
                         for (const IntrinsicKind &k : t2_intrinsic_kinds) {
@@ -1816,20 +2444,38 @@ namespace erts_t2 {
                             }
                         }
                     }
+
+                    /* maps:fold tail sites (call_ext_only): the call is
+                     * the block terminator. */
+                    T2Op *t = b->terminator;
+
+                    if (t != nullptr && t->kind == T2OpKind::TailCallExt &&
+                        t->flags == 0 && t->mfa_m == am_maps_mod &&
+                        t->mfa_f == am_fold_fn && t->index == 3 &&
+                        !maps_intrin_disabled()) {
+                        maps_sites.push_back(t);
+                    }
                 }
 
                 if (intrin_trace()) {
                     erts_fprintf(stderr,
-                                 "t2_intrinsics: %T:%T/%u scan: %u "
-                                 "site(s)\n",
+                                 "t2_intrinsics: %T:%T/%u scan: %u lists "
+                                 "site(s), %u maps site(s)\n",
                                  fn.module,
                                  fn.function,
                                  (unsigned)fn.arity,
-                                 (unsigned)sites.size());
+                                 (unsigned)sites.size(),
+                                 (unsigned)maps_sites.size());
                 }
 
                 for (Site &s : sites) {
                     if (!expand_site(s.call, *s.k)) {
+                        return false;
+                    }
+                }
+
+                for (T2Op *site : maps_sites) {
+                    if (!expand_maps_fold_site(site)) {
                         return false;
                     }
                 }
@@ -1920,7 +2566,8 @@ namespace erts_t2 {
 
                 if (op->kind == T2OpKind::SpeculateType &&
                     (op->flags & T2_OP_SPEC_BOUNDARY) == 0 &&
-                    (op->flags & T2_OP_WINDOW_CALLEE) == 0) {
+                    (op->flags & T2_OP_WINDOW_CALLEE) == 0 &&
+                    (op->flags & T2_OP_SPEC_CALLSITE) == 0) {
                     bool invariant = true;
 
                     for (uint16_t i = 0; i < op->num_operands; i++) {

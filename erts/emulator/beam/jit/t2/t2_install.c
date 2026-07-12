@@ -854,11 +854,12 @@ Eterm erts_t2_debug_in_blob(Process *p, Eterm pid) {
 }
 
 Eterm erts_t2_debug_yield_stats(Process *p) {
-    Eterm *hp = HAlloc(p, 3);
+    Eterm *hp = HAlloc(p, 4);
 
-    return TUPLE2(hp,
+    return TUPLE3(hp,
                   erts_make_integer((Uint)erts_t2_backedge_yields, p),
-                  erts_make_integer((Uint)erts_t2_backedge_resumes, p));
+                  erts_make_integer((Uint)erts_t2_backedge_resumes, p),
+                  erts_make_integer((Uint)erts_t2_callsite_deopts, p));
 }
 
 #else /* !BEAMASM || !__aarch64__ */
@@ -921,9 +922,9 @@ Eterm erts_t2_debug_in_blob(Process *p, Eterm pid) {
 }
 
 Eterm erts_t2_debug_yield_stats(Process *p) {
-    Eterm *hp = HAlloc(p, 3);
+    Eterm *hp = HAlloc(p, 4);
 
-    return TUPLE2(hp, make_small(0), make_small(0));
+    return TUPLE3(hp, make_small(0), make_small(0), make_small(0));
 }
 
 int erts_t2_jettison_function(struct erl_module_instance *mi,

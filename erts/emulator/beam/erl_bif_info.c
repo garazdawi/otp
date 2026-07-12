@@ -4327,9 +4327,11 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 #endif
 	}
 	else if (ERTS_IS_ATOM_STR("t2_yield_stats", BIF_ARG_1)) {
-	    /* T2-Full P2 commit 5: {BackEdgeYields, BackEdgeResumes} —
+	    /* T2-Full P2 commit 5 (+ maps:fold Stage 1):
+	       {BackEdgeYields, BackEdgeResumes, CallsiteDeopts} —
 	       the racy monitoring counters bumped by the recovered
-	       loops' cold yield/resume stubs. */
+	       loops' cold yield/resume stubs and by the callsite-class
+	       ("re-execute the erased call") deopt trampolines. */
 #ifdef BEAMASM
 	    BIF_RET(erts_t2_debug_yield_stats(BIF_P));
 #else

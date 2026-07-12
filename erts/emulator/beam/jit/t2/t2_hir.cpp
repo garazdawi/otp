@@ -169,6 +169,16 @@ namespace erts_t2 {
             return "get_tl";
         case T2OpKind::GetMapElement:
             return "get_map_element";
+        case T2OpKind::IsFlatmapBounded:
+            return "is_flatmap_bounded";
+        case T2OpKind::FlatmapSize:
+            return "flatmap_size";
+        case T2OpKind::FlatmapKeyAt:
+            return "flatmap_key_at";
+        case T2OpKind::FlatmapValAt:
+            return "flatmap_val_at";
+        case T2OpKind::FoldBudget:
+            return "fold_budget";
         case T2OpKind::StartMatch:
             return "start_match";
         case T2OpKind::BsMatch:
@@ -303,6 +313,10 @@ namespace erts_t2 {
         case T2OpKind::GetHd:
         case T2OpKind::GetTl:
         case T2OpKind::GetMapElement:
+        case T2OpKind::IsFlatmapBounded:
+        case T2OpKind::FlatmapSize:
+        case T2OpKind::FlatmapKeyAt:
+        case T2OpKind::FlatmapValAt:
         case T2OpKind::StartMatch:
         case T2OpKind::BsMatch:
         case T2OpKind::BsGetTail:
@@ -1050,6 +1064,11 @@ namespace erts_t2 {
                  * bs_get_tail allocates the tail sub-bitstring. */
                 case T2OpKind::StartMatch:
                 case T2OpKind::BsGetTail:
+                    return true;
+                /* The maps:fold budget check side-exits (uncharged) to
+                 * the erased call's T1 PC; the map IS the deopt
+                 * contract (the call-boundary state). */
+                case T2OpKind::FoldBudget:
                     return true;
                 case T2OpKind::BsMatch:
                     /* A sync point only when its command list needs

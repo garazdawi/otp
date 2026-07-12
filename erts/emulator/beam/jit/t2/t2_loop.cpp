@@ -331,10 +331,14 @@ namespace erts_t2 {
          * re-executes the iteration from the window's re-call boundary.
          * Boundary-shaped ops (T2_OP_SPEC_BOUNDARY) deopt to their own
          * T1 EFFECT PC — they re-execute nothing before themselves and
-         * are exempt from the window rule. */
+         * are exempt from the window rule. Callsite-shaped ops
+         * (T2_OP_SPEC_CALLSITE) deopt by re-executing the erased call
+         * from the call-boundary sync map they carry; they have their
+         * own rule (the callsite pass in t2_validate_windows). */
         bool op_is_window_guard(const T2Op *op) {
             return op_is_speculative_kind(op) &&
-                   (op->flags & T2_OP_SPEC_BOUNDARY) == 0;
+                   (op->flags & (T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE)) ==
+                           0;
         }
 
         bool is_self_tail_call(const T2Function &fn, const T2Op *term) {
@@ -624,6 +628,9 @@ namespace erts_t2 {
         case T2OpKind::ChargeReds:
             /* A re-executed iteration must not charge twice. */
             return true;
+        case T2OpKind::FoldBudget:
+            /* Batch reduction charge: same double-charge concern. */
+            return true;
         default:
             break;
         }
@@ -747,6 +754,123 @@ namespace erts_t2 {
                     }
                     if (t2_op_dirties_window(op, arity_eff)) {
                         flag = 1;
+                    }
+                }
+            }
+        }
+
+        /* ---- Callsite-class rule (maps:fold Stage 1) ------------------ *
+         * An op whose deopt RE-EXECUTES THE ERASED CALL
+         * (T2_OP_SPEC_CALLSITE) must carry the call-boundary sync map,
+         * and the specialized region must have left that boundary
+         * intact when the op fires: no effect, frame op, reduction
+         * charge, GC/heap op, or write below the boundary's live X
+         * prefix (or to any Y slot) may precede it — checked over the
+         * op's own block prefix and over the innermost loop containing
+         * it (every iteration re-runs the loop body before the op can
+         * fire again). Same-class ops are exempt: the FoldBudget's
+         * batch charge preceding a later deopt is the accepted,
+         * documented deviation (T1 re-charges what the budget already
+         * paid — reduction accounting only, never term results). */
+        {
+            auto is_callsite_op = [](const T2Op *op) {
+                return (op->flags & T2_OP_SPEC_CALLSITE) != 0 &&
+                       (op_is_speculative_kind(op) ||
+                        op->kind == T2OpKind::FoldBudget);
+            };
+            auto callsite_dirt = [](const T2Op *op, uint32_t x_live) {
+                if ((op->flags & T2_OP_SPEC_CALLSITE) != 0) {
+                    return false; /* same class */
+                }
+                if (op_is_effect(op)) {
+                    return true;
+                }
+                switch (op->kind) {
+                case T2OpKind::Allocate:
+                case T2OpKind::Deallocate:
+                case T2OpKind::Trim:
+                case T2OpKind::ChargeReds:
+                case T2OpKind::GcTest:
+                case T2OpKind::StartMatch:
+                case T2OpKind::BsMatch:
+                case T2OpKind::BsGetTail:
+                    return true;
+                default:
+                    break;
+                }
+                if (op->dst_reg != T2_REG_NONE) {
+                    if (t2_reg_is_y(op->dst_reg)) {
+                        return true;
+                    }
+                    if (t2_reg_is_x(op->dst_reg) &&
+                        t2_reg_index(op->dst_reg) < x_live) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            for (const T2BasicBlock *b : fn.blocks) {
+                for (const T2Op *op = b->ops_head; op != nullptr;
+                     op = op->next) {
+                    if (!is_callsite_op(op)) {
+                        continue;
+                    }
+                    if (op->sync == nullptr) {
+                        return fail(b->id,
+                                    op,
+                                    "callsite-class op without the "
+                                    "call-boundary sync map");
+                    }
+
+                    uint32_t x_live = op->sync->x_live;
+
+                    /* Own-block prefix. */
+                    for (const T2Op *p = b->ops_head; p != op; p = p->next) {
+                        if (callsite_dirt(p, x_live)) {
+                            return fail(b->id,
+                                        op,
+                                        "callsite-class op after an "
+                                        "effect/frame/charge/low-X "
+                                        "write in its own block (the "
+                                        "call-boundary state must be "
+                                        "intact)");
+                        }
+                    }
+
+                    /* Innermost containing loop: the whole body must
+                     * keep the boundary intact. */
+                    const T2Loop *inner = nullptr;
+
+                    for (const T2Loop &loop : li.loops) {
+                        bool contains = false;
+
+                        for (uint32_t bid : loop.body) {
+                            if (bid == b->id) {
+                                contains = true;
+                                break;
+                            }
+                        }
+                        if (contains &&
+                            (inner == nullptr ||
+                             loop.body.size() < inner->body.size())) {
+                            inner = &loop;
+                        }
+                    }
+                    if (inner != nullptr) {
+                        for (uint32_t bid : inner->body) {
+                            for (const T2Op *p = fn.blocks[bid]->ops_head;
+                                 p != nullptr;
+                                 p = p->next) {
+                                if (callsite_dirt(p, x_live)) {
+                                    return fail(bid,
+                                                op,
+                                                "callsite-class op in a "
+                                                "loop whose body dirties "
+                                                "the call-boundary state");
+                                }
+                            }
+                        }
                     }
                 }
             }

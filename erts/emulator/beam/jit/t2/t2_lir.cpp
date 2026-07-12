@@ -175,6 +175,16 @@ namespace erts_t2 {
             return "add_small";
         case T2LirKind::SubSmall:
             return "sub_small";
+        case T2LirKind::IsFlatmapBounded:
+            return "is_flatmap_bounded";
+        case T2LirKind::FlatmapSize:
+            return "flatmap_size";
+        case T2LirKind::FlatmapKeyAt:
+            return "flatmap_key_at";
+        case T2LirKind::FlatmapValAt:
+            return "flatmap_val_at";
+        case T2LirKind::FoldBudget:
+            return "fold_budget";
         case T2LirKind::StartMatch:
             return "start_match";
         case T2LirKind::BsMatch:

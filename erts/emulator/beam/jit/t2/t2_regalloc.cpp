@@ -244,6 +244,20 @@ namespace erts_t2 {
                                             "deopt PC");
                             }
                             break;
+                        case T2LirKind::FoldBudget:
+                            /* Callsite-class batch charge: the erased
+                             * call's T1 PC and the call-boundary sync
+                             * map (the deopt contract) must both be
+                             * present. */
+                            if (op.t1_pc_fail == nullptr) {
+                                return fail("fold budget without a "
+                                            "deopt PC");
+                            }
+                            if (op.sync == nullptr) {
+                                return fail("fold budget without a "
+                                            "sync map");
+                            }
+                            break;
                         case T2LirKind::ReductionCheck:
                             /* Back-edge: the demote target (own L_f)
                              * and the fresh-call sync map must both

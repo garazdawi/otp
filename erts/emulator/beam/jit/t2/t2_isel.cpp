@@ -335,6 +335,15 @@ namespace erts_t2 {
                     return pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
                 }
 
+                if (op->flags & T2_OP_SPEC_CALLSITE) {
+                    /* Callsite class (maps:fold Stage 1): re-execute
+                     * the ERASED CALL — the side exit branches to the
+                     * call site's own T1 PC (no CP push; the sync map
+                     * is the call-boundary state, physically intact by
+                     * the callsite rule in t2_validate_windows). */
+                    return pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
+                }
+
                 if (op->flags & T2_OP_WINDOW_CALLEE) {
                     /* Intrinsic-loop window deopt (P2 commit 8): the
                      * iteration re-executes as a fresh CALLEE call —
@@ -1128,6 +1137,7 @@ namespace erts_t2 {
                      * the values, require every small-tag bit, deopt on
                      * failure. */
                     lop.kind = T2LirKind::SpeculateSmall;
+                    lop.spec_callsite = (op->flags & T2_OP_SPEC_CALLSITE) != 0;
                     if (!fill_srcs(op, &lop)) {
                         return false;
                     }
@@ -1160,6 +1170,7 @@ namespace erts_t2 {
                     lop.kind = op->kind == T2OpKind::AddSmall
                                        ? T2LirKind::AddSmall
                                        : T2LirKind::SubSmall;
+                    lop.spec_callsite = (op->flags & T2_OP_SPEC_CALLSITE) != 0;
                     if (op->dst_reg == T2_REG_NONE) {
                         return fail_op(op, "arith result without a home");
                     }
@@ -1238,6 +1249,100 @@ namespace erts_t2 {
                     lop.imm = op->imm_int;
                     if (lop.imm <= 0 || lop.imm >= 4096) {
                         return fail_op(op, "charge_reds out of range");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
+                case T2OpKind::IsFlatmapBounded: {
+                    /* Fused shape test + branch (maps:fold Stage 1):
+                     * both edges stay in the blob — non-flatmap is the
+                     * general case, not an error. */
+                    if (!feeds_branch(op) || op->next != nullptr) {
+                        return fail_op(op,
+                                       "flatmap guard result not consumed "
+                                       "by this block's branch");
+                    }
+                    const T2Op *term = op->block->terminator;
+
+                    lop.kind = T2LirKind::IsFlatmapBounded;
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "flatmap guard of a constant");
+                    }
+                    lop.succ_then = term->succ_then->id;
+                    lop.succ_else = term->succ_else->id;
+                    *consumed_terminator = true;
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
+                case T2OpKind::FlatmapSize:
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "flatmap_size without a home");
+                    }
+                    lop.kind = T2LirKind::FlatmapSize;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "flatmap_size of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
+                case T2OpKind::FlatmapKeyAt:
+                case T2OpKind::FlatmapValAt:
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "flatmap access without a home");
+                    }
+                    lop.kind = op->kind == T2OpKind::FlatmapKeyAt
+                                       ? T2LirKind::FlatmapKeyAt
+                                       : T2LirKind::FlatmapValAt;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const || lop.srcs[1].is_const) {
+                        return fail_op(op, "flatmap access of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
+                case T2OpKind::FoldBudget:
+                    /* The whole-fold reduction batch: uncharged side
+                     * exit to the erased call's own T1 PC when FCALLS
+                     * does not cover it (T1 re-executes the call and
+                     * does its own charging/yielding). */
+                    if (op->sync == nullptr) {
+                        return fail_op(op, "fold budget without a sync map");
+                    }
+                    lop.kind = T2LirKind::FoldBudget;
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "fold budget of a constant");
+                    }
+                    lop.imm = (Sint64)op->index; /* per-element charge */
+                    lop.imm2 = op->imm_int;      /* constant charge    */
+                    if (lop.imm <= 0 || lop.imm >= 128 || lop.imm2 <= 0 ||
+                        lop.imm2 >= 4096) {
+                        return fail_op(op, "fold budget out of range");
+                    }
+                    lop.spec_callsite = true;
+                    lop.t1_pc_fail = pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
+                    if (lop.t1_pc_fail == nullptr) {
+                        return fail_op(op,
+                                       "no CALL pctab entry for the fold "
+                                       "budget deopt");
                     }
                     b.ops.push_back(lop);
                     return true;

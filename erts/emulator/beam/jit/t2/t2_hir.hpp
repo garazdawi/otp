@@ -177,6 +177,38 @@ namespace erts_t2 {
         /* Maps (reserved for Phase B) */
         GetMapElement,
 
+        /* maps:fold flatmap specialization (Stage 1;
+         * PLAN/T2FULL/census/mapsfold_design.md). All five are
+         * synthesized only by the maps:fold expander
+         * (t2_intrinsics.cpp) — never decoded from BEAM.
+         *
+         * IsFlatmapBounded: boxed ∧ header subtag == flatmap ∧
+         * size <= MAP_SMALL_MAP_LIMIT; a boolean consumed by the
+         * block's Branch (both edges stay in the blob — non-flatmap
+         * is the general case, not an error).
+         *
+         * FlatmapSize: load the flatmap's raw size word and tag it as
+         * a small. Loop-invariant, never fails (dominated by the
+         * shape guard).
+         *
+         * FlatmapKeyAt/FlatmapValAt: (map, index) -> term; the index
+         * operand is a TAGGED small, provably < size by the loop
+         * bound, so neither op can fail.
+         *
+         * FoldBudget: the whole-fold reduction batch. Charges
+         * imm_int + index * untag(n) reductions (n = operand 0, the
+         * tagged size; index = per-element charge, imm_int = the
+         * constant charge) against FCALLS; when the budget is not
+         * available it side-exits UNCHARGED to the erased call's own
+         * T1 PC (ERTS_T2_PC_CALL) with the call-boundary sync map, so
+         * T1 re-executes the fold and does its own charging/yielding.
+         * Effect-only, sync required (T2_OP_SPEC_CALLSITE class). */
+        IsFlatmapBounded,
+        FlatmapSize,
+        FlatmapKeyAt,
+        FlatmapValAt,
+        FoldBudget,
+
         /* The byte-aligned binary scan subset (P2 commit 7;
          * PLAN/T2FULL/09 §7). StartMatch creates/validates a match
          * context (bs_start_match3: may GC — sync point; result
@@ -473,7 +505,18 @@ namespace erts_t2 {
          * continuation as CP and enters the CALLEE body (imm_int =
          * callee L_f) — T1 re-executes the iteration as a fresh helper
          * call from X0..callee_arity-1. */
-        T2_OP_WINDOW_CALLEE = 1 << 9
+        T2_OP_WINDOW_CALLEE = 1 << 9,
+        /* The third deopt class (maps:fold Stage 1): a speculative op
+         * (SpeculateType/AddSmall/SubSmall) or FoldBudget whose side
+         * exit RE-EXECUTES THE ERASED CALL — it branches to the call
+         * site's own T1 PC (ERTS_T2_PC_CALL), no CP push, and T1
+         * re-executes the whole call_ext from the call-boundary state.
+         * The op must carry the call-boundary sync map (cmap); sound
+         * because the specialized fast path is effect-free/alloc-free
+         * and writes nothing below cmap->x_live nor any Y slot before
+         * the exit, so the boundary state is physically intact.
+         * Validated by the callsite rule in t2_validate_windows. */
+        T2_OP_SPEC_CALLSITE = 1 << 10
     };
 
     /* One arm of a `switch` terminator. */

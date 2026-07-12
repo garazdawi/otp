@@ -93,6 +93,12 @@ typedef struct {
 extern Uint64 erts_t2_backedge_yields;
 extern Uint64 erts_t2_backedge_resumes;
 
+/* Callsite-class deopt counter (racy, monitoring only): incremented by
+ * the cold fail trampoline of every T2_OP_SPEC_CALLSITE side exit (the
+ * maps:fold specialization's "re-execute the erased call" deopts), so
+ * deopt storms are visible — no re-tier machinery exists. */
+extern Uint64 erts_t2_callsite_deopts;
+
 /* One-time init (mutex + accounting). Called from beamasm_init(). */
 void erts_t2_ranges_init(void);
 

@@ -214,6 +214,11 @@ namespace {
                      * error edge, so count presence, not occurrences. */
                     intrinsic_loop++;
                     break;
+                case T2LirKind::FoldBudget:
+                    /* maps:fold specialization marker: the fold call is
+                     * erased on the flatmap fast path (Stage 1). */
+                    intrinsic_loop++;
+                    break;
                 default:
                     break;
                 }

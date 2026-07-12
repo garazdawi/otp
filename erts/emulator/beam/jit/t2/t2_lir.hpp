@@ -198,6 +198,25 @@ namespace erts_t2 {
         AddSmall,
         SubSmall,
 
+        /* maps:fold flatmap specialization (Stage 1). IsFlatmapBounded
+         * is a fused test+branch (boxed ∧ flatmap subtag ∧ size <=
+         * MAP_SMALL_MAP_LIMIT; succ_then = fast loop, succ_else = the
+         * general-case block holding the original call — both edges in
+         * the blob, no side exit). FlatmapSize loads the raw size word
+         * and tags it small (never fails; dominated by the guard).
+         * FlatmapKeyAt/FlatmapValAt index the keys tuple / inline
+         * value array with a tagged-small index (never fail; index <
+         * size by the loop bound). FoldBudget charges imm2 + imm *
+         * untag(src0) reductions, side-exiting UNCHARGED to t1_pc_fail
+         * (the erased call's own T1 PC) when FCALLS does not cover the
+         * batch — T1 then re-executes the call and charges/yields
+         * itself. */
+        IsFlatmapBounded,
+        FlatmapSize,
+        FlatmapKeyAt,
+        FlatmapValAt,
+        FoldBudget,
+
         /* The byte-aligned binary scan subset (P2 commit 7). All four
          * reuse T1's emitters 1:1 in identity mode; the fused
          * scan-loop emitter (t2_emit.cpp) may take over a recovered
@@ -419,6 +438,12 @@ namespace erts_t2 {
         /* Shared decode ordinal with the HIR/pctab (PLAN/T2FULL/07 §4). */
         uint32_t beam_idx;
 
+        /* Callsite-class deopt (T2_OP_SPEC_CALLSITE): t1_pc_fail is the
+         * erased call's own T1 PC and the fail trampoline bumps the
+         * erts_t2_callsite_deopts monitoring counter (deopt storms must
+         * be visible — no re-tier machinery exists). */
+        bool spec_callsite;
+
         /* CFG edges (block ids into T2LirFunction::blocks, or
          * T2_LIR_NO_BLOCK). Tests/compares/arith-with-fail-edge use
          * succ_else as the in-blob fail target and succ_then as the
@@ -459,12 +484,12 @@ namespace erts_t2 {
                 : kind(T2LirKind::Invalid), dst(), dst2(), num_srcs(0), imm(0),
                   imm2(0), imm_term(0), mfa_m(0), mfa_f(0), arity(0), live(0),
                   exp(nullptr), target(nullptr), t1_pc_fail(nullptr),
-                  t1_pc_cont(nullptr), beam_idx(0), succ_then(T2_LIR_NO_BLOCK),
-                  succ_else(T2_LIR_NO_BLOCK), first_case(0), num_cases(0),
-                  default_target(T2_LIR_NO_BLOCK), pool_first(0),
-                  num_srcs_ext(0), first_bs_cmd(0), num_bs_cmds(0),
-                  dst_value(T2_NO_VALUE), dst2_value(T2_NO_VALUE),
-                  sync(nullptr) {
+                  t1_pc_cont(nullptr), beam_idx(0), spec_callsite(false),
+                  succ_then(T2_LIR_NO_BLOCK), succ_else(T2_LIR_NO_BLOCK),
+                  first_case(0), num_cases(0), default_target(T2_LIR_NO_BLOCK),
+                  pool_first(0), num_srcs_ext(0), first_bs_cmd(0),
+                  num_bs_cmds(0), dst_value(T2_NO_VALUE),
+                  dst2_value(T2_NO_VALUE), sync(nullptr) {
         }
     };
 
