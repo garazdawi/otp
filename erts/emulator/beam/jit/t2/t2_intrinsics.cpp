@@ -191,6 +191,18 @@ namespace erts_t2 {
             return off;
         }
 
+        /* P1b (the local pre-chain): a LOCAL (call_only) tail site
+         * whose own-module pass-through wrapper chain is peeled into
+         * the caller, exposing the cross-module fold call the literal
+         * fun actually reaches (pt-style apply_fold(F,L) ->
+         * lists:foldl(F,0,L)). Its own kill switch on top of T2_NO_P1
+         * so the committed P1a/P1c behavior stays unaffected by A/B
+         * runs. */
+        bool p1_local_disabled() {
+            static const bool off = getenv("T2_NO_P1_LOCAL") != nullptr;
+            return off;
+        }
+
         const T2Value *resolve_copies(const T2Value *v) {
             for (int depth = 0; depth < 64; depth++) {
                 if (v->def == nullptr || v->def->kind != T2OpKind::Copy) {
@@ -3058,6 +3070,251 @@ namespace erts_t2 {
                 return true;
             }
 
+            /* ===================================================== *
+             * P1b: the LOCAL pass-through pre-chain.                *
+             *                                                       *
+             * A LOCAL (call_only) tail site never specializes in    *
+             * place — the wrapper's own fun argument is a variable  *
+             * (`pt:apply_fold/2 site lists:foldl/3 rejected: no     *
+             * literal MakeFun`). Instead, the SITE that passes the  *
+             * literal fun peels the own-module wrapper: classify it *
+             * as a straight guardless pass-through spine to exactly *
+             * one tail call whose arguments are parameter           *
+             * pass-throughs or immediate constants (arity MAY       *
+             * change — the classic "seed the accumulator" shape),   *
+             * compose the bindings across local levels, and treat   *
+             * the first cross-module target as the site to          *
+             * specialize. The boundary rewrite happens only at      *
+             * commit time (transactional: a rejected site keeps its *
+             * original local call, byte-identical behavior and      *
+             * reductions).                                          *
+             *                                                       *
+             * Deopt discipline: the peeled site's exposed boundary  *
+             * is WIDER than the T1 call instruction the imm==0      *
+             * re-dispatch deopts branch to, so a peeled site        *
+             * commits only in INNER re-dispatch mode (every in-loop *
+             * side exit enters the terminal loop function's own     *
+             * body) with a statically-small entry accumulator (the  *
+             * conditional entry guard — the one remaining imm==0    *
+             * deopt — is then never live at runtime: it tests a     *
+             * compile-time small constant). Yield/tombstone/entry   *
+             * pre-screen already target the EXPOSED callee's own T1 *
+             * entry (outer_lf) or re-invoke it for real (b_err), so *
+             * they are peel-agnostic.                               *
+             * ===================================================== */
+
+            /* One argument of the exposed call: a wrapper parameter
+             * pass-through or an immediate constant the wrapper
+             * materializes (ConstInt/ConstAtom/ConstNil only — a
+             * ConstLiteral's term dies with the callee decode). */
+            struct P1LocalArg {
+                int32_t param = -1; /* >= 0: param index; -1: const */
+                T2OpKind ckind = T2OpKind::ConstNil;
+                Sint64 cint = 0;
+                Eterm cterm = NIL;
+            };
+
+            struct P1LocalWrap {
+                bool ext = false;
+                Eterm m = NIL, f = NIL;
+                uint32_t arity = 0;
+                P1LocalArg args[T2_P1_MAX_ARITY];
+            };
+
+            /* Classify an own-module callee as a THIN LOCAL
+             * PASS-THROUGH wrapper: a straight spine from the entry
+             * to exactly one flag-free tail call whose arguments are
+             * parameter pass-throughs or immediate constants. The
+             * only admissible branch is an is_function test on the
+             * fun parameter, statically discharged on the literal
+             * fun (a wrong-arity test would raise for it: reject).
+             * No CallFun (no peel), no frame, no returning path:
+             * anything else stays generic. Read-only. */
+            bool p1_classify_local_wrapper(const T2Function &callee,
+                                           uint32_t fun_idx,
+                                           uint32_t fun_arity,
+                                           P1LocalWrap *out,
+                                           const char **why) {
+                *why = "local wrapper shape not admissible";
+
+                uint32_t ar = callee.arity;
+
+                if (ar == 0 || ar > T2_P1_MAX_ARITY || callee.blocks.empty() ||
+                    fun_idx >= ar) {
+                    return false;
+                }
+
+                std::vector<const T2Value *> params(ar, nullptr);
+
+                for (const T2Op *op = callee.blocks[0]->ops_head;
+                     op != nullptr && op->kind == T2OpKind::Param;
+                     op = op->next) {
+                    if (op->index >= ar || params[op->index] != nullptr) {
+                        *why = "local wrapper params not canonical";
+                        return false;
+                    }
+                    params[op->index] = op->result;
+                }
+                for (uint32_t i = 0; i < ar; i++) {
+                    if (params[i] == nullptr) {
+                        *why = "local wrapper params not canonical";
+                        return false;
+                    }
+                }
+
+                const T2BasicBlock *b = callee.blocks[0];
+                const T2Op *tc = nullptr;
+                uint32_t ops_seen = 0;
+                uint32_t steps = 0;
+
+                while (tc == nullptr) {
+                    if (++steps > T2_P1_MAX_WRAPPER_OPS) {
+                        *why = "local wrapper spine too long";
+                        return false;
+                    }
+                    for (const T2Op *phi = b->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        if (phi->num_operands != 1) {
+                            *why = "local wrapper has a real merge";
+                            return false;
+                        }
+                    }
+
+                    bool entry = b == callee.blocks[0];
+
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if (op->kind == T2OpKind::Param) {
+                            if (!entry) {
+                                *why = "local wrapper param outside the "
+                                       "entry";
+                                return false;
+                            }
+                            continue;
+                        }
+                        if ((op->flags & ~(uint16_t)T2_OP_PAIR_HEAD) != 0) {
+                            *why = "local wrapper op carries flags";
+                            return false;
+                        }
+                        switch (op->kind) {
+                        case T2OpKind::Copy:
+                        case T2OpKind::ConstInt:
+                        case T2OpKind::ConstAtom:
+                        case T2OpKind::ConstNil:
+                            break;
+                        case T2OpKind::IsFunction:
+                            if (resolve_thru(op->operands[0]) !=
+                                params[fun_idx]) {
+                                *why = "local wrapper tests a non-fun "
+                                       "value";
+                                return false;
+                            }
+                            break;
+                        default:
+                            *why = "local wrapper body op not admissible";
+                            return false;
+                        }
+                        if (++ops_seen > T2_P1_MAX_WRAPPER_OPS) {
+                            *why = "local wrapper too large";
+                            return false;
+                        }
+                    }
+
+                    const T2Op *t = b->terminator;
+
+                    if (t == nullptr) {
+                        *why = "local wrapper block without terminator";
+                        return false;
+                    }
+                    switch (t->kind) {
+                    case T2OpKind::Jump:
+                        b = t->succ_then;
+                        break;
+                    case T2OpKind::Branch: {
+                        const T2Op *test = resolve_thru(t->operands[0])->def;
+
+                        if (test == nullptr ||
+                            test->kind != T2OpKind::IsFunction ||
+                            resolve_thru(test->operands[0]) !=
+                                    params[fun_idx] ||
+                            test->index != fun_arity) {
+                            *why = "local wrapper branch is not the "
+                                   "statically discharged fun guard";
+                            return false;
+                        }
+                        b = t->succ_then;
+                        break;
+                    }
+                    case T2OpKind::TailCall:
+                    case T2OpKind::TailCallExt:
+                        if (t->flags != 0 || t->sync == nullptr) {
+                            *why = "local wrapper tail call carries "
+                                   "flags or no sync";
+                            return false;
+                        }
+                        tc = t;
+                        break;
+                    default:
+                        *why = "local wrapper is not a straight "
+                               "pass-through spine";
+                        return false;
+                    }
+                }
+
+                uint32_t ar2 = tc->index;
+
+                if (ar2 == 0 || ar2 > T2_P1_MAX_ARITY ||
+                    tc->num_operands != (uint16_t)ar2) {
+                    *why = "local wrapper target arity out of bounds";
+                    return false;
+                }
+
+                int32_t fpos = -1;
+
+                for (uint32_t j = 0; j < ar2; j++) {
+                    const T2Value *root = resolve_thru(tc->operands[j]);
+                    int32_t p = p1_param_index(params, root);
+
+                    if (p >= 0) {
+                        out->args[j].param = p;
+                        if ((uint32_t)p == fun_idx) {
+                            if (fpos >= 0) {
+                                *why = "local wrapper passes the fun "
+                                       "twice";
+                                return false;
+                            }
+                            fpos = (int32_t)j;
+                        }
+                        continue;
+                    }
+
+                    const T2Op *def = root->def;
+
+                    if (def != nullptr && (def->kind == T2OpKind::ConstInt ||
+                                           def->kind == T2OpKind::ConstAtom ||
+                                           def->kind == T2OpKind::ConstNil)) {
+                        out->args[j].param = -1;
+                        out->args[j].ckind = def->kind;
+                        out->args[j].cint = def->imm_int;
+                        out->args[j].cterm = def->imm_term;
+                        continue;
+                    }
+                    *why = "local wrapper argument neither pass-through "
+                           "nor immediate constant";
+                    return false;
+                }
+                if (fpos < 0) {
+                    *why = "fun not passed through the local wrapper";
+                    return false;
+                }
+
+                out->ext = tc->kind == T2OpKind::TailCallExt;
+                out->m = tc->mfa_m;
+                out->f = tc->mfa_f;
+                out->arity = ar2;
+                return true;
+            }
+
             /* Terminal congruence: the chain's accumulated wrapper
              * constraints (in the loop's argument space) against the
              * ADMITTED loop's structure. This is what makes skipping
@@ -3615,6 +3872,58 @@ namespace erts_t2 {
              * build callback (the callee HIR is alive), AFTER all
              * read-only admission passed; any failure here is a hard
              * error that degrades the whole function to T1, loudly. */
+            /* The terminal loop's dispatch list param: the unique
+             * param phi the loop's cons/nil tests name, or -1 when
+             * none/ambiguous. Shared by the commit (the inner
+             * re-dispatch's entry pre-screen tests it) and the local
+             * pre-chain admission (which REQUIRES inner mode, so it
+             * pre-checks the same condition before the boundary
+             * rewrite). */
+            static int32_t p1_unique_list_param(const T2Function &callee,
+                                                const T2Loop &loop) {
+                uint32_t ar = callee.arity;
+                const T2BasicBlock *ce = callee.blocks[0];
+                const T2BasicBlock *ch = callee.blocks[loop.header];
+                std::vector<const T2Op *> phis(ar, nullptr);
+
+                for (const T2Op *phi = ch->phis_head; phi != nullptr;
+                     phi = phi->next) {
+                    if (phi->dst_reg == T2_REG_NONE ||
+                        !t2_reg_is_x(phi->dst_reg) ||
+                        t2_reg_index(phi->dst_reg) >= ar) {
+                        continue; /* admission excludes this */
+                    }
+                    phis[t2_reg_index(phi->dst_reg)] = phi;
+                }
+
+                int32_t list_idx = -1;
+
+                for (const T2BasicBlock *b : callee.blocks) {
+                    if (b == ce || p1_is_err_block(b)) {
+                        continue;
+                    }
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if (op->kind != T2OpKind::IsNonemptyList &&
+                            op->kind != T2OpKind::IsNil) {
+                            continue;
+                        }
+                        const T2Value *tv = resolve_thru(op->operands[0]);
+
+                        for (uint32_t i = 0; i < ar; i++) {
+                            if (phis[i] == nullptr || tv != phis[i]->result) {
+                                continue;
+                            }
+                            if (list_idx >= 0 && list_idx != (int32_t)i) {
+                                return -1; /* ambiguous */
+                            }
+                            list_idx = (int32_t)i;
+                        }
+                    }
+                }
+                return list_idx;
+            }
+
             bool p1_commit(T2Op *call,
                            T2Function &callee,
                            const T2Loop &loop,
@@ -3689,33 +3998,8 @@ namespace erts_t2 {
                 int32_t list_idx = -1;
 
                 if (inner_lf != nullptr) {
-                    bool ambiguous = false;
-
-                    for (const T2BasicBlock *b : callee.blocks) {
-                        if (b == ce || p1_is_err_block(b)) {
-                            continue;
-                        }
-                        for (const T2Op *op = b->ops_head; op != nullptr;
-                             op = op->next) {
-                            if (op->kind != T2OpKind::IsNonemptyList &&
-                                op->kind != T2OpKind::IsNil) {
-                                continue;
-                            }
-                            const T2Value *tv = resolve_thru(op->operands[0]);
-
-                            for (uint32_t i = 0; i < ar; i++) {
-                                if (phis[i] == nullptr ||
-                                    tv != phis[i]->result) {
-                                    continue;
-                                }
-                                if (list_idx >= 0 && list_idx != (int32_t)i) {
-                                    ambiguous = true;
-                                }
-                                list_idx = (int32_t)i;
-                            }
-                        }
-                    }
-                    if (list_idx < 0 || ambiguous) {
+                    list_idx = p1_unique_list_param(callee, loop);
+                    if (list_idx < 0) {
                         if (p1_trace()) {
                             erts_fprintf(stderr,
                                          "t2_p1: %T:%T/%u inner re-dispatch "
@@ -4587,7 +4871,8 @@ namespace erts_t2 {
              * `true` return with changed untouched means the site was
              * (silently or tracedly) left alone. */
             bool expand_p1_site(T2Op *call) {
-                bool is_tail = call->kind == T2OpKind::TailCallExt;
+                bool is_local = call->kind == T2OpKind::TailCall;
+                bool is_tail = call->kind == T2OpKind::TailCallExt || is_local;
 
                 if (!is_tail && call->kind != T2OpKind::CallExt) {
                     p1_reject(call, "not a call_ext/call_ext_only site");
@@ -4599,7 +4884,16 @@ namespace erts_t2 {
                     p1_reject(call, "no call-shaped sync map");
                     return true;
                 }
-                if (call->mfa_m == fn.module) {
+                if (is_local) {
+                    /* P1b: a LOCAL (call_only) tail site is admissible
+                     * only as a pass-through pre-chain head, and a
+                     * peeled site commits only in inner re-dispatch
+                     * mode (see the pre-chain block above). */
+                    if (p1_local_disabled() || p1_inner_disabled()) {
+                        p1_reject(call, "local pre-chain disabled");
+                        return true;
+                    }
+                } else if (call->mfa_m == fn.module) {
                     p1_reject(call,
                               "own-module callee (instance not "
                               "committed at load time)");
@@ -4686,9 +4980,148 @@ namespace erts_t2 {
                     return true;
                 }
 
+                /* ---- P1b: peel the LOCAL pass-through pre-chain ---- *
+                 * Classify the chain of own-module wrappers behind a
+                 * local tail site (built from our OWN retained code —
+                 * the instance being compiled), compose the argument
+                 * bindings, and expose the first cross-module target
+                 * as the call to specialize. Classification only: the
+                 * site is rewritten at commit time. */
+                uint32_t tgt_ar = call->index;
+                Eterm tgt_m = call->mfa_m;
+                Eterm tgt_f = call->mfa_f;
+                uint32_t tgt_fun_pos = (uint32_t)fun_idx;
+                uint32_t pre_wrappers = 0;
+                P1LocalArg pre[T2_P1_MAX_ARITY];
+
+                for (uint32_t i = 0; i < tgt_ar; i++) {
+                    pre[i].param = (int32_t)i;
+                }
+
+                if (is_local) {
+                    std::vector<std::pair<Eterm, uint32_t>> lvisited{
+                            {tgt_f, tgt_ar}};
+
+                    for (;;) {
+                        if (pre_wrappers >= T2_P1_MAX_DEPTH) {
+                            p1_reject(call,
+                                      "local pre-chain exceeds the "
+                                      "depth bound");
+                            return true;
+                        }
+
+                        P1LocalWrap lw;
+                        bool classified = false;
+                        const char *lwhy = "local wrapper shape not "
+                                           "admissible";
+                        std::string lerr;
+                        T2BuildStatus lbst = t2_build_for_debug(
+                                ret,
+                                tgt_f,
+                                (unsigned)tgt_ar,
+                                [&](T2Function &lc) {
+                                    classified = p1_classify_local_wrapper(
+                                            lc,
+                                            tgt_fun_pos,
+                                            fun_arity,
+                                            &lw,
+                                            &lwhy);
+                                },
+                                &lerr);
+
+                        if (lbst != T2BuildStatus::Ok) {
+                            p1_reject(call,
+                                      "local wrapper not buildable "
+                                      "(eligibility)");
+                            return true;
+                        }
+                        if (!classified) {
+                            p1_reject(call, lwhy);
+                            return true;
+                        }
+
+                        /* Compose the wrapper's bindings over the
+                         * site's. */
+                        P1LocalArg next[T2_P1_MAX_ARITY];
+                        int32_t nfun = -1;
+
+                        for (uint32_t j = 0; j < lw.arity; j++) {
+                            if (lw.args[j].param >= 0) {
+                                if ((uint32_t)lw.args[j].param == tgt_fun_pos) {
+                                    nfun = (int32_t)j;
+                                }
+                                next[j] = pre[lw.args[j].param];
+                            } else {
+                                next[j] = lw.args[j];
+                            }
+                        }
+                        ASSERT(nfun >= 0); /* classifier required it */
+                        for (uint32_t j = 0; j < lw.arity; j++) {
+                            pre[j] = next[j];
+                        }
+                        tgt_fun_pos = (uint32_t)nfun;
+                        tgt_m = lw.m;
+                        tgt_f = lw.f;
+                        tgt_ar = lw.arity;
+                        pre_wrappers++;
+
+                        if (p1_trace()) {
+                            erts_fprintf(stderr,
+                                         "t2_p1: %T:%T/%u local pre-chain "
+                                         "exposes %T:%T/%u (depth %u)\n",
+                                         fn.module,
+                                         fn.function,
+                                         (unsigned)fn.arity,
+                                         tgt_m,
+                                         tgt_f,
+                                         (unsigned)tgt_ar,
+                                         (unsigned)pre_wrappers);
+                        }
+
+                        if (lw.ext) {
+                            break;
+                        }
+
+                        bool cycle = false;
+
+                        for (const auto &v : lvisited) {
+                            if (v.first == tgt_f && v.second == tgt_ar) {
+                                cycle = true;
+                                break;
+                            }
+                        }
+                        if (cycle) {
+                            p1_reject(call, "local pre-chain cycles");
+                            return true;
+                        }
+                        lvisited.emplace_back(tgt_f, tgt_ar);
+                    }
+
+                    if (tgt_m == fn.module) {
+                        p1_reject(call,
+                                  "own-module callee after the local "
+                                  "pre-chain (instance not committed "
+                                  "at load time)");
+                        return true;
+                    }
+
+                    /* The commit-time boundary rewrite copies each
+                     * pass-through from its site home x_p to its
+                     * exposed home x_j, emitted in DESCENDING j;
+                     * p <= j keeps every pending source unclobbered
+                     * (constants have no source). */
+                    for (uint32_t j = 0; j < tgt_ar; j++) {
+                        if (pre[j].param > (int32_t)j) {
+                            p1_reject(call,
+                                      "local pre-chain argument mapping "
+                                      "not monotone");
+                            return true;
+                        }
+                    }
+                }
+
                 /* The callee: loaded with retention, T1 entry resolved. */
-                Module *cm =
-                        erts_get_module(call->mfa_m, erts_active_code_ix());
+                Module *cm = erts_get_module(tgt_m, erts_active_code_ix());
 
                 if (cm == nullptr || cm->curr.code_hdr == nullptr ||
                     cm->curr.t2_retained == nullptr) {
@@ -4699,7 +5132,7 @@ namespace erts_t2 {
                 const BeamCodeHeader *chdr =
                         (const BeamCodeHeader *)cm->curr.code_hdr;
                 const ErtsT2RetainedCode *cret = cm->curr.t2_retained;
-                const void *clf = find_lf(chdr, call->mfa_f, call->index);
+                const void *clf = find_lf(chdr, tgt_f, tgt_ar);
 
                 if (clf == nullptr) {
                     p1_reject(call, "callee T1 entry not found");
@@ -4738,13 +5171,13 @@ namespace erts_t2 {
                  * call and the trigger re-runs on that target.
                  * Bounded depth, visited set; anything else stays
                  * generic. */
-                uint32_t ar = call->index;
-                Eterm cur_m = call->mfa_m;
-                Eterm cur_f = call->mfa_f;
+                uint32_t ar = tgt_ar;
+                Eterm cur_m = tgt_m;
+                Eterm cur_f = tgt_f;
                 const ErtsT2RetainedCode *cur_ret = cret;
                 const BeamCodeHeader *cur_hdr = chdr;
                 uint32_t perm[T2_P1_MAX_ARITY];
-                uint32_t fun_pos = (uint32_t)fun_idx;
+                uint32_t fun_pos = tgt_fun_pos;
                 uint32_t wrappers = 0;
                 uint32_t peels = 0;
                 P1Pending pend;
@@ -4850,21 +5283,133 @@ namespace erts_t2 {
                                 }
                             }
 
+                            if (pre_wrappers > 0) {
+                                /* Peeled site: every imm==0
+                                 * re-dispatch deopt would branch to
+                                 * the T1 call instruction of the
+                                 * NARROWER local call — commit only
+                                 * in inner mode with a statically
+                                 * small entry accumulator (see the
+                                 * pre-chain block). */
+                                if (inner_lf == nullptr ||
+                                    p1_unique_list_param(callee, cli.loops[0]) <
+                                            0) {
+                                    why = "local pre-chain requires "
+                                          "the inner re-dispatch";
+                                    return;
+                                }
+                                if (acc_idx >= 0) {
+                                    bool acc_small;
+
+                                    if (pre[acc_idx].param < 0) {
+                                        acc_small =
+                                                pre[acc_idx].ckind ==
+                                                        T2OpKind::ConstInt &&
+                                                IS_SSMALL(pre[acc_idx].cint);
+                                    } else {
+                                        acc_small = const_is_small(resolve_copies(
+                                                call->sync->x[pre[acc_idx]
+                                                                      .param]));
+                                    }
+                                    if (!acc_small) {
+                                        why = "local pre-chain entry "
+                                              "accumulator not "
+                                              "statically small";
+                                        return;
+                                    }
+                                }
+
+                                /* ---- the boundary rewrite -------- *
+                                 * From here on the site is committed
+                                 * to: any later failure is a hard
+                                 * error and the whole build falls
+                                 * back to T1 (never a rewritten-but-
+                                 * generic site). Constants and moved
+                                 * params materialize in their exposed
+                                 * homes ahead of the (erased) call;
+                                 * descending j keeps sources (p <= j)
+                                 * unclobbered. */
+                                T2BasicBlock *b_site = call->block;
+                                T2SyncMap *scmap = call->sync;
+                                std::vector<T2Value *> xs(ar, nullptr);
+
+                                for (int32_t j = (int32_t)ar - 1; j >= 0; j--) {
+                                    const P1LocalArg &a = pre[j];
+
+                                    if (a.param >= 0) {
+                                        T2Value *v = scmap->x[a.param];
+
+                                        if (a.param == j) {
+                                            xs[j] = v;
+                                            continue;
+                                        }
+
+                                        T2Op *cp = fn.new_op(b_site,
+                                                             T2OpKind::Copy,
+                                                             v->type);
+
+                                        fn.set_operands(cp, {v});
+                                        cp->operand_regs =
+                                                fn.arena.alloc_array<int32_t>(
+                                                        1);
+                                        cp->operand_regs[0] =
+                                                t2_xreg((uint32_t)a.param);
+                                        cp->dst_reg = t2_xreg((uint32_t)j);
+                                        cp->flags = T2_OP_INLINED;
+                                        cp->beam_idx = call->beam_idx;
+                                        xs[j] = cp->result;
+                                    } else {
+                                        T2Value *cv;
+
+                                        switch (a.ckind) {
+                                        case T2OpKind::ConstInt:
+                                            cv = fn.emit_const_int(b_site,
+                                                                   a.cint);
+                                            break;
+                                        case T2OpKind::ConstAtom:
+                                            cv = fn.emit_const_atom(b_site,
+                                                                    a.cterm);
+                                            break;
+                                        default:
+                                            cv = fn.emit_const_nil(b_site);
+                                            break;
+                                        }
+                                        cv->def->dst_reg = t2_xreg((uint32_t)j);
+                                        cv->def->flags = T2_OP_INLINED;
+                                        cv->def->beam_idx = call->beam_idx;
+                                        xs[j] = cv;
+                                    }
+                                }
+
+                                call->kind = T2OpKind::TailCallExt;
+                                call->mfa_m = tgt_m;
+                                call->mfa_f = tgt_f;
+                                call->index = ar;
+                                call->live = ar;
+                                fn.set_operands(call, xs);
+                                call->operand_regs =
+                                        fn.arena.alloc_array<int32_t>(ar);
+                                for (uint32_t j = 0; j < ar; j++) {
+                                    call->operand_regs[j] = t2_xreg(j);
+                                }
+                                call->sync = make_map(xs, scmap);
+                            }
+
                             if (!p1_commit(call,
                                            callee,
                                            cli.loops[0],
                                            fun_pos,
                                            acc_idx,
                                            mf,
-                                           call->mfa_m,
-                                           call->mfa_f,
+                                           tgt_m,
+                                           tgt_f,
                                            clf,
                                            cur_m,
                                            cur_f,
                                            inner_lf,
                                            chain_hdrs,
                                            perm,
-                                           wrappers - peels)) {
+                                           wrappers - peels + pre_wrappers)) {
                                 hard_err = true;
                                 return;
                             }
@@ -5164,12 +5709,15 @@ namespace erts_t2 {
                         !maps_intrin_disabled()) {
                         maps_sites.push_back(t);
                     } else if (t != nullptr &&
-                               t->kind == T2OpKind::TailCallExt &&
+                               (t->kind == T2OpKind::TailCallExt ||
+                                t->kind == T2OpKind::TailCall) &&
                                t->flags == 0 && !p1_disabled()) {
                         /* P1a general trigger (tail sites): any
                          * cross-module tail call not claimed by the
-                         * hand-coded recognizers; expand_p1_site does
-                         * the structural screening. */
+                         * hand-coded recognizers — or, P1b, a LOCAL
+                         * (call_only) tail call heading a pass-through
+                         * pre-chain; expand_p1_site does the
+                         * structural screening. */
                         p1_sites.push_back(t);
                     }
                 }
