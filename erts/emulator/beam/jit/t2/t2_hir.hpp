@@ -536,7 +536,32 @@ namespace erts_t2 {
          * converted SpeculateType/AddSmall/SubSmall carry none, like
          * any window-shaped guard. The deopt monitoring counter still
          * counts these exits (t2_isel keeps spec_callsite set). */
-        T2_OP_SPEC_ENTRY = 1 << 11
+        T2_OP_SPEC_ENTRY = 1 << 11,
+        /* The fifth deopt class (P1a general call-site specialization,
+         * PLAN/T2FULL/census/p1_design.md): a speculative op inside an
+         * inlined UNBOUNDED callee loop whose side exit RE-DISPATCHES
+         * THE GENERIC CALLEE WITH THE LOOP-CARRIED STATE — it branches
+         * to the erased call site's own T1 PC (ERTS_T2_PC_CALL, no CP
+         * push; the T1 call instruction itself re-establishes the CP
+         * for a body site and tail-transfers for a tail site), and T1
+         * re-executes the call over the CURRENT X0..x_live-1, which by
+         * the op's sync map holds exactly {loop-carried vector} — so
+         * T1 continues the fold from element k with no redo and no
+         * reduction over-charge (contrast T2_OP_SPEC_CALLSITE, whose
+         * contract is the *original* boundary being intact: a restart,
+         * only legal for bounded loops). The op must carry the
+         * loop-carried sync map; the register-state walk proves the
+         * vector is physically in X0..x_live-1, and the window
+         * validator applies the per-iteration clean-prefix rule (the
+         * flag is deliberately NOT exempted in op_is_window_guard). */
+        T2_OP_SPEC_REDISPATCH = 1 << 12,
+        /* The specialized site was a TAIL call (call_ext_only): there
+         * is no T1 continuation (no CONT pctab entry, nothing to push
+         * as CP). On a ReductionCheck with T2_OP_RC_CALLEE this makes
+         * the tombstone demote enter the callee body WITHOUT the CP
+         * push (the blob's own return address already points at the
+         * caller's caller, exactly as after the erased tail call). */
+        T2_OP_TAIL_SITE = 1 << 13
     };
 
     /* One arm of a `switch` terminator. */

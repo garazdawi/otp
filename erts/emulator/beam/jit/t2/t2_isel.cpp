@@ -344,6 +344,17 @@ namespace erts_t2 {
                     return pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
                 }
 
+                if (op->flags & T2_OP_SPEC_REDISPATCH) {
+                    /* Re-dispatch class (P1a): re-invoke the generic
+                     * callee with the LOOP-CARRIED state — the side
+                     * exit branches to the call site's own T1 PC over
+                     * the current X vector (no CP push; T1's own call
+                     * instruction re-establishes the CP for a body
+                     * site and tail-transfers for a tail site), so T1
+                     * continues the fold from element k with no redo. */
+                    return pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
+                }
+
                 if (op->flags & T2_OP_WINDOW_CALLEE) {
                     /* Intrinsic-loop window deopt (P2 commit 8): the
                      * iteration re-executes as a fresh CALLEE call —
@@ -1142,11 +1153,13 @@ namespace erts_t2 {
                      * failure. */
                     lop.kind = T2LirKind::SpeculateSmall;
                     /* Entry-class exits (the sunk-fun re-invocation,
-                     * T2_OP_SPEC_ENTRY) count in the same monitoring
-                     * counter as callsite exits: both are "the maps
-                     * specialization bailed". */
-                    lop.spec_callsite = (op->flags & (T2_OP_SPEC_CALLSITE |
-                                                      T2_OP_SPEC_ENTRY)) != 0;
+                     * T2_OP_SPEC_ENTRY) and re-dispatch exits (P1a)
+                     * count in the same monitoring counter as callsite
+                     * exits: all are "the specialization bailed". */
+                    lop.spec_callsite =
+                            (op->flags &
+                             (T2_OP_SPEC_CALLSITE | T2_OP_SPEC_ENTRY |
+                              T2_OP_SPEC_REDISPATCH)) != 0;
                     if (!fill_srcs(op, &lop)) {
                         return false;
                     }
@@ -1179,8 +1192,10 @@ namespace erts_t2 {
                     lop.kind = op->kind == T2OpKind::AddSmall
                                        ? T2LirKind::AddSmall
                                        : T2LirKind::SubSmall;
-                    lop.spec_callsite = (op->flags & (T2_OP_SPEC_CALLSITE |
-                                                      T2_OP_SPEC_ENTRY)) != 0;
+                    lop.spec_callsite =
+                            (op->flags &
+                             (T2_OP_SPEC_CALLSITE | T2_OP_SPEC_ENTRY |
+                              T2_OP_SPEC_REDISPATCH)) != 0;
                     if (op->dst_reg == T2_REG_NONE) {
                         return fail_op(op, "arith result without a home");
                     }
@@ -1220,20 +1235,28 @@ namespace erts_t2 {
                     }
                     if (op->flags & T2_OP_RC_CALLEE) {
                         /* Intrinsic back edge (P2 commit 8): callee
-                         * demote class — see T2LirKind's comment. */
+                         * demote class — see T2LirKind's comment. A
+                         * TAIL site (T2_OP_TAIL_SITE; P1a) has no T1
+                         * continuation: the tombstone demote enters
+                         * the callee body with no CP push (the blob's
+                         * own return address already points at the
+                         * caller's caller). */
                         lop.kind = T2LirKind::ReductionCheckCallee;
                         lop.imm = 1 + (Sint64)op->index;
                         lop.mfa_m = op->mfa_m;
                         lop.mfa_f = op->mfa_f;
                         lop.arity = op->live;
+                        lop.tail_site = (op->flags & T2_OP_TAIL_SITE) != 0;
                         lop.target = (const void *)(UWord)op->imm_int;
                         lop.t1_pc_fail =
                                 pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
-                        lop.t1_pc_cont =
-                                pc_lookup(op->beam_idx, ERTS_T2_PC_CONT);
+                        if (!lop.tail_site) {
+                            lop.t1_pc_cont =
+                                    pc_lookup(op->beam_idx, ERTS_T2_PC_CONT);
+                        }
                         if (lop.target == nullptr ||
                             lop.t1_pc_fail == nullptr ||
-                            lop.t1_pc_cont == nullptr) {
+                            (lop.t1_pc_cont == nullptr && !lop.tail_site)) {
                             return fail_op(op,
                                            "unresolved callee back-edge "
                                            "addresses");

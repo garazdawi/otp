@@ -953,6 +953,78 @@ namespace erts_t2 {
                 }
             }
 
+            /* call_fun Arity (fun implicitly in x[Arity]) and
+             * call_fun2 Tag Arity Func (explicit fun operand): a fun
+             * application. Always a body call at the generic-op level
+             * (a tail fun call decodes as call_fun + deallocate +
+             * return). Operands are the args in X0..Arity-1 plus the
+             * fun as the LAST operand; index = the call arity; the
+             * sync map's X prefix additionally covers the fun's X home
+             * (T1 re-executing the call reads it from there). There is
+             * no isel lowering — a CallFun must be erased (the P1
+             * devirtualizer) or the function stays T1. */
+            void translate_call_fun(const DecodedOp &dop) {
+                bool is_cf2 = dop.op == genop_call_fun2_3;
+                uint32_t arity = (uint32_t)dop.args[is_cf2 ? 1 : 0].val;
+                std::vector<T2Value *> args;
+                std::vector<int32_t> arg_regs;
+                uint32_t x_live = arity;
+                T2Value *funv;
+                int32_t fun_reg;
+
+                for (uint32_t i = 0; i < arity; i++) {
+                    T2Value *v = read_var(cur, i);
+
+                    if (v == nullptr) {
+                        fail_op(dop, "call_fun argument register undefined");
+                        return;
+                    }
+                    args.push_back(v);
+                    arg_regs.push_back(t2_xreg(i));
+                }
+
+                if (is_cf2) {
+                    const DecodedArg &fa = dop.args[2];
+
+                    if (fa.type != TAG_x && fa.type != TAG_y) {
+                        fail_op(dop, "call_fun2 fun operand is not a register");
+                        return;
+                    }
+                    fun_reg = (int32_t)reg_var(fa);
+                    funv = read_var(cur, reg_var(fa));
+                    if (t2_reg_is_x(fun_reg) &&
+                        t2_reg_index(fun_reg) >= x_live) {
+                        x_live = t2_reg_index(fun_reg) + 1;
+                    }
+                } else {
+                    fun_reg = t2_xreg(arity);
+                    funv = read_var(cur, arity);
+                    x_live = arity + 1;
+                }
+                if (funv == nullptr) {
+                    fail_op(dop, "call_fun fun register undefined");
+                    return;
+                }
+                args.push_back(funv);
+                arg_regs.push_back(fun_reg);
+
+                T2Op *op = fn->new_op(cur, T2OpKind::CallFun, T2Type::any());
+
+                op->beam_idx = dop.beam_idx;
+                fn->set_operands(op, args);
+                op->index = arity;
+                op->live = x_live;
+                op->operand_regs = fn->arena.alloc_array<int32_t>(args.size());
+                for (size_t i = 0; i < args.size(); i++) {
+                    op->operand_regs[i] = arg_regs[i];
+                }
+                op->sync = snapshot_sync(x_live);
+
+                /* The result lands in x0; other X registers die. */
+                op->dst_reg = t2_xreg(0);
+                write_var(cur, 0, op->result);
+            }
+
             void translate_error_exit(const DecodedOp &dop, bool has_value) {
                 std::vector<SrcVal> args;
 
@@ -1403,6 +1475,11 @@ namespace erts_t2 {
                 break;
             case genop_call_ext_last_3:
                 translate_call(dop, true, true, true);
+                break;
+
+            case genop_call_fun_1:
+            case genop_call_fun2_3:
+                translate_call_fun(dop);
                 break;
 
             case genop_return_0: {

@@ -155,6 +155,19 @@ namespace erts_t2 {
             return on;
         }
 
+        /* P1a general caller-driven call-site specialization
+         * (PLAN/T2FULL/census/p1_design.md): its own lever + trace so
+         * the hand-coded expanders stay unaffected by A/B runs. */
+        bool p1_disabled() {
+            static const bool off = getenv("T2_NO_P1") != nullptr;
+            return off;
+        }
+
+        bool p1_trace() {
+            static const bool on = getenv("T2_P1_TRACE") != nullptr;
+            return on;
+        }
+
         const T2Value *resolve_copies(const T2Value *v) {
             for (int depth = 0; depth < 64; depth++) {
                 if (v->def == nullptr || v->def->kind != T2OpKind::Copy) {
@@ -2402,6 +2415,1226 @@ namespace erts_t2 {
                 return true;
             }
 
+            /* ========================================================= *
+             * P1a: general caller-driven call-site specialization       *
+             * (PLAN/T2FULL/census/p1_design.md).                        *
+             *                                                           *
+             * At a hot tail call to a cross-module M:F/A where (a) some *
+             * argument resolves to a literal env-free MakeFun of this   *
+             * module and (b) M:F/A is a self-recursive loop recoverable *
+             * by t2_loop_recover, the callee's recovered loop is CLONED *
+             * into the caller, its params bound to the call's boundary  *
+             * vector, the per-element CallFun devirtualized by splicing *
+             * the fun body, and the callee's frame dropped. Deopt is    *
+             * the new RE-DISPATCH shape (T2_OP_SPEC_REDISPATCH /        *
+             * T2_OP_TAIL_SITE): every side exit re-invokes the generic  *
+             * callee with the LOOP-CARRIED vector — a branch to the     *
+             * call site's own T1 CALL PC over the current X0..ar-1      *
+             * (guards), a genuine TailCallExt M:F/A(l_k, acc_k, fun)    *
+             * (error edges), and an RC_CALLEE back edge whose yield     *
+             * stays in T2 and whose tombstone/parked translation        *
+             * re-enters the callee (timeslice never deopts). No shape   *
+             * guard and no slow edge: the callee's own case dispatch is *
+             * the loop entry, and re-dispatch IS the generic fallback.  *
+             * ========================================================= */
+
+            static constexpr uint32_t T2_P1_MAX_CALLEE_OPS = 48;
+            static constexpr uint32_t T2_P1_MAX_ARITY = 4;
+
+            void p1_reject(const T2Op *call, const char *why) {
+                if (p1_trace()) {
+                    erts_fprintf(stderr,
+                                 "t2_p1: %T:%T/%u site %T:%T/%u rejected: "
+                                 "%s\n",
+                                 fn.module,
+                                 fn.function,
+                                 (unsigned)fn.arity,
+                                 call->mfa_m,
+                                 call->mfa_f,
+                                 (unsigned)call->index,
+                                 why);
+                }
+            }
+
+            /* Ops admissible in the cloned callee loop, besides the
+             * structural ones checked separately (the one CallFun, the
+             * one Allocate/Deallocate pair, the recovery RC, Params in
+             * the entry block, phis in the header). Deliberately
+             * narrower than fun_op_ok: no Add/Sub (a callee-body
+             * arith would carry a callee-relative sync/beam_idx that
+             * means nothing in the caller) and no ConstLiteral (a
+             * dynamic literal's term dies with the callee decode). */
+            static bool p1_callee_op_ok(const T2Op *op) {
+                if ((op->flags & ~(uint16_t)T2_OP_PAIR_HEAD) != 0) {
+                    return false;
+                }
+                switch (op->kind) {
+                case T2OpKind::ConstInt:
+                case T2OpKind::ConstAtom:
+                case T2OpKind::ConstNil:
+                case T2OpKind::Copy:
+                case T2OpKind::GetHd:
+                case T2OpKind::GetTl:
+                case T2OpKind::GetTupleElement:
+                case T2OpKind::IsInteger:
+                case T2OpKind::IsFloat:
+                case T2OpKind::IsNumber:
+                case T2OpKind::IsAtom:
+                case T2OpKind::IsBoolean:
+                case T2OpKind::IsTuple:
+                case T2OpKind::IsList:
+                case T2OpKind::IsNonemptyList:
+                case T2OpKind::IsNil:
+                case T2OpKind::IsMap:
+                case T2OpKind::IsPid:
+                case T2OpKind::IsPort:
+                case T2OpKind::IsReference:
+                case T2OpKind::IsFunction:
+                case T2OpKind::IsTaggedTuple:
+                case T2OpKind::TestArity:
+                case T2OpKind::CmpEqExact:
+                case T2OpKind::CmpNeExact:
+                case T2OpKind::CmpEq:
+                case T2OpKind::CmpNe:
+                case T2OpKind::CmpLt:
+                case T2OpKind::CmpLe:
+                case T2OpKind::CmpGt:
+                case T2OpKind::CmpGe:
+                    return true;
+                default:
+                    return false;
+                }
+            }
+
+            /* An error block from the P1 cloner's point of view: the
+             * terminator raises (T2_OP_ERR_EXIT_*). Unlike splice_fun's
+             * is_err_block it tolerates phis — the Braun builder leaves
+             * trivial single-input phis in shared raise blocks, and the
+             * cloner drops the whole block (error edges collapse onto
+             * the re-dispatch block), phis included. */
+            static bool p1_is_err_block(const T2BasicBlock *b) {
+                return b != nullptr && b->terminator != nullptr &&
+                       (b->terminator->flags &
+                        (T2_OP_ERR_EXIT_SHARED | T2_OP_ERR_EXIT_OP)) != 0;
+            }
+
+            /* Read-only admission of the RECOVERED callee. Fills the
+             * accumulator param index (the phi whose latch input is the
+             * CallFun's result; -1 when none) — everything else is
+             * re-derived structurally by the clone pass. */
+            bool p1_admit_callee(const T2Function &callee,
+                                 const T2LoopInfo &cli,
+                                 uint32_t fun_idx,
+                                 uint32_t fun_arity,
+                                 int32_t *acc_idx_out,
+                                 const char **why) {
+                *why = "callee shape not admissible";
+
+                if (cli.loops.size() != 1 || cli.loops[0].latches.size() != 1 ||
+                    cli.loops[0].preheader != 0 ||
+                    cli.loops[0].header >= callee.blocks.size()) {
+                    *why = "callee is not a single-latch recovered loop";
+                    return false;
+                }
+
+                const T2Loop &loop = cli.loops[0];
+                const T2BasicBlock *ce = callee.blocks[0];
+                const T2BasicBlock *ch = callee.blocks[loop.header];
+                uint32_t latch_id = loop.latches[0];
+                uint32_t ar = callee.arity;
+
+                /* Entry block: only Params + the jump to the header. */
+                for (const T2Op *op = ce->ops_head; op != nullptr;
+                     op = op->next) {
+                    if (op->kind != T2OpKind::Param) {
+                        *why = "callee entry block has non-Param ops";
+                        return false;
+                    }
+                }
+                if (ce->terminator == nullptr ||
+                    ce->terminator->kind != T2OpKind::Jump ||
+                    ce->terminator->succ_then != ch) {
+                    *why = "callee entry does not jump to the loop header";
+                    return false;
+                }
+
+                /* Header phis: exactly one per param, homed X0..ar-1. */
+                std::vector<const T2Op *> phis(ar, nullptr);
+                for (const T2Op *phi = ch->phis_head; phi != nullptr;
+                     phi = phi->next) {
+                    if (phi->dst_reg == T2_REG_NONE ||
+                        !t2_reg_is_x(phi->dst_reg) ||
+                        t2_reg_index(phi->dst_reg) >= ar ||
+                        phis[t2_reg_index(phi->dst_reg)] != nullptr) {
+                        *why = "callee header phis are not the param vector";
+                        return false;
+                    }
+                    phis[t2_reg_index(phi->dst_reg)] = phi;
+                }
+                for (uint32_t i = 0; i < ar; i++) {
+                    if (phis[i] == nullptr) {
+                        *why = "callee header phi missing";
+                        return false;
+                    }
+                }
+
+                /* Latch input per phi. */
+                auto latch_input = [&](const T2Op *phi) -> const T2Value * {
+                    for (uint16_t i = 0; i < phi->num_operands; i++) {
+                        if (phi->phi_blocks[i]->id == latch_id) {
+                            return phi->operands[i];
+                        }
+                    }
+                    return nullptr;
+                };
+
+                /* The fun param must be loop-invariant: its latch input
+                 * resolves (through copies) back to the phi itself. */
+                {
+                    const T2Value *lv = latch_input(phis[fun_idx]);
+
+                    if (lv == nullptr ||
+                        resolve_copies(lv) != phis[fun_idx]->result) {
+                        *why = "callee fun param is not loop-invariant";
+                        return false;
+                    }
+                }
+
+                /* Walk every block: census the structural ops, check
+                 * the whitelist. Error blocks are admissible exits. */
+                const T2Op *callfun = nullptr;
+                const T2Op *alloc = nullptr;
+                const T2Op *dealloc = nullptr;
+                const T2Op *rc = nullptr;
+                uint32_t nops = 0;
+
+                for (const T2BasicBlock *b : callee.blocks) {
+                    if (b == ce || p1_is_err_block(b)) {
+                        continue;
+                    }
+                    if (b != ch) {
+                        /* The Braun builder leaves trivial single-input
+                         * phis in once-unsealed blocks; the clone
+                         * forwards them through the value map. Real
+                         * merges outside the header are out of P1a
+                         * scope. */
+                        for (const T2Op *phi = b->phis_head; phi != nullptr;
+                             phi = phi->next) {
+                            if (phi->num_operands != 1) {
+                                *why = "callee has a merge outside the "
+                                       "loop header";
+                                return false;
+                            }
+                        }
+                    }
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        nops++;
+                        switch (op->kind) {
+                        case T2OpKind::CallFun:
+                            if (callfun != nullptr || op->flags != 0 ||
+                                op->sync == nullptr || b->id != latch_id ||
+                                op->index != fun_arity) {
+                                *why = "callee CallFun census failed";
+                                return false;
+                            }
+                            callfun = op;
+                            continue;
+                        case T2OpKind::Allocate:
+                            if (alloc != nullptr || b->id != latch_id ||
+                                op->imm_int != 0) {
+                                *why = "callee frame shape not admissible";
+                                return false;
+                            }
+                            alloc = op;
+                            continue;
+                        case T2OpKind::Deallocate:
+                            if (dealloc != nullptr || b->id != latch_id) {
+                                *why = "callee frame shape not admissible";
+                                return false;
+                            }
+                            dealloc = op;
+                            continue;
+                        case T2OpKind::ReductionCheck:
+                            if (rc != nullptr || op->flags != 0 ||
+                                op->sync == nullptr || b->id != latch_id) {
+                                *why = "callee back edge not admissible";
+                                return false;
+                            }
+                            rc = op;
+                            continue;
+                        default:
+                            break;
+                        }
+                        if (!p1_callee_op_ok(op)) {
+                            *why = "callee op outside the P1a whitelist";
+                            return false;
+                        }
+                    }
+                    const T2Op *t = b->terminator;
+
+                    if (t == nullptr) {
+                        *why = "callee block without terminator";
+                        return false;
+                    }
+                    switch (t->kind) {
+                    case T2OpKind::Jump:
+                    case T2OpKind::Branch:
+                        break;
+                    case T2OpKind::Return:
+                        if (t->num_operands != 1 ||
+                            t->operand_regs == nullptr ||
+                            t->operand_regs[0] != t2_xreg(0)) {
+                            *why = "callee return value not in x0";
+                            return false;
+                        }
+                        break;
+                    default:
+                        *why = "callee terminator outside the P1a set";
+                        return false;
+                    }
+                }
+
+                if (callfun == nullptr || rc == nullptr ||
+                    (alloc == nullptr) != (dealloc == nullptr) ||
+                    (alloc != nullptr && alloc->index != dealloc->index) ||
+                    nops > T2_P1_MAX_CALLEE_OPS) {
+                    *why = "callee census failed";
+                    return false;
+                }
+
+                /* The CallFun's fun operand (last) must be the fun
+                 * param's phi, through copies. */
+                if (callfun->num_operands != fun_arity + 1 ||
+                    resolve_copies(
+                            callfun->operands[callfun->num_operands - 1]) !=
+                            phis[fun_idx]->result) {
+                    *why = "callee CallFun does not apply the fun param";
+                    return false;
+                }
+
+                /* Order within the latch block: [alloc <] callfun
+                 * [< dealloc] < rc. */
+                {
+                    int state = alloc == nullptr ? 1 : 0;
+
+                    for (const T2Op *op = callee.blocks[latch_id]->ops_head;
+                         op != nullptr;
+                         op = op->next) {
+                        if (op == alloc && state == 0) {
+                            state = 1;
+                        } else if (op == callfun && state == 1) {
+                            state = 2;
+                        } else if (op == dealloc && state == 2) {
+                            state = 3;
+                        } else if (op == rc &&
+                                   state == (alloc == nullptr ? 2 : 3)) {
+                            state = 4;
+                        } else if (op == alloc || op == callfun ||
+                                   op == dealloc || op == rc) {
+                            *why = "callee latch op order not admissible";
+                            return false;
+                        }
+                    }
+                    if (state != 4) {
+                        *why = "callee latch op order not admissible";
+                        return false;
+                    }
+                }
+
+                /* The accumulator param: the phi whose latch input
+                 * resolves to the CallFun's result. */
+                *acc_idx_out = -1;
+                for (uint32_t i = 0; i < ar; i++) {
+                    if (i == fun_idx) {
+                        continue;
+                    }
+                    const T2Value *lv = latch_input(phis[i]);
+
+                    if (lv != nullptr &&
+                        resolve_copies(lv) == callfun->result) {
+                        *acc_idx_out = (int32_t)i;
+                    }
+                }
+
+                return true;
+            }
+
+            /* The clone + specialization pass. Runs inside the callee
+             * build callback (the callee HIR is alive), AFTER all
+             * read-only admission passed; any failure here is a hard
+             * error that degrades the whole function to T1, loudly. */
+            bool p1_commit(T2Op *call,
+                           T2Function &callee,
+                           const T2Loop &loop,
+                           uint32_t fun_idx,
+                           int32_t acc_idx,
+                           const T2Op *mf,
+                           Eterm callee_m,
+                           Eterm callee_f,
+                           const void *callee_lf,
+                           const void *callee_hdr) {
+                uint32_t bi = call->beam_idx;
+                T2SyncMap *cmap = call->sync;
+                uint32_t ar = callee.arity;
+                T2BasicBlock *ce = callee.blocks[0];
+                T2BasicBlock *ch = callee.blocks[loop.header];
+                uint32_t latch_id = loop.latches[0];
+
+                /* ---- callee structure (re-derived; admission holds) -- */
+
+                std::vector<const T2Op *> phis(ar, nullptr);
+                for (const T2Op *phi = ch->phis_head; phi != nullptr;
+                     phi = phi->next) {
+                    phis[t2_reg_index(phi->dst_reg)] = phi;
+                }
+
+                auto latch_input = [&](const T2Op *phi) -> T2Value * {
+                    for (uint16_t i = 0; i < phi->num_operands; i++) {
+                        if (phi->phi_blocks[i]->id == latch_id) {
+                            return phi->operands[i];
+                        }
+                    }
+                    return nullptr;
+                };
+
+                /* ---- clone ------------------------------------------- */
+
+                std::unordered_map<const T2Value *, T2Value *> vmap;
+                std::unordered_map<const T2BasicBlock *, T2BasicBlock *> bmap;
+                std::vector<T2Op *> clones; /* cloned body ops, in order */
+                std::vector<T2Op *> cl_phis(ar, nullptr);
+                T2Op *ccf = nullptr; /* the cloned CallFun               */
+                T2Op *crc = nullptr; /* the cloned back-edge RC          */
+
+                T2BasicBlock *b_grd = fn.new_block();
+                T2BasicBlock *b_err = fn.new_block();
+
+                /* Params + the invariant fun phi bind to the boundary
+                 * vector (identical to the operands; the validator
+                 * asserted it). */
+                for (const T2Op *op = ce->ops_head;
+                     op != nullptr && op->kind == T2OpKind::Param;
+                     op = op->next) {
+                    vmap[op->result] = cmap->x[op->index];
+                }
+                vmap[phis[fun_idx]->result] = cmap->x[fun_idx];
+
+                /* Block skeleton (entry + error blocks are not cloned;
+                 * error edges collapse onto the re-dispatch block). */
+                for (const T2BasicBlock *b : callee.blocks) {
+                    if (b == ce || p1_is_err_block(b)) {
+                        continue;
+                    }
+                    bmap[b] = fn.new_block();
+                }
+                auto target_of = [&](T2BasicBlock *cb) -> T2BasicBlock * {
+                    auto it = bmap.find(cb);
+
+                    return it != bmap.end() ? it->second : b_err;
+                };
+
+                /* Header phis (except the fun's). */
+                for (uint32_t i = 0; i < ar; i++) {
+                    if (i == fun_idx) {
+                        continue;
+                    }
+                    T2Op *np = fn.new_phi(bmap.at(ch), phis[i]->type);
+
+                    np->dst_reg = t2_xreg(i);
+                    np->flags = T2_OP_INLINED;
+                    np->beam_idx = bi;
+                    vmap[phis[i]->result] = np->result;
+                    cl_phis[i] = np;
+                }
+
+                auto mapped = [&](const T2Value *v) -> T2Value * {
+                    auto it = vmap.find(v);
+
+                    return it == vmap.end() ? nullptr : it->second;
+                };
+
+                /* Body ops, header block first (its defs dominate the
+                 * loop), then the rest in index order. */
+                std::vector<const T2BasicBlock *> order;
+
+                order.push_back(ch);
+                for (const T2BasicBlock *b : callee.blocks) {
+                    if (b == ce || b == ch || p1_is_err_block(b)) {
+                        continue;
+                    }
+                    order.push_back(b);
+                }
+
+                for (const T2BasicBlock *b : order) {
+                    T2BasicBlock *nb = bmap.at(b);
+
+                    /* Trivial single-input phis (Braun leftovers in
+                     * once-unsealed blocks) forward through the value
+                     * map; their home must already be the input's home
+                     * (it is, by Braun construction — checked). */
+                    if (b != ch) {
+                        for (const T2Op *phi = b->phis_head; phi != nullptr;
+                             phi = phi->next) {
+                            T2Value *mv = mapped(phi->operands[0]);
+
+                            if (mv == nullptr) {
+                                return fail("p1: trivial phi input escapes "
+                                            "the value map");
+                            }
+                            if (mv->def == nullptr ||
+                                mv->def->dst_reg != phi->dst_reg) {
+                                return fail("p1: trivial phi home differs "
+                                            "from its input's home");
+                            }
+                            vmap[phi->result] = mv;
+                        }
+                    }
+
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        /* The callee's frame is dropped by construction:
+                         * the erased CallFun was the only reason for it
+                         * (admission pinned the one balanced pair). */
+                        if (op->kind == T2OpKind::Allocate ||
+                            op->kind == T2OpKind::Deallocate) {
+                            continue;
+                        }
+
+                        T2Op *cl = fn.new_op(nb, op->kind, op->type);
+                        std::vector<T2Value *> ins;
+
+                        for (uint16_t i = 0; i < op->num_operands; i++) {
+                            T2Value *mv = mapped(op->operands[i]);
+
+                            if (mv == nullptr) {
+                                return fail("p1: callee operand escapes "
+                                            "the value map");
+                            }
+                            ins.push_back(mv);
+                        }
+                        fn.set_operands(cl, ins);
+                        if (op->operand_regs != nullptr) {
+                            cl->operand_regs = fn.arena.alloc_array<int32_t>(
+                                    op->num_operands);
+                            for (uint16_t i = 0; i < op->num_operands; i++) {
+                                cl->operand_regs[i] = op->operand_regs[i];
+                            }
+                        }
+                        cl->imm_int = op->imm_int;
+                        cl->imm_term = op->imm_term;
+                        cl->mfa_m = op->mfa_m;
+                        cl->mfa_f = op->mfa_f;
+                        cl->index = op->index;
+                        cl->bif_num = op->bif_num;
+                        cl->live = op->live;
+                        cl->dst_reg = op->dst_reg;
+                        /* PAIR_HEAD dropped: the re-homing below moves
+                         * every pair destination off its source, so the
+                         * clones are safe as plain singles. */
+                        cl->flags = T2_OP_INLINED |
+                                    (op->flags & T2_OP_TUPLE_ARITY_FUSED);
+                        cl->sync = nullptr;
+                        cl->beam_idx = bi;
+
+                        if (op->result != nullptr) {
+                            vmap[op->result] = cl->result;
+                        }
+                        if (op->kind == T2OpKind::CallFun) {
+                            ccf = cl;
+                        }
+                        if (op->kind == T2OpKind::ReductionCheck) {
+                            crc = cl;
+                        }
+                        clones.push_back(cl);
+                    }
+
+                    const T2Op *t = b->terminator;
+
+                    switch (t->kind) {
+                    case T2OpKind::Jump:
+                        fn.emit_jump(nb, target_of(t->succ_then));
+                        break;
+                    case T2OpKind::Branch: {
+                        T2Value *cond = mapped(t->operands[0]);
+
+                        if (cond == nullptr) {
+                            return fail("p1: callee branch cond escapes "
+                                        "the value map");
+                        }
+                        fn.emit_branch(nb,
+                                       cond,
+                                       target_of(t->succ_then),
+                                       target_of(t->succ_else));
+                        break;
+                    }
+                    case T2OpKind::Return: {
+                        T2Value *rv = mapped(t->operands[0]);
+
+                        if (rv == nullptr) {
+                            return fail("p1: callee return escapes the "
+                                        "value map");
+                        }
+                        T2Op *ret_op =
+                                fn.new_op(nb, T2OpKind::Return, T2Type::none());
+
+                        fn.set_operands(ret_op, {rv});
+                        ret_op->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                        ret_op->operand_regs[0] = t2_xreg(0);
+                        ret_op->sync = make_map({rv}, cmap);
+                        ret_op->beam_idx = bi;
+                        break;
+                    }
+                    default:
+                        return fail("p1: callee terminator outside the "
+                                    "admitted set");
+                    }
+                    nb->terminator->beam_idx = bi;
+                }
+                if (ccf == nullptr || crc == nullptr) {
+                    return fail("p1: cloned CallFun/RC vanished");
+                }
+
+                /* ---- keep-sets for the re-homing pass ----------------- */
+
+                /* Latch materializations: the (mapped) values feeding
+                 * the phis' latch inputs keep the phi homes. */
+                std::unordered_set<const T2Value *> keep;
+                std::vector<T2Value *> latch_vec(ar, nullptr);
+
+                for (uint32_t i = 0; i < ar; i++) {
+                    if (i == fun_idx) {
+                        latch_vec[i] = cmap->x[fun_idx];
+                        continue;
+                    }
+                    T2Value *mv = mapped(latch_input(phis[i]));
+
+                    if (mv == nullptr) {
+                        return fail("p1: latch input escapes the value map");
+                    }
+                    if (mv->def == nullptr || mv->def->dst_reg != t2_xreg(i)) {
+                        return fail("p1: latch materialization is not in "
+                                    "the phi home");
+                    }
+                    keep.insert(mv);
+                    latch_vec[i] = mv;
+                }
+                /* Return-value materializations keep X0. */
+                for (const auto &e : bmap) {
+                    const T2Op *t = e.second->terminator;
+
+                    if (t != nullptr && t->kind == T2OpKind::Return) {
+                        const T2Value *rv = t->operands[0];
+
+                        if (rv->def == nullptr ||
+                            rv->def->dst_reg != t2_xreg(0)) {
+                            return fail("p1: return value is not in x0");
+                        }
+                        keep.insert(rv);
+                    }
+                }
+
+                /* ---- re-home iteration-locals off X0..ar-1 and Y ------ */
+
+                uint32_t next_free = ar;
+
+                for (const T2Op *cl : clones) {
+                    if (cl->dst_reg != T2_REG_NONE &&
+                        t2_reg_is_x(cl->dst_reg) &&
+                        t2_reg_index(cl->dst_reg) >= next_free) {
+                        next_free = t2_reg_index(cl->dst_reg) + 1;
+                    }
+                }
+
+                for (T2Op *cl : clones) {
+                    if (cl->result == nullptr || cl->dst_reg == T2_REG_NONE ||
+                        keep.count(cl->result) != 0) {
+                        continue;
+                    }
+                    if (t2_reg_is_x(cl->dst_reg) &&
+                        t2_reg_index(cl->dst_reg) >= ar) {
+                        continue;
+                    }
+
+                    int32_t nr = t2_xreg(next_free++);
+
+                    cl->dst_reg = nr;
+                    for (T2Op *u : clones) {
+                        if (u->operand_regs == nullptr) {
+                            continue;
+                        }
+                        for (uint16_t i = 0; i < u->num_operands; i++) {
+                            if (u->operands[i] == cl->result) {
+                                u->operand_regs[i] = nr;
+                            }
+                        }
+                    }
+                    for (const auto &e : bmap) {
+                        T2Op *t = e.second->terminator;
+
+                        if (t == nullptr || t->operand_regs == nullptr) {
+                            continue;
+                        }
+                        for (uint16_t i = 0; i < t->num_operands; i++) {
+                            if (t->operands[i] == cl->result) {
+                                t->operand_regs[i] = nr;
+                            }
+                        }
+                    }
+                }
+
+                /* ---- devirtualize: splice the fun body at the CallFun - */
+
+                T2BasicBlock *cb = ccf->block; /* the cloned latch      */
+                T2BasicBlock *b_lat2 = fn.new_block();
+
+                {
+                    T2Op *after = ccf->next;
+
+                    if (after != nullptr) {
+                        after->prev = nullptr;
+                        b_lat2->ops_head = after;
+                        b_lat2->ops_tail = cb->ops_tail;
+                        for (T2Op *q = after; q != nullptr; q = q->next) {
+                            q->block = b_lat2;
+                        }
+                        ccf->next = nullptr;
+                        cb->ops_tail = ccf;
+                    }
+                    b_lat2->terminator = cb->terminator;
+                    if (b_lat2->terminator != nullptr) {
+                        b_lat2->terminator->block = b_lat2;
+                    }
+                    cb->terminator = nullptr;
+                }
+
+                uint32_t fun_arity = ccf->num_operands - 1;
+                std::vector<T2Value *> fargs;
+                std::vector<int32_t> farg_homes;
+
+                for (uint32_t j = 0; j < fun_arity; j++) {
+                    T2Value *root = const_cast<T2Value *>(
+                            resolve_copies(ccf->operands[j]));
+
+                    if (is_const_def(root)) {
+                        fargs.push_back(root);
+                        farg_homes.push_back(T2_REG_NONE);
+                    } else if (root->def != nullptr &&
+                               root->def->dst_reg != T2_REG_NONE) {
+                        fargs.push_back(root);
+                        farg_homes.push_back(root->def->dst_reg);
+                    } else {
+                        fargs.push_back(ccf->operands[j]);
+                        farg_homes.push_back(ccf->operand_regs != nullptr
+                                                     ? ccf->operand_regs[j]
+                                                     : T2_REG_NONE);
+                    }
+                }
+
+                FunBody fb;
+                bool spliced = false;
+                bool splice_hard_err = false;
+
+                {
+                    uint32_t impl_idx = (uint32_t)mf->imm_int;
+                    std::string berr;
+                    bool built = t2_build_selected(
+                            ret,
+                            &impl_idx,
+                            1,
+                            [&](T2Function &impl) {
+                                FunBody tmp;
+
+                                if (splice_fun(impl,
+                                               fargs,
+                                               farg_homes,
+                                               b_err,
+                                               next_free,
+                                               &tmp)) {
+                                    fb = std::move(tmp);
+                                    spliced = true;
+                                } else if (err != nullptr && !err->empty()) {
+                                    splice_hard_err = true;
+                                }
+                            },
+                            &berr);
+
+                    if (!built || splice_hard_err || !spliced) {
+                        if (err != nullptr && err->empty()) {
+                            *err = "p1: fun body splice failed "
+                                   "(site abandoned post-clone): " +
+                                   berr;
+                        }
+                        return false;
+                    }
+                }
+
+                fn.emit_jump(cb, fb.entry);
+                cb->terminator->beam_idx = bi;
+                fn.emit_jump(fb.ret_join, b_lat2);
+                fb.ret_join->terminator->beam_idx = bi;
+
+                /* The fun's return value replaces the CallFun's result
+                 * everywhere (the latch accumulator copy included);
+                 * re-point the readers' operand homes at its real home. */
+                {
+                    int32_t ret_home = T2_REG_NONE;
+                    auto hit = fb.home.find(fb.ret_phi);
+
+                    if (hit != fb.home.end()) {
+                        ret_home = hit->second;
+                    } else if (fb.ret_phi->def != nullptr) {
+                        ret_home = fb.ret_phi->def->dst_reg;
+                    }
+                    replace_value(fn, ccf->result, fb.ret_phi);
+                    for (T2Op *u : clones) {
+                        if (u == ccf || u->operand_regs == nullptr) {
+                            continue;
+                        }
+                        for (uint16_t i = 0; i < u->num_operands; i++) {
+                            if (u->operands[i] == fb.ret_phi) {
+                                u->operand_regs[i] = ret_home;
+                            }
+                        }
+                    }
+                    unlink_op(cb, ccf);
+                }
+
+                /* ---- loop phi inputs (before dead-copy reaping: the
+                 *      latch materializations' uses must be visible) --- */
+
+                for (uint32_t i = 0; i < ar; i++) {
+                    if (i == fun_idx) {
+                        continue;
+                    }
+                    fn.set_phi_inputs(cl_phis[i],
+                                      {cmap->x[i], latch_vec[i]},
+                                      {b_grd, b_lat2});
+                }
+
+                /* ---- reap dead cloned copies (the fun's save/restore
+                 *      round-trip through the dropped frame, the arg
+                 *      shuffle the splice bypassed) ---------------------- */
+
+                {
+                    bool again = true;
+
+                    while (again) {
+                        again = false;
+                        for (T2Op *cl : clones) {
+                            if (cl->kind != T2OpKind::Copy ||
+                                cl->block == nullptr || cl->result == nullptr) {
+                                continue;
+                            }
+
+                            uint32_t uses = 0;
+
+                            for_each_op(fn, [&](T2Op *u) {
+                                for (uint16_t i = 0; i < u->num_operands; i++) {
+                                    if (u->operands[i] == cl->result) {
+                                        uses++;
+                                    }
+                                }
+                                if (u->sync != nullptr) {
+                                    const T2SyncMap *m = u->sync;
+
+                                    for (uint32_t i = 0; i < m->x_live; i++) {
+                                        if (m->x[i] == cl->result) {
+                                            uses++;
+                                        }
+                                    }
+                                    for (int32_t i = 0;
+                                         m->frame_size != T2_NO_FRAME &&
+                                         i < m->frame_size;
+                                         i++) {
+                                        if (m->y[i] == cl->result) {
+                                            uses++;
+                                        }
+                                    }
+                                }
+                            });
+                            if (uses == 0) {
+                                unlink_op(cl->block, cl);
+                                cl->block = nullptr;
+                                again = true;
+                            }
+                        }
+                    }
+                }
+
+                /* ---- the frame is gone: nothing may touch Y ----------- */
+
+                for (const T2Op *cl : clones) {
+                    if (cl->block == nullptr) {
+                        continue; /* reaped */
+                    }
+                    if (cl->dst_reg != T2_REG_NONE &&
+                        t2_reg_is_y(cl->dst_reg)) {
+                        return fail("p1: live Y write after frame drop");
+                    }
+                    if (cl->operand_regs != nullptr) {
+                        for (uint16_t i = 0; i < cl->num_operands; i++) {
+                            if (cl->operand_regs[i] != T2_REG_NONE &&
+                                t2_reg_is_y(cl->operand_regs[i])) {
+                                return fail("p1: live Y read after frame "
+                                            "drop");
+                            }
+                        }
+                    }
+                }
+
+                /* ---- speculation: re-dispatch class ------------------- */
+
+                T2SyncMap *vec_map = make_map(
+                        latch_vec_entry_map(cl_phis, cmap, fun_idx, ar),
+                        cmap);
+                bool need_acc_guard = false;
+
+                if (!convert_arith(fb,
+                                   acc_idx >= 0 ? cl_phis[acc_idx]->result
+                                                : nullptr,
+                                   &need_acc_guard,
+                                   T2_OP_SPEC_REDISPATCH,
+                                   0,
+                                   vec_map,
+                                   bi)) {
+                    if (err != nullptr) {
+                        *err = "p1: fun arithmetic not convertible (site "
+                               "abandoned post-clone)";
+                    }
+                    return false;
+                }
+
+                /* ---- back edge: RC_CALLEE (tail), +2 for the erased
+                 *      fun call (fun entry + fun return dispatch) ------- */
+
+                crc->flags = T2_OP_RC_CALLEE | T2_OP_TAIL_SITE;
+                crc->mfa_m = callee_m;
+                crc->mfa_f = callee_f;
+                crc->live = ar;
+                crc->imm_int = (Sint64)(UWord)callee_lf;
+                crc->index += 2;
+                crc->sync = make_map(latch_vec, cmap);
+
+                /* ---- preheader: entry guard + the erased call's own
+                 *      entry charge (RC#1) ------------------------------ */
+
+                if (need_acc_guard && acc_idx >= 0) {
+                    T2Op *g = fn.new_op(b_grd,
+                                        T2OpKind::SpeculateType,
+                                        T2Type::none());
+
+                    fn.set_operands(g, {cmap->x[acc_idx]});
+                    g->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                    g->operand_regs[0] = t2_xreg(acc_idx);
+                    g->flags = T2_OP_INLINED | T2_OP_SPEC_REDISPATCH;
+                    g->sync = cmap;
+                    g->beam_idx = bi;
+                }
+                {
+                    T2Op *rc1 = fn.new_op(b_grd,
+                                          T2OpKind::ReductionCheck,
+                                          T2Type::none());
+
+                    fn.set_operands(rc1, {});
+                    rc1->flags = T2_OP_RC_CALLEE | T2_OP_TAIL_SITE;
+                    rc1->mfa_m = callee_m;
+                    rc1->mfa_f = callee_f;
+                    rc1->live = ar;
+                    rc1->imm_int = (Sint64)(UWord)callee_lf;
+                    rc1->index = 0; /* charge 1: the callee's entry check */
+                    rc1->sync = cmap;
+                    rc1->beam_idx = bi;
+                }
+                fn.emit_jump(b_grd, bmap.at(ch));
+                b_grd->terminator->beam_idx = bi;
+
+                /* ---- the re-dispatch exit (error edges): a genuine
+                 *      tail call to the generic callee over the
+                 *      loop-carried vector ------------------------------ */
+
+                {
+                    T2Op *rd = fn.new_op(b_err,
+                                         T2OpKind::TailCallExt,
+                                         T2Type::none());
+
+                    fn.set_operands(
+                            rd,
+                            latch_vec_entry_map(cl_phis, cmap, fun_idx, ar));
+                    rd->operand_regs = fn.arena.alloc_array<int32_t>(ar);
+                    for (uint32_t i = 0; i < ar; i++) {
+                        rd->operand_regs[i] = t2_xreg(i);
+                    }
+                    rd->mfa_m = callee_m;
+                    rd->mfa_f = callee_f;
+                    rd->index = ar;
+                    rd->sync = vec_map;
+                    rd->beam_idx = bi;
+                }
+
+                /* ---- caller wiring ------------------------------------ */
+
+                ASSERT(fn.blocks[call->block->id] == call->block &&
+                       call->block->terminator == call);
+                {
+                    T2BasicBlock *b_pre = call->block;
+
+                    b_pre->terminator = nullptr;
+                    fn.emit_jump(b_pre, b_grd);
+                    b_pre->terminator->beam_idx = bi;
+                }
+
+                /* Dependencies: the callee module (its loop is baked
+                 * into this blob) and our own instance (the inlined fun
+                 * body). */
+                {
+                    auto add_dep = [&](const void *hdr) {
+                        for (const void *d : fn.dep_hdrs) {
+                            if (d == hdr) {
+                                return;
+                            }
+                        }
+                        fn.dep_hdrs.push_back(hdr);
+                    };
+                    add_dep(callee_hdr);
+                    add_dep(own_code_hdr);
+                }
+
+                if (p1_trace() || intrin_trace()) {
+                    erts_fprintf(stderr,
+                                 "t2_p1: %T:%T/%u inlined %T:%T/%u (tail "
+                                 "site, fun arg %u, beam_idx %u)\n",
+                                 fn.module,
+                                 fn.function,
+                                 (unsigned)fn.arity,
+                                 callee_m,
+                                 callee_f,
+                                 (unsigned)ar,
+                                 (unsigned)fun_idx,
+                                 (unsigned)bi);
+                }
+
+                changed = true;
+                return true;
+            }
+
+            /* The loop-carried vector in param order: the phis, with
+             * the invariant fun slot holding the caller's boundary fun
+             * value. */
+            static std::vector<T2Value *> latch_vec_entry_map(
+                    const std::vector<T2Op *> &cl_phis,
+                    const T2SyncMap *cmap,
+                    uint32_t fun_idx,
+                    uint32_t ar) {
+                std::vector<T2Value *> v(ar, nullptr);
+
+                for (uint32_t i = 0; i < ar; i++) {
+                    v[i] = i == fun_idx ? cmap->x[i] : cl_phis[i]->result;
+                }
+                return v;
+            }
+
+            /* One P1 site: recognition + admission, then commit. A
+             * `true` return with changed untouched means the site was
+             * (silently or tracedly) left alone. */
+            bool expand_p1_site(T2Op *call) {
+                if (call->kind != T2OpKind::TailCallExt) {
+                    p1_reject(call, "body site (P1a implements tail sites)");
+                    return true;
+                }
+                if (call->sync == nullptr ||
+                    call->sync->x_live != call->index || call->index == 0 ||
+                    call->index > T2_P1_MAX_ARITY) {
+                    p1_reject(call, "no call-shaped sync map");
+                    return true;
+                }
+                if (call->mfa_m == fn.module) {
+                    p1_reject(call,
+                              "own-module callee (instance not "
+                              "committed at load time)");
+                    return true;
+                }
+
+                /* Only the frameless call_ext_only shape (mirror the
+                 * maps tail-site rule: a fused call_ext_last's T1 CALL
+                 * PC deallocates again). */
+                {
+                    const T2Op *last = call->block->ops_tail;
+
+                    if (call->sync->frame_size != T2_NO_FRAME ||
+                        (last != nullptr &&
+                         last->kind == T2OpKind::Deallocate &&
+                         last->beam_idx == call->beam_idx)) {
+                        p1_reject(call,
+                                  "call_ext_last shape (fused dealloc) "
+                                  "unsupported");
+                        return true;
+                    }
+                }
+
+                /* A statically-known fun among the arguments: an
+                 * env-free SSA-constant MakeFun of this module. */
+                int32_t fun_idx = -1;
+                const T2Op *mf = nullptr;
+
+                for (uint16_t i = 0; i < call->num_operands; i++) {
+                    const T2Value *root = resolve_copies(call->operands[i]);
+                    const T2Op *def = root->def;
+
+                    if (def != nullptr && def->kind == T2OpKind::MakeFun &&
+                        def->live == 0 /* num_free */ && def->imm_int >= 0) {
+                        fun_idx = (int32_t)i;
+                        mf = def;
+                        break;
+                    }
+                }
+                if (mf == nullptr) {
+                    p1_reject(call, "no literal env-free MakeFun argument");
+                    return true;
+                }
+                if (ret->lambdas == NULL ||
+                    mf->index >= (uint32_t)ret->lambda_count) {
+                    p1_reject(call, "lambda out of range");
+                    return true;
+                }
+
+                uint32_t fun_arity;
+                {
+                    const ErtsT2Lambda *lam = &ret->lambdas[mf->index];
+
+                    fun_arity = (uint32_t)(lam->arity - lam->num_free);
+                }
+                {
+                    uint32_t idx = (uint32_t)mf->imm_int;
+
+                    if (idx >= (uint32_t)ret->function_count ||
+                        (ret->eligible_bitmap[idx / 32] &
+                         (((Uint32)1) << (idx % 32))) == 0) {
+                        p1_reject(call, "fun impl not eligible");
+                        return true;
+                    }
+                }
+
+                /* Every deopt branches to the site's own T1 CALL PC. */
+                if (erts_t2_pc_lookup_kind(ret,
+                                           fn.fn_index,
+                                           call->beam_idx,
+                                           ERTS_T2_PC_CALL) == 0) {
+                    p1_reject(call, "no CALL pctab entry");
+                    return true;
+                }
+
+                /* The callee: loaded with retention, T1 entry resolved. */
+                Module *cm =
+                        erts_get_module(call->mfa_m, erts_active_code_ix());
+
+                if (cm == nullptr || cm->curr.code_hdr == nullptr ||
+                    cm->curr.t2_retained == nullptr) {
+                    p1_reject(call, "callee module not loaded/retained");
+                    return true;
+                }
+
+                const BeamCodeHeader *chdr =
+                        (const BeamCodeHeader *)cm->curr.code_hdr;
+                const ErtsT2RetainedCode *cret = cm->curr.t2_retained;
+                const void *clf = find_lf(chdr, call->mfa_f, call->index);
+
+                if (clf == nullptr) {
+                    p1_reject(call, "callee T1 entry not found");
+                    return true;
+                }
+
+                /* Pre-admit the fun body (mutation-free). */
+                {
+                    uint32_t impl_idx = (uint32_t)mf->imm_int;
+                    bool admitted = false;
+                    std::string berr;
+
+                    if (!t2_build_selected(
+                                ret,
+                                &impl_idx,
+                                1,
+                                [&](T2Function &impl) {
+                                    admitted =
+                                            admit_fun(impl, fun_arity, false);
+                                },
+                                &berr)) {
+                        return true; /* decode trouble: leave alone */
+                    }
+                    if (!admitted) {
+                        p1_reject(call, "fun body not admissible");
+                        return true;
+                    }
+                }
+
+                /* Build the callee's HIR (the retained-code path the
+                 * debug BIFs use), recover its loop, admit, and — only
+                 * with every check green — clone + specialize. */
+                bool committed = false;
+                bool hard_err = false;
+                const char *why = "callee build/admission failed";
+                std::string berr;
+
+                T2BuildStatus bst = t2_build_for_debug(
+                        cret,
+                        call->mfa_f,
+                        (unsigned)call->index,
+                        [&](T2Function &callee) {
+                            bool recovered = false;
+                            std::string rerr;
+
+                            if (!t2_loop_recover(callee, &recovered, &rerr) ||
+                                !recovered) {
+                                why = "callee loop not recoverable";
+                                return;
+                            }
+                            if (!t2_validate(callee, &rerr)) {
+                                why = "callee invalid post-recovery";
+                                return;
+                            }
+
+                            T2LoopInfo cli;
+
+                            t2_loop_info(callee, &cli);
+
+                            int32_t acc_idx = -1;
+
+                            if (!p1_admit_callee(callee,
+                                                 cli,
+                                                 (uint32_t)fun_idx,
+                                                 fun_arity,
+                                                 &acc_idx,
+                                                 &why)) {
+                                return;
+                            }
+
+                            if (!p1_commit(call,
+                                           callee,
+                                           cli.loops[0],
+                                           (uint32_t)fun_idx,
+                                           acc_idx,
+                                           mf,
+                                           call->mfa_m,
+                                           call->mfa_f,
+                                           clf,
+                                           (const void *)chdr)) {
+                                hard_err = true;
+                                return;
+                            }
+                            committed = true;
+                        },
+                        &berr);
+
+                if (hard_err) {
+                    return false; /* *err set by p1_commit */
+                }
+                if (bst != T2BuildStatus::Ok || !committed) {
+                    p1_reject(call, why);
+                    return true;
+                }
+                return true;
+            }
+
             bool run() {
                 if (fn.blocks.empty() || !fn.sync_complete || ret == nullptr) {
                     return true;
@@ -2414,6 +3647,7 @@ namespace erts_t2 {
                 };
                 std::vector<Site> sites;
                 std::vector<T2Op *> maps_sites;
+                std::vector<T2Op *> p1_sites;
                 Eterm am_lists_mod = ERTS_MAKE_AM("lists");
                 Eterm am_maps_mod = ERTS_MAKE_AM("maps");
                 Eterm am_fold_fn = ERTS_MAKE_AM("fold");
@@ -2454,6 +3688,14 @@ namespace erts_t2 {
                         t->mfa_f == am_fold_fn && t->index == 3 &&
                         !maps_intrin_disabled()) {
                         maps_sites.push_back(t);
+                    } else if (t != nullptr &&
+                               t->kind == T2OpKind::TailCallExt &&
+                               t->flags == 0 && !p1_disabled()) {
+                        /* P1a general trigger (tail sites): any
+                         * cross-module tail call not claimed by the
+                         * hand-coded recognizers; expand_p1_site does
+                         * the structural screening. */
+                        p1_sites.push_back(t);
                     }
                 }
 
@@ -2476,6 +3718,12 @@ namespace erts_t2 {
 
                 for (T2Op *site : maps_sites) {
                     if (!expand_maps_fold_site(site)) {
+                        return false;
+                    }
+                }
+
+                for (T2Op *site : p1_sites) {
+                    if (!expand_p1_site(site)) {
                         return false;
                     }
                 }

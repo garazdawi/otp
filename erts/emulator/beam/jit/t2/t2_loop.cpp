@@ -338,6 +338,14 @@ namespace erts_t2 {
          * T1 entry body; each has its own rule (the callsite and
          * entry-recall passes in t2_validate_windows). */
         bool op_is_window_guard(const T2Op *op) {
+            /* Re-dispatch-class ops (T2_OP_SPEC_REDISPATCH, P1a) are
+             * deliberately NOT exempted: their deopt re-invokes the
+             * generic callee with the loop-carried vector, so the
+             * per-iteration clean-prefix rule applies to them exactly
+             * as to plain window guards (T1 re-executes the current
+             * iteration inside the real callee); their extra
+             * obligations (sync map presence, out-of-loop prefix) are
+             * checked by the redispatch rule in t2_validate_windows. */
             return op_is_speculative_kind(op) &&
                    (op->flags & (T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
                                  T2_OP_SPEC_ENTRY)) == 0;
@@ -873,6 +881,43 @@ namespace erts_t2 {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        /* ---- Re-dispatch-class rule (T2_OP_SPEC_REDISPATCH; P1a) ------ *
+         * An op whose deopt RE-INVOKES THE GENERIC CALLEE WITH THE
+         * LOOP-CARRIED STATE (a side exit to the erased call's own T1
+         * PC over the current X vector) must carry the loop-carried
+         * sync map — the register-state walk (t2_hir.cpp) proves the
+         * vector is physically in X0..x_live-1 at the op — and its
+         * own-block prefix must not have dirtied the vector or charged
+         * reductions (the in-loop paths are covered by the
+         * per-iteration clean-prefix walk above, since the class is
+         * not exempted from op_is_window_guard; this prefix check is
+         * what covers an out-of-loop placement such as the preheader
+         * entry guard). */
+        for (const T2BasicBlock *b : fn.blocks) {
+            for (const T2Op *op = b->ops_head; op != nullptr; op = op->next) {
+                if ((op->flags & T2_OP_SPEC_REDISPATCH) == 0 ||
+                    !op_is_speculative_kind(op)) {
+                    continue;
+                }
+                if (op->sync == nullptr) {
+                    return fail(b->id,
+                                op,
+                                "redispatch-class op without the "
+                                "loop-carried sync map");
+                }
+                for (const T2Op *p = b->ops_head; p != op; p = p->next) {
+                    if (t2_op_dirties_window(p, op->sync->x_live)) {
+                        return fail(b->id,
+                                    op,
+                                    "redispatch-class op after an effect/"
+                                    "frame/charge/vector write in its own "
+                                    "block (the re-dispatch vector must be "
+                                    "intact)");
                     }
                 }
             }

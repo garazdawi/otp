@@ -274,10 +274,13 @@ namespace erts_t2 {
                         case T2LirKind::ReductionCheckCallee:
                             /* Intrinsic back edge (P2 commit 8): callee
                              * entry, translation PC, CP continuation
-                             * and the callee fresh-call map. */
+                             * and the callee fresh-call map. A tail
+                             * site (P1a) has no continuation — the
+                             * demote enters the callee with no CP
+                             * push. */
                             if (op.target == nullptr ||
                                 op.t1_pc_fail == nullptr ||
-                                op.t1_pc_cont == nullptr) {
+                                (op.t1_pc_cont == nullptr && !op.tail_site)) {
                                 return fail("callee back-edge with "
                                             "unresolved addresses");
                             }

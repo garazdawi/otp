@@ -1530,7 +1530,8 @@ namespace erts_t2 {
                 return;
             }
             if (callee && (op.target == nullptr || op.t1_pc_fail == nullptr ||
-                           op.t1_pc_cont == nullptr || op.arity == 0)) {
+                           (op.t1_pc_cont == nullptr && !op.tail_site) ||
+                           op.arity == 0)) {
                 fail("callee back-edge with unresolved addresses");
                 return;
             }

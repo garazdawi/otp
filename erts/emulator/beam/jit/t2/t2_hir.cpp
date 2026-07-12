@@ -1034,6 +1034,10 @@ namespace erts_t2 {
                 switch (op->kind) {
                 case T2OpKind::Call:
                 case T2OpKind::CallExt:
+                /* A fun application (P1a): a call boundary like Call —
+                 * T1 re-executing the site reads the args AND the fun
+                 * from their decoded homes. */
+                case T2OpKind::CallFun:
                 case T2OpKind::Return:
                 case T2OpKind::GcTest:
                 case T2OpKind::Allocate:

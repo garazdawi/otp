@@ -66,10 +66,19 @@ int erts_t2_genop_supported(int genop) {
     case genop_test_heap_2:
 
     /* Fun creation (P2 commit 8). The decode resolves the lambda index
-     * against the retained lambda table; call_fun stays unsupported
-     * (the intrinsics consume constant funs, everything else keeps the
-     * fun as a plain value). */
+     * against the retained lambda table. */
     case genop_make_fun3_3:
+
+    /* Fun application (P1a general call-site specialization,
+     * PLAN/T2FULL/census/p1_design.md §2). Decoded to the CallFun HIR
+     * op so a self-recursive fold's loop is recoverable by
+     * t2_loop_recover and its per-element call devirtualizable when
+     * inlined at a caller with a statically-known fun. There is
+     * deliberately NO isel lowering: a function whose blob would still
+     * contain a CallFun degrades to T1 at isel, exactly like any
+     * unsupported op. */
+    case genop_call_fun_1:
+    case genop_call_fun2_3:
 
     /* Calls and returns. */
     case genop_call_2:
@@ -302,8 +311,7 @@ static int t2_bif2_op_supported(BeamFile *beam, const BeamOp *op) {
     const BeamFile_ImportEntry *e;
 
     /* The decoder normalizes a zero fail label to TAG_p. */
-    if (op->arity < 5 || op->a[0].type != TAG_p ||
-        op->a[1].type != TAG_u ||
+    if (op->arity < 5 || op->a[0].type != TAG_p || op->a[1].type != TAG_u ||
         op->a[1].val >= (UWord)beam->imports.count) {
         return 0;
     }
@@ -353,8 +361,7 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
     bitmap = erts_alloc(ERTS_ALC_T_T2_CODE, bitmap_words * sizeof(Uint32));
     sys_memset(bitmap, 0, bitmap_words * sizeof(Uint32));
     if (loop_bitmap_out != NULL) {
-        loops = erts_alloc(ERTS_ALC_T_T2_CODE,
-                           bitmap_words * sizeof(Uint32));
+        loops = erts_alloc(ERTS_ALC_T_T2_CODE, bitmap_words * sizeof(Uint32));
         sys_memset(loops, 0, bitmap_words * sizeof(Uint32));
         *loop_bitmap_out = loops;
     }
@@ -605,8 +612,7 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
         return 0;
     }
 
-    fns = erts_alloc(ERTS_ALC_T_T2_CODE,
-                     (size_t)nfns * sizeof(ErtsT2CensusFn));
+    fns = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(ErtsT2CensusFn));
     sys_memset(fns, 0, (size_t)nfns * sizeof(ErtsT2CensusFn));
     for (c = 0; c < ERTS_T2_BLK__COUNT; c++) {
         block_cnt[c] = 0;
