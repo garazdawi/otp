@@ -1027,6 +1027,48 @@ namespace erts_t2 {
                     return true;
                 }
 
+                case T2OpKind::GetMapElement: {
+                    /* One decoded map-key lookup (WIN 1): read-only, no
+                     * GC, no trap; the dst is written on the success
+                     * edge only, and the builder always guards it with
+                     * Succeeded/Branch to the decoded fail label — both
+                     * edges stay in the blob. */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "get_map_element without a home");
+                    }
+                    lop.kind = T2LirKind::GetMapElement;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        /* The scan admits only register sources; a
+                         * constant map here is drift. */
+                        return fail_op(op, "get_map_element of a constant");
+                    }
+
+                    const T2Op *succ = op->next;
+                    if (succ != nullptr && succ->kind == T2OpKind::Succeeded &&
+                        succ->num_operands == 1 &&
+                        succ->operands[0] == op->result && feeds_branch(succ)) {
+                        const T2Op *term = op->block->terminator;
+
+                        lop.succ_then = term->succ_then->id;
+                        lop.succ_else = term->succ_else->id;
+                        *skip_until = succ;
+                        *consumed_terminator = true;
+                    } else {
+                        /* The builder always guards get_map_element with
+                         * a real fail label; anything else is drift. */
+                        return fail_op(op,
+                                       "get_map_element without a folded "
+                                       "fail edge");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
                 case T2OpKind::StartMatch: {
                     /* bs_start_match3 (P2 commit 7): conditional dst
                      * write; the builder's Succeeded/Branch folds into

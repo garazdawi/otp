@@ -130,15 +130,26 @@ int erts_t2_genop_supported(int genop) {
     case genop_put_list_3:
     case genop_put_tuple2_2:
 
+    /* Map matching (eligibility widening, eligibility_wins.md WIN 1).
+     * is_map is a plain type test; get_map_elements is additionally
+     * argument-checked (get_map_elements_op_supported below) and is
+     * decomposed by the builder into one read-only lookup per key.
+     * Both are read-only, no alloc, no trap — fails branch to the
+     * decoded fail label, never raise. */
+    case genop_is_map_2:
+    case genop_get_map_elements_3:
+
     /* GC BIFs (generic arithmetic lowers to these). */
     case genop_gc_bif1_5:
     case genop_gc_bif2_6:
     case genop_gc_bif3_7:
 
-    /* Clause-failure exits (modelled as error-exit blocks). */
+    /* Clause-failure exits (modelled as error-exit blocks). badrecord
+     * rides the same error-exit machinery as badmatch/case_end (WIN 4). */
     case genop_badmatch_1:
     case genop_if_end_0:
     case genop_case_end_1:
+    case genop_badrecord_1:
 
     /* The byte-aligned binary scan subset (P2 commit 7; PLAN/T2FULL/09
      * §7, PLAN/T2/08 §3). bs_match/3 is additionally argument-checked
@@ -353,6 +364,60 @@ static int is_function2_op_supported(const BeamOp *op) {
     return op->a[2].val <= MAX_ARG;
 }
 
+/* get_map_elements Fail Src N K1 D1 ... (the {list,...} expanded):
+ * only the register-source, real-fail-label shape with X/Y
+ * destinations is decoded. Keys may be any constant, or a register
+ * in the single-pair shape (the loader itself rejects multi-pair
+ * register keys, beam_load_map_key_sort). Mirrored 1:1 by the
+ * builder's decode — a mismatch there is scan/builder drift. */
+static int get_map_elements_op_supported(const BeamOp *op) {
+    UWord count;
+    UWord i;
+
+    if (op->arity < 5 || op->a[0].type != TAG_f ||
+        (op->a[1].type != TAG_x && op->a[1].type != TAG_y) ||
+        op->a[2].type != TAG_u) {
+        return 0;
+    }
+    count = op->a[2].val;
+    if (count < 2 || (count % 2) != 0 || (UWord)op->arity != 3 + count) {
+        return 0;
+    }
+    for (i = 0; i < count / 2; i++) {
+        const BeamOpArg *k = &op->a[3 + 2 * i];
+        const BeamOpArg *d = &op->a[3 + 2 * i + 1];
+
+        switch (k->type) {
+        case TAG_q:
+            if ((SWord)k->val < 0) {
+                /* A dynamic literal (bignum synthesized by the decode):
+                 * not retained, so the blob could never embed it —
+                 * isel would reject the compile (safe_literal_term).
+                 * Filter it here instead. */
+                return 0;
+            }
+            break;
+        case TAG_a:
+        case TAG_i:
+        case TAG_n:
+            break;
+        case TAG_x:
+        case TAG_y:
+            /* A register key only occurs in the single-pair shape. */
+            if (count != 2) {
+                return 0;
+            }
+            break;
+        default:
+            return 0;
+        }
+        if (d->type != TAG_x && d->type != TAG_y) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static int t2_bif2_op_supported(BeamFile *beam, const BeamOp *op) {
     const BeamFile_ImportEntry *e;
 
@@ -505,6 +570,11 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                  * multi-destination command list stays T1, decided
                  * here at the scan (PLAN/T2FULL/09 §7 surprise 4). */
                 fn_ok = 0;
+            } else if (fn_ok && op->op == genop_get_map_elements_3 &&
+                       !get_map_elements_op_supported(op)) {
+                /* Constant source / malformed shape: outside the
+                 * decoded subset, stays T1. */
+                fn_ok = 0;
             }
             if (fn_inst && erts_t2_genop_build_only(op->op)) {
                 /* Buildable as a P1 chain callee, but not
@@ -544,11 +614,13 @@ int erts_t2_blocker_class(BeamFile *beam, const BeamOp *op) {
     case genop_apply_last_2:
         return ERTS_T2_BLK_CALL_FUN;
 
+    /* is_map and the supported get_map_elements shapes moved to the
+     * supported set (WIN 1); a *rejecting* get_map_elements (constant
+     * source / malformed) still lands here, like bs_match below. */
     case genop_get_map_elements_3:
     case genop_put_map_assoc_5:
     case genop_put_map_exact_5:
     case genop_has_map_fields_3:
-    case genop_is_map_2:
         return ERTS_T2_BLK_MAPS;
 
     case genop_bs_create_bin_6:
@@ -585,7 +657,6 @@ int erts_t2_blocker_class(BeamFile *beam, const BeamOp *op) {
     case genop_raise_2:
     case genop_raw_raise_0:
     case genop_build_stacktrace_0:
-    case genop_badrecord_1:
         return ERTS_T2_BLK_EXCEPTIONS;
 
     case genop_send_0:
@@ -747,6 +818,8 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
                     supported = t2_bif2_op_supported(beam, op);
                 } else if (op->op == genop_bs_match_3) {
                     supported = bs_match_op_supported(beam, op);
+                } else if (op->op == genop_get_map_elements_3) {
+                    supported = get_map_elements_op_supported(op);
                 } else {
                     supported = erts_t2_genop_supported(op->op);
                 }

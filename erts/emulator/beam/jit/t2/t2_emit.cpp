@@ -652,6 +652,7 @@ namespace erts_t2 {
             case T2LirKind::IsList:
             case T2LirKind::IsNonemptyList:
             case T2LirKind::IsTuple:
+            case T2LirKind::IsMap:
             case T2LirKind::TestArity:
             case T2LirKind::IsTupleOfArity:
             case T2LirKind::IsTaggedTuple:
@@ -693,6 +694,9 @@ namespace erts_t2 {
                 break;
             case T2LirKind::MakeTuple:
                 emit_lir_make_tuple(op);
+                break;
+            case T2LirKind::GetMapElement:
+                emit_lir_get_map_element(op);
                 break;
             case T2LirKind::MakeFun:
                 emit_lir_make_fun(op);
@@ -1080,6 +1084,42 @@ namespace erts_t2 {
             }
         }
 
+        /* One decoded map-key lookup (WIN 1): T1's own maybe-immediate
+         * path (emit_i_get_map_element) with the key allowed to be a
+         * constant — mov_arg materializes an immediate or a retained
+         * static literal (a bare tagged pointer) into ARG2, and the
+         * shared fragment dispatches at runtime: immediate keys walk
+         * the flatmap/HAMT inline, boxed keys take the generic
+         * get_map_element runtime call (term-deep EQ). Read-only, no
+         * GC, no trap; ZF is set on success with the value in ARG1.
+         * The dst is written on the success edge only, exactly as in
+         * T1. The source is a map by the decoded instruction's
+         * contract (a dominating is_map test), the same invariant T1's
+         * emitters assume. */
+        void emit_lir_get_map_element(const T2LirOp &op) {
+            if (op.num_srcs != 2 || op.srcs[0].is_const || op.dst.is_none() ||
+                op.succ_then == T2_LIR_NO_BLOCK ||
+                op.succ_else == T2_LIR_NO_BLOCK) {
+                fail("malformed get_map_element");
+                return;
+            }
+
+            const Label &else_l = block_label(op.succ_else);
+
+            comment("T2 get_map_element");
+            mov_arg(ARG1, src_argval(op.srcs[0]));
+            mov_arg(ARG2, src_argval(op.srcs[1]));
+
+            fragment_call(ga->get_i_get_map_element_shared());
+            a.b_ne(resolve_label(else_l, disp1MB));
+
+            mov_arg(loc_argval(op.dst), ARG1);
+
+            if (!failed()) {
+                emit_goto(op.succ_then);
+            }
+        }
+
         /* Identity bs_start_match3 (P2 commit 7): the reused T1 emitter
          * with the fail edge redirected in-blob (or absent for a
          * decoded {f,0}). The destination write is conditional on the
@@ -1186,6 +1226,9 @@ namespace erts_t2 {
                 break;
             case T2LirKind::IsTuple:
                 emit_i_is_tuple(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsMap:
+                emit_is_map(failL, ArgSource(src_argval(op.srcs[0])));
                 break;
             case T2LirKind::TestArity:
                 /* Matching the empty tuple {} is legal, so the arity can

@@ -186,6 +186,7 @@ static int pctab_is_error(int op) {
     case genop_badmatch_1:
     case genop_case_end_1:
     case genop_if_end_0:
+    case genop_badrecord_1:
         return 1;
     default:
         return 0;

@@ -711,6 +711,7 @@ void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
     case op_badmatch_s:
     case op_case_end_s:
     case op_if_end:
+    case op_badrecord_s:
         t2_pc_record(before, ERTS_T2_PC_ERROR);
         break;
 

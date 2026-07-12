@@ -1203,6 +1203,7 @@ namespace erts_t2 {
                 case genop_badmatch_1:
                 case genop_case_end_1:
                 case genop_if_end_0:
+                case genop_badrecord_1:
                     return true;
                 default:
                     return false;
@@ -1583,6 +1584,9 @@ namespace erts_t2 {
             case genop_is_tuple_2:
                 translate_type_test(T2OpKind::IsTuple, dop);
                 break;
+            case genop_is_map_2:
+                translate_type_test(T2OpKind::IsMap, dop);
+                break;
 
             case genop_test_arity_3: {
                 T2Value *v = emit_result_op(T2OpKind::TestArity,
@@ -1831,11 +1835,92 @@ namespace erts_t2 {
 
             case genop_badmatch_1:
             case genop_case_end_1:
+            case genop_badrecord_1:
                 translate_error_exit(dop, true);
                 break;
             case genop_if_end_0:
                 translate_error_exit(dop, false);
                 break;
+
+            case genop_get_map_elements_3: {
+                /* Fail Src N K1 D1 ... (the {list,...} expanded) — the
+                 * eligibility scan admitted only the register-source,
+                 * real-fail-label shape (get_map_elements_op_supported);
+                 * a mismatch here is scan/builder drift. Decomposed into
+                 * one read-only GetMapElement per key, each with its own
+                 * Succeeded/Branch fail edge to the decoded label —
+                 * semantically T1's own progressive-write behavior (on
+                 * the fail path earlier destinations may already be
+                 * written; the compiler treats them as dead there).
+                 *
+                 * Pair order: a destination aliasing the map's home
+                 * register is looked up LAST, so every earlier lookup
+                 * still reads the map from its canonical home (multi-
+                 * pair keys are constants by the loader's single-
+                 * variable-key rule, so only the source can be
+                 * clobbered). Within one op reads precede the write. */
+                const DecodedArg &fail = dop.args[0];
+                UWord count = dop.args[2].val;
+                SrcVal src = read_arg_r(dop.args[1]);
+
+                if (src.v == nullptr) {
+                    return;
+                }
+                if (fail.type != TAG_f || count < 2 || (count % 2) != 0 ||
+                    dop.args.size() != 3 + count ||
+                    (dop.args[1].type != TAG_x && dop.args[1].type != TAG_y)) {
+                    fail_op(dop,
+                            "get_map_elements outside the decoded shape "
+                            "(eligibility/builder drift)");
+                    return;
+                }
+
+                UWord npairs = count / 2;
+                UWord aliased = npairs; /* sentinel: no aliasing pair */
+
+                for (UWord i = 0; i < npairs; i++) {
+                    const DecodedArg &d = dop.args[3 + 2 * i + 1];
+
+                    if ((d.type == TAG_x || d.type == TAG_y) &&
+                        (int32_t)reg_var(d) == src.reg) {
+                        aliased = i;
+                    }
+                }
+
+                for (UWord n = 0; n < npairs; n++) {
+                    /* All non-aliasing pairs in stream order, then the
+                     * aliasing one. */
+                    UWord i = n;
+
+                    if (aliased < npairs) {
+                        if (n >= aliased) {
+                            i = n + 1;
+                        }
+                        if (n == npairs - 1) {
+                            i = aliased;
+                        }
+                    }
+
+                    SrcVal key = read_arg_r(dop.args[3 + 2 * i]);
+                    T2Value *v = emit_result_op(T2OpKind::GetMapElement,
+                                                {src, key},
+                                                T2Type::any());
+
+                    if (v == nullptr) {
+                        return;
+                    }
+
+                    T2Value *ok = emit_result_op(T2OpKind::Succeeded,
+                                                 {SrcVal{v, T2_REG_NONE}},
+                                                 bool_type());
+                    guard_branch(ok, fail);
+                    write_dst_new(dop.args[3 + 2 * i + 1], v);
+                    if (failed) {
+                        return;
+                    }
+                }
+                break;
+            }
 
                 /* --- the byte-aligned binary scan subset (P2 commit 7) --- */
 

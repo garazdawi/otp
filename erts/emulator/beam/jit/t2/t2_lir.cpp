@@ -133,6 +133,8 @@ namespace erts_t2 {
             return "make_list";
         case T2LirKind::MakeTuple:
             return "make_tuple";
+        case T2LirKind::GetMapElement:
+            return "get_map_element";
         case T2LirKind::MakeFun:
             return "make_fun";
         case T2LirKind::CmpBool:

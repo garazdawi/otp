@@ -141,6 +141,15 @@ namespace erts_t2 {
         MakeList,
         MakeTuple,
 
+        /* One decoded map-key lookup (the get_map_elements identity
+         * subset): map in srcs[0], key in srcs[1], via T1's
+         * i_get_map_element_shared fragment — the fully generic path
+         * (flatmap/hashmap, immediate/boxed key) T1 itself takes for a
+         * maybe-immediate register key. Read-only, no GC, no trap; the
+         * dst is written on the success edge only (fail edge in
+         * succ_else, exactly like the folded guards). */
+        GetMapElement,
+
         /* Heap reservation (emit_gc_test / emit_test_heap). */
         GcTest,
 
