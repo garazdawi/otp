@@ -291,7 +291,7 @@ namespace erts_t2 {
                             break;
                         case T2LirKind::DemoteCallee:
                             if (op.target == nullptr ||
-                                op.t1_pc_cont == nullptr) {
+                                (op.t1_pc_cont == nullptr && !op.tail_site)) {
                                 return fail("demote-callee with "
                                             "unresolved addresses");
                             }

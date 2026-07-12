@@ -178,6 +178,19 @@ namespace erts_t2 {
             return off;
         }
 
+        /* P1 inner re-dispatch (the mid-list deopt fidelity fix): the
+         * structural/type side exits of an inlined loop land in the
+         * TERMINAL loop function's body (foldl_1-equivalent) instead of
+         * re-invoking the outermost original call, so a mid-list
+         * malformed input raises the byte-identical exception and the
+         * deopt re-charges no wrapper entries. Its own kill switch on
+         * top of T2_NO_P1 reverts to the outermost re-dispatch for A/B
+         * runs. */
+        bool p1_inner_disabled() {
+            static const bool off = getenv("T2_NO_P1_INNER") != nullptr;
+            return off;
+        }
+
         const T2Value *resolve_copies(const T2Value *v) {
             for (int depth = 0; depth < 64; depth++) {
                 if (v->def == nullptr || v->def->kind != T2OpKind::Copy) {
@@ -2438,14 +2451,23 @@ namespace erts_t2 {
              * the fun body, and the callee's frame dropped. Deopt is    *
              * the new RE-DISPATCH shape (T2_OP_SPEC_REDISPATCH /        *
              * T2_OP_TAIL_SITE): every side exit re-invokes the generic  *
-             * callee with the LOOP-CARRIED vector — a branch to the     *
-             * call site's own T1 CALL PC over the current X0..ar-1      *
-             * (guards), a genuine TailCallExt M:F/A(l_k, acc_k, fun)    *
-             * (error edges), and an RC_CALLEE back edge whose yield     *
-             * stays in T2 and whose tombstone/parked translation        *
-             * re-enters the callee (timeslice never deopts). No shape   *
-             * guard and no slow edge: the callee's own case dispatch is *
-             * the loop entry, and re-dispatch IS the generic fallback.  *
+             * callee with the LOOP-CARRIED vector. Under the identity   *
+             * permutation the mid-list exits land INSIDE the TERMINAL   *
+             * loop function — guards enter its T1 body past the entry   *
+             * check (the back edge pre-charged it) and the error edges  *
+             * demote into it (DemoteCallee at a tail site) — exactly    *
+             * where generic execution would be, with T1-exact           *
+             * reductions and error shapes; a first-element structural   *
+             * miss is pre-screened at the boundary and re-executes the  *
+             * OUTERMOST original call (a genuine TailCallExt), whose    *
+             * wrapper chain owns that error's shape (T2_NO_P1_INNER     *
+             * reverts every exit to the outermost form: a branch to     *
+             * the call site's own T1 CALL PC over the current           *
+             * X0..ar-1). The RC_CALLEE back edge's yield stays in T2    *
+             * and its tombstone/parked translation re-enters the        *
+             * callee (timeslice never deopts). No shape guard and no    *
+             * slow edge: the callee's own case dispatch is the loop     *
+             * entry, and re-dispatch IS the generic fallback.           *
              * ========================================================= */
 
             static constexpr uint32_t T2_P1_MAX_CALLEE_OPS = 48;
@@ -2477,15 +2499,18 @@ namespace erts_t2 {
              * NOT handle re-dispatches from an unconsumed state.    *
              * The terminal loop is bound directly to the ORIGINAL   *
              * call's boundary vector through the composed           *
-             * permutation; deopt/yield/re-dispatch all target the   *
+             * permutation. Mid-list deopts land inside the TERMINAL *
+             * loop function (the inner re-dispatch, identity        *
+             * permutation only — see the P1a block above); the      *
+             * entry pre-screen, yield and tombstone target the      *
              * OUTERMOST original M:F/A — the only exported member   *
              * of the chain, and a correct continuation from any     *
              * loop state by the congruence above. The loop entry RC *
-             * re-charges the wrapper chain's fixed entry            *
-             * reductions: +1 per NON-peeling level (a peeling       *
-             * wrapper's fun call + loop handoff costs exactly one   *
-             * loop iteration's charge, which the extra inlined      *
-             * iteration already pays).                              *
+             * charges the wrapper chain's fixed entry reductions:   *
+             * +1 per NON-peeling level (a peeling wrapper's fun     *
+             * call + loop handoff costs exactly one loop            *
+             * iteration's charge, which the extra inlined iteration *
+             * already pays).                                        *
              *                                                       *
              * Under a non-identity permutation the clone relabels   *
              * every x home below the arity through the permutation, *
@@ -3609,6 +3634,9 @@ namespace erts_t2 {
                            Eterm outer_m,
                            Eterm outer_f,
                            const void *outer_lf,
+                           Eterm inner_m,
+                           Eterm inner_f,
+                           const void *inner_lf,
                            const std::vector<const void *> &chain_hdrs,
                            const uint32_t *perm,
                            uint32_t rc1_extra) {
@@ -3652,6 +3680,61 @@ namespace erts_t2 {
                     return nullptr;
                 };
 
+                /* ---- inner re-dispatch: the loop-carried list -------- *
+                 * The terminal loop dispatches cons/nil on exactly one
+                 * of its params (the list); the inner re-dispatch's
+                 * entry pre-screen tests the same param at the
+                 * boundary. A callee whose list tests do not name one
+                 * unique param phi falls back to the outermost
+                 * re-dispatch (inner_lf = null). */
+                int32_t list_idx = -1;
+
+                if (inner_lf != nullptr) {
+                    bool ambiguous = false;
+
+                    for (const T2BasicBlock *b : callee.blocks) {
+                        if (b == ce || p1_is_err_block(b)) {
+                            continue;
+                        }
+                        for (const T2Op *op = b->ops_head; op != nullptr;
+                             op = op->next) {
+                            if (op->kind != T2OpKind::IsNonemptyList &&
+                                op->kind != T2OpKind::IsNil) {
+                                continue;
+                            }
+                            const T2Value *tv = resolve_thru(op->operands[0]);
+
+                            for (uint32_t i = 0; i < ar; i++) {
+                                if (phis[i] == nullptr ||
+                                    tv != phis[i]->result) {
+                                    continue;
+                                }
+                                if (list_idx >= 0 && list_idx != (int32_t)i) {
+                                    ambiguous = true;
+                                }
+                                list_idx = (int32_t)i;
+                            }
+                        }
+                    }
+                    if (list_idx < 0 || ambiguous) {
+                        if (p1_trace()) {
+                            erts_fprintf(stderr,
+                                         "t2_p1: %T:%T/%u inner re-dispatch "
+                                         "off (no unique list param in "
+                                         "%T:%T/%u), outermost kept\n",
+                                         fn.module,
+                                         fn.function,
+                                         (unsigned)fn.arity,
+                                         inner_m,
+                                         inner_f,
+                                         (unsigned)ar);
+                        }
+                        inner_lf = nullptr;
+                    }
+                }
+
+                const bool inner = inner_lf != nullptr;
+
                 /* ---- clone ------------------------------------------- */
 
                 std::unordered_map<const T2Value *, T2Value *> vmap;
@@ -3663,6 +3746,16 @@ namespace erts_t2 {
 
                 T2BasicBlock *b_grd = fn.new_block();
                 T2BasicBlock *b_err = fn.new_block();
+                /* Inner mode splits the error funnel: in-loop error
+                 * edges (mid-list, by the entry pre-screen) demote into
+                 * the TERMINAL loop function's body (b_err_in), while
+                 * the pre-screen's own miss — a malformed argument the
+                 * generic wrapper chain would have examined first —
+                 * keeps the outermost re-dispatch (b_err). b_ok is the
+                 * pre-screen's reconvergence: the loop header's single
+                 * entry predecessor. */
+                T2BasicBlock *b_err_in = inner ? fn.new_block() : nullptr;
+                T2BasicBlock *b_ok = inner ? fn.new_block() : b_grd;
 
                 /* Params + the invariant fun phi bind to the boundary
                  * vector (identical to the operands; the validator
@@ -3685,7 +3778,8 @@ namespace erts_t2 {
                 auto target_of = [&](T2BasicBlock *cb) -> T2BasicBlock * {
                     auto it = bmap.find(cb);
 
-                    return it != bmap.end() ? it->second : b_err;
+                    return it != bmap.end() ? it->second
+                                            : (inner ? b_err_in : b_err);
                 };
 
                 /* Header phis (except the fun's). */
@@ -4094,7 +4188,7 @@ namespace erts_t2 {
                     }
                     fn.set_phi_inputs(cl_phis[i],
                                       {cmap->x[perm[i]], latch_vec[i]},
-                                      {b_grd, b_lat2});
+                                      {b_ok, b_lat2});
                 }
 
                 /* ---- reap dead cloned copies (the fun's save/restore
@@ -4175,12 +4269,21 @@ namespace erts_t2 {
                                  cmap);
                 bool need_acc_guard = false;
 
+                /* Inner mode carries the terminal loop function's L_f
+                 * on the guards (imm_int, the window-callee pattern):
+                 * their side exits enter its body past the entry check
+                 * — the back edge pre-charged this iteration's entry —
+                 * so T1 re-executes the iteration inside the REAL loop
+                 * function with T1-exact reductions and frames. The
+                 * identity permutation (checked by the caller) makes
+                 * the loop-carried vector the terminal function's own
+                 * fresh-call vector, already pinned in X0..ar-1. */
                 if (!convert_arith(fb,
                                    acc_idx >= 0 ? cl_phis[acc_idx]->result
                                                 : nullptr,
                                    &need_acc_guard,
                                    T2_OP_SPEC_REDISPATCH,
-                                   0,
+                                   inner ? (Sint64)(UWord)inner_lf : 0,
                                    vec_map,
                                    bi)) {
                     if (err != nullptr) {
@@ -4248,21 +4351,72 @@ namespace erts_t2 {
                     rc1->sync = cmap;
                     rc1->beam_idx = bi;
                 }
-                fn.emit_jump(b_grd, bmap.at(ch));
-                b_grd->terminator->beam_idx = bi;
+                if (inner) {
+                    /* Entry pre-screen (inner mode): a first-element
+                     * structural miss must re-execute the OUTERMOST
+                     * call — the generic wrapper chain examines the
+                     * argument first and raises ITS shape (case_clause
+                     * at the wrapper for a non-list) — so the boundary
+                     * cons/nil test peels that case off before the
+                     * loop. Past it, any in-loop structural miss is
+                     * mid-list by construction and demotes into the
+                     * terminal loop function, exactly where generic
+                     * execution would be. The screen lives in its own
+                     * blocks past b_grd: the entry stub's rc1 keeps
+                     * its trailing jump (the yield-resume target), so
+                     * a resume at the stub re-runs the screen over the
+                     * restored boundary vector. */
+                    T2BasicBlock *b_scr = fn.new_block();
+                    T2BasicBlock *b_chk2 = fn.new_block();
+                    T2Value *lv = cmap->x[perm[list_idx]];
+                    int32_t lh = t2_xreg(perm[list_idx]);
 
-                /* ---- the re-dispatch exit (error edges): a genuine
-                 *      tail call to the generic callee over the
-                 *      loop-carried vector ------------------------------ */
+                    fn.emit_jump(b_grd, b_scr);
+                    b_grd->terminator->beam_idx = bi;
+                    new_test_branch(b_scr,
+                                    T2OpKind::IsNonemptyList,
+                                    lv,
+                                    lh,
+                                    b_ok,
+                                    b_chk2,
+                                    bi);
+                    new_test_branch(b_chk2,
+                                    T2OpKind::IsNil,
+                                    lv,
+                                    lh,
+                                    b_ok,
+                                    b_err,
+                                    bi);
+                    fn.emit_jump(b_ok, bmap.at(ch));
+                    b_ok->terminator->beam_idx = bi;
+                } else {
+                    fn.emit_jump(b_grd, bmap.at(ch));
+                    b_grd->terminator->beam_idx = bi;
+                }
+
+                /* ---- the re-dispatch exit: a genuine tail call to the
+                 *      generic callee. Fallback mode funnels every
+                 *      error edge here over the loop-carried vector;
+                 *      inner mode reaches it only from the entry
+                 *      pre-screen, where the phis do not dominate — the
+                 *      re-dispatch is the untouched call boundary
+                 *      itself (nothing before the pre-screen writes
+                 *      it). ------------------------------------------- */
 
                 {
                     T2Op *rd = fn.new_op(b_err,
                                          T2OpKind::TailCallExt,
                                          T2Type::none());
+                    std::vector<T2Value *> rvec;
 
-                    fn.set_operands(
-                            rd,
-                            p1_outer_vec(cl_phis, cmap, fun_idx, ar, perm));
+                    if (inner) {
+                        for (uint32_t i = 0; i < ar; i++) {
+                            rvec.push_back(cmap->x[i]);
+                        }
+                    } else {
+                        rvec = p1_outer_vec(cl_phis, cmap, fun_idx, ar, perm);
+                    }
+                    fn.set_operands(rd, rvec);
                     rd->operand_regs = fn.arena.alloc_array<int32_t>(ar);
                     for (uint32_t i = 0; i < ar; i++) {
                         rd->operand_regs[i] = t2_xreg(i);
@@ -4270,8 +4424,32 @@ namespace erts_t2 {
                     rd->mfa_m = outer_m;
                     rd->mfa_f = outer_f;
                     rd->index = ar;
-                    rd->sync = vec_map;
+                    rd->sync = inner ? cmap : vec_map;
                     rd->beam_idx = bi;
+                }
+
+                /* ---- the inner demote (error edges, inner mode): a
+                 *      mid-list structural miss transfers into the
+                 *      terminal loop function's body over its own
+                 *      fresh-call vector — the entry charge was paid by
+                 *      the back edge, so T1 re-executes the iteration
+                 *      and raises the byte-identical error (the
+                 *      intrinsic tier's helper demote, at a TAIL site:
+                 *      no CP push) ------------------------------------- */
+
+                if (inner) {
+                    T2Op *dm = fn.new_op(b_err_in,
+                                         T2OpKind::DemoteCallee,
+                                         T2Type::none());
+
+                    fn.set_operands(dm, {});
+                    dm->mfa_m = inner_m;
+                    dm->mfa_f = inner_f;
+                    dm->live = ar;
+                    dm->imm_int = (Sint64)(UWord)inner_lf;
+                    dm->flags = T2_OP_TAIL_SITE;
+                    dm->sync = vec_map;
+                    dm->beam_idx = bi;
                 }
 
                 /* ---- caller wiring ------------------------------------ */
@@ -4489,6 +4667,7 @@ namespace erts_t2 {
                 Eterm cur_m = call->mfa_m;
                 Eterm cur_f = call->mfa_f;
                 const ErtsT2RetainedCode *cur_ret = cret;
+                const BeamCodeHeader *cur_hdr = chdr;
                 uint32_t perm[T2_P1_MAX_ARITY];
                 uint32_t fun_pos = (uint32_t)fun_idx;
                 uint32_t wrappers = 0;
@@ -4558,6 +4737,44 @@ namespace erts_t2 {
                                                     &why)) {
                                 return;
                             }
+
+                            /* Inner re-dispatch target: the TERMINAL
+                             * loop function's own T1 entry, admissible
+                             * only under the identity permutation (the
+                             * loop-carried vector must BE its
+                             * fresh-call vector, no move script). A
+                             * reordering chain or an unresolved entry
+                             * keeps the outermost re-dispatch. */
+                            const void *inner_lf = nullptr;
+
+                            if (!p1_inner_disabled()) {
+                                bool ident = true;
+
+                                for (uint32_t i = 0; i < ar; i++) {
+                                    ident &= perm[i] == i;
+                                }
+                                if (ident) {
+                                    inner_lf = find_lf(cur_hdr,
+                                                       cur_f,
+                                                       (unsigned)ar);
+                                }
+                                if (inner_lf == nullptr && p1_trace()) {
+                                    erts_fprintf(stderr,
+                                                 "t2_p1: %T:%T/%u inner "
+                                                 "re-dispatch off for terminal "
+                                                 "%T:%T/%u (%s), outermost "
+                                                 "kept\n",
+                                                 fn.module,
+                                                 fn.function,
+                                                 (unsigned)fn.arity,
+                                                 cur_m,
+                                                 cur_f,
+                                                 (unsigned)ar,
+                                                 ident ? "no T1 entry"
+                                                       : "permuted chain");
+                                }
+                            }
+
                             if (!p1_commit(call,
                                            callee,
                                            cli.loops[0],
@@ -4567,6 +4784,9 @@ namespace erts_t2 {
                                            call->mfa_m,
                                            call->mfa_f,
                                            clf,
+                                           cur_m,
+                                           cur_f,
+                                           inner_lf,
                                            chain_hdrs,
                                            perm,
                                            wrappers - peels)) {
@@ -4770,6 +4990,7 @@ namespace erts_t2 {
                             return true;
                         }
                         cur_ret = nm->curr.t2_retained;
+                        cur_hdr = (const BeamCodeHeader *)nm->curr.code_hdr;
 
                         const void *nh = (const void *)nm->curr.code_hdr;
                         bool have = false;

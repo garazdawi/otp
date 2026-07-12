@@ -1738,9 +1738,12 @@ namespace erts_t2 {
          * check (the loop's charges already paid it). T1 re-executes
          * the iteration — raising the byte-identical error on the
          * error edges — and returns to the caller's own T1
-         * continuation. */
+         * continuation. A TAIL site (the P1 inner re-dispatch) pushes
+         * no CP: the blob's own return address already points at the
+         * caller's caller. */
         void emit_lir_demote_callee(const T2LirOp &op) {
-            if (op.target == nullptr || op.t1_pc_cont == nullptr) {
+            if (op.target == nullptr ||
+                (op.t1_pc_cont == nullptr && !op.tail_site)) {
                 fail("demote-callee with unresolved addresses");
                 return;
             }
@@ -1748,8 +1751,10 @@ namespace erts_t2 {
             fact(EmitFact::SideExitPc, op.beam_idx, op.target);
 
             reg_cache.invalidate();
-            mov_imm(TMP1, (Uint64)op.t1_pc_cont);
-            a.str(TMP1, a64::Mem(E, -8).pre());
+            if (!op.tail_site) {
+                mov_imm(TMP1, (Uint64)op.t1_pc_cont);
+                a.str(TMP1, a64::Mem(E, -8).pre());
+            }
             mov_imm(TMP1, (Uint64)op.target);
             a.br(TMP1);
             mark_unreachable();

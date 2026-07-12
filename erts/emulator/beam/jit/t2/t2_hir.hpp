@@ -276,7 +276,10 @@ namespace erts_t2 {
          * error edges) and returns to the caller's own T1
          * continuation. imm_int = the callee's T1 entry L_f; live =
          * the callee arity; mfa_m/mfa_f name it; beam_idx = the
-         * intrinsic call site (CONT lookup).
+         * intrinsic call site (CONT lookup). At a TAIL site
+         * (T2_OP_TAIL_SITE; the P1 inner re-dispatch) there is no T1
+         * continuation and no CP is pushed — the blob's own return
+         * address already points at the caller's caller.
          *
          * ChargeReds: `FCALLS -= imm_int`, no check, no sync — the
          * reduction charges T1 pays on a path where the intrinsic
@@ -549,20 +552,27 @@ namespace erts_t2 {
         /* The fifth deopt class (P1a general call-site specialization,
          * PLAN/T2FULL/census/p1_design.md): a speculative op inside an
          * inlined UNBOUNDED callee loop whose side exit RE-DISPATCHES
-         * THE GENERIC CALLEE WITH THE LOOP-CARRIED STATE — it branches
-         * to the erased call site's own T1 PC (ERTS_T2_PC_CALL, no CP
-         * push; the T1 call instruction itself re-establishes the CP
-         * for a body site and tail-transfers for a tail site), and T1
-         * re-executes the call over the CURRENT X0..x_live-1, which by
-         * the op's sync map holds exactly {loop-carried vector} — so
-         * T1 continues the fold from element k with no redo and no
-         * reduction over-charge (contrast T2_OP_SPEC_CALLSITE, whose
-         * contract is the *original* boundary being intact: a restart,
-         * only legal for bounded loops). The op must carry the
-         * loop-carried sync map; the register-state walk proves the
-         * vector is physically in X0..x_live-1, and the window
-         * validator applies the per-iteration clean-prefix rule (the
-         * flag is deliberately NOT exempted in op_is_window_guard). */
+         * THE GENERIC CALLEE WITH THE LOOP-CARRIED STATE. Inner mode
+         * (imm_int = the TERMINAL inlined loop function's T1 entry
+         * L_f; identity permutation only): the side exit enters that
+         * function's body past its entry check — the back edge
+         * pre-charged this iteration's entry — so T1 re-executes the
+         * iteration inside the real loop function with T1-exact
+         * reductions and error frames. Otherwise (imm_int = 0) it
+         * branches to the erased call site's own T1 PC
+         * (ERTS_T2_PC_CALL, no CP push; the T1 call instruction
+         * itself re-establishes the CP for a body site and
+         * tail-transfers for a tail site), and T1 re-executes the
+         * call over the CURRENT X0..x_live-1, which by the op's sync
+         * map holds exactly {loop-carried vector} — so T1 continues
+         * the fold from element k with no redo (contrast
+         * T2_OP_SPEC_CALLSITE, whose contract is the *original*
+         * boundary being intact: a restart, only legal for bounded
+         * loops). The op must carry the loop-carried sync map; the
+         * register-state walk proves the vector is physically in
+         * X0..x_live-1, and the window validator applies the
+         * per-iteration clean-prefix rule (the flag is deliberately
+         * NOT exempted in op_is_window_guard). */
         T2_OP_SPEC_REDISPATCH = 1 << 12,
         /* The specialized site was a TAIL call (call_ext_only): there
          * is no T1 continuation (no CONT pctab entry, nothing to push

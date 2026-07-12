@@ -346,12 +346,25 @@ namespace erts_t2 {
 
                 if (op->flags & T2_OP_SPEC_REDISPATCH) {
                     /* Re-dispatch class (P1a): re-invoke the generic
-                     * callee with the LOOP-CARRIED state — the side
+                     * callee with the LOOP-CARRIED state. Inner mode
+                     * (imm_int = the terminal inlined loop function's
+                     * L_f): the side exit enters that function's body
+                     * past its entry check — the back edge pre-charged
+                     * this iteration's entry — over its own fresh-call
+                     * vector in X0..arity-1 (no CP push: P1 sites are
+                     * tail sites), so T1 continues the fold exactly
+                     * where generic execution would be, with T1-exact
+                     * reductions and error frames. Otherwise the side
                      * exit branches to the call site's own T1 PC over
                      * the current X vector (no CP push; T1's own call
                      * instruction re-establishes the CP for a body
                      * site and tail-transfers for a tail site), so T1
                      * continues the fold from element k with no redo. */
+                    if (op->imm_int != 0) {
+                        return (const void
+                                        *)((const char *)(UWord)op->imm_int +
+                                           erts_t2_test_yield_return_offset());
+                    }
                     return pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
                 }
 
@@ -1503,7 +1516,11 @@ namespace erts_t2 {
                      * call site's T1 continuation as CP and enter the
                      * callee body — the callee L_f (imm_int) past its
                      * entry check (the loop's charges already paid
-                     * it). */
+                     * it). A TAIL site (T2_OP_TAIL_SITE; the P1 inner
+                     * re-dispatch) has no T1 continuation: the demote
+                     * enters the callee body with no CP push (the
+                     * blob's own return address already points at the
+                     * caller's caller). */
                     if (t->sync == nullptr) {
                         return fail("demote-callee without a sync map");
                     }
@@ -1511,11 +1528,16 @@ namespace erts_t2 {
                     lop.mfa_m = t->mfa_m;
                     lop.mfa_f = t->mfa_f;
                     lop.arity = t->live;
+                    lop.tail_site = (t->flags & T2_OP_TAIL_SITE) != 0;
                     lop.target =
                             (const void *)((const char *)(UWord)t->imm_int +
                                            erts_t2_test_yield_return_offset());
-                    lop.t1_pc_cont = pc_lookup(t->beam_idx, ERTS_T2_PC_CONT);
-                    if (t->imm_int == 0 || lop.t1_pc_cont == nullptr) {
+                    if (!lop.tail_site) {
+                        lop.t1_pc_cont =
+                                pc_lookup(t->beam_idx, ERTS_T2_PC_CONT);
+                    }
+                    if (t->imm_int == 0 ||
+                        (lop.t1_pc_cont == nullptr && !lop.tail_site)) {
                         return fail("demote-callee without a resolved "
                                     "callee/continuation");
                     }
