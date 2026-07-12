@@ -357,6 +357,10 @@ namespace erts_t2 {
                                           erts_t2_test_yield_return_offset());
                 }
 
+                /* Window shape, and the entry class (T2_OP_SPEC_ENTRY,
+                 * the make_fun sink): both branch to the function's
+                 * own T1 entry body and re-execute the invocation from
+                 * the fresh-call vector in X0..arity-1. */
                 const void *lf = local_target(hir.function, hir.arity);
 
                 if (lf == nullptr) {
@@ -1137,7 +1141,12 @@ namespace erts_t2 {
                      * the values, require every small-tag bit, deopt on
                      * failure. */
                     lop.kind = T2LirKind::SpeculateSmall;
-                    lop.spec_callsite = (op->flags & T2_OP_SPEC_CALLSITE) != 0;
+                    /* Entry-class exits (the sunk-fun re-invocation,
+                     * T2_OP_SPEC_ENTRY) count in the same monitoring
+                     * counter as callsite exits: both are "the maps
+                     * specialization bailed". */
+                    lop.spec_callsite = (op->flags & (T2_OP_SPEC_CALLSITE |
+                                                      T2_OP_SPEC_ENTRY)) != 0;
                     if (!fill_srcs(op, &lop)) {
                         return false;
                     }
@@ -1170,7 +1179,8 @@ namespace erts_t2 {
                     lop.kind = op->kind == T2OpKind::AddSmall
                                        ? T2LirKind::AddSmall
                                        : T2LirKind::SubSmall;
-                    lop.spec_callsite = (op->flags & T2_OP_SPEC_CALLSITE) != 0;
+                    lop.spec_callsite = (op->flags & (T2_OP_SPEC_CALLSITE |
+                                                      T2_OP_SPEC_ENTRY)) != 0;
                     if (op->dst_reg == T2_REG_NONE) {
                         return fail_op(op, "arith result without a home");
                     }
@@ -1317,9 +1327,14 @@ namespace erts_t2 {
 
                 case T2OpKind::FoldBudget:
                     /* The whole-fold reduction batch: uncharged side
-                     * exit to the erased call's own T1 PC when FCALLS
-                     * does not cover it (T1 re-executes the call and
-                     * does its own charging/yielding). */
+                     * exit when FCALLS does not cover it. Callsite
+                     * class: to the erased call's own T1 PC (T1
+                     * re-executes the call and does its own charging/
+                     * yielding). Entry class (the make_fun sink
+                     * dissolved the call boundary): to the function's
+                     * T1 entry body — T1 re-runs the whole invocation,
+                     * fun construction included, charging exactly as
+                     * it always does (the budget was not taken). */
                     if (op->sync == nullptr) {
                         return fail_op(op, "fold budget without a sync map");
                     }
@@ -1338,11 +1353,11 @@ namespace erts_t2 {
                         return fail_op(op, "fold budget out of range");
                     }
                     lop.spec_callsite = true;
-                    lop.t1_pc_fail = pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
+                    lop.t1_pc_fail = spec_deopt_pc(op);
                     if (lop.t1_pc_fail == nullptr) {
                         return fail_op(op,
-                                       "no CALL pctab entry for the fold "
-                                       "budget deopt");
+                                       "no T1 PC for the fold budget "
+                                       "deopt");
                     }
                     b.ops.push_back(lop);
                     return true;

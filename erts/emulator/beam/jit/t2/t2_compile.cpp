@@ -62,6 +62,7 @@
 #include "t2_spec.hpp"
 #include "t2_inline.hpp"
 #include "t2_intrinsics.hpp"
+#include "t2_opt.hpp"
 
 extern "C"
 {
@@ -477,6 +478,38 @@ namespace {
                         return T2CompileStatus::IselUnsupported;
                     }
                     rewritten |= hoisted;
+                }
+
+                /* Stage 3 standard optimization suite (t2_opt.hpp;
+                 * PLAN/T2FULL/census/stage3_opts_design.md): DCE,
+                 * constant folding + copy propagation, CSE and the
+                 * make_fun sink over the inlined HIR. Only runs when
+                 * the blob has an inlined body to optimize; its output
+                 * is re-proven by the full validator below AND the
+                 * window validator (the entry-recall rule for sunk
+                 * sites), so any bad rewrite degrades to T1, loudly.
+                 * T2_NO_OPT=1 disables the whole suite; per-opt levers
+                 * live in t2_opt.cpp. */
+                if (getenv("T2_NO_OPT") == NULL) {
+                    bool opt_changed = false;
+
+                    if (!t2_opt(hir, li, &opt_changed, &err)) {
+                        if (diag) {
+                            *diag = "opt: " + err;
+                        }
+                        return T2CompileStatus::IselUnsupported;
+                    }
+                    if (opt_changed && getenv("T2_OPT_DUMP") != NULL) {
+                        std::string d = t2_dump(hir);
+
+                        erts_fprintf(stderr,
+                                     "t2_opt dump %T:%T/%u\n",
+                                     hir.module,
+                                     hir.function,
+                                     (unsigned)hir.arity);
+                        fwrite(d.data(), 1, d.size(), stderr);
+                    }
+                    rewritten |= opt_changed;
                 }
 
                 if (rewritten && !t2_validate(hir, &err)) {

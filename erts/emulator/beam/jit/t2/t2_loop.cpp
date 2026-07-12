@@ -333,12 +333,14 @@ namespace erts_t2 {
          * T1 EFFECT PC — they re-execute nothing before themselves and
          * are exempt from the window rule. Callsite-shaped ops
          * (T2_OP_SPEC_CALLSITE) deopt by re-executing the erased call
-         * from the call-boundary sync map they carry; they have their
-         * own rule (the callsite pass in t2_validate_windows). */
+         * from the call-boundary sync map they carry; entry-shaped ops
+         * (T2_OP_SPEC_ENTRY) re-execute the whole invocation from the
+         * T1 entry body; each has its own rule (the callsite and
+         * entry-recall passes in t2_validate_windows). */
         bool op_is_window_guard(const T2Op *op) {
             return op_is_speculative_kind(op) &&
-                   (op->flags & (T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE)) ==
-                           0;
+                   (op->flags & (T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
+                                 T2_OP_SPEC_ENTRY)) == 0;
         }
 
         bool is_self_tail_call(const T2Function &fn, const T2Op *term) {
@@ -870,6 +872,120 @@ namespace erts_t2 {
                                                 "the call-boundary state");
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        /* ---- Entry-recall rule (T2_OP_SPEC_ENTRY; Stage 3 sink) ------- *
+         * An op whose deopt RE-EXECUTES THE WHOLE INVOCATION from the
+         * function's T1 entry body needs every path from function entry
+         * to it clean: no effect, frame op, reduction charge, GC below
+         * the arity prefix, or write to X0..arity-1 — otherwise the
+         * re-run repeats an effect or reads a corrupted argument
+         * vector. Unlike the per-iteration loop rule above, dirt
+         * propagates through loop back edges (prior iterations are
+         * part of the path), so the fixpoint runs over the whole CFG
+         * with no header exemption. Params are the vector itself, not
+         * writes to it; same-class ops are exempt (the entry-class
+         * FoldBudget's batch charge preceding a later deopt is the same
+         * documented deviation the callsite rule accepts); a back-edge
+         * ReductionCheck's charge would be paid twice, so it is dirt
+         * even though the per-iteration model treats it as a boundary. */
+        {
+            bool any_entry = false;
+
+            for (const T2BasicBlock *b : fn.blocks) {
+                for (const T2Op *op = b->ops_head; op != nullptr && !any_entry;
+                     op = op->next) {
+                    any_entry = (op->flags & T2_OP_SPEC_ENTRY) != 0;
+                }
+                if (any_entry) {
+                    break;
+                }
+            }
+
+            if (any_entry) {
+                auto entry_dirt = [&](const T2Op *op) {
+                    if ((op->flags & T2_OP_SPEC_ENTRY) != 0) {
+                        return false;
+                    }
+                    if (op->kind == T2OpKind::Param) {
+                        return false;
+                    }
+                    if (op->kind == T2OpKind::ReductionCheck) {
+                        return true;
+                    }
+                    return t2_op_dirties_window(op, fn.arity);
+                };
+
+                std::vector<uint8_t> dirty_in(fn.blocks.size(), 0);
+                bool changed = true;
+
+                while (changed) {
+                    changed = false;
+                    for (const T2BasicBlock *b : fn.blocks) {
+                        uint8_t flag = dirty_in[b->id];
+
+                        for (const T2Op *phi = b->phis_head; phi != nullptr;
+                             phi = phi->next) {
+                            if (entry_dirt(phi)) {
+                                flag = 1;
+                            }
+                        }
+                        for (const T2Op *op = b->ops_head; op != nullptr;
+                             op = op->next) {
+                            if (entry_dirt(op)) {
+                                flag = 1;
+                            }
+                        }
+
+                        for_each_succ(b->terminator, [&](T2BasicBlock *s) {
+                            if (s != nullptr && flag && !dirty_in[s->id]) {
+                                dirty_in[s->id] = 1;
+                                changed = true;
+                            }
+                        });
+                    }
+                }
+
+                for (const T2BasicBlock *b : fn.blocks) {
+                    uint8_t flag = dirty_in[b->id];
+
+                    for (const T2Op *phi = b->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        if (entry_dirt(phi)) {
+                            flag = 1;
+                        }
+                    }
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if ((op->flags & T2_OP_SPEC_ENTRY) != 0) {
+                            if (op->kind != T2OpKind::FoldBudget &&
+                                !op_is_speculative_kind(op)) {
+                                return fail(b->id,
+                                            op,
+                                            "entry-class flag on a "
+                                            "non-deopt op kind");
+                            }
+                            if (op->kind == T2OpKind::FoldBudget &&
+                                op->sync == nullptr) {
+                                return fail(b->id,
+                                            op,
+                                            "entry-class fold budget "
+                                            "without the entry sync map");
+                            }
+                            if (flag) {
+                                return fail(b->id,
+                                            op,
+                                            "entry-class op on a dirty "
+                                            "path from the function "
+                                            "entry (entry-recall rule)");
+                            }
+                        }
+                        if (entry_dirt(op)) {
+                            flag = 1;
                         }
                     }
                 }

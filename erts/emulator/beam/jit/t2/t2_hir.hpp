@@ -516,7 +516,27 @@ namespace erts_t2 {
          * and writes nothing below cmap->x_live nor any Y slot before
          * the exit, so the boundary state is physically intact.
          * Validated by the callsite rule in t2_validate_windows. */
-        T2_OP_SPEC_CALLSITE = 1 << 10
+        T2_OP_SPEC_CALLSITE = 1 << 10,
+        /* The fourth deopt class (Stage 3 make_fun sinking,
+         * PLAN/T2FULL/census/stage3_opts_design.md §3d): a former
+         * callsite-class op whose erased-call boundary was dissolved
+         * by the sink — the fun that boundary needs in X0 is no longer
+         * materialized on the fast path. Its side exit RE-EXECUTES THE
+         * WHOLE INVOCATION instead: it branches to the function's own
+         * T1 entry body (L_f + TEST_YIELD_RETURN_OFFSET, the plain
+         * window target), no CP push, and T1 re-runs everything —
+         * including the sunk make_fun and the erased call — from the
+         * fresh-call vector in X0..arity-1. Sound only when every path
+         * from function entry to the op is clean: no effect, frame op,
+         * reduction charge (FoldBudget's own batch charge is the same
+         * accepted deviation the callsite class documents), GC below
+         * the arity prefix, or write to X0..arity-1 — enforced by the
+         * entry-recall rule in t2_validate_windows. FoldBudget keeps a
+         * sync map (the entry vector; it is a sync-required op);
+         * converted SpeculateType/AddSmall/SubSmall carry none, like
+         * any window-shaped guard. The deopt monitoring counter still
+         * counts these exits (t2_isel keeps spec_callsite set). */
+        T2_OP_SPEC_ENTRY = 1 << 11
     };
 
     /* One arm of a `switch` terminator. */
