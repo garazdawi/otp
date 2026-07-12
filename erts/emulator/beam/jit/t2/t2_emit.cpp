@@ -698,6 +698,9 @@ namespace erts_t2 {
             case T2LirKind::GetMapElement:
                 emit_lir_get_map_element(op);
                 break;
+            case T2LirKind::GuardBif:
+                emit_lir_guard_bif(op);
+                break;
             case T2LirKind::MakeFun:
                 emit_lir_make_fun(op);
                 break;
@@ -1116,6 +1119,94 @@ namespace erts_t2 {
             mov_arg(loc_argval(op.dst), ARG1);
 
             if (!failed()) {
+                emit_goto(op.succ_then);
+            }
+        }
+
+        /* The read-only guard-BIF subset (WIN 3): T1's own guard-BIF
+         * emitters (arm/instr_guard_bifs.cpp) with the Fail label
+         * redirected in-blob (folded Succeeded/Branch) or to the op's
+         * own T1 EFFECT trampoline ({f,0} — T1 re-executes the bif op
+         * from its canonical-slot state and raises, so exceptions
+         * stay byte-identical; T2 never raises). All are read-only,
+         * no GC, no trap; the dst is written on the success path
+         * only, exactly as in T1. The synthesized args carry no type
+         * metadata, so the emitters take their fully generic paths —
+         * for is_map_key that is T1's own i_bif2 runtime-call
+         * fallback, which needs the BIF's C entry (op.target).
+         *
+         * hd/tl arrive only in the {f,0} shape (a real fail label
+         * decodes to IsNonemptyList + GetHd/GetTl, the loader's own
+         * ops.tab transform); T1's bif_hd/bif_tl raise inline, so
+         * they lower to the same nonempty-list test + car/cdr load
+         * with the fail edge trampolined instead. */
+        void emit_lir_guard_bif(const T2LirOp &op) {
+            if (op.dst.is_none() || op.num_srcs < 1 || op.num_srcs > 2 ||
+                op.mfa_m != am_erlang || (uint32_t)op.num_srcs != op.arity) {
+                fail("malformed guard bif");
+                return;
+            }
+
+            ArgLabel failL(arith_fail_argval(op));
+            if (failed()) {
+                return;
+            }
+            ArgRegister dst(loc_argval(op.dst));
+
+            comment("T2 guard bif");
+            if (op.arity == 2) {
+                ArgSource s1(src_argval(op.srcs[0]));
+                ArgSource s2(src_argval(op.srcs[1]));
+
+                if (op.mfa_f == am_element) {
+                    emit_bif_element(failL, s1, s2, dst);
+                } else if (op.mfa_f == am_map_get) {
+                    emit_bif_map_get(failL, s1, s2, dst);
+                } else if (op.mfa_f == am_is_map_key) {
+                    if (op.target == nullptr) {
+                        fail("is_map_key without a resolved bif entry");
+                        return;
+                    }
+                    emit_bif_is_map_key(ArgWord((UWord)op.target),
+                                        failL,
+                                        s1,
+                                        s2,
+                                        dst);
+                } else {
+                    fail("unsupported guard bif");
+                    return;
+                }
+            } else if (op.mfa_f == am_hd || op.mfa_f == am_tl) {
+                ArgRegister src(src_argval(op.srcs[0]));
+
+                emit_is_nonempty_list(failL, src);
+                if (op.mfa_f == am_hd) {
+                    emit_get_hd(src, dst);
+                } else {
+                    emit_get_tl(src, dst);
+                }
+            } else if (op.mfa_f == am_node) {
+                emit_bif_node(failL, ArgRegister(src_argval(op.srcs[0])), dst);
+            } else if (op.mfa_f == am_map_size) {
+                emit_bif_map_size(failL,
+                                  ArgSource(src_argval(op.srcs[0])),
+                                  dst);
+            } else if (op.mfa_f == am_byte_size) {
+                emit_bif_byte_size(failL,
+                                   ArgSource(src_argval(op.srcs[0])),
+                                   dst);
+            } else if (op.mfa_f == am_bit_size) {
+                emit_bif_bit_size(failL,
+                                  ArgSource(src_argval(op.srcs[0])),
+                                  dst);
+            } else {
+                fail("unsupported guard bif");
+                return;
+            }
+
+            /* A folded fail edge means the op absorbed the block branch:
+             * fall through was rewritten to an explicit jump. */
+            if (op.succ_then != T2_LIR_NO_BLOCK && !failed()) {
                 emit_goto(op.succ_then);
             }
         }

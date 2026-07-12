@@ -435,6 +435,129 @@ static int t2_bif2_op_supported(BeamFile *beam, const BeamOp *op) {
            e->function == am_Eq || e->function == am_Neq;
 }
 
+/* A guard-BIF source in the shapes the builder decodes: a register,
+ * or (when the operand's T1 instruction accepts any `s`) an
+ * embeddable constant — immediates, or a *static* literal; dynamic
+ * literals (bignums synthesized by the decode) are not retained, so
+ * the blob could never embed them (same rule as get_map_elements
+ * keys above). */
+static int t2_guard_bif_src_ok(const BeamOpArg *a, int reg_only) {
+    switch (a->type) {
+    case TAG_x:
+    case TAG_y:
+        return 1;
+    case TAG_q:
+        return !reg_only && (SWord)a->val >= 0;
+    case TAG_a:
+    case TAG_i:
+    case TAG_n:
+        return !reg_only;
+    default:
+        return 0;
+    }
+}
+
+/* The read-only guard-BIF subset (eligibility_wins.md WIN 3): bif1/
+ * bif2 to erlang:hd/1, tl/1, node/1, element/2, map_get/2 and
+ * is_map_key/2. All are read-only, no alloc, no trap; a real fail
+ * label branches (clause select) and a {f,0} fail side-exits to the
+ * op's own T1 EFFECT site, which re-executes and raises (T2 never
+ * raises). Admitted shapes are mirrored 1:1 by the builder's decode
+ * (t2_hir_builder.cpp) and by the pctab's decode-side classification
+ * (pctab_guard_bif_effect in t2_pctab.c) — a mismatch there is
+ * scan/builder drift. The map/list/node operand must be a register
+ * (the dedicated T1 instructions' own ops.tab constraint). */
+static int t2_guard_bif_op_supported(BeamFile *beam, const BeamOp *op) {
+    const BeamFile_ImportEntry *e;
+    const BeamOpArg *fail, *dst;
+
+    if (op->op == genop_bif1_4) {
+        if (op->arity < 4) {
+            return 0;
+        }
+        dst = &op->a[3];
+    } else if (op->op == genop_bif2_5) {
+        if (op->arity < 5) {
+            return 0;
+        }
+        dst = &op->a[4];
+    } else {
+        return 0;
+    }
+    fail = &op->a[0];
+    if ((fail->type != TAG_f && fail->type != TAG_p) ||
+        op->a[1].type != TAG_u ||
+        op->a[1].val >= (UWord)beam->imports.count ||
+        (dst->type != TAG_x && dst->type != TAG_y)) {
+        return 0;
+    }
+    e = &beam->imports.entries[op->a[1].val];
+    if (e->module != am_erlang) {
+        return 0;
+    }
+    if (op->op == genop_bif1_4) {
+        if (e->arity != 1) {
+            return 0;
+        }
+        if (e->function == am_hd || e->function == am_tl ||
+            e->function == am_node) {
+            /* Register source only: real-fail hd/tl decompose into
+             * is_nonempty_list + get_hd/get_tl (the loader's own
+             * transform), and bif_node's S operand is a register. */
+            return t2_guard_bif_src_ok(&op->a[2], 1);
+        }
+        return 0;
+    }
+    if (e->arity != 2) {
+        return 0;
+    }
+    if (e->function == am_element) {
+        return t2_guard_bif_src_ok(&op->a[2], 0) &&
+               t2_guard_bif_src_ok(&op->a[3], 0);
+    }
+    if (e->function == am_map_get || e->function == am_is_map_key) {
+        /* Any embeddable key; the map must be a register (ops.tab
+         * Src2=xy -> bif_map_get / bif_is_map_key). */
+        return t2_guard_bif_src_ok(&op->a[2], 0) &&
+               t2_guard_bif_src_ok(&op->a[3], 1);
+    }
+    return 0;
+}
+
+/* gc_bifs the backend can actually lower: the arithmetic kinds
+ * (bif_kind in t2_hir_builder.cpp) plus the read-only guard-BIF
+ * subset carried by gc_bif1 (map_size/byte_size/bit_size — T1
+ * itself discards Live for these, they never GC). Anything else
+ * (length/1 traps mid-op; abs/1 & co. lower to the generic i_bif
+ * runtime call) still *builds* (translate_gc_bif's T2OpKind::Bif) as
+ * a P1-chain callee, but has no isel lowering — keeping it in the
+ * install set was a latent installable-but-fails-isel gap. */
+static int t2_gc_bif_inst_supported(BeamFile *beam, const BeamOp *op) {
+    const BeamFile_ImportEntry *e;
+
+    if (op->arity < 3 || op->a[2].type != TAG_u ||
+        op->a[2].val >= (UWord)beam->imports.count) {
+        return 0;
+    }
+    e = &beam->imports.entries[op->a[2].val];
+    if (e->module != am_erlang) {
+        return 0;
+    }
+    if (e->arity == 2) {
+        return e->function == am_Plus || e->function == am_Minus ||
+               e->function == am_Times || e->function == am_div ||
+               e->function == am_rem || e->function == am_band ||
+               e->function == am_bor || e->function == am_bxor ||
+               e->function == am_bsl || e->function == am_bsr;
+    }
+    if (e->arity == 1) {
+        return e->function == am_Minus || e->function == am_bnot ||
+               e->function == am_map_size || e->function == am_byte_size ||
+               e->function == am_bit_size;
+    }
+    return 0;
+}
+
 Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                                  int *any_eligible,
                                  Uint32 **install_bitmap_out,
@@ -554,8 +677,15 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
              * the function's generic ops. */
             fn_size++;
             if (fn_ok && op->op == genop_bif2_5) {
-                /* Comparison subset only (see t2_bif2_op_supported). */
-                if (!t2_bif2_op_supported(beam, op)) {
+                /* Comparison subset (t2_bif2_op_supported) or the
+                 * guard-BIF subset (WIN 3). */
+                if (!t2_bif2_op_supported(beam, op) &&
+                    !t2_guard_bif_op_supported(beam, op)) {
+                    fn_ok = 0;
+                }
+            } else if (fn_ok && op->op == genop_bif1_4) {
+                /* Guard-BIF subset only (WIN 3). */
+                if (!t2_guard_bif_op_supported(beam, op)) {
                     fn_ok = 0;
                 }
             } else if (fn_ok && !erts_t2_genop_supported(op->op)) {
@@ -579,6 +709,14 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
             if (fn_inst && erts_t2_genop_build_only(op->op)) {
                 /* Buildable as a P1 chain callee, but not
                  * standalone-installable (no isel lowering). */
+                fn_inst = 0;
+            }
+            if (fn_inst &&
+                (op->op == genop_gc_bif1_5 || op->op == genop_gc_bif2_6 ||
+                 op->op == genop_gc_bif3_7) &&
+                !t2_gc_bif_inst_supported(beam, op)) {
+                /* Same build-only treatment for non-lowerable gc_bif
+                 * targets (see t2_gc_bif_inst_supported). */
                 fn_inst = 0;
             }
             break;
@@ -815,7 +953,10 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
                 /* The exact 3-way eligibility predicate (kept in lockstep
                  * with erts_t2_eligibility_scan). */
                 if (op->op == genop_bif2_5) {
-                    supported = t2_bif2_op_supported(beam, op);
+                    supported = t2_bif2_op_supported(beam, op) ||
+                                t2_guard_bif_op_supported(beam, op);
+                } else if (op->op == genop_bif1_4) {
+                    supported = t2_guard_bif_op_supported(beam, op);
                 } else if (op->op == genop_bs_match_3) {
                     supported = bs_match_op_supported(beam, op);
                 } else if (op->op == genop_get_map_elements_3) {

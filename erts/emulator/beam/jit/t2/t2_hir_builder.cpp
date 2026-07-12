@@ -827,6 +827,22 @@ namespace erts_t2 {
                 const BeamFile_ImportEntry &mfa = ret->imports[import_index];
                 T2OpKind kind = bif_kind(mfa.module, mfa.function, mfa.arity);
 
+                if (kind == T2OpKind::Bif && mfa.module == am_erlang &&
+                    mfa.arity == 1 && num_sources == 1 &&
+                    (mfa.function == am_map_size ||
+                     mfa.function == am_byte_size ||
+                     mfa.function == am_bit_size)) {
+                    /* The read-only gc_bif-carried guard BIFs (WIN 3):
+                     * T1 lowers these to dedicated instructions
+                     * (ops.tab bif_map_size/bif_byte_size/bif_bit_size)
+                     * and discards Live — they never GC (the result is
+                     * always a small). Previously these built as
+                     * T2OpKind::Bif, which has no isel lowering (the
+                     * latent installable-but-fails-isel gap). */
+                    translate_guard_bif(dop, mfa, 3, 1, 4);
+                    return;
+                }
+
                 std::vector<SrcVal> srcs;
                 for (int i = 0; i < num_sources; i++) {
                     srcs.push_back(read_arg_r(dop.args[3 + i]));
@@ -856,6 +872,57 @@ namespace erts_t2 {
                 }
 
                 write_dst_new(dst, v);
+            }
+
+            /* The read-only guard-BIF subset (eligibility_wins.md
+             * WIN 3): one GuardBif HIR op lowered onto T1's dedicated
+             * guard-BIF emitters (arm/instr_guard_bifs.cpp). Read-only,
+             * no alloc, no trap — NOT a sync point: a real fail label
+             * branches in-blob (Succeeded/Branch, like a gc_bif guard),
+             * and a {f,0} fail side-exits to the op's own T1 EFFECT
+             * site, which re-reads the sources from their canonical
+             * slots and raises (T2 never raises) — the error-exit
+             * contract. The destination is written on the success path
+             * only, exactly as in T1. `src0`/`dsti` name the decoded
+             * argument positions (bif1/bif2: 2; gc_bif1: 3). */
+            void translate_guard_bif(const DecodedOp &dop,
+                                     const BeamFile_ImportEntry &mfa,
+                                     size_t src0,
+                                     int num_sources,
+                                     size_t dsti) {
+                const DecodedArg &fail = dop.args[0];
+
+                if (fail.type != TAG_f && fail.type != TAG_p) {
+                    fail_op(dop,
+                            "guard bif outside the decoded shape "
+                            "(eligibility/builder drift)");
+                    return;
+                }
+
+                std::vector<SrcVal> srcs;
+                for (int i = 0; i < num_sources; i++) {
+                    srcs.push_back(read_arg_r(dop.args[src0 + (size_t)i]));
+                }
+
+                T2Value *v =
+                        emit_result_op(T2OpKind::GuardBif, srcs, T2Type::any());
+                if (v == nullptr) {
+                    return;
+                }
+
+                T2Op *op = v->def;
+                op->mfa_m = mfa.module;
+                op->mfa_f = mfa.function;
+                op->index = (uint32_t)num_sources;
+
+                if (fail.type == TAG_f) {
+                    T2Value *ok = emit_result_op(T2OpKind::Succeeded,
+                                                 {SrcVal{v, T2_REG_NONE}},
+                                                 bool_type());
+                    guard_branch(ok, fail);
+                }
+
+                write_dst_new(dop.args[dsti], v);
             }
 
             void fail_op(const DecodedOp &dop, const char *what) {
@@ -1775,19 +1842,76 @@ namespace erts_t2 {
                 break;
             }
 
+            case genop_bif1_4: {
+                /* The read-only guard-BIF subset (WIN 3): hd/1, tl/1,
+                 * node/1 — the eligibility scan admitted only these,
+                 * register-source shapes; anything else is a decode
+                 * error. hd/tl with a real fail label decode exactly
+                 * like the loader's own transform (ops.tab):
+                 * is_nonempty_list Fail Src | get_hd/get_tl Src Dst.
+                 * The {f,0} shapes (T1's raising bif_hd/bif_tl) and
+                 * node/1 go through GuardBif. */
+                UWord import_index = dop.args[1].val;
+                const DecodedArg &src = dop.args[2];
+
+                if (import_index >= (UWord)ret->import_count) {
+                    fail_op(dop, "bif1 import index out of range");
+                    return;
+                }
+
+                const BeamFile_ImportEntry &mfa = ret->imports[import_index];
+
+                if (mfa.module != am_erlang || mfa.arity != 1) {
+                    fail_op(dop, "unsupported bif1 target");
+                    return;
+                }
+                if (src.type != TAG_x && src.type != TAG_y) {
+                    fail_op(dop,
+                            "bif1 source outside the decoded shape "
+                            "(eligibility/builder drift)");
+                    return;
+                }
+
+                if ((mfa.function == am_hd || mfa.function == am_tl) &&
+                    dop.args[0].type == TAG_f) {
+                    SrcVal s = read_arg_r(src);
+                    T2Value *ok = emit_result_op(T2OpKind::IsNonemptyList,
+                                                 {s},
+                                                 bool_type());
+
+                    guard_branch(ok, dop.args[0]);
+                    if (failed) {
+                        return;
+                    }
+                    write_dst_new(dop.args[3],
+                                  emit_result_op(mfa.function == am_hd
+                                                         ? T2OpKind::GetHd
+                                                         : T2OpKind::GetTl,
+                                                 {s},
+                                                 T2Type::any()));
+                    break;
+                }
+                if (mfa.function == am_hd || mfa.function == am_tl ||
+                    mfa.function == am_node) {
+                    translate_guard_bif(dop, mfa, 2, 1, 3);
+                    break;
+                }
+                fail_op(dop, "unsupported bif1 target");
+                return;
+            }
+
             case genop_bif2_5: {
-                /* Value-producing total comparison (P2 commit 8):
-                 * `bif2 {f,0} erlang:CMP/2 A B D`. The eligibility
-                 * scan admitted only the never-failing comparison
-                 * subset; anything else is a decode error. Pure, no
-                 * sync point (T1's bif_is_* lowerings are fragment
-                 * compares, no GC, no trap). */
+                /* Value-producing total comparison (P2 commit 8,
+                 * `bif2 {f,0} erlang:CMP/2 A B D` — pure fragment
+                 * compares, no GC, no trap, no sync point) or the
+                 * read-only guard-BIF subset (WIN 3: element/2,
+                 * map_get/2, is_map_key/2). The eligibility scan
+                 * admitted only these; anything else is a decode
+                 * error. */
                 UWord import_index = dop.args[1].val;
 
-                /* A zero fail label decodes as TAG_p. */
-                if (dop.args[0].type != TAG_p ||
-                    import_index >= (UWord)ret->import_count) {
-                    fail_op(dop, "unsupported bif2 shape");
+                if (import_index >= (UWord)ret->import_count) {
+                    fail_op(dop, "bif2 import index out of range");
                     return;
                 }
 
@@ -1798,6 +1922,31 @@ namespace erts_t2 {
                     fail_op(dop, "unsupported bif2 target");
                     return;
                 }
+
+                if (mfa.function == am_element) {
+                    translate_guard_bif(dop, mfa, 2, 2, 4);
+                    break;
+                }
+                if (mfa.function == am_map_get ||
+                    mfa.function == am_is_map_key) {
+                    if (dop.args[3].type != TAG_x &&
+                        dop.args[3].type != TAG_y) {
+                        fail_op(dop,
+                                "guard-bif map operand outside the "
+                                "decoded shape (eligibility/builder "
+                                "drift)");
+                        return;
+                    }
+                    translate_guard_bif(dop, mfa, 2, 2, 4);
+                    break;
+                }
+
+                /* A zero fail label decodes as TAG_p. */
+                if (dop.args[0].type != TAG_p) {
+                    fail_op(dop, "unsupported bif2 shape");
+                    return;
+                }
+
                 if (mfa.function == am_Ge) {
                     kind = T2OpKind::CmpGe;
                 } else if (mfa.function == am_Lt) {

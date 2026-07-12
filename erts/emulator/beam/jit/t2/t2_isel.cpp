@@ -1069,6 +1069,88 @@ namespace erts_t2 {
                     return true;
                 }
 
+                case T2OpKind::GuardBif: {
+                    /* The read-only guard-BIF subset (WIN 3): lowered
+                     * onto T1's dedicated guard-BIF emitters. Fail
+                     * edge like arith: in-blob when the builder's
+                     * Succeeded/Branch follows (a real fail label);
+                     * else a side exit to the op's own T1 EFFECT site
+                     * ({f,0} — T1 re-executes and raises, T2 never
+                     * raises). Read-only, no GC, no trap; the dst is
+                     * written on the success path only. */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "guard bif result without a home");
+                    }
+                    lop.kind = T2LirKind::GuardBif;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.mfa_m = op->mfa_m;
+                    lop.mfa_f = op->mfa_f;
+                    lop.arity = op->index;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    /* T1's emitters take a *register* for bif_node's S
+                     * operand, the map argument of bif_map_get /
+                     * bif_is_map_key and the hd/tl list — all admitted
+                     * as registers by the scan; a constant here is
+                     * drift. */
+                    if (lop.num_srcs < 1 || lop.num_srcs > 2 ||
+                        ((op->mfa_f == am_node || op->mfa_f == am_hd ||
+                          op->mfa_f == am_tl) &&
+                         lop.srcs[0].is_const) ||
+                        ((op->mfa_f == am_map_get ||
+                          op->mfa_f == am_is_map_key) &&
+                         lop.srcs[1].is_const)) {
+                        return fail_op(op,
+                                       "guard bif operand outside the "
+                                       "decoded shape");
+                    }
+                    {
+                        /* The BIF's C entry: is_map_key's T1 emitter
+                         * falls back to the generic i_bif2 runtime
+                         * call for an untyped map operand and needs
+                         * the function pointer. Guard BIFs always
+                         * have an active export from init. */
+                        const Export *ep = erts_active_export_entry(op->mfa_m,
+                                                                    op->mfa_f,
+                                                                    op->index);
+
+                        if (ep == nullptr || ep->bif_number < 0) {
+                            return fail_op(op,
+                                           "guard bif without a bif export");
+                        }
+                        lop.target = (const void *)bif_table[ep->bif_number].f;
+                    }
+
+                    const T2Op *succ = op->next;
+                    if (succ != nullptr && succ->kind == T2OpKind::Succeeded &&
+                        succ->num_operands == 1 &&
+                        succ->operands[0] == op->result && feeds_branch(succ)) {
+                        const T2Op *term = op->block->terminator;
+
+                        lop.succ_then = term->succ_then->id;
+                        lop.succ_else = term->succ_else->id;
+                        *skip_until = succ;
+                        *consumed_terminator = true;
+                    } else if (succ != nullptr &&
+                               succ->kind == T2OpKind::Succeeded) {
+                        return fail_op(op,
+                                       "succeeded not consumed by the block "
+                                       "branch");
+                    } else {
+                        lop.t1_pc_fail =
+                                pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
+                        if (lop.t1_pc_fail == nullptr) {
+                            return fail_op(op,
+                                           "no EFFECT pctab entry for the "
+                                           "guard-bif side exit");
+                        }
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
                 case T2OpKind::StartMatch: {
                     /* bs_start_match3 (P2 commit 7): conditional dst
                      * write; the builder's Succeeded/Branch folds into

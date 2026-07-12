@@ -700,6 +700,18 @@ void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
     case op_bif_byte_size_jsd:
     case op_bif_map_size_jsd:
     case op_i_length_jtd:
+    /* The guard-BIF subset (WIN 3): dedicated specific ops with an
+     * explicit fail label. A {f,0}-failing T2 GuardBif side-exits
+     * here and T1 re-executes and raises. bif_hd/bif_tl are the
+     * {f,0}-only lowerings — a real fail label becomes
+     * is_nonempty_list + get_hd/get_tl, which record nothing
+     * (decode-side mirror: pctab_guard_bif_effect in t2_pctab.c). */
+    case op_bif_element_jssd:
+    case op_bif_map_get_jssd:
+    case op_bif_is_map_key_bjssd:
+    case op_bif_node_jSd:
+    case op_bif_hd_sd:
+    case op_bif_tl_sd:
         t2_pc_record(before, ERTS_T2_PC_EFFECT);
         break;
 

@@ -1058,7 +1058,14 @@ namespace erts_t2 {
                 case T2OpKind::Bnot:
                 case T2OpKind::Neg:
                 case T2OpKind::Bif:
-                case T2OpKind::GuardBif:
+                /* GuardBif is deliberately NOT here: the WIN 3 subset
+                 * is read-only, no alloc, no trap. A real fail label
+                 * branches in-blob; a {f,0} fail side-exits to the
+                 * op's own T1 EFFECT site, which re-reads the sources
+                 * from their canonical slots and raises — the same
+                 * boundary-state-by-predecessors contract as the
+                 * error-exit TailCallExt shapes below
+                 * (translate_error_exit). */
                 /* A recovered loop's back-edge yield check
                  * (t2_loop.cpp): the map is the fresh-call argument
                  * vector the demote path re-enters T1 with. */

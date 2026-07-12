@@ -239,6 +239,14 @@ namespace erts_t2 {
         TailCallExt,
         TailCallFun,
         Bif,
+        /* The read-only guard-BIF subset (eligibility_wins.md WIN 3):
+         * hd/tl ({f,0} shapes), node/1, element/2, map_get/2,
+         * is_map_key/2 (bif1/bif2) and map_size/byte_size/bit_size
+         * (gc_bif1). mfa_m/mfa_f carry the target, index its arity.
+         * Read-only, no alloc, no trap — NOT a sync point: a real
+         * fail label is a Succeeded/Branch in-blob edge, a {f,0}
+         * fail side-exits to the op's own T1 EFFECT site (T1
+         * re-executes and raises). */
         GuardBif,
         MakeFun,
 

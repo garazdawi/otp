@@ -179,6 +179,53 @@ static int pctab_is_effect(int op) {
     }
 }
 
+/* The guard-BIF subset (WIN 3): decode-side mirror of the specific
+ * ops t2_pc_classify records as EFFECT (beam_asm_module.cpp),
+ * following the loader's ops.tab transforms exactly:
+ *
+ *   - element/2, map_get/2, is_map_key/2 lower to bif_element /
+ *     bif_map_get / bif_is_map_key (or i_bif2 for a non-register map
+ *     operand) — all recorded, so every instance classifies;
+ *   - node/1 lowers to bif_node (register source) or i_bif1 — both
+ *     recorded;
+ *   - hd/tl with a real fail label and an xy source lower to
+ *     is_nonempty_list + get_hd/get_tl, which record nothing; the
+ *     {f,0} shape lowers to bif_hd/bif_tl and any other shape to
+ *     i_bif1 — recorded.
+ *
+ * Only the allowlisted MFAs are classified: any other bif1/bif2
+ * makes its function T2-ineligible (t2_eligible.c), and only
+ * eligible functions' entries enter the table, so the two sides are
+ * only ever zipped over admitted shapes. */
+static int pctab_guard_bif_effect(const ErtsT2RetainedCode *ret,
+                                  const BeamOp *op) {
+    const BeamFile_ImportEntry *e;
+
+    if ((op->op != genop_bif1_4 && op->op != genop_bif2_5) ||
+        op->a[1].type != TAG_u || op->a[1].val >= (UWord)ret->import_count) {
+        return 0;
+    }
+    e = &ret->imports[op->a[1].val];
+    if (e->module != am_erlang) {
+        return 0;
+    }
+    if (op->op == genop_bif1_4 && e->arity == 1) {
+        if (e->function == am_hd || e->function == am_tl) {
+            if (op->a[0].type == TAG_f &&
+                (op->a[2].type == TAG_x || op->a[2].type == TAG_y)) {
+                return 0;
+            }
+            return 1;
+        }
+        return e->function == am_node;
+    }
+    if (op->op == genop_bif2_5 && e->arity == 2) {
+        return e->function == am_element || e->function == am_map_get ||
+               e->function == am_is_map_key;
+    }
+    return 0;
+}
+
 /* Error-exit ops. Note the case_end/badmatch NotInX=cy transform emits a
  * separate leading move, so the specific op count still matches 1:1. */
 static int pctab_is_error(int op) {
@@ -263,7 +310,8 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                         } else {
                             fns[fn_idx].bif_ords[bif_cur++] = ord;
                         }
-                    } else if (pctab_is_effect(op->op)) {
+                    } else if (pctab_is_effect(op->op) ||
+                               pctab_guard_bif_effect(ret, op)) {
                         if (pass == 0) {
                             fns[fn_idx].effect_count++;
                         } else {
