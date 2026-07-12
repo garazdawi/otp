@@ -422,7 +422,7 @@ namespace erts_t2 {
             const void *func_info_target() {
                 const BeamCodeHeader *hdr = code_hdr();
 
-                if ((Sint)hir.fn_index >= hdr->num_functions) {
+                if ((Sint)hir.fn_index >= (Sint)hdr->num_functions) {
                     return nullptr;
                 }
 
@@ -592,6 +592,24 @@ namespace erts_t2 {
                  * non-sync ops): it is the P2 allocator's pin set. */
                 lop.sync = op->sync;
 
+                /* P2 loop unboxing: the re-tag mask (cold-path ORR set
+                 * for the emitter), the raw result marker, and the
+                 * per-operand rawness bits ride along 1:1. The HIR
+                 * validator (run_raw_checks + the sync-map raw_mask
+                 * rule) proved the discipline; raw_srcs bits on ops
+                 * whose emitters ignore them are inert. */
+                lop.raw_mask = op->raw_mask;
+                lop.raw_dst = (op->flags & T2_OP_RAW_MODE) != 0 &&
+                              op->result != nullptr &&
+                              t2_value_is_raw_home(op->result);
+                for (uint16_t i = 0;
+                     i < op->num_operands && i < T2_LIR_MAX_SRCS;
+                     i++) {
+                    if (t2_value_is_raw_home(op->operands[i])) {
+                        lop.raw_srcs |= (uint8_t)(1u << i);
+                    }
+                }
+
                 /* Generic arithmetic (gc_bif): fail edge in-blob when the
                  * builder's Succeeded/Branch follows; else side exit to the
                  * op's own T1 EFFECT site. */
@@ -760,6 +778,16 @@ namespace erts_t2 {
                                            "boxed literal move unsupported "
                                            "in P1 commit-3 isel");
                         }
+
+                        /* P2 loop unboxing: a raw ConstInt materializes
+                         * in the tag-cleared representation (checked
+                         * above in its tagged form — the cleared word
+                         * is not a term and must dodge the immediate
+                         * check). */
+                        if (op->kind == T2OpKind::ConstInt &&
+                            (op->flags & T2_OP_RAW_MODE) != 0) {
+                            term &= ~(Eterm)_TAG_IMMED1_MASK;
+                        }
                         lop.kind = T2LirKind::Move;
                         lop.dst = reg_loc(op->dst_reg);
                         lop.dst_value = op->result->id;
@@ -810,6 +838,36 @@ namespace erts_t2 {
                     b.ops.push_back(lop);
                     return true;
                 }
+
+                case T2OpKind::UntagInt:
+                case T2OpKind::TagInt:
+                    /* P2 loop unboxing: one AND (clear the small tag) /
+                     * one ORR (restore it), in the value's home. Only
+                     * the RAW-IN-HOME form has a lowering; the legacy
+                     * phys-only UntagInt never reaches isel. */
+                    if (op->kind == T2OpKind::UntagInt &&
+                        (op->flags & T2_OP_RAW_MODE) == 0) {
+                        return fail_op(op,
+                                       "phys-discipline untag_int has no "
+                                       "P1 lowering");
+                    }
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "un/tag without a home");
+                    }
+                    lop.kind = op->kind == T2OpKind::UntagInt
+                                       ? T2LirKind::UntagInt
+                                       : T2LirKind::TagInt;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "un/tag of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
 
                 case T2OpKind::GetHd:
                 case T2OpKind::GetTl: {
@@ -1621,6 +1679,10 @@ namespace erts_t2 {
                  * by design; see T2_OP_ERR_EXIT_*). For the reordered
                  * tail-BIF shape this map rides on the CallBif op. */
                 lop.sync = t->sync;
+                /* P2 loop unboxing: the re-tag mask rides along (the P1
+                 * fallback re-dispatch consumes the raw accumulator as
+                 * a real call argument; its emission re-tags first). */
+                lop.raw_mask = t->raw_mask;
 
                 switch (t->kind) {
                 case T2OpKind::Return:
@@ -1831,8 +1893,13 @@ namespace erts_t2 {
                     if (is_const_kind(v->def->kind)) {
                         f |= T2_LIR_VF_CONST;
                     }
-                    if (v->def->kind == T2OpKind::UntagInt ||
-                        v->def->kind == T2OpKind::MulRaw) {
+                    if ((v->def->kind == T2OpKind::UntagInt ||
+                         v->def->kind == T2OpKind::MulRaw) &&
+                        (v->def->flags & T2_OP_RAW_MODE) == 0) {
+                        /* The phys-only discipline. A RAW_MODE UntagInt
+                         * (P2 loop unboxing) is slot-homed by design;
+                         * its placement is governed by the HIR raw
+                         * checks + the sync-map raw_mask rule instead. */
                         f |= T2_LIR_VF_UNTAGGED;
                     }
                     lir.value_flags[v->id] = f;

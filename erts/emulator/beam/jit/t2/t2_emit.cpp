@@ -130,12 +130,15 @@ namespace erts_t2 {
         Label entry_label;
 
         /* Distinct T1 fail PCs (keyed with the CP a callee-window
-         * trampoline pushes — null for the plain shape — and the
+         * trampoline pushes — null for the plain shape — the
          * callsite-deopt marker, which makes the trampoline bump the
-         * erts_t2_callsite_deopts monitoring counter) -> the BEAM
-         * label number of the in-blob trampoline that branches to
-         * them. */
-        std::map<std::pair<std::pair<const void *, const void *>, bool>,
+         * erts_t2_callsite_deopts monitoring counter, and the raw
+         * re-tag mask, which makes the trampoline ORR the small tag
+         * back into the masked X homes before T1 observes them) ->
+         * the BEAM label number of the in-blob trampoline that
+         * branches to them. */
+        std::map<std::pair<std::pair<const void *, const void *>,
+                           std::pair<bool, uint32_t>>,
                  unsigned>
                 fail_labels;
         unsigned next_label;
@@ -181,6 +184,14 @@ namespace erts_t2 {
             uint32_t mfa_ar = 0;
             const void *cont = nullptr;
             const void *translate = nullptr;
+            /* P2 loop unboxing: X homes holding RAW-IN-HOME words at
+             * the back edge. The yield setup re-tags them (the saved
+             * X vector must be terms — the suspended process is
+             * GC-visible), and the resume path clears the tags again
+             * before re-entering the loop header (which expects the
+             * raw representation). The tombstone demote path runs on
+             * the restored (tagged) vector and is not adjusted. */
+            uint32_t raw_mask = 0;
         };
         std::vector<ResumeStub> resume_stubs;
 
@@ -526,11 +537,16 @@ namespace erts_t2 {
         /* Get (or create) the ArgLabel number of the trampoline for a T1
          * fail PC. rawLabels must map it so resolve_beam_label() resolves.
          * `callsite` marks a callsite-class deopt (maps:fold Stage 1):
-         * its trampoline additionally bumps the monitoring counter. */
+         * its trampoline additionally bumps the monitoring counter.
+         * `raw_mask` (P2 loop unboxing) names the X homes holding
+         * RAW-IN-HOME words at the deopt: the trampoline re-tags them
+         * before branching, so T1 only ever observes terms. */
         unsigned fail_label_num(const void *t1_pc,
                                 const void *cont = nullptr,
-                                bool callsite = false) {
-            auto key = std::make_pair(std::make_pair(t1_pc, cont), callsite);
+                                bool callsite = false,
+                                uint32_t raw_mask = 0) {
+            auto key = std::make_pair(std::make_pair(t1_pc, cont),
+                                      std::make_pair(callsite, raw_mask));
             auto it = fail_labels.find(key);
             if (it != fail_labels.end()) {
                 return it->second;
@@ -541,24 +557,52 @@ namespace erts_t2 {
             return n;
         }
 
+        /* P2 loop unboxing: re-tag (or re-clear) the masked X homes in
+         * a cold path. Re-tag ORRs the small tag back (RAW -> term)
+         * before T1 observes the register file; re-clear ANDs it away
+         * again (term -> RAW) on a resume path back into the blob. Two
+         * instructions per home (compute into TMP1, store back), which
+         * only cold paths ever pay. */
+        void fixup_raw_homes(uint32_t mask, bool retag) {
+            for (unsigned i = 0; mask != 0; i++, mask >>= 1) {
+                if ((mask & 1) == 0) {
+                    continue;
+                }
+
+                ArgVal xr(ArgVal::Type::XReg, i);
+                auto v = load_source(xr, TMP1);
+
+                if (retag) {
+                    a.orr(TMP1, v.reg, imm(_TAG_IMMED1_SMALL));
+                } else {
+                    a.and_(TMP1, v.reg, imm(~(Uint64)_TAG_IMMED1_MASK));
+                }
+                mov_arg(xr, TMP1);
+            }
+        }
+
         void emit_fail_trampolines() {
             for (const auto &pair : fail_labels) {
                 const void *t1_pc = pair.first.first.first;
                 const void *cont = pair.first.first.second;
-                bool callsite = pair.first.second;
+                bool callsite = pair.first.second.first;
+                uint32_t raw_mask = pair.first.second.second;
 
                 reg_cache.invalidate();
                 bind_veneer_target(rawLabels.at(pair.second));
                 /* Absolute branch to the T1 PC. mov_imm materializes the
                  * 64-bit address; br transfers control. T1 re-executes and
                  * (for error paths) raises a byte-identical exception.
-                 * A callee-window trampoline (P2 commit 8) first pushes
+                 * A raw-mask trampoline (P2 loop unboxing) first re-tags
+                 * the masked X homes — T1 must only ever observe terms.
+                 * A callee-window trampoline (P2 commit 8) pushes
                  * the intrinsic call site's continuation — the CP the
                  * skipped callee prologue would have pushed — so the T1
                  * helper returns to the caller's own T1 continuation.
                  * A callsite-class trampoline (maps:fold Stage 1) bumps
                  * the deopt counter (racy, monitoring only) so deopt
                  * storms are visible. */
+                fixup_raw_homes(raw_mask, /*retag=*/true);
                 if (callsite) {
                     mov_imm(TMP2, (Uint64)&erts_t2_callsite_deopts);
                     a.ldr(TMP3, a64::Mem(TMP2));
@@ -757,6 +801,10 @@ namespace erts_t2 {
             case T2LirKind::AddSmall:
             case T2LirKind::SubSmall:
                 emit_lir_addsub_small(op);
+                break;
+            case T2LirKind::UntagInt:
+            case T2LirKind::TagInt:
+                emit_lir_untag_tag(op);
                 break;
             case T2LirKind::SideExit:
                 /* Unconditional transfer to a T1 PC: an error-exit op's
@@ -961,7 +1009,8 @@ namespace erts_t2 {
 
             const Label &fl = rawLabels.at(fail_label_num(op.t1_pc_fail,
                                                           op.t1_pc_cont,
-                                                          op.spec_callsite));
+                                                          op.spec_callsite,
+                                                          op.raw_mask));
             fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
 
             a64::Gp vals[T2_LIR_MAX_SRCS];
@@ -1016,23 +1065,40 @@ namespace erts_t2 {
                             ? *fail_override
                             : rawLabels.at(fail_label_num(op.t1_pc_fail,
                                                           op.t1_pc_cont,
-                                                          op.spec_callsite));
+                                                          op.spec_callsite,
+                                                          op.raw_mask));
             if (fail_override == nullptr) {
                 fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
             }
 
-            comment("T2 %s small (flag-checked)", is_add ? "add" : "sub");
+            comment("T2 %s small (flag-checked%s)",
+                    is_add ? "add" : "sub",
+                    op.raw_dst ? ", raw" : "");
 
+            /* Raw mode (P2 loop unboxing): every operand is brought to
+             * the tag-CLEARED form (raw operands already are; tagged
+             * ones get one AND; constants clear statically), so the
+             * flag-setting add/sub commits the raw result with the
+             * bit-identical overflow check. Tagged mode: srcs[0] keeps
+             * its tag (it rides the add), srcs[1] is cleared. */
             a64::Gp lhs;
             if (op.srcs[0].is_const) {
                 /* A proven-small constant operand (the pass never
                  * guards constants). */
-                mov_imm(TMP2, op.srcs[0].term);
+                mov_imm(TMP2,
+                        op.raw_dst ? ((Uint64)op.srcs[0].term &
+                                      ~(Uint64)_TAG_IMMED1_MASK)
+                                   : (Uint64)op.srcs[0].term);
                 lhs = TMP2;
             } else if (op.srcs[0].loc.is_phys()) {
                 lhs = phys_gp(op.srcs[0].loc);
             } else {
                 lhs = load_source(src_argval(op.srcs[0]), TMP2).reg;
+            }
+            if (op.raw_dst && !op.srcs[0].is_const && (op.raw_srcs & 1) == 0) {
+                /* Tagged operand into a raw result: clear its tag. */
+                a.and_(TMP2, lhs, imm(~(Uint64)_TAG_IMMED1_MASK));
+                lhs = TMP2;
             }
 
             /* Uniform scratch-then-commit ("deopt before the *commit*",
@@ -1069,11 +1135,14 @@ namespace erts_t2 {
                 } else {
                     rhs = load_source(src_argval(op.srcs[1]), TMP3).reg;
                 }
-                a.and_(TMP1, rhs, imm(~_TAG_IMMED1_MASK));
+                if ((op.raw_srcs & 2) == 0) {
+                    a.and_(TMP1, rhs, imm(~_TAG_IMMED1_MASK));
+                    rhs = TMP1;
+                }
                 if (is_add) {
-                    a.adds(out, lhs, TMP1);
+                    a.adds(out, lhs, rhs);
                 } else {
-                    a.subs(out, lhs, TMP1);
+                    a.subs(out, lhs, rhs);
                 }
             }
 
@@ -1085,6 +1154,29 @@ namespace erts_t2 {
             } else {
                 mov_arg(loc_argval(op.dst), ARG1);
             }
+        }
+
+        /* P2 loop unboxing: the representation edges. UntagInt clears
+         * a proven small's tag bits (tagged -> RAW-IN-HOME, loop
+         * entry); TagInt restores them (RAW -> term, loop exit). Pure
+         * bit ops, no deopt. */
+        void emit_lir_untag_tag(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const || op.dst.is_none()) {
+                fail("malformed un/tag op");
+                return;
+            }
+
+            bool untag = op.kind == T2LirKind::UntagInt;
+            a64::Gp src = load_source(src_argval(op.srcs[0]), TMP1).reg;
+
+            comment(untag ? "T2 untag (raw loop entry)"
+                          : "T2 tag (raw loop exit)");
+            if (untag) {
+                a.and_(TMP1, src, imm(~(Uint64)_TAG_IMMED1_MASK));
+            } else {
+                a.orr(TMP1, src, imm(_TAG_IMMED1_SMALL));
+            }
+            mov_arg(loc_argval(op.dst), TMP1);
         }
 
         /* One decoded map-key lookup (WIN 1): T1's own maybe-immediate
@@ -1297,6 +1389,31 @@ namespace erts_t2 {
             }
 
             ArgLabel failL(ArgVal(ArgVal::Type::Label, 1 + op.succ_else));
+
+            /* P2 loop unboxing: a raw compare. Both operands are
+             * tag-cleared smalls (value << 4, validator-proven), so a
+             * plain signed compare decides — the T1 emitter's per-
+             * iteration small checks and generic fallback vanish. */
+            if (op.raw_srcs != 0) {
+                if (op.kind != T2LirKind::CmpLt || op.raw_srcs != 3 ||
+                    op.num_srcs != 2 || op.srcs[0].is_const ||
+                    op.srcs[1].is_const) {
+                    fail("raw operands outside the raw cmp_lt shape");
+                    return;
+                }
+
+                a64::Gp lhs = load_source(src_argval(op.srcs[0]), TMP1).reg;
+                a64::Gp rhs = load_source(src_argval(op.srcs[1]), TMP2).reg;
+                const Label &else_l = block_label(op.succ_else);
+
+                comment("T2 raw cmp_lt");
+                a.cmp(lhs, rhs);
+                a.b_ge(resolve_label(else_l, disp1MB));
+                if (!failed()) {
+                    emit_goto(op.succ_then);
+                }
+                return;
+            }
 
             switch (op.kind) {
             case T2LirKind::IsInteger:
@@ -1565,6 +1682,12 @@ namespace erts_t2 {
             bool is_ext = op.kind == T2LirKind::CallExt ||
                           op.kind == T2LirKind::TailCallExt;
 
+            /* P2 loop unboxing: a re-dispatch over the loop-carried
+             * vector (P1 fallback mode) consumes raw homes as real
+             * call arguments — re-tag them before the transfer. Such
+             * call blocks are the cold error funnel by construction. */
+            fixup_raw_homes(op.raw_mask, /*retag=*/true);
+
             if (is_ext) {
                 /* Export dispatch through the active code index, exactly
                  * like emit_i_call_ext / emit_i_call_ext_only (including
@@ -1701,6 +1824,7 @@ namespace erts_t2 {
             st.resume = a.new_label();
             st.header = block_label(header);
             st.beam_idx = op.beam_idx;
+            st.raw_mask = op.raw_mask;
             if (callee) {
                 /* Intrinsic back edge (P2 commit 8): the stub embeds
                  * the CALLEE MFA (a suspended process introspects as
@@ -1783,25 +1907,32 @@ namespace erts_t2 {
 
             a64::Gp map = load_source(src_argval(op.srcs[0]), TMP1).reg;
 
-            comment("T2 flatmap_size");
+            comment("T2 flatmap_size%s", op.raw_dst ? " (raw)" : "");
             /* emit_untag_ptr, not emit_boxed_val's folded -2: a literal
              * map term carries the literal tag bit as well. */
             emit_untag_ptr(TMP1, map);
             a.ldr(TMP2, a64::Mem(TMP1, offsetof(flatmap_t, size)));
             a.lsl(TMP2, TMP2, imm(_TAG_IMMED1_SIZE));
-            a.orr(TMP2, TMP2, imm(_TAG_IMMED1_SMALL));
+            if (!op.raw_dst) {
+                /* Raw mode (P2 loop unboxing) keeps the tag-cleared
+                 * form (size << 4); tagged mode ORRs the small tag. */
+                a.orr(TMP2, TMP2, imm(_TAG_IMMED1_SMALL));
+            }
             mov_arg(loc_argval(op.dst), TMP2);
         }
 
-        /* K_i / V_i of a flatmap, indexed by a TAGGED small (provably
-         * < size by the loop bound, so no checks). Keys live in the
-         * separate keys tuple (skip its arity word); values are inline
-         * after the flatmap header. */
+        /* K_i / V_i of a flatmap, indexed by a TAGGED small — or by a
+         * tag-cleared RAW small in raw mode (P2 loop unboxing) —
+         * provably < size by the loop bound, so no checks. Keys live
+         * in the separate keys tuple (skip its arity word); values are
+         * inline after the flatmap header. */
         void emit_lir_flatmap_at(const T2LirOp &op) {
             bool is_key = op.kind == T2LirKind::FlatmapKeyAt;
+            bool raw_idx = (op.raw_srcs & 2) != 0;
 
             if (op.num_srcs != 2 || op.srcs[0].is_const ||
-                op.srcs[1].is_const || op.dst.is_none()) {
+                op.srcs[1].is_const || op.dst.is_none() ||
+                (op.raw_srcs & ~2u) != 0) {
                 fail("malformed flatmap access");
                 return;
             }
@@ -1810,7 +1941,12 @@ namespace erts_t2 {
             a64::Gp idx = load_source(src_argval(op.srcs[1]), TMP2).reg;
 
             comment(is_key ? "T2 flatmap_key_at" : "T2 flatmap_val_at");
-            a.lsr(TMP3, idx, imm(_TAG_IMMED1_SIZE));
+            if (raw_idx) {
+                /* raw = i << 4; the byte offset is i * 8 = raw >> 1. */
+                a.lsr(TMP3, idx, imm(1));
+            } else {
+                a.lsr(TMP3, idx, imm(_TAG_IMMED1_SIZE));
+            }
             /* emit_untag_ptr throughout (a literal map / literal keys
              * tuple carries the literal tag bit too). */
             emit_untag_ptr(TMP1, map);
@@ -1823,7 +1959,11 @@ namespace erts_t2 {
                 /* Values are inline right after the flatmap_t header. */
                 a.add(TMP1, TMP1, imm(sizeof(flatmap_t)));
             }
-            mov_arg(loc_argval(op.dst), a64::Mem(TMP1, TMP3, a64::lsl(3)));
+            if (raw_idx) {
+                mov_arg(loc_argval(op.dst), a64::Mem(TMP1, TMP3));
+            } else {
+                mov_arg(loc_argval(op.dst), a64::Mem(TMP1, TMP3, a64::lsl(3)));
+            }
         }
 
         /* The whole-fold reduction batch: charge = imm2 + imm *
@@ -1841,11 +1981,14 @@ namespace erts_t2 {
                 return;
             }
 
-            const Label &fl =
-                    rawLabels.at(fail_label_num(op.t1_pc_fail, nullptr, true));
+            const Label &fl = rawLabels.at(
+                    fail_label_num(op.t1_pc_fail, nullptr, true, op.raw_mask));
 
             fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
 
+            /* The operand may be tagged or tag-cleared raw (P2 loop
+             * unboxing): the lsr below reads the same size value from
+             * both forms. */
             a64::Gp n = load_source(src_argval(op.srcs[0]), TMP1).reg;
 
             comment("T2 fold budget (%ld + %ld*n)",
@@ -1885,6 +2028,10 @@ namespace erts_t2 {
             fact(EmitFact::SideExitPc, op.beam_idx, op.target);
 
             reg_cache.invalidate();
+            /* P2 loop unboxing: T1 (the callee body) must only observe
+             * terms — re-tag the raw homes first. Demote blocks are
+             * cold by construction. */
+            fixup_raw_homes(op.raw_mask, /*retag=*/true);
             if (!op.tail_site) {
                 mov_imm(TMP1, (Uint64)op.t1_pc_cont);
                 a.str(TMP1, a64::Mem(E, -8).pre());
@@ -1936,6 +2083,10 @@ namespace erts_t2 {
                      * vector needs). */
                     emit_scan_writeback(scan_loops[st.scan], false);
                 }
+                /* P2 loop unboxing: the saved X vector must be terms
+                 * (the suspended process is GC-visible) — re-tag the
+                 * raw homes before the shared yield saves them. */
+                fixup_raw_homes(st.raw_mask, /*retag=*/true);
                 mov_imm(TMP1, (Uint64)&erts_t2_backedge_yields);
                 a.ldr(TMP2, a64::Mem(TMP1));
                 a.add(TMP2, TMP2, imm(1));
@@ -1974,6 +2125,12 @@ namespace erts_t2 {
                 a.adr(TMP1, st.anchor);
                 a.ldr(TMP1, a64::Mem(TMP1));
                 a.cbnz(TMP1, demote);
+                /* P2 loop unboxing: the restored X vector is tagged
+                 * (saved so above); the loop header expects the raw
+                 * representation — clear the tags again. The tombstone
+                 * demote path below stays on the tagged vector (it
+                 * enters T1). */
+                fixup_raw_homes(st.raw_mask, /*retag=*/false);
                 a.b(st.header);
 
                 a.bind(demote);
@@ -2193,6 +2350,16 @@ namespace erts_t2 {
                 const T2LirBlock &b = fn.blocks[bid];
 
                 sl.adv_in[bid] = adv;
+
+                /* P2 loop unboxing: the fused region's write-back
+                 * trampolines know nothing about raw homes — a raw op
+                 * in a scan region is out of scope (never coexists
+                 * today: raw loops have no plain ReductionCheck). */
+                for (const T2LirOp &op : b.ops) {
+                    if (op.raw_mask != 0 || op.raw_srcs != 0 || op.raw_dst) {
+                        return false;
+                    }
+                }
 
                 for (size_t oi = 0; oi < b.ops.size(); oi++) {
                     const T2LirOp &op = b.ops[oi];

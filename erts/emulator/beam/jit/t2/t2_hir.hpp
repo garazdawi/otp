@@ -595,7 +595,25 @@ namespace erts_t2 {
          * spec op (whose BODY-site form pushes the site's CONT
          * instead). P1 sets it on every site-shape-sensitive op it
          * plants; its absence means a BODY site throughout. */
-        T2_OP_TAIL_SITE = 1 << 13
+        T2_OP_TAIL_SITE = 1 << 13,
+        /* P2 loop unboxing (tag elimination): the op's result is a
+         * RAW-IN-HOME word — the tagged small with its low
+         * _TAG_IMMED1_SIZE tag bits CLEARED (value << 4) — living in
+         * its canonical X home across the loop. The representation is
+         * chosen so the flag-setting add/sub overflow check (b.vs) is
+         * bit-identical to the tagged one, re-tagging is one ORR with
+         * _TAG_IMMED1_SMALL and un-tagging one AND. Legal only on
+         * Phi / AddSmall / SubSmall / ConstInt / FlatmapSize
+         * (producers) and CmpLt / FlatmapKeyAt / FlatmapValAt
+         * (raw-consuming ops); the producers must be X-homed, and
+         * every consumer relationship is enforced by run_raw_checks
+         * (t2_hir.cpp). At any op whose deopt/yield path hands the
+         * register file to T1, the raw homes named by its sync map
+         * must be declared in T2Op::raw_mask so the emitter re-tags
+         * them in the cold path — a raw word reaching T1 as a term is
+         * memory corruption, so the validator makes a missed mask a
+         * hard error. */
+        T2_OP_RAW_MODE = 1 << 14
     };
 
     /* One arm of a `switch` terminator. */
@@ -643,6 +661,15 @@ namespace erts_t2 {
         int32_t *operand_regs;         /* arena array [num_operands] or null */
 
         uint16_t flags; /* T2_OP_* bits */
+
+        /* P2 loop unboxing: bit i set = the value this op's sync map
+         * names at X i is RAW-IN-HOME (see T2_OP_RAW_MODE) and the
+         * op's deopt/yield emission must re-tag X i in the cold path
+         * before T1 observes the register file (and un-tag it again
+         * on a resume path back into the blob). Zero everywhere
+         * outside an unboxed loop. Only X0..X31 are maskable; the
+         * validator rejects raw homes above that. */
+        uint32_t raw_mask = 0;
 
         /* Sync-point register map (P1); null on non-sync ops. */
         T2SyncMap *sync;
@@ -818,6 +845,13 @@ namespace erts_t2 {
      * fact between the speculation pass (t2_spec.cpp) and the validator's
      * speculative-type walk: a proof never needs a guard. */
     bool t2_type_proves_small(const T2Type &t);
+
+    /* True when the value is a RAW-IN-HOME word (P2 loop unboxing): its
+     * def carries T2_OP_RAW_MODE and produces a value. Structural — a
+     * value has one representation everywhere (SSA), so rawness is a
+     * property of the def. Shared between the validator (t2_hir.cpp)
+     * and isel (t2_isel.cpp). */
+    bool t2_value_is_raw_home(const T2Value *v);
 
     /* A compact human-readable dump of the CFG and ops. */
     std::string t2_dump(const T2Function &fn);

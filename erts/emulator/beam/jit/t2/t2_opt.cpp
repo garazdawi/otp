@@ -889,7 +889,13 @@ namespace erts_t2 {
                              * fail isel where the move lowered fine. */
                             if (def != nullptr && is_const_kind(def->kind) &&
                                 def->kind != T2OpKind::ConstLiteral &&
-                                def->kind != T2OpKind::ConstFloat) {
+                                def->kind != T2OpKind::ConstFloat &&
+                                ((op->flags | def->flags) & T2_OP_RAW_MODE) ==
+                                        0) {
+                                /* Raw-mode consts/copies (P2 loop
+                                 * unboxing) carry the tag-cleared
+                                 * representation — never foldable to a
+                                 * tagged-convention constant. */
                                 trace("constfold copy-of-const", op);
                                 fold_to_const(op, def);
                                 n_fold++;
@@ -900,7 +906,12 @@ namespace erts_t2 {
 
                         if (op->kind == T2OpKind::AddSmall ||
                             op->kind == T2OpKind::SubSmall) {
-                            if (op->num_operands != 2) {
+                            if (op->num_operands != 2 ||
+                                (op->flags & T2_OP_RAW_MODE) != 0) {
+                                /* A raw-mode op's result is the tag-
+                                 * cleared representation; folding it to
+                                 * a (tagged-convention) ConstInt would
+                                 * change what its consumers read. */
                                 continue;
                             }
 
@@ -1058,13 +1069,17 @@ namespace erts_t2 {
                 char buf[96];
                 std::string key;
 
+                /* P2 loop unboxing: a RAW_MODE op produces/consumes the
+                 * tag-cleared representation — never CSE-equivalent to
+                 * its tagged twin (e.g. raw ConstInt 0 vs small 0). */
                 snprintf(buf,
                          sizeof(buf),
-                         "%u:%lld:%lx:%u",
+                         "%u:%lld:%lx:%u:%u",
                          (unsigned)op->kind,
                          (long long)op->imm_int,
                          (unsigned long)op->imm_term,
-                         op->index);
+                         op->index,
+                         (unsigned)(op->flags & T2_OP_RAW_MODE));
                 key = buf;
                 for (uint16_t i = 0; i < op->num_operands; i++) {
                     snprintf(buf, sizeof(buf), ":v%u", op->operands[i]->id);
@@ -1418,7 +1433,8 @@ namespace erts_t2 {
                     const T2Op *d = it->second->def;
 
                     if (d != nullptr && (d->kind == T2OpKind::UntagInt ||
-                                         d->kind == T2OpKind::MulRaw)) {
+                                         d->kind == T2OpKind::MulRaw ||
+                                         (d->flags & T2_OP_RAW_MODE) != 0)) {
                         return false; /* never a GC-visible slot */
                     }
                     gc_claims[i] = it->second;

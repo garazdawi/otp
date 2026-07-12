@@ -207,6 +207,15 @@ namespace erts_t2 {
         AddSmall,
         SubSmall,
 
+        /* P2 loop unboxing (tag elimination). UntagInt clears a proven
+         * small's tag bits in place-of-representation (AND ~_TAG_
+         * IMMED1_MASK: value << 4 with a zero low nibble — the
+         * RAW-IN-HOME form); TagInt restores the small tag (ORR
+         * _TAG_IMMED1_SMALL). Pure bit ops, no deopt, one instruction
+         * each on the hot path's edges (loop entry / loop exit). */
+        UntagInt,
+        TagInt,
+
         /* maps:fold flatmap specialization (Stage 1). IsFlatmapBounded
          * is a fused test+branch (boxed ∧ flatmap subtag ∧ size <=
          * MAP_SMALL_MAP_LIMIT; succ_then = fast loop, succ_else = the
@@ -459,6 +468,19 @@ namespace erts_t2 {
          * callee body without a CP push. */
         bool tail_site;
 
+        /* --- P2 loop unboxing (T2_OP_RAW_MODE / T2Op::raw_mask) -------
+         * raw_mask: bit i = X i holds a RAW-IN-HOME word (tag bits
+         * cleared) at this op's deopt/yield boundary; the emitter must
+         * ORR the small tag back in the cold path before T1 observes
+         * the register file (trampolines, yield stubs, demotes, the
+         * re-dispatch call) and AND it away again on a resume path
+         * back into the blob. raw_srcs: bit s = srcs[s] is raw (the
+         * emitter must not clear it again / must use the raw compare
+         * or raw index form). raw_dst: the result is committed raw. */
+        uint32_t raw_mask;
+        uint8_t raw_srcs;
+        bool raw_dst;
+
         /* CFG edges (block ids into T2LirFunction::blocks, or
          * T2_LIR_NO_BLOCK). Tests/compares/arith-with-fail-edge use
          * succ_else as the in-blob fail target and succ_then as the
@@ -500,12 +522,12 @@ namespace erts_t2 {
                   imm2(0), imm_term(0), mfa_m(0), mfa_f(0), arity(0), live(0),
                   exp(nullptr), target(nullptr), t1_pc_fail(nullptr),
                   t1_pc_cont(nullptr), beam_idx(0), spec_callsite(false),
-                  tail_site(false), succ_then(T2_LIR_NO_BLOCK),
-                  succ_else(T2_LIR_NO_BLOCK), first_case(0), num_cases(0),
-                  default_target(T2_LIR_NO_BLOCK), pool_first(0),
-                  num_srcs_ext(0), first_bs_cmd(0), num_bs_cmds(0),
-                  dst_value(T2_NO_VALUE), dst2_value(T2_NO_VALUE),
-                  sync(nullptr) {
+                  tail_site(false), raw_mask(0), raw_srcs(0), raw_dst(false),
+                  succ_then(T2_LIR_NO_BLOCK), succ_else(T2_LIR_NO_BLOCK),
+                  first_case(0), num_cases(0), default_target(T2_LIR_NO_BLOCK),
+                  pool_first(0), num_srcs_ext(0), first_bs_cmd(0),
+                  num_bs_cmds(0), dst_value(T2_NO_VALUE),
+                  dst2_value(T2_NO_VALUE), sync(nullptr) {
         }
     };
 

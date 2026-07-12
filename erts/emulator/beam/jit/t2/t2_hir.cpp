@@ -1150,11 +1150,15 @@ namespace erts_t2 {
             /* An untagged machine word (PLAN/T2/04 §11.2): never a
              * valid term, so it must never occupy an X/Y slot at a sync
              * boundary — GC would misread it. Corruption-class
-             * invariant (i) of PLAN/T2FULL/09 §4. */
+             * invariant (i) of PLAN/T2FULL/09 §4. A T2_OP_RAW_MODE
+             * UntagInt is exempt: it is the P2 loop-unboxing form,
+             * whose result IS slot-homed and whose sync-map mentions
+             * are governed by the raw_mask rule below instead. */
             static bool value_is_untagged(const T2Value *v) {
                 return v->def != nullptr &&
                        (v->def->kind == T2OpKind::UntagInt ||
-                        v->def->kind == T2OpKind::MulRaw);
+                        v->def->kind == T2OpKind::MulRaw) &&
+                       (v->def->flags & T2_OP_RAW_MODE) == 0;
             }
 
             bool check_sync_map(const T2Op *op) {
@@ -1164,6 +1168,16 @@ namespace erts_t2 {
                     if (sync_required(op)) {
                         return fail("block %u: sync-point op %s has no sync "
                                     "map",
+                                    op->block->id,
+                                    t2_op_kind_name(op->kind));
+                    }
+                    if (op->raw_mask != 0) {
+                        /* A re-tag mask is only meaningful against a sync
+                         * map (the emitter re-tags exactly the masked
+                         * map homes); a mask without a map is a transform
+                         * bug, never silent. */
+                        return fail("block %u: %s carries a raw re-tag mask "
+                                    "but no sync map",
                                     op->block->id,
                                     t2_op_kind_name(op->kind));
                     }
@@ -1179,13 +1193,45 @@ namespace erts_t2 {
                                     t2_op_kind_name(op->kind),
                                     i);
                     }
+                    /* P2 loop unboxing: a RAW-IN-HOME value may be named
+                     * by a sync map ONLY when the op's raw_mask declares
+                     * its X home, so the emitter re-tags it in the cold
+                     * path before T1 observes the register file. Both
+                     * directions are corruption-class: a raw home the
+                     * mask misses leaks a raw word to T1 as a term; a
+                     * masked tagged home would be double-tagged. */
+                    {
+                        bool raw = t2_value_is_raw_home(m->x[i]);
+                        bool masked = i < 32 &&
+                                      (op->raw_mask & ((uint32_t)1 << i)) != 0;
+
+                        if (raw != masked) {
+                            return fail("block %u: %s sync map x%u (v%u) is "
+                                        "%s but the raw re-tag mask says %s",
+                                        op->block->id,
+                                        t2_op_kind_name(op->kind),
+                                        i,
+                                        m->x[i]->id,
+                                        raw ? "raw-in-home" : "tagged",
+                                        masked ? "raw" : "tagged");
+                        }
+                    }
+                }
+                if (op->raw_mask != 0 && m->x_live < 32 &&
+                    (op->raw_mask >> m->x_live) != 0) {
+                    return fail("block %u: %s raw re-tag mask names an X "
+                                "home at/above x_live %u",
+                                op->block->id,
+                                t2_op_kind_name(op->kind),
+                                m->x_live);
                 }
                 for (int32_t i = 0;
                      m->frame_size != T2_NO_FRAME && i < m->frame_size;
                      i++) {
-                    if (value_is_untagged(m->y[i])) {
-                        return fail("block %u: untagged v%u in the %s sync "
-                                    "map (y%d)",
+                    if (value_is_untagged(m->y[i]) ||
+                        t2_value_is_raw_home(m->y[i])) {
+                        return fail("block %u: untagged/raw v%u in the %s "
+                                    "sync map (y%d)",
                                     op->block->id,
                                     m->y[i]->id,
                                     t2_op_kind_name(op->kind),
@@ -1803,17 +1849,26 @@ namespace erts_t2 {
             static void spec_transfer_op(const T2Op *op, SpecFacts &f) {
                 switch (op->kind) {
                 case T2OpKind::ConstInt:
-                    if (IS_SSMALL(op->imm_int)) {
+                    if ((op->flags & T2_OP_RAW_MODE) != 0) {
+                        /* P2 loop unboxing: the constant materializes in
+                         * the tag-cleared representation. */
+                        sf_set(f.raw, op->result->id);
+                    } else if (IS_SSMALL(op->imm_int)) {
                         sf_set(f.small, op->result->id);
                     }
                     break;
                 case T2OpKind::Copy:
                     /* SSA-identity of its operand: facts pass through
                      * (the speculation pass sees through the decoded
-                     * frame copies the same way). */
+                     * frame copies the same way). A RAW_MODE Copy is a
+                     * raw move (P2 loop unboxing: the P1 latch
+                     * materialization of a raw accumulator). */
                     if (sf_test(f.small, op->operands[0]->id) ||
                         t2_type_proves_small(op->operands[0]->type)) {
                         sf_set(f.small, op->result->id);
+                    }
+                    if (sf_test(f.raw, op->operands[0]->id)) {
+                        sf_set(f.raw, op->result->id);
                     }
                     break;
                 case T2OpKind::SpeculateType:
@@ -1829,10 +1884,24 @@ namespace erts_t2 {
                     break;
                 case T2OpKind::AddSmall:
                 case T2OpKind::SubSmall:
-                case T2OpKind::TagInt:
                     /* Flag-checked commit: the result is small on the
-                     * fall-through path (deopt before the commit). */
+                     * fall-through path (deopt before the commit) — or
+                     * the tag-cleared RAW word in raw mode (the deopt
+                     * condition is bit-identical; only the low tag
+                     * nibble differs). */
+                    if ((op->flags & T2_OP_RAW_MODE) != 0) {
+                        sf_set(f.raw, op->result->id);
+                    } else {
+                        sf_set(f.small, op->result->id);
+                    }
+                    break;
+                case T2OpKind::TagInt:
                     sf_set(f.small, op->result->id);
+                    break;
+                case T2OpKind::FlatmapSize:
+                    if ((op->flags & T2_OP_RAW_MODE) != 0) {
+                        sf_set(f.raw, op->result->id);
+                    }
                     break;
                 case T2OpKind::UntagInt:
                 case T2OpKind::MulRaw:
@@ -1882,6 +1951,232 @@ namespace erts_t2 {
                 default:
                     return true;
                 }
+            }
+
+            /* -------------------------------------------------------- *
+             * P2 loop unboxing: structural RAW-IN-HOME discipline.      *
+             *                                                          *
+             * Rawness is a property of a value's def (one               *
+             * representation per SSA value), so the whole discipline    *
+             * is checkable structurally, without dataflow:              *
+             *                                                          *
+             *   - T2_OP_RAW_MODE may only mark the known producer /    *
+             *     raw-consumer kinds; raw producers must be X-homed    *
+             *     (a raw word in a Y slot would be walked as a term    *
+             *     by the stack scanner).                               *
+             *   - Every consumer of a raw value must be raw-aware:     *
+             *     a raw word reaching a generic op (which treats its   *
+             *     operand as a term) is corruption, never silent.      *
+             *   - Sync-map mentions are covered by the raw_mask rule   *
+             *     in check_sync_map.                                   *
+             * -------------------------------------------------------- */
+
+            bool raw_check_op(const T2Op *op) {
+                bool raw_mode = (op->flags & T2_OP_RAW_MODE) != 0;
+                auto is_raw = [](const T2Value *v) {
+                    return t2_value_is_raw_home(v);
+                };
+                auto no_raw_operands = [&](const char *why) -> bool {
+                    for (uint16_t i = 0; i < op->num_operands; i++) {
+                        if (is_raw(op->operands[i])) {
+                            return fail("block %u: %s operand %u (v%u) is a "
+                                        "raw-in-home word (%s)",
+                                        op->block->id,
+                                        t2_op_kind_name(op->kind),
+                                        i,
+                                        op->operands[i]->id,
+                                        why);
+                        }
+                    }
+                    return true;
+                };
+
+                if (raw_mode) {
+                    switch (op->kind) {
+                    case T2OpKind::Phi:
+                    case T2OpKind::Copy: /* raw move */
+                    case T2OpKind::AddSmall:
+                    case T2OpKind::SubSmall:
+                    case T2OpKind::ConstInt:
+                    case T2OpKind::FlatmapSize:
+                    case T2OpKind::UntagInt:
+                    case T2OpKind::CmpLt:
+                    case T2OpKind::FlatmapKeyAt:
+                    case T2OpKind::FlatmapValAt:
+                        break;
+                    default:
+                        return fail("block %u: T2_OP_RAW_MODE on %s (not a "
+                                    "raw-aware kind)",
+                                    op->block->id,
+                                    t2_op_kind_name(op->kind));
+                    }
+                    if (op->result != nullptr && op->kind != T2OpKind::CmpLt &&
+                        op->kind != T2OpKind::FlatmapKeyAt &&
+                        op->kind != T2OpKind::FlatmapValAt &&
+                        (op->dst_reg == T2_REG_NONE ||
+                         !t2_reg_is_x(op->dst_reg))) {
+                        return fail("block %u: raw producer %s is not "
+                                    "X-homed",
+                                    op->block->id,
+                                    t2_op_kind_name(op->kind));
+                    }
+                    if (op->kind == T2OpKind::ConstInt &&
+                        !IS_SSMALL(op->imm_int)) {
+                        return fail("block %u: raw ConstInt is not a small",
+                                    op->block->id);
+                    }
+                }
+
+                switch (op->kind) {
+                case T2OpKind::Phi:
+                    for (uint16_t i = 0; i < op->num_operands; i++) {
+                        if (is_raw(op->operands[i]) != raw_mode) {
+                            return fail("block %u: phi input %u (v%u) is %s "
+                                        "but the phi is %s",
+                                        op->block->id,
+                                        i,
+                                        op->operands[i]->id,
+                                        is_raw(op->operands[i]) ? "raw"
+                                                                : "tagged",
+                                        raw_mode ? "raw" : "tagged");
+                        }
+                    }
+                    return true;
+                case T2OpKind::AddSmall:
+                case T2OpKind::SubSmall:
+                    /* Raw mode clears every tagged operand and commits
+                     * raw; tagged mode relies on the tag riding the
+                     * add, so no raw operand may reach it. */
+                    if (!raw_mode) {
+                        return no_raw_operands("tagged flag-checked "
+                                               "arithmetic");
+                    }
+                    return true;
+                case T2OpKind::TagInt:
+                    if (op->num_operands != 1 || !is_raw(op->operands[0])) {
+                        return fail("block %u: tag_int operand is not a "
+                                    "raw-in-home word",
+                                    op->block->id);
+                    }
+                    return true;
+                case T2OpKind::UntagInt:
+                    return no_raw_operands("untag of a raw word");
+                case T2OpKind::Copy:
+                    /* A raw move passes the raw word through (the LIR
+                     * Move is representation-agnostic); a plain Copy
+                     * must never consume one. */
+                    if (raw_mode) {
+                        if (op->num_operands != 1 || !is_raw(op->operands[0])) {
+                            return fail("block %u: raw copy of a non-raw "
+                                        "value",
+                                        op->block->id);
+                        }
+                        return true;
+                    }
+                    return no_raw_operands("plain register copy");
+                case T2OpKind::CmpLt:
+                    if (raw_mode) {
+                        if (op->num_operands != 2 || !is_raw(op->operands[0]) ||
+                            !is_raw(op->operands[1])) {
+                            return fail("block %u: raw cmp_lt needs two "
+                                        "raw operands",
+                                        op->block->id);
+                        }
+                        return true;
+                    }
+                    return no_raw_operands("generic comparison");
+                case T2OpKind::FlatmapKeyAt:
+                case T2OpKind::FlatmapValAt:
+                    if (is_raw(op->operands[0])) {
+                        return fail("block %u: %s map operand is raw",
+                                    op->block->id,
+                                    t2_op_kind_name(op->kind));
+                    }
+                    if (is_raw(op->operands[1]) != raw_mode) {
+                        return fail("block %u: %s index rawness does not "
+                                    "match the op's raw mode",
+                                    op->block->id,
+                                    t2_op_kind_name(op->kind));
+                    }
+                    return true;
+                case T2OpKind::FoldBudget:
+                    /* The batch charge untags its operand with a plain
+                     * shift, which reads the same value from the tagged
+                     * and the tag-cleared forms — both admissible. */
+                    return true;
+                case T2OpKind::Call:
+                case T2OpKind::CallExt:
+                case T2OpKind::TailCall:
+                case T2OpKind::TailCallExt:
+                    /* A re-dispatch over the loop-carried vector (P1
+                     * fallback mode) consumes raw homes as real call
+                     * arguments; the emitter re-tags them in place
+                     * before the transfer, driven by raw_mask. Require
+                     * the declaration for every raw argument. */
+                    for (uint16_t i = 0; i < op->num_operands; i++) {
+                        if (!is_raw(op->operands[i])) {
+                            continue;
+                        }
+                        if (op->operand_regs == nullptr ||
+                            !t2_reg_is_x(op->operand_regs[i]) ||
+                            t2_reg_index(op->operand_regs[i]) >= 32 ||
+                            (op->raw_mask &
+                             ((uint32_t)1
+                              << t2_reg_index(op->operand_regs[i]))) == 0) {
+                            return fail("block %u: %s argument %u (v%u) is "
+                                        "raw but not declared in the re-tag "
+                                        "mask",
+                                        op->block->id,
+                                        t2_op_kind_name(op->kind),
+                                        i,
+                                        op->operands[i]->id);
+                        }
+                    }
+                    return true;
+                default:
+                    return no_raw_operands("not a raw-aware consumer");
+                }
+            }
+
+            bool run_raw_checks() {
+                bool any = false;
+
+                for (const T2BasicBlock *b : fn.blocks) {
+                    for (const T2Op *op = b->ops_head; op != nullptr && !any;
+                         op = op->next) {
+                        any = (op->flags & T2_OP_RAW_MODE) != 0;
+                    }
+                    for (const T2Op *phi = b->phis_head; phi != nullptr && !any;
+                         phi = phi->next) {
+                        any = (phi->flags & T2_OP_RAW_MODE) != 0;
+                    }
+                    if (any) {
+                        break;
+                    }
+                }
+                if (!any) {
+                    return true; /* the common case costs one scan */
+                }
+
+                for (const T2BasicBlock *b : fn.blocks) {
+                    for (const T2Op *phi = b->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        if (!raw_check_op(phi)) {
+                            return false;
+                        }
+                    }
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if (!raw_check_op(op)) {
+                            return false;
+                        }
+                    }
+                    if (b->terminator != nullptr &&
+                        !raw_check_op(b->terminator)) {
+                        return false;
+                    }
+                }
+                return true;
             }
 
             bool run_speculation_checks() {
@@ -2126,6 +2421,13 @@ namespace erts_t2 {
                     return false;
                 }
 
+                /* P2 loop unboxing: RAW-IN-HOME discipline (structural;
+                 * sync-map mentions are covered by the raw_mask rule
+                 * inside run_sync_checks). */
+                if (!run_raw_checks()) {
+                    return false;
+                }
+
                 return true;
             }
         };
@@ -2140,6 +2442,21 @@ namespace erts_t2 {
     bool t2_type_proves_small(const T2Type &t) {
         return t.integer_only() && t.has_min && t.has_max && IS_SSMALL(t.min) &&
                IS_SSMALL(t.max);
+    }
+
+    bool t2_value_is_raw_home(const T2Value *v) {
+        if (v->def == nullptr || (v->def->flags & T2_OP_RAW_MODE) == 0 ||
+            v->def->result != v) {
+            return false;
+        }
+        switch (v->def->kind) {
+        case T2OpKind::CmpLt:        /* boolean result           */
+        case T2OpKind::FlatmapKeyAt: /* tagged term result — the */
+        case T2OpKind::FlatmapValAt: /* flag marks the raw index */
+            return false;
+        default:
+            return true;
+        }
     }
 
     /* ------------------------------------------------------------------ *
@@ -2324,6 +2641,13 @@ namespace erts_t2 {
         }
         if (op->flags & T2_OP_ERR_EXIT_SHARED) {
             out += " !err_exit_shared";
+        }
+        if (op->flags & T2_OP_RAW_MODE) {
+            out += " !raw";
+        }
+        if (op->raw_mask != 0) {
+            snprintf(buf, sizeof(buf), " !retag=0x%x", op->raw_mask);
+            out += buf;
         }
 
         out += "\n";

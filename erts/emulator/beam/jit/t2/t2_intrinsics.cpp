@@ -203,6 +203,21 @@ namespace erts_t2 {
             return off;
         }
 
+        /* P2 loop unboxing (tag elimination,
+         * PLAN/T2FULL/census/opt_landscape.md P2): keep the
+         * loop-carried accumulator / induction variable as RAW-IN-HOME
+         * words (tag-cleared smalls, T2_OP_RAW_MODE) across the
+         * expanded fold loops, tagging only at loop exits and — via
+         * T2Op::raw_mask — on every deopt/yield cold path. T2_NO_P2
+         * disables the whole rewrite INCLUDING the single-return
+         * accumulator-induction fix in convert_arith that feeds it, so
+         * a lever-off run reproduces the pre-P2 code byte-for-byte
+         * (the exact same-binary A/B the gates require). */
+        bool unbox_disabled() {
+            static const bool off = getenv("T2_NO_P2") != nullptr;
+            return off;
+        }
+
         const T2Value *resolve_copies(const T2Value *v) {
             for (int depth = 0; depth < 64; depth++) {
                 if (v->def == nullptr || v->def->kind != T2OpKind::Copy) {
@@ -1010,21 +1025,44 @@ namespace erts_t2 {
                 bool acc_inductive = acc_phi != nullptr;
 
                 if (acc_phi != nullptr) {
-                    /* fb.ret_phi's inputs are Copies of return values;
-                     * check their roots. */
                     const T2Op *rp = fb.ret_phi->def;
 
-                    for (uint16_t i = 0; i < rp->num_operands; i++) {
-                        const T2Value *root = resolve_copies(rp->operands[i]);
+                    if (!unbox_disabled() && rp != nullptr &&
+                        rp->kind != T2OpKind::Phi) {
+                        /* Single-return fast path (splice_fun): ret_phi
+                         * IS the return value, not a phi over the
+                         * return values — so the induction test must
+                         * examine ret_phi's own root, not the operands
+                         * of whatever op computed it (a sum fun's
+                         * Add(elem, acc) is inductive; its ELEM operand
+                         * is irrelevant). Pre-P2 this mis-classified
+                         * every single-return arith fun as
+                         * non-inductive, forcing a per-iteration
+                         * accumulator guard; gated behind the P2 lever
+                         * so lever-off reproduces that code exactly. */
+                        const T2Value *root = resolve_copies(fb.ret_phi);
 
-                        bool ok = const_is_small(root) ||
-                                  (root->def != nullptr &&
-                                   (root->def->kind == T2OpKind::Add ||
-                                    root->def->kind == T2OpKind::Sub) &&
-                                   !fb.arith.empty());
+                        acc_inductive = const_is_small(root) ||
+                                        (root->def != nullptr &&
+                                         (root->def->kind == T2OpKind::Add ||
+                                          root->def->kind == T2OpKind::Sub) &&
+                                         !fb.arith.empty());
+                    } else {
+                        /* fb.ret_phi's inputs are Copies of return
+                         * values; check their roots. */
+                        for (uint16_t i = 0; i < rp->num_operands; i++) {
+                            const T2Value *root =
+                                    resolve_copies(rp->operands[i]);
 
-                        if (!ok) {
-                            acc_inductive = false;
+                            bool ok = const_is_small(root) ||
+                                      (root->def != nullptr &&
+                                       (root->def->kind == T2OpKind::Add ||
+                                        root->def->kind == T2OpKind::Sub) &&
+                                       !fb.arith.empty());
+
+                            if (!ok) {
+                                acc_inductive = false;
+                            }
                         }
                     }
                 }
@@ -1125,6 +1163,237 @@ namespace erts_t2 {
                 m->frame_size = frame_from->frame_size;
                 m->y = frame_from->y;
                 return m;
+            }
+
+            /* ---- P2 loop unboxing (tag elimination) ------------------- *
+             *
+             * Rewrite one loop-carried accumulator to the RAW-IN-HOME
+             * representation (tag-cleared small, T2_OP_RAW_MODE; see
+             * t2_hir.hpp): the loop-entry seed untags once (UntagInt),
+             * the converted flag-checked arith operates raw with the
+             * bit-identical overflow deopt, and the value is re-tagged
+             * only at loop exits (Copy -> TagInt) and — via
+             * T2Op::raw_mask, consumed by the emitter's cold paths —
+             * at every deopt/yield/demote boundary whose sync map
+             * names it. Planned in FULL before anything mutates: any
+             * use outside the closed set below aborts the plan and the
+             * loop stays tagged (transparency dominates the win).     */
+
+            struct UnboxPlan {
+                std::unordered_set<const T2Value *> raw;
+                std::vector<T2Op *> flip;   /* ops gaining RAW_MODE     */
+                std::vector<T2Op *> to_tag; /* exit Copies -> TagInt    */
+                std::vector<std::pair<T2Op *, uint32_t>> masks;
+            };
+
+            /* True when `op` is a deopt/yield/demote class whose
+             * emission re-tags masked homes in its cold path. */
+            static bool unbox_maskable(const T2Op *op) {
+                switch (op->kind) {
+                case T2OpKind::SpeculateType:
+                case T2OpKind::AddSmall:
+                case T2OpKind::SubSmall:
+                case T2OpKind::ReductionCheck:
+                case T2OpKind::DemoteCallee:
+                case T2OpKind::FoldBudget:
+                case T2OpKind::Call:
+                case T2OpKind::CallExt:
+                case T2OpKind::TailCall:
+                case T2OpKind::TailCallExt:
+                    return true;
+                default:
+                    return false;
+                }
+            }
+
+            /* Plan the raw value set from the accumulator phi through
+             * the converted arith chain (and the latch copies), then
+             * verify every use of every raw value is accounted for.
+             * Returns false (nothing mutated) when a use escapes. */
+            bool plan_acc_unbox(T2Op *acc_phi,
+                                const std::vector<T2Op *> &arith,
+                                UnboxPlan *plan) {
+                std::unordered_set<const T2Op *> arith_set(arith.begin(),
+                                                           arith.end());
+                std::unordered_set<const T2Op *> flip_set, tag_set;
+                std::vector<const T2Value *> work;
+
+                auto add_raw = [&](const T2Value *v) {
+                    if (plan->raw.insert(v).second) {
+                        work.push_back(v);
+                    }
+                };
+                auto add_flip = [&](T2Op *o) {
+                    if (flip_set.insert(o).second) {
+                        plan->flip.push_back(o);
+                    }
+                };
+                auto feeds_acc_phi = [&](const T2Value *v) {
+                    for (uint16_t i = 0; i < acc_phi->num_operands; i++) {
+                        if (acc_phi->operands[i] == v) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+                add_raw(acc_phi->result);
+
+                while (!work.empty()) {
+                    const T2Value *v = work.back();
+                    bool ok = true;
+
+                    work.pop_back();
+                    for_each_op(fn, [&](T2Op *op) {
+                        if (!ok) {
+                            return;
+                        }
+
+                        /* Operand uses. */
+                        for (uint16_t i = 0; ok && i < op->num_operands; i++) {
+                            if (op->operands[i] != v) {
+                                continue;
+                            }
+                            if (op == acc_phi) {
+                                continue; /* the phi itself */
+                            }
+                            switch (op->kind) {
+                            case T2OpKind::AddSmall:
+                            case T2OpKind::SubSmall:
+                                /* Only the chain this plan owns. */
+                                if (arith_set.count(op) != 0) {
+                                    add_flip(op);
+                                    add_raw(op->result);
+                                } else {
+                                    ok = false;
+                                }
+                                break;
+                            case T2OpKind::Copy:
+                                if (feeds_acc_phi(op->result)) {
+                                    /* Latch materialization: a raw
+                                     * move. */
+                                    add_flip(op);
+                                    add_raw(op->result);
+                                } else if (tag_set.insert(op).second) {
+                                    /* Exit copy: re-tag instead. */
+                                    plan->to_tag.push_back(op);
+                                }
+                                break;
+                            case T2OpKind::FoldBudget:
+                                /* Reads the same value from either
+                                 * representation. */
+                                break;
+                            case T2OpKind::Call:
+                            case T2OpKind::CallExt:
+                            case T2OpKind::TailCall:
+                            case T2OpKind::TailCallExt:
+                                /* The re-dispatch consumes the raw home
+                                 * as a real argument; its emission
+                                 * re-tags in place first. */
+                                if (op->operand_regs == nullptr ||
+                                    !t2_reg_is_x(op->operand_regs[i]) ||
+                                    t2_reg_index(op->operand_regs[i]) >= 32) {
+                                    ok = false;
+                                } else {
+                                    plan->masks.emplace_back(
+                                            op,
+                                            (uint32_t)1 << t2_reg_index(
+                                                    op->operand_regs[i]));
+                                }
+                                break;
+                            default:
+                                ok = false; /* not raw-aware: abort */
+                                break;
+                            }
+                        }
+
+                        /* Sync-map mentions: the op's cold path must be
+                         * able to re-tag the named home. */
+                        if (ok && op->sync != nullptr) {
+                            const T2SyncMap *m = op->sync;
+
+                            for (uint32_t i = 0; ok && i < m->x_live; i++) {
+                                if (m->x[i] != v) {
+                                    continue;
+                                }
+                                if (i >= 32 || !unbox_maskable(op)) {
+                                    ok = false;
+                                } else {
+                                    plan->masks.emplace_back(op,
+                                                             (uint32_t)1 << i);
+                                }
+                            }
+                            for (int32_t i = 0;
+                                 ok && m->frame_size != T2_NO_FRAME &&
+                                 i < m->frame_size;
+                                 i++) {
+                                if (m->y[i] == v) {
+                                    ok = false; /* raw never in Y */
+                                }
+                            }
+                        }
+                    });
+                    if (!ok) {
+                        return false;
+                    }
+                }
+
+                /* The latch input must have gone raw (the entry input
+                 * is the caller's boundary value — it gets the
+                 * UntagInt seed); exactly one of the two. */
+                if (acc_phi->num_operands != 2) {
+                    return false;
+                }
+                {
+                    bool r0 = plan->raw.count(acc_phi->operands[0]) != 0;
+                    bool r1 = plan->raw.count(acc_phi->operands[1]) != 0;
+
+                    if (r0 == r1) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            /* Commit a successful plan: flags, exit re-tags, masks.
+             * The caller wires the entry UntagInt seed itself (its
+             * placement is template-specific). */
+            void apply_acc_unbox(UnboxPlan &plan, T2Op *acc_phi) {
+                acc_phi->flags |= T2_OP_RAW_MODE;
+                for (T2Op *o : plan.flip) {
+                    o->flags |= T2_OP_RAW_MODE;
+                }
+                for (T2Op *o : plan.to_tag) {
+                    o->kind = T2OpKind::TagInt;
+                }
+                for (auto &mb : plan.masks) {
+                    mb.first->raw_mask |= mb.second;
+                }
+            }
+
+            /* The entry seed: an UntagInt of `entry_val` into the
+             * accumulator home, appended to `b` (before its
+             * terminator), replacing the phi's entry-edge input. */
+            T2Value *unbox_entry_seed(T2Op *acc_phi,
+                                      T2Value *entry_val,
+                                      int32_t entry_home,
+                                      T2BasicBlock *b,
+                                      uint32_t bi) {
+                T2Op *u = fn.new_op(b, T2OpKind::UntagInt, T2Type::any());
+
+                fn.set_operands(u, {entry_val});
+                u->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                u->operand_regs[0] = entry_home;
+                u->dst_reg = acc_phi->dst_reg;
+                u->flags = T2_OP_RAW_MODE;
+                u->beam_idx = bi;
+
+                for (uint16_t i = 0; i < acc_phi->num_operands; i++) {
+                    if (acc_phi->operands[i] == entry_val) {
+                        acc_phi->operands[i] = u->result;
+                    }
+                }
+                return u->result;
             }
 
             /* ---- CFG surgery ------------------------------------------ */
@@ -1438,6 +1707,10 @@ namespace erts_t2 {
                 FunBody fb;
                 bool spliced = false;
                 bool splice_hard_err = false;
+                /* Block-id range of the spliced fun body (the window-
+                 * class deopt ops live there; P2 loop unboxing masks
+                 * them). */
+                size_t fbb0 = 0, fbb1 = 0;
 
                 {
                     /* Only the head is extracted up front; the tail
@@ -1470,6 +1743,7 @@ namespace erts_t2 {
                     uint32_t impl_idx = (uint32_t)mf->imm_int;
                     std::string berr;
 
+                    fbb0 = fn.blocks.size();
                     bool built = t2_build_selected(
                             ret,
                             &impl_idx,
@@ -1490,6 +1764,7 @@ namespace erts_t2 {
                                 }
                             },
                             &berr);
+                    fbb1 = fn.blocks.size();
 
                     if (!built || splice_hard_err) {
                         /* Internal inconsistency mid-rewrite: the block
@@ -1852,6 +2127,60 @@ namespace erts_t2 {
                     res->beam_idx = bi;
                     fn.set_phi_inputs(res, join_vals, join_preds);
                     replace_value(fn, call->result, res->result);
+                }
+
+                /* ---- P2 loop unboxing: the accumulator ---------------- *
+                 * The window-class deopts in the spliced body re-execute
+                 * the iteration as a fresh helper call over X0..2 — a
+                 * physical contract on the register file. With a raw
+                 * accumulator in X1 each such op gets the fresh-call
+                 * sync map (making the contract explicit for the
+                 * validators) and the re-tag mask, so its trampoline
+                 * restores the term before T1 runs. The demote maps,
+                 * the RC#2 back edge and the exit copies are covered by
+                 * the generic plan (masks / TagInt rewrites). */
+                if (!unbox_disabled() && acc_phi_op != nullptr &&
+                    need_acc_guard) {
+                    UnboxPlan plan;
+
+                    if (plan_acc_unbox(acc_phi_op, fb.arith, &plan)) {
+                        T2SyncMap *wmap = make_map(
+                                {fv, acc_phi_op->result, l_phi_op->result},
+                                cmap);
+
+                        for (size_t bx = fbb0; bx < fbb1; bx++) {
+                            for (T2Op *op = fn.blocks[bx]->ops_head;
+                                 op != nullptr;
+                                 op = op->next) {
+                                if ((op->flags & T2_OP_WINDOW_CALLEE) == 0) {
+                                    continue;
+                                }
+                                switch (op->kind) {
+                                case T2OpKind::SpeculateType:
+                                case T2OpKind::AddSmall:
+                                case T2OpKind::SubSmall:
+                                    op->sync = wmap;
+                                    op->raw_mask |= (uint32_t)1 << 1;
+                                    break;
+                                default:
+                                    break;
+                                }
+                            }
+                        }
+
+                        apply_acc_unbox(plan, acc_phi_op);
+                        unbox_entry_seed(acc_phi_op, a0, t2_xreg(1), b_grd, bi);
+
+                        if (intrin_trace()) {
+                            erts_fprintf(stderr,
+                                         "t2_intrinsics: %T:%T/%u foldl "
+                                         "acc unboxed (beam_idx %u)\n",
+                                         fn.module,
+                                         fn.function,
+                                         (unsigned)fn.arity,
+                                         (unsigned)bi);
+                        }
+                    }
                 }
 
                 /* Dependencies: the lists instance (baked helper/wrapper
@@ -2407,6 +2736,79 @@ namespace erts_t2 {
                     }
                     if (!have) {
                         fn.dep_hdrs.push_back(own_code_hdr);
+                    }
+                }
+
+                /* ---- P2 loop unboxing --------------------------------- *
+                 * Every fast-path deopt in this template is callsite-
+                 * class (restart the erased call from cmap, which never
+                 * names the loop-carried values), so the loop-internal
+                 * representation is free: no re-tag mask is ever needed
+                 * here — a raw word in x3/x4/nx is invisible to T1 (the
+                 * re-executed call's Live is 3, so neither T1 nor GC
+                 * reads above x2).                                      *
+                 *   - induction + bound (i @x4, n @nx): always raw —
+                 *     template-owned, defensively checked against any
+                 *     sync-map mention; the per-iteration bound check
+                 *     becomes one raw compare and the element loads
+                 *     index raw.
+                 *   - accumulator (acc @x3): raw when the generic plan
+                 *     admits it (inductive sum shape).                  */
+                if (!unbox_disabled()) {
+                    bool iv_clean = true;
+                    const T2Value *ivs[] = {i_phi->result,
+                                            i_next,
+                                            i0,
+                                            size_op->result};
+
+                    for_each_op(fn, [&](T2Op *op) {
+                        if (op->sync == nullptr) {
+                            return;
+                        }
+                        for (uint32_t i = 0; i < op->sync->x_live; i++) {
+                            for (const T2Value *v : ivs) {
+                                iv_clean &= op->sync->x[i] != v;
+                            }
+                        }
+                        for (int32_t i = 0;
+                             op->sync->frame_size != T2_NO_FRAME &&
+                             i < op->sync->frame_size;
+                             i++) {
+                            for (const T2Value *v : ivs) {
+                                iv_clean &= op->sync->y[i] != v;
+                            }
+                        }
+                    });
+                    if (iv_clean) {
+                        i_phi->flags |= T2_OP_RAW_MODE;
+                        i0->def->flags |= T2_OP_RAW_MODE;
+                        i_next->def->flags |= T2_OP_RAW_MODE;
+                        size_op->flags |= T2_OP_RAW_MODE;
+                        cmp->flags |= T2_OP_RAW_MODE;
+                        kv->def->flags |= T2_OP_RAW_MODE;
+                        vv->def->flags |= T2_OP_RAW_MODE;
+                    }
+
+                    UnboxPlan plan;
+
+                    if (need_acc_guard &&
+                        plan_acc_unbox(acc_phi, fb.arith, &plan)) {
+                        apply_acc_unbox(plan, acc_phi);
+                        /* The loop-entry copy (a0 @x1 -> @x3) becomes
+                         * the untag seed: same shape, tag cleared. The
+                         * entry guard above proved a0 small. */
+                        acc_in->def->kind = T2OpKind::UntagInt;
+                        acc_in->def->flags |= T2_OP_RAW_MODE;
+
+                        if (intrin_trace()) {
+                            erts_fprintf(stderr,
+                                         "t2_intrinsics: %T:%T/%u maps:fold "
+                                         "acc unboxed (beam_idx %u)\n",
+                                         fn.module,
+                                         fn.function,
+                                         (unsigned)fn.arity,
+                                         (unsigned)bi);
+                        }
                     }
                 }
 
@@ -4808,6 +5210,61 @@ namespace erts_t2 {
                 }
                 fn.emit_jump(b_pre, b_grd);
                 b_pre->terminator->beam_idx = bi;
+
+                /* ---- P2 loop unboxing: the accumulator ---------------- *
+                 * The generic plan covers everything here: the
+                 * re-dispatch-class spec ops carry vec_map (which names
+                 * the acc phi — masked), the RC_CALLEE back edge's map
+                 * names the acc latch copy (masked; its yield stub
+                 * re-tags and its resume re-clears), the inner demote /
+                 * fallback re-dispatch carry vec_map (masked), and the
+                 * cloned return copies become TagInt. The entry seed
+                 * needs its own block on the entry edge: the preheader
+                 * ends with rc1 — whose LIR contract requires the
+                 * trailing back-jump, and whose yield RESUME re-enters
+                 * through this edge, re-establishing the raw
+                 * representation for free. */
+                if (!unbox_disabled() && acc_idx >= 0 && need_acc_guard) {
+                    UnboxPlan plan;
+                    T2BasicBlock *hdr = bmap.at(ch);
+                    T2BasicBlock *edge = b_ok; /* == b_grd in fallback */
+
+                    if (edge->terminator != nullptr &&
+                        edge->terminator->kind == T2OpKind::Jump &&
+                        edge->terminator->succ_then == hdr &&
+                        plan_acc_unbox(cl_phis[acc_idx], fb.arith, &plan)) {
+                        T2BasicBlock *b_seed = fn.new_block();
+
+                        edge->terminator->succ_then = b_seed;
+                        fn.emit_jump(b_seed, hdr);
+                        b_seed->terminator->beam_idx = bi;
+                        for (T2Op *phi = hdr->phis_head; phi != nullptr;
+                             phi = phi->next) {
+                            for (uint16_t i = 0; i < phi->num_operands; i++) {
+                                if (phi->phi_blocks[i] == edge) {
+                                    phi->phi_blocks[i] = b_seed;
+                                }
+                            }
+                        }
+
+                        apply_acc_unbox(plan, cl_phis[acc_idx]);
+                        unbox_entry_seed(cl_phis[acc_idx],
+                                         cmap->x[perm[acc_idx]],
+                                         t2_xreg(perm[acc_idx]),
+                                         b_seed,
+                                         bi);
+
+                        if (p1_trace() || intrin_trace()) {
+                            erts_fprintf(stderr,
+                                         "t2_p1: %T:%T/%u inlined loop "
+                                         "acc unboxed (beam_idx %u)\n",
+                                         fn.module,
+                                         fn.function,
+                                         (unsigned)fn.arity,
+                                         (unsigned)bi);
+                        }
+                    }
+                }
 
                 /* Dependencies: EVERY module in the transitive chain
                  * (each one's structure is baked into this blob) and

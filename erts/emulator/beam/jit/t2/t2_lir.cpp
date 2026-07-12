@@ -177,6 +177,10 @@ namespace erts_t2 {
             return "add_small";
         case T2LirKind::SubSmall:
             return "sub_small";
+        case T2LirKind::UntagInt:
+            return "untag_int";
+        case T2LirKind::TagInt:
+            return "tag_int";
         case T2LirKind::IsFlatmapBounded:
             return "is_flatmap_bounded";
         case T2LirKind::FlatmapSize:
@@ -305,6 +309,22 @@ namespace erts_t2 {
                 }
                 if (op.t1_pc_fail != nullptr) {
                     os << " [fail=" << op.t1_pc_fail << "]";
+                }
+                if (op.raw_dst || op.raw_srcs != 0) {
+                    os << " [raw";
+                    if (op.raw_dst) {
+                        os << " dst";
+                    }
+                    for (uint8_t i = 0; i < op.num_srcs; i++) {
+                        if (op.raw_srcs & (1u << i)) {
+                            os << " s" << (unsigned)i;
+                        }
+                    }
+                    os << "]";
+                }
+                if (op.raw_mask != 0) {
+                    os << " [retag 0x" << std::hex << op.raw_mask << std::dec
+                       << "]";
                 }
                 os << "\n";
             }
