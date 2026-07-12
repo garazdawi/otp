@@ -88,3 +88,28 @@ first. Speedup = T1 / P1-on:
 (Erlang tail lists:foldl) fold idioms to ~3x with no per-function recognizer.
 Remaining gaps: Elixir Enum.reduce (blocked on builder map-op coverage → P1c-2),
 maps:fold on large hashmaps (flatmap-only by design), Gleam call_ext_last fold.
+
+## Re-run under P1c-2 (tolerant wrapper classification, 2026-07-12)
+
+P1c-2 unblocked Elixir `Enum.reduce`: `t2_build_for_p1` builds the multi-clause
+`'Elixir.Enum':reduce/3` TOLERANTLY (map/Range clauses degrade to Opaque leaves
+behind the `is_list` guard), the wrapper walk selects the is_list clause's local
+tail call into the compiler-inlined `'-reduce/3-lists^foldl/2-0-'/3` loop (depth
+1, identity permutation — Elixir inlines foldl itself, it never calls
+`:lists.foldl`), and the loop commits after its nil-exit `is_function2` guard is
+statically discharged on the literal fun. Lever: `T2_NO_P1C2`.
+
+| caller | T1 | P1-on | speedup | vs P1c-1 |
+|---|---|---|---|---|
+| X1 Elixir Enum.reduce sum | 2832 | 944 | **3.00x** | 0.95x → 3.0x |
+| X2 Elixir Enum.reduce count | 2833 | 1218 | **2.33x** | 0.97x → 2.3x |
+| X4 Elixir Enum.reduce map | 8703 | 8328 | 1.05x | entry-deopt only (hashmap) |
+
+Correctness (p1c2_verify): list/nil/singleton byte-identical, reductions
+identical to generic (3007); Range struct and map inputs entry-deopt to the
+generic clauses (correct results); bignum mid-list re-dispatches (+2 reds, no
+restart); non-list scalar raises the identical Protocol.UndefinedError. The one
+documented deviation (same class as P1c-1's): an IMPROPER list's mid-list deopt
+re-dispatches the outermost `Enum.reduce(4, acc, fun)`, raising
+Protocol.UndefinedError where generic raises function_clause in the helper.
+E1/E2/E1b/E2b/G1/G2/maps:fold/X3/G3 unregressed; install parity clean.

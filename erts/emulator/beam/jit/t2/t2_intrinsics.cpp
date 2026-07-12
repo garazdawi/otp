@@ -168,6 +168,16 @@ namespace erts_t2 {
             return on;
         }
 
+        /* P1c-2 (tolerant wrapper classification): its own kill switch
+         * on top of T2_NO_P1, so P1a/P1c-1 A/B runs stay unaffected.
+         * Gates BOTH the tolerant-build retry of a NotEligible chain
+         * callee AND the widened error-leaf shapes (Opaque, noreturn
+         * erlang:error tail calls) in p1_is_err_block. */
+        bool p1c2_disabled() {
+            static const bool off = getenv("T2_NO_P1C2") != nullptr;
+            return off;
+        }
+
         const T2Value *resolve_copies(const T2Value *v) {
             for (int depth = 0; depth < 64; depth++) {
                 if (v->def == nullptr || v->def->kind != T2OpKind::Copy) {
@@ -3250,11 +3260,39 @@ namespace erts_t2 {
              * is_err_block it tolerates phis — the Braun builder leaves
              * trivial single-input phis in shared raise blocks, and the
              * cloner drops the whole block (error edges collapse onto
-             * the re-dispatch block), phis included. */
+             * the re-dispatch block), phis included.
+             *
+             * P1c-2 widens the shape (behind its lever) with two more
+             * not-the-fast-path leaves, both consumed the same way —
+             * inputs reaching them are excluded from the inlined path
+             * by the leaf-confinement mask (classification) or their
+             * edges collapse onto the re-dispatch block (clone):
+             *
+             * - Opaque: a tolerant partial build's degrade marker
+             *   (classification only; a tolerant callee never commits).
+             * - A hand-rolled noreturn raise: a plain tail call to
+             *   erlang:error/1,2 (flags 0) never returns — Elixir
+             *   spells its function_clause exits this way instead of
+             *   case_end — so the block behaves exactly like a flagged
+             *   error exit. */
             static bool p1_is_err_block(const T2BasicBlock *b) {
-                return b != nullptr && b->terminator != nullptr &&
-                       (b->terminator->flags &
-                        (T2_OP_ERR_EXIT_SHARED | T2_OP_ERR_EXIT_OP)) != 0;
+                if (b == nullptr || b->terminator == nullptr) {
+                    return false;
+                }
+
+                const T2Op *t = b->terminator;
+
+                if ((t->flags & (T2_OP_ERR_EXIT_SHARED | T2_OP_ERR_EXIT_OP)) !=
+                    0) {
+                    return true;
+                }
+                if (p1c2_disabled()) {
+                    return false;
+                }
+                return t->kind == T2OpKind::Opaque ||
+                       (t->kind == T2OpKind::TailCallExt && t->flags == 0 &&
+                        t->mfa_m == am_erlang && t->mfa_f == am_error &&
+                        (t->index == 1 || t->index == 2));
             }
 
             /* Read-only admission of the RECOVERED callee. Fills the
@@ -3370,6 +3408,66 @@ namespace erts_t2 {
                          op = op->next) {
                         nops++;
                         switch (op->kind) {
+                        case T2OpKind::IsFunction: {
+                            /* P1c-2: an IsFunction inside the admitted
+                             * loop (Elixir's inlined-foldl helper
+                             * guards is_function2 on its nil exit) has
+                             * no isel lowering, so it is admissible
+                             * only when the commit can statically
+                             * discharge it on the literal fun: the
+                             * tested value must be the fun param's
+                             * phi, the tested arity the literal fun's,
+                             * and the result consumed by exactly one
+                             * direct Branch condition (the clone drops
+                             * the op and rewires that branch to its
+                             * taken edge). */
+                            if (p1c2_disabled() || op->flags != 0 ||
+                                op->index != fun_arity ||
+                                resolve_thru(op->operands[0]) !=
+                                        phis[fun_idx]->result) {
+                                *why = "callee IsFunction not "
+                                       "dischargeable on the literal "
+                                       "fun";
+                                return false;
+                            }
+
+                            uint32_t uses = 0, branch_uses = 0;
+
+                            for (const T2BasicBlock *ub : callee.blocks) {
+                                for (const T2Op *u = ub->phis_head;
+                                     u != nullptr;
+                                     u = u->next) {
+                                    for (uint16_t i = 0; i < u->num_operands;
+                                         i++) {
+                                        uses += u->operands[i] == op->result;
+                                    }
+                                }
+                                for (const T2Op *u = ub->ops_head; u != nullptr;
+                                     u = u->next) {
+                                    for (uint16_t i = 0; i < u->num_operands;
+                                         i++) {
+                                        uses += u->operands[i] == op->result;
+                                    }
+                                }
+
+                                const T2Op *u = ub->terminator;
+
+                                if (u == nullptr) {
+                                    continue;
+                                }
+                                for (uint16_t i = 0; i < u->num_operands; i++) {
+                                    uses += u->operands[i] == op->result;
+                                }
+                                branch_uses += u->kind == T2OpKind::Branch &&
+                                               u->operands[0] == op->result;
+                            }
+                            if (uses != 1 || branch_uses != 1) {
+                                *why = "callee IsFunction result "
+                                       "escapes its guard branch";
+                                return false;
+                            }
+                            continue;
+                        }
                         case T2OpKind::CallFun:
                             if (callfun != nullptr || op->flags != 0 ||
                                 op->sync == nullptr || b->id != latch_id ||
@@ -3656,6 +3754,14 @@ namespace erts_t2 {
                             op->kind == T2OpKind::Deallocate) {
                             continue;
                         }
+                        /* Statically discharged on the literal fun
+                         * (admission pinned the shape); the consuming
+                         * branch is rewired to its taken edge below
+                         * and the op vanishes — IsFunction has no isel
+                         * lowering. */
+                        if (op->kind == T2OpKind::IsFunction) {
+                            continue;
+                        }
 
                         T2Op *cl = fn.new_op(nb, op->kind, op->type);
                         std::vector<T2Value *> ins;
@@ -3712,6 +3818,17 @@ namespace erts_t2 {
                         fn.emit_jump(nb, target_of(t->succ_then));
                         break;
                     case T2OpKind::Branch: {
+                        const T2Op *test = resolve_thru(t->operands[0])->def;
+
+                        if (test != nullptr &&
+                            test->kind == T2OpKind::IsFunction) {
+                            /* Statically discharged: admission pinned
+                             * the test to the fun phi with the literal
+                             * fun's own arity — always TRUE. */
+                            fn.emit_jump(nb, target_of(t->succ_then));
+                            break;
+                        }
+
                         T2Value *cond = mapped(t->operands[0]);
 
                         if (cond == nullptr) {
@@ -4388,89 +4505,131 @@ namespace erts_t2 {
                     bool committed = false;
                     bool hard_err = false;
                     bool wrapped = false;
+                    bool tolerant = false;
                     P1Wrap wr;
                     const char *why = "callee build/admission failed";
                     std::string berr;
 
-                    T2BuildStatus bst = t2_build_for_debug(
-                            cur_ret,
-                            cur_f,
-                            (unsigned)ar,
-                            [&](T2Function &callee) {
-                                bool recovered = false;
-                                std::string rerr;
+                    auto classify = [&](T2Function &callee) {
+                        bool recovered = false;
+                        std::string rerr;
 
-                                if (!t2_loop_recover(callee,
-                                                     &recovered,
-                                                     &rerr)) {
-                                    why = "callee loop recovery failed";
-                                    return;
-                                }
-                                if (recovered) {
-                                    if (!t2_validate(callee, &rerr)) {
-                                        why = "callee invalid "
-                                              "post-recovery";
-                                        return;
-                                    }
+                        if (!t2_loop_recover(callee, &recovered, &rerr)) {
+                            why = "callee loop recovery failed";
+                            return;
+                        }
+                        if (recovered) {
+                            if (tolerant) {
+                                /* A tolerant (partial) build is
+                                 * classification-only: a cloned
+                                 * loop must come from a fully
+                                 * eligible build. */
+                                why = "tolerant-built callee "
+                                      "recovered a loop (commit "
+                                      "requires full eligibility)";
+                                return;
+                            }
+                            if (!t2_validate(callee, &rerr)) {
+                                why = "callee invalid "
+                                      "post-recovery";
+                                return;
+                            }
 
-                                    T2LoopInfo cli;
+                            T2LoopInfo cli;
 
-                                    t2_loop_info(callee, &cli);
+                            t2_loop_info(callee, &cli);
 
-                                    int32_t acc_idx = -1;
+                            int32_t acc_idx = -1;
 
-                                    if (!p1_admit_callee(callee,
-                                                         cli,
-                                                         fun_pos,
-                                                         fun_arity,
-                                                         &acc_idx,
-                                                         &why)) {
-                                        return;
-                                    }
-                                    if (wrappers > 0 &&
-                                        !p1_chain_congruent(callee,
-                                                            cli.loops[0],
-                                                            fun_pos,
-                                                            acc_idx,
-                                                            pend,
-                                                            &why)) {
-                                        return;
-                                    }
-                                    if (!p1_commit(call,
-                                                   callee,
-                                                   cli.loops[0],
-                                                   fun_pos,
-                                                   acc_idx,
-                                                   mf,
-                                                   call->mfa_m,
-                                                   call->mfa_f,
-                                                   clf,
-                                                   chain_hdrs,
-                                                   perm,
-                                                   wrappers - peels)) {
-                                        hard_err = true;
-                                        return;
-                                    }
-                                    committed = true;
-                                    return;
-                                }
+                            if (!p1_admit_callee(callee,
+                                                 cli,
+                                                 fun_pos,
+                                                 fun_arity,
+                                                 &acc_idx,
+                                                 &why)) {
+                                return;
+                            }
+                            if (wrappers > 0 &&
+                                !p1_chain_congruent(callee,
+                                                    cli.loops[0],
+                                                    fun_pos,
+                                                    acc_idx,
+                                                    pend,
+                                                    &why)) {
+                                return;
+                            }
+                            if (!p1_commit(call,
+                                           callee,
+                                           cli.loops[0],
+                                           fun_pos,
+                                           acc_idx,
+                                           mf,
+                                           call->mfa_m,
+                                           call->mfa_f,
+                                           clf,
+                                           chain_hdrs,
+                                           perm,
+                                           wrappers - peels)) {
+                                hard_err = true;
+                                return;
+                            }
+                            committed = true;
+                            return;
+                        }
 
-                                /* Not a loop: try the wrapper shape. */
-                                if (wrappers >= T2_P1_MAX_DEPTH) {
-                                    why = "wrapper chain exceeds the "
-                                          "transitive depth bound";
-                                    return;
-                                }
-                                if (!p1_classify_wrapper(callee,
-                                                         fun_pos,
-                                                         fun_arity,
-                                                         &wr,
-                                                         &why)) {
-                                    return;
-                                }
-                                wrapped = true;
-                            },
-                            &berr);
+                        /* Not a loop: try the wrapper shape. */
+                        if (wrappers >= T2_P1_MAX_DEPTH) {
+                            why = "wrapper chain exceeds the "
+                                  "transitive depth bound";
+                            return;
+                        }
+                        if (!p1_classify_wrapper(callee,
+                                                 fun_pos,
+                                                 fun_arity,
+                                                 &wr,
+                                                 &why)) {
+                            return;
+                        }
+                        wrapped = true;
+                    };
+
+                    T2BuildStatus bst = t2_build_for_debug(cur_ret,
+                                                           cur_f,
+                                                           (unsigned)ar,
+                                                           classify,
+                                                           &berr);
+
+                    if (bst == T2BuildStatus::NotEligible && !p1c2_disabled()) {
+                        /* P1c-2: the chain callee is only PARTIALLY
+                         * buildable (a multi-clause function whose
+                         * sibling clauses use unsupported ops, e.g.
+                         * 'Elixir.Enum':reduce/3's map/Range clauses
+                         * next to its is_list fold clause). Retry with
+                         * the tolerant build: unsupported regions
+                         * degrade to Opaque leaves the wrapper walk
+                         * treats as not-the-fast-path, subject to the
+                         * same leaf-confinement congruence as flagged
+                         * error exits. Wrapper classification only —
+                         * the tolerant reject above keeps a recovered
+                         * loop from committing. */
+                        tolerant = true;
+                        if (p1_trace()) {
+                            erts_fprintf(stderr,
+                                         "t2_p1: %T:%T/%u tolerant build "
+                                         "of chain callee %T:%T/%u\n",
+                                         fn.module,
+                                         fn.function,
+                                         (unsigned)fn.arity,
+                                         cur_m,
+                                         cur_f,
+                                         (unsigned)ar);
+                        }
+                        bst = t2_build_for_p1(cur_ret,
+                                              cur_f,
+                                              (unsigned)ar,
+                                              classify,
+                                              &berr);
+                    }
 
                     if (hard_err) {
                         if (p1_trace() && err != nullptr) {

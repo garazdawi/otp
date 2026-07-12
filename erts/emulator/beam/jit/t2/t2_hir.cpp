@@ -231,6 +231,8 @@ namespace erts_t2 {
             return "deallocate";
         case T2OpKind::Trim:
             return "trim";
+        case T2OpKind::Opaque:
+            return "opaque";
         case T2OpKind::Invalid:
             break;
         }
@@ -247,6 +249,7 @@ namespace erts_t2 {
         case T2OpKind::TailCallExt:
         case T2OpKind::TailCallFun:
         case T2OpKind::DemoteCallee:
+        case T2OpKind::Opaque:
             return true;
         default:
             return false;

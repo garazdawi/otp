@@ -305,8 +305,10 @@ namespace erts_t2 {
         public:
             FunctionBuilder(ModuleDecode &md_,
                             const FunctionCode &fc_,
-                            uint32_t fn_index_)
-                    : md(md_), ret(md_.ret), fc(fc_), fn_index(fn_index_) {
+                            uint32_t fn_index_,
+                            bool tolerant_ = false)
+                    : md(md_), ret(md_.ret), fc(fc_), fn_index(fn_index_),
+                      tolerant(tolerant_) {
             }
 
             std::unique_ptr<T2Function> build(std::string *err);
@@ -316,6 +318,16 @@ namespace erts_t2 {
             const ErtsT2RetainedCode *ret;
             const FunctionCode &fc;
             uint32_t fn_index;
+
+            /* Tolerant mode (P1c-2, t2_build_for_p1): a translation
+             * failure degrades the current block into an Opaque leaf
+             * instead of failing the whole build, so a partially
+             * buildable multi-clause function (e.g. an is_list-guarded
+             * fold clause next to map-matching clauses) still yields
+             * classifiable HIR. Classification-only: the result is
+             * never lowered. */
+            bool tolerant;
+            bool skipping = false;
 
             std::unique_ptr<T2Function> fn;
 
@@ -690,6 +702,32 @@ namespace erts_t2 {
 
             void end_block() {
                 cur = nullptr;
+            }
+
+            /* Tolerant-mode degrade: seal the current block with an
+             * Opaque terminator and skip to the next reachable label.
+             * Admissible only while the block has no terminator yet —
+             * an op that failed after attaching one (e.g. a select
+             * rejected mid-case-list, with edges already added) stays
+             * a hard error, as does a failure between blocks. Ops
+             * translated before the failing one remain in the block;
+             * that is sound because an Opaque block is only ever
+             * consumed as an as-a-whole "unknown behavior" leaf. */
+            bool opaque_cut() {
+                if (cur == nullptr || cur->terminator != nullptr) {
+                    return false;
+                }
+
+                T2Op *op = fn->new_op(cur, T2OpKind::Opaque, T2Type::none());
+
+                fn->set_operands(op, {});
+                op->beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
+
+                failed = false;
+                error.clear();
+                skipping = true;
+                cur = nullptr;
+                return true;
             }
 
             /* ---- op translation --------------------------------------------
@@ -2012,6 +2050,19 @@ namespace erts_t2 {
             for (const DecodedOp &dop : fc.ops) {
                 cur_op = &dop;
 
+                if (skipping) {
+                    /* Tolerant mode, after an opaque cut: skip the
+                     * unbuildable region. Translation resumes at the
+                     * next label an already-translated edge targets;
+                     * a label only the skipped region references
+                     * stays an inert island (post-pass below). */
+                    if (dop.op != genop_label_1 ||
+                        preds[label_block.at(dop.args[0].val)->id].empty()) {
+                        continue;
+                    }
+                    skipping = false;
+                }
+
                 if (cur == nullptr && dop.op != genop_label_1) {
                     /* Ignorable ops may trail a terminator without a label. */
                     if (dop.op == genop_line_1 ||
@@ -2037,6 +2088,9 @@ namespace erts_t2 {
                     fn->entry_sync = snapshot_sync(fc.arity);
                 }
 
+                if (failed && tolerant && opaque_cut()) {
+                    continue;
+                }
                 if (failed) {
                     break;
                 }
@@ -2053,6 +2107,31 @@ namespace erts_t2 {
                     if (!b->sealed) {
                         seal_block(b);
                     }
+                }
+            }
+
+            if (!failed && tolerant) {
+                /* Labels only skipped regions referenced were never
+                 * translated: seal them as inert Opaque islands (no
+                 * ops, no phis, no predecessors — nothing consults
+                 * them). A terminator-less block that acquired
+                 * predecessors would mean a translated edge targets a
+                 * skipped label (a backward reference into the cut
+                 * region); reject rather than fabricate its body. */
+                for (T2BasicBlock *b : fn->blocks) {
+                    if (b->terminator != nullptr) {
+                        continue;
+                    }
+                    if (!preds[b->id].empty() || b->ops_head != nullptr ||
+                        b->phis_head != nullptr || b == fn->blocks[0]) {
+                        fail("tolerant build: translated edge into a "
+                             "skipped label");
+                        break;
+                    }
+
+                    T2Op *op = fn->new_op(b, T2OpKind::Opaque, T2Type::none());
+
+                    fn->set_operands(op, {});
                 }
             }
 
@@ -2077,10 +2156,11 @@ namespace erts_t2 {
      * TU-local ModuleDecode / FunctionBuilder above remain reachable.     *
      * ------------------------------------------------------------------ */
 
-    T2BuildStatus t2_build_for_debug(
+    static T2BuildStatus build_named(
             const ErtsT2RetainedCode *ret,
             Eterm function,
             unsigned arity,
+            bool tolerant,
             const std::function<void(T2Function &)> &emit,
             std::string *err) {
         ModuleDecode md;
@@ -2103,15 +2183,18 @@ namespace erts_t2 {
                 continue;
             }
 
-            /* Found by name/arity; the SSA builder only handles functions
-             * the eligibility scan accepted. */
-            if (i >= (size_t)ret->function_count ||
-                !(ret->eligible_bitmap[i / 32] & (((Uint32)1) << (i % 32)))) {
+            /* Found by name/arity; the standard SSA build only handles
+             * functions the eligibility scan accepted, while a tolerant
+             * build degrades the unsupported regions to Opaque leaves
+             * instead. */
+            if (!tolerant &&
+                (i >= (size_t)ret->function_count ||
+                 !(ret->eligible_bitmap[i / 32] & (((Uint32)1) << (i % 32))))) {
                 status = T2BuildStatus::NotEligible;
                 break;
             }
 
-            FunctionBuilder builder(md, fc, (uint32_t)i);
+            FunctionBuilder builder(md, fc, (uint32_t)i, tolerant);
             std::unique_ptr<T2Function> fn = builder.build(&local_err);
 
             if (fn == nullptr) {
@@ -2139,6 +2222,23 @@ namespace erts_t2 {
 
         md.cleanup();
         return status;
+    }
+
+    T2BuildStatus t2_build_for_debug(
+            const ErtsT2RetainedCode *ret,
+            Eterm function,
+            unsigned arity,
+            const std::function<void(T2Function &)> &emit,
+            std::string *err) {
+        return build_named(ret, function, arity, false, emit, err);
+    }
+
+    T2BuildStatus t2_build_for_p1(const ErtsT2RetainedCode *ret,
+                                  Eterm function,
+                                  unsigned arity,
+                                  const std::function<void(T2Function &)> &emit,
+                                  std::string *err) {
+        return build_named(ret, function, arity, true, emit, err);
     }
 
     bool t2_build_selected(const ErtsT2RetainedCode *ret,

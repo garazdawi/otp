@@ -248,6 +248,15 @@ namespace erts_t2 {
         Switch,
         Return,
 
+        /* Opaque: a zero-operand, zero-successor terminator sealing a
+         * block whose real code could not be built — the TOLERANT
+         * build mode's degrade marker (t2_build_for_p1). Such partial
+         * HIR exists only for read-only classification (the P1
+         * call-site specializer's wrapper walk, t2_intrinsics.cpp);
+         * it is never lowered, and the standard build paths never
+         * emit it. */
+        Opaque,
+
         /* Process / runtime */
         GcTest,
         ReductionCheck,
@@ -811,6 +820,21 @@ namespace erts_t2 {
             unsigned arity,
             const std::function<void(T2Function &)> &emit,
             std::string *err);
+
+    /* t2_build_for_debug's TOLERANT sibling (P1c-2): builds the named
+     * function even when it is NOT in the eligibility bitmap, degrading
+     * every unbuildable op into an Opaque leaf terminator sealing its
+     * block (the rest of the unsupported region is skipped up to the
+     * next reachable label). The result validates as ordinary HIR but
+     * exists only for read-only classification — the P1 wrapper walk
+     * treats Opaque blocks as not-the-fast-path leaves — and must never
+     * be lowered or committed as a cloned loop. Same emit/lifetime
+     * contract as t2_build_for_debug. */
+    T2BuildStatus t2_build_for_p1(const ErtsT2RetainedCode *ret,
+                                  Eterm function,
+                                  unsigned arity,
+                                  const std::function<void(T2Function &)> &emit,
+                                  std::string *err);
 
     /* Decode the retained module once and build + validate every
      * eligible function, invoking `emit` for each success while the
