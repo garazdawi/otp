@@ -2298,8 +2298,12 @@ namespace erts_t2 {
         for (size_t i = 0; i < md.functions.size(); i++) {
             const FunctionCode &fc = md.functions[i];
 
+            /* The strict install bitmap: a buildable-only function
+             * (call_fun / is_function2) is reachable as a P1 chain
+             * callee but must not burn a standalone compile attempt
+             * it is guaranteed to lose at isel. */
             if (i >= (size_t)ret->function_count ||
-                !(ret->eligible_bitmap[i / 32] & (((Uint32)1) << (i % 32)))) {
+                !(ret->install_bitmap[i / 32] & (((Uint32)1) << (i % 32)))) {
                 continue;
             }
 

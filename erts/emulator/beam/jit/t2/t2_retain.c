@@ -176,6 +176,7 @@ static size_t align_up(size_t size) {
 ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     ErtsT2RetainedCode *ret;
     Uint32 *bitmap;
+    Uint32 *installs = NULL;
     Uint32 *loops = NULL;
     Uint32 *arities = NULL;
     Uint32 *sizes = NULL;
@@ -200,6 +201,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
                                sizeof(Uint32));
     bitmap = erts_t2_eligibility_scan(beam,
                                       &any_eligible,
+                                      &installs,
                                       &loops,
                                       &on_load,
                                       arities,
@@ -214,6 +216,9 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     if (!any_eligible) {
         if (bitmap != NULL) {
             erts_free(ERTS_ALC_T_T2_CODE, bitmap);
+        }
+        if (installs != NULL) {
+            erts_free(ERTS_ALC_T_T2_CODE, installs);
         }
         if (loops != NULL) {
             erts_free(ERTS_ALC_T_T2_CODE, loops);
@@ -235,7 +240,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
      * unaligned code bytes last. */
     total = align_up(sizeof(ErtsT2RetainedCode)) + align_up(atoms_size) +
             align_up(imports_size) + align_up(types_size) +
-            align_up(literals_size) + 2 * align_up(bitmap_size) +
+            align_up(literals_size) + 3 * align_up(bitmap_size) +
             align_up(lambdas_size) + code_size;
 
     base = erts_alloc(ERTS_ALC_T_T2_CODE, total);
@@ -269,6 +274,10 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
 
     ret->eligible_bitmap = (Uint32 *)(base + offset);
     sys_memcpy(ret->eligible_bitmap, bitmap, bitmap_size);
+    offset += align_up(bitmap_size);
+
+    ret->install_bitmap = (Uint32 *)(base + offset);
+    sys_memcpy(ret->install_bitmap, installs, bitmap_size);
     offset += align_up(bitmap_size);
 
     ret->loop_bitmap = (Uint32 *)(base + offset);
@@ -313,13 +322,14 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
      * codegen, so the profiling sequences can bake record addresses.
      * Only under counter-triggered tier-up (never with +JT2enable's
      * forced compile-at-load, which needs no counters), and only when
-     * some eligible function has the loop shape. */
+     * some installable function has the loop shape (a buildable-only
+     * loop would just degrade at isel; never arm it). */
     if (erts_t2_tier_enabled() && !on_load) {
         int any_loop = 0;
         Sint32 i;
 
         for (i = 0; i < beam->code.function_count; i++) {
-            if ((bitmap[i / 32] & (((Uint32)1) << (i % 32))) &&
+            if ((installs[i / 32] & (((Uint32)1) << (i % 32))) &&
                 (loops[i / 32] & (((Uint32)1) << (i % 32)))) {
                 any_loop = 1;
                 break;
@@ -341,7 +351,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
                 rec->fn_index = (Uint32)i;
                 rec->arity = arities[i];
                 rec->module = beam->module;
-                if ((bitmap[i / 32] & (((Uint32)1) << (i % 32))) &&
+                if ((installs[i / 32] & (((Uint32)1) << (i % 32))) &&
                     (loops[i / 32] & (((Uint32)1) << (i % 32)))) {
                     rec->threshold =
                             erts_t2_tier_threshold_for(sizes[i]);
@@ -353,6 +363,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     }
 
     erts_free(ERTS_ALC_T_T2_CODE, bitmap);
+    erts_free(ERTS_ALC_T_T2_CODE, installs);
     erts_free(ERTS_ALC_T_T2_CODE, loops);
     erts_free(ERTS_ALC_T_T2_CODE, arities);
     erts_free(ERTS_ALC_T_T2_CODE, sizes);

@@ -88,6 +88,13 @@ typedef struct ErtsT2RetainedCode {
      * tier-2 supported set. */
     Uint32 *eligible_bitmap;
 
+    /* One bit per function, set iff additionally none of its ops is
+     * build-only (erts_t2_genop_build_only): the subset of
+     * eligible_bitmap the standalone compile drivers admit. A function
+     * whose bit is clear here but set above is reachable only as a P1
+     * chain callee / fun body. */
+    Uint32 *install_bitmap;
+
     /* Lambda (FunT chunk) retention (P2 commit 8): make_fun3's first
      * argument indexes this table. The meta half is copied at prepare;
      * the ErlFunEntry pointers are captured at finalize from the
@@ -183,6 +190,11 @@ void erts_t2_account_bytes(Sint delta);
 /* t2_eligible.c: true iff the tier supports this generic opcode. */
 int erts_t2_genop_supported(int genop);
 
+/* t2_eligible.c: true iff the opcode is supported for HIR building
+ * only (decoded so P1 can erase it; no isel lowering). Such an op
+ * keeps its function out of the install bitmap. */
+int erts_t2_genop_build_only(int genop);
+
 /* --- the byte-aligned bs_match subset (P2 commit 7) ------------------
  *
  * bs_match/3 carries a variadic command list; only the byte-aligned
@@ -256,11 +268,15 @@ int erts_t2_build_all(const ErtsT2RetainedCode *ret, const void *code_hdr);
 /* t2_eligible.c: scans every function's generic ops; returns a bitmap
  * with one bit per function (caller frees, ERTS_ALC_T_T2_CODE), or
  * NULL when the module has no functions. Sets \p *any_eligible . When
- * \p loop_bitmap_out is non-null it receives a second same-sized
- * bitmap (caller frees) marking functions with a local self-recursive
- * tail call — the loop shape tier-up profiles. */
+ * \p install_bitmap_out is non-null it receives a same-sized bitmap
+ * (caller frees) restricted to functions without build-only ops — the
+ * standalone-installable subset. When \p loop_bitmap_out is non-null
+ * it receives a second same-sized bitmap (caller frees) marking
+ * functions with a local self-recursive tail call — the loop shape
+ * tier-up profiles. */
 Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                                  int *any_eligible,
+                                 Uint32 **install_bitmap_out,
                                  Uint32 **loop_bitmap_out,
                                  int *on_load_out,
                                  Uint32 *arities_out,

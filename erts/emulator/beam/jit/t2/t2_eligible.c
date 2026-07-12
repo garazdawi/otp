@@ -31,6 +31,12 @@
  * The supported-op table is the single source of truth shared with the
  * SSA builder (t2_hir_builder.cpp): the builder handles exactly the ops
  * accepted here, so bitmap and builder coverage cannot drift.
+ *
+ * Eligible (buildable) and standalone-installable are distinct: a few
+ * supported ops exist only to be erased by the P1 caller
+ * specialization and have no isel lowering (erts_t2_genop_build_only).
+ * The scan emits a second, stricter install bitmap without them; only
+ * that bitmap admits a function to a standalone compile attempt.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -74,9 +80,9 @@ int erts_t2_genop_supported(int genop) {
      * op so a self-recursive fold's loop is recoverable by
      * t2_loop_recover and its per-element call devirtualizable when
      * inlined at a caller with a statically-known fun. There is
-     * deliberately NO isel lowering: a function whose blob would still
-     * contain a CallFun degrades to T1 at isel, exactly like any
-     * unsupported op. */
+     * deliberately NO isel lowering: build-only (see
+     * erts_t2_genop_build_only below), so a fun-containing function is
+     * buildable as a P1 chain callee but never standalone-installed. */
     case genop_call_fun_1:
     case genop_call_fun2_3:
 
@@ -107,8 +113,7 @@ int erts_t2_genop_supported(int genop) {
      * the scan below, like bs_match). Decoded to the IsFunction HIR op
      * so the P1c wrapper classifier (t2_intrinsics.cpp) can see
      * guard-carrying fold wrappers like lists:foldl/3. Like CallFun
-     * there is deliberately NO isel lowering: a function whose blob
-     * would still contain an IsFunction degrades to T1 at isel. */
+     * there is deliberately NO isel lowering: build-only. */
     case genop_is_function2_3:
     case genop_is_lt_3:
     case genop_is_ge_3:
@@ -143,6 +148,27 @@ int erts_t2_genop_supported(int genop) {
     case genop_bs_match_3:
     case genop_bs_test_tail2_3:
     case genop_bs_get_tail_3:
+        return 1;
+
+    default:
+        return 0;
+    }
+}
+
+/* The build-only subset of the supported set above: ops the SSA
+ * builder decodes -- so P1 can build a chain callee (a fold loop's
+ * CallFun, a wrapper's IsFunction guard) and erase the op when it
+ * specializes the caller -- but that have no isel lowering. A function
+ * containing one must stay buildable, yet must NOT be
+ * standalone-installable: its blob would still hold the op and degrade
+ * to T1 at isel, wasting the compile. The eligibility scan folds this
+ * into the install bitmap; the (permissive) eligible bitmap keeps
+ * gating what may be built. */
+int erts_t2_genop_build_only(int genop) {
+    switch (genop) {
+    case genop_call_fun_1:
+    case genop_call_fun2_3:
+    case genop_is_function2_3:
         return 1;
 
     default:
@@ -346,6 +372,7 @@ static int t2_bif2_op_supported(BeamFile *beam, const BeamOp *op) {
 
 Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                                  int *any_eligible,
+                                 Uint32 **install_bitmap_out,
                                  Uint32 **loop_bitmap_out,
                                  int *on_load_out,
                                  Uint32 *arities_out,
@@ -355,10 +382,12 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
     BeamOp *op;
 
     Uint32 *bitmap;
+    Uint32 *installs = NULL;
     Uint32 *loops = NULL;
     size_t bitmap_words;
     int fn_idx = -1;
     int fn_ok = 0;
+    int fn_inst = 0;
     int fn_loop = 0;
     Uint32 fn_size = 0;
     int expect_entry = 0;
@@ -366,6 +395,9 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
     int done = 0;
 
     *any_eligible = 0;
+    if (install_bitmap_out != NULL) {
+        *install_bitmap_out = NULL;
+    }
     if (loop_bitmap_out != NULL) {
         *loop_bitmap_out = NULL;
     }
@@ -380,6 +412,12 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
     bitmap_words = (beam->code.function_count + 31) / 32;
     bitmap = erts_alloc(ERTS_ALC_T_T2_CODE, bitmap_words * sizeof(Uint32));
     sys_memset(bitmap, 0, bitmap_words * sizeof(Uint32));
+    if (install_bitmap_out != NULL) {
+        installs =
+                erts_alloc(ERTS_ALC_T_T2_CODE, bitmap_words * sizeof(Uint32));
+        sys_memset(installs, 0, bitmap_words * sizeof(Uint32));
+        *install_bitmap_out = installs;
+    }
     if (loop_bitmap_out != NULL) {
         loops = erts_alloc(ERTS_ALC_T_T2_CODE, bitmap_words * sizeof(Uint32));
         sys_memset(loops, 0, bitmap_words * sizeof(Uint32));
@@ -394,6 +432,7 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
         case genop_int_func_start_5:
             fn_idx++;
             fn_ok = 1;
+            fn_inst = 1;
             fn_loop = 0;
             fn_size = 0;
             expect_entry = 1;
@@ -411,6 +450,9 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                 if (fn_ok) {
                     bitmap[fn_idx / 32] |= ((Uint32)1) << (fn_idx % 32);
                     *any_eligible = 1;
+                }
+                if (installs != NULL && fn_ok && fn_inst) {
+                    installs[fn_idx / 32] |= ((Uint32)1) << (fn_idx % 32);
                 }
                 if (loops != NULL && fn_loop) {
                     loops[fn_idx / 32] |= ((Uint32)1) << (fn_idx % 32);
@@ -463,6 +505,11 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                  * multi-destination command list stays T1, decided
                  * here at the scan (PLAN/T2FULL/09 §7 surprise 4). */
                 fn_ok = 0;
+            }
+            if (fn_inst && erts_t2_genop_build_only(op->op)) {
+                /* Buildable as a P1 chain callee, but not
+                 * standalone-installable (no isel lowering). */
+                fn_inst = 0;
             }
             break;
         }

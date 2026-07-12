@@ -837,7 +837,9 @@ namespace erts_t2 {
                                   std::string *err);
 
     /* Decode the retained module once and build + validate every
-     * eligible function, invoking `emit` for each success while the
+     * standalone-installable function (the install bitmap — NOT the
+     * wider eligible bitmap: a buildable-only function would just
+     * degrade at isel), invoking `emit` for each success while the
      * module decode is alive (same contract as t2_build_for_debug).
      * Build/validate failures skip the function (it stays on T1).
      * Returns false with *err set only when the module decode itself
