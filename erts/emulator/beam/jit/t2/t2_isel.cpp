@@ -351,15 +351,17 @@ namespace erts_t2 {
                      * L_f): the side exit enters that function's body
                      * past its entry check — the back edge pre-charged
                      * this iteration's entry — over its own fresh-call
-                     * vector in X0..arity-1 (no CP push: P1 sites are
-                     * tail sites), so T1 continues the fold exactly
-                     * where generic execution would be, with T1-exact
-                     * reductions and error frames. Otherwise the side
-                     * exit branches to the call site's own T1 PC over
-                     * the current X vector (no CP push; T1's own call
-                     * instruction re-establishes the CP for a body
-                     * site and tail-transfers for a tail site), so T1
-                     * continues the fold from element k with no redo. */
+                     * vector in X0..arity-1 (no CP push at a tail
+                     * site; a body site's trampoline pushes the site's
+                     * T1 CONT — fill_spec_cont), so T1 continues the
+                     * fold exactly where generic execution would be,
+                     * with T1-exact reductions and error frames.
+                     * Otherwise the side exit branches to the call
+                     * site's own T1 PC over the current X vector (no
+                     * CP push; T1's own call instruction re-establishes
+                     * the CP for a body site and tail-transfers for a
+                     * tail site), so T1 continues the fold from
+                     * element k with no redo. */
                     if (op->imm_int != 0) {
                         return (const void
                                         *)((const char *)(UWord)op->imm_int +
@@ -394,12 +396,20 @@ namespace erts_t2 {
                                       erts_t2_test_yield_return_offset());
             }
 
-            /* For a window-callee spec op, resolve the CP its deopt
-             * trampoline pushes (the intrinsic call site's T1
-             * continuation); no-op otherwise. Returns false when the
+            /* For a spec op whose deopt trampoline must push a CP —
+             * a window-callee op, or a BODY-site inner re-dispatch op
+             * (T2_OP_SPEC_REDISPATCH with a callee L_f but no
+             * T2_OP_TAIL_SITE; the skipped callee prologue would have
+             * pushed it) — resolve the intrinsic call site's T1
+             * continuation; no-op otherwise. Returns false when the
              * lookup fails. */
             bool fill_spec_cont(const T2Op *op, T2LirOp *lop) {
-                if ((op->flags & T2_OP_WINDOW_CALLEE) == 0) {
+                bool need = (op->flags & T2_OP_WINDOW_CALLEE) != 0 ||
+                            ((op->flags & T2_OP_SPEC_REDISPATCH) != 0 &&
+                             op->imm_int != 0 &&
+                             (op->flags & T2_OP_TAIL_SITE) == 0);
+
+                if (!need) {
                     return true;
                 }
                 lop->t1_pc_cont = pc_lookup(op->beam_idx, ERTS_T2_PC_CONT);

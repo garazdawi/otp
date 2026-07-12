@@ -558,9 +558,12 @@ namespace erts_t2 {
          * function's body past its entry check — the back edge
          * pre-charged this iteration's entry — so T1 re-executes the
          * iteration inside the real loop function with T1-exact
-         * reductions and error frames. Otherwise (imm_int = 0) it
-         * branches to the erased call site's own T1 PC
-         * (ERTS_T2_PC_CALL, no CP push; the T1 call instruction
+         * reductions and error frames (at a BODY site — no
+         * T2_OP_TAIL_SITE — the deopt trampoline first pushes the
+         * call site's T1 CONT as the CP the skipped callee prologue
+         * would have pushed; t2_isel's fill_spec_cont). Otherwise
+         * (imm_int = 0) it branches to the erased call site's own T1
+         * PC (ERTS_T2_PC_CALL, no CP push; the T1 call instruction
          * itself re-establishes the CP for a body site and
          * tail-transfers for a tail site), and T1 re-executes the
          * call over the CURRENT X0..x_live-1, which by the op's sync
@@ -579,7 +582,11 @@ namespace erts_t2 {
          * as CP). On a ReductionCheck with T2_OP_RC_CALLEE this makes
          * the tombstone demote enter the callee body WITHOUT the CP
          * push (the blob's own return address already points at the
-         * caller's caller, exactly as after the erased tail call). */
+         * caller's caller, exactly as after the erased tail call);
+         * same on a DemoteCallee and on an inner-mode re-dispatch
+         * spec op (whose BODY-site form pushes the site's CONT
+         * instead). P1 sets it on every site-shape-sensitive op it
+         * plants; its absence means a BODY site throughout. */
         T2_OP_TAIL_SITE = 1 << 13
     };
 

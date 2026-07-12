@@ -1115,6 +1115,54 @@ namespace erts_t2 {
                 return m;
             }
 
+            /* ---- CFG surgery ------------------------------------------ */
+
+            /* Split a block at a non-tail call: everything after the
+             * call — the terminator included — moves to a fresh JOIN
+             * block, phi edges from the split block retarget to it,
+             * and the call is unlinked (its block pointer survives).
+             * The caller owns re-terminating the split block and
+             * re-homing the call's result into the join. */
+            T2BasicBlock *split_at_call(T2Op *call) {
+                T2BasicBlock *b_pre = call->block;
+                T2BasicBlock *b_join = fn.new_block();
+                T2Op *after = call->next;
+
+                if (after != nullptr) {
+                    after->prev = nullptr;
+                    b_join->ops_head = after;
+                    b_join->ops_tail = b_pre->ops_tail;
+                    for (T2Op *q = after; q != nullptr; q = q->next) {
+                        q->block = b_join;
+                    }
+                    call->next = nullptr;
+                    b_pre->ops_tail = call;
+                }
+                b_join->terminator = b_pre->terminator;
+                if (b_join->terminator != nullptr) {
+                    b_join->terminator->block = b_join;
+                }
+                b_pre->terminator = nullptr;
+
+                /* Phis in former successors now come from b_join. */
+                for (T2BasicBlock *b : fn.blocks) {
+                    for (T2Op *phi = b->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        if (phi->phi_blocks == nullptr) {
+                            continue;
+                        }
+                        for (uint16_t i = 0; i < phi->num_operands; i++) {
+                            if (phi->phi_blocks[i] == b_pre) {
+                                phi->phi_blocks[i] = b_join;
+                            }
+                        }
+                    }
+                }
+
+                unlink_op(b_pre, call);
+                return b_join;
+            }
+
             /* ---- per-op helpers --------------------------------------- */
 
             T2Op *new_rc(T2BasicBlock *b,
@@ -1316,46 +1364,7 @@ namespace erts_t2 {
                 /* ---- blocks ------------------------------------------ */
 
                 T2BasicBlock *b_pre = call->block;
-                T2BasicBlock *b_join = fn.new_block();
-
-                /* Split: everything after the call moves to b_join;
-                 * the original terminator too. */
-                {
-                    T2Op *after = call->next;
-
-                    if (after != nullptr) {
-                        after->prev = nullptr;
-                        b_join->ops_head = after;
-                        b_join->ops_tail = b_pre->ops_tail;
-                        for (T2Op *q = after; q != nullptr; q = q->next) {
-                            q->block = b_join;
-                        }
-                        call->next = nullptr;
-                        b_pre->ops_tail = call;
-                    }
-                    b_join->terminator = b_pre->terminator;
-                    if (b_join->terminator != nullptr) {
-                        b_join->terminator->block = b_join;
-                    }
-                    b_pre->terminator = nullptr;
-
-                    /* Phis in former successors now come from b_join. */
-                    for (T2BasicBlock *b : fn.blocks) {
-                        for (T2Op *phi = b->phis_head; phi != nullptr;
-                             phi = phi->next) {
-                            if (phi->phi_blocks == nullptr) {
-                                continue;
-                            }
-                            for (uint16_t i = 0; i < phi->num_operands; i++) {
-                                if (phi->phi_blocks[i] == b_pre) {
-                                    phi->phi_blocks[i] = b_join;
-                                }
-                            }
-                        }
-                    }
-
-                    unlink_op(b_pre, call);
-                }
+                T2BasicBlock *b_join = split_at_call(call);
 
                 T2BasicBlock *b_preb =
                         k.cls == IClass::Foreach ? fn.new_block() : nullptr;
@@ -2047,44 +2056,10 @@ namespace erts_t2 {
                 T2BasicBlock *b_join = nullptr;
 
                 if (!is_tail) {
-                    b_join = fn.new_block();
-
                     /* Split: everything after the call moves to b_join,
-                     * the original terminator too (mirrors the lists
-                     * expansion's split). */
-                    T2Op *after = call->next;
-
-                    if (after != nullptr) {
-                        after->prev = nullptr;
-                        b_join->ops_head = after;
-                        b_join->ops_tail = b_pre->ops_tail;
-                        for (T2Op *q = after; q != nullptr; q = q->next) {
-                            q->block = b_join;
-                        }
-                        call->next = nullptr;
-                        b_pre->ops_tail = call;
-                    }
-                    b_join->terminator = b_pre->terminator;
-                    if (b_join->terminator != nullptr) {
-                        b_join->terminator->block = b_join;
-                    }
-                    b_pre->terminator = nullptr;
-
-                    for (T2BasicBlock *b : fn.blocks) {
-                        for (T2Op *phi = b->phis_head; phi != nullptr;
-                             phi = phi->next) {
-                            if (phi->phi_blocks == nullptr) {
-                                continue;
-                            }
-                            for (uint16_t i = 0; i < phi->num_operands; i++) {
-                                if (phi->phi_blocks[i] == b_pre) {
-                                    phi->phi_blocks[i] = b_join;
-                                }
-                            }
-                        }
-                    }
-
-                    unlink_op(b_pre, call);
+                     * the original terminator too (shared with the
+                     * lists expansion and the P1 body path). */
+                    b_join = split_at_call(call);
                 } else {
                     /* The call IS the terminator; no successors, no
                      * post-call ops. */
@@ -2442,32 +2417,47 @@ namespace erts_t2 {
              * P1a: general caller-driven call-site specialization       *
              * (PLAN/T2FULL/census/p1_design.md).                        *
              *                                                           *
-             * At a hot tail call to a cross-module M:F/A where (a) some *
-             * argument resolves to a literal env-free MakeFun of this   *
-             * module and (b) M:F/A is a self-recursive loop recoverable *
-             * by t2_loop_recover, the callee's recovered loop is CLONED *
-             * into the caller, its params bound to the call's boundary  *
-             * vector, the per-element CallFun devirtualized by splicing *
-             * the fun body, and the callee's frame dropped. Deopt is    *
-             * the new RE-DISPATCH shape (T2_OP_SPEC_REDISPATCH /        *
-             * T2_OP_TAIL_SITE): every side exit re-invokes the generic  *
-             * callee with the LOOP-CARRIED vector. Under the identity   *
-             * permutation the mid-list exits land INSIDE the TERMINAL   *
-             * loop function — guards enter its T1 body past the entry   *
-             * check (the back edge pre-charged it) and the error edges  *
-             * demote into it (DemoteCallee at a tail site) — exactly    *
-             * where generic execution would be, with T1-exact           *
+             * At a hot call (tail or body) to a cross-module M:F/A      *
+             * where (a) some argument resolves to a literal env-free    *
+             * MakeFun of this module and (b) M:F/A is a self-recursive  *
+             * loop recoverable by t2_loop_recover, the callee's         *
+             * recovered loop is CLONED into the caller, its params      *
+             * bound to the call's boundary vector, the per-element      *
+             * CallFun devirtualized by splicing the fun body, and the   *
+             * callee's frame dropped. Deopt is the RE-DISPATCH shape    *
+             * (T2_OP_SPEC_REDISPATCH; T2_OP_TAIL_SITE at a tail site):  *
+             * every side exit re-invokes the generic callee with the    *
+             * LOOP-CARRIED vector. Under the identity permutation the   *
+             * mid-list exits land INSIDE the TERMINAL loop function —   *
+             * guards enter its T1 body past the entry check (the back   *
+             * edge pre-charged it; a body site's trampoline pushes the  *
+             * site's T1 CONT as the CP the skipped prologue would have  *
+             * pushed) and the error edges demote into it (DemoteCallee: *
+             * no CP push at a tail site, CONT pushed at a body site) —  *
+             * exactly where generic execution would be, with T1-exact   *
              * reductions and error shapes; a first-element structural   *
              * miss is pre-screened at the boundary and re-executes the  *
-             * OUTERMOST original call (a genuine TailCallExt), whose    *
-             * wrapper chain owns that error's shape (T2_NO_P1_INNER     *
-             * reverts every exit to the outermost form: a branch to     *
-             * the call site's own T1 CALL PC over the current           *
-             * X0..ar-1). The RC_CALLEE back edge's yield stays in T2    *
-             * and its tombstone/parked translation re-enters the        *
+             * OUTERMOST original call, whose wrapper chain owns that    *
+             * error's shape (T2_NO_P1_INNER reverts every exit to the   *
+             * outermost form). The RC_CALLEE back edge's yield stays    *
+             * in T2 and its tombstone/parked translation re-enters the  *
              * callee (timeslice never deopts). No shape guard and no    *
              * slow edge: the callee's own case dispatch is the loop     *
              * entry, and re-dispatch IS the generic fallback.           *
+             *                                                           *
+             * Site shapes. TAIL (call_ext_only): the cloned loop's      *
+             * Return IS the caller's return, and the outermost          *
+             * re-dispatch is a genuine TailCallExt. BODY (CallExt):     *
+             * the ops after the call move to a JOIN block               *
+             * (split_at_call, as the maps/lists expanders do); every    *
+             * cloned Return materializes the fold result in X0 (the    *
+             * call's dst) and jumps to the join, where a result phi     *
+             * replaces the call's value; the outermost re-dispatch is   *
+             * a resident CallExt over the loop-carried vector whose CP  *
+             * is the site's T1 CONT — the callee returns into T1 and    *
+             * the rest of the invocation runs there (demote-on-return,  *
+             * the maps slow-edge shape), so its phi input is            *
+             * structural, never taken at runtime.                       *
              * ========================================================= */
 
             static constexpr uint32_t T2_P1_MAX_CALLEE_OPS = 48;
@@ -3646,6 +3636,15 @@ namespace erts_t2 {
                 T2BasicBlock *ce = callee.blocks[0];
                 T2BasicBlock *ch = callee.blocks[loop.header];
                 uint32_t latch_id = loop.latches[0];
+                const bool is_tail = call->kind == T2OpKind::TailCallExt;
+                const uint16_t site_flag = is_tail ? T2_OP_TAIL_SITE : 0;
+
+                /* BODY site: split the caller at the call up front —
+                 * the ops after the call (the original terminator
+                 * included) move to the JOIN block the cloned loop's
+                 * exits and the re-dispatch edge jump into. */
+                T2BasicBlock *b_pre = call->block;
+                T2BasicBlock *b_join = is_tail ? nullptr : split_at_call(call);
 
                 /* Under a non-identity permutation (a transitive
                  * chain that reorders arguments) the clone relabels
@@ -3741,6 +3740,8 @@ namespace erts_t2 {
                 std::unordered_map<const T2BasicBlock *, T2BasicBlock *> bmap;
                 std::vector<T2Op *> clones; /* cloned body ops, in order */
                 std::vector<T2Op *> cl_phis(ar, nullptr);
+                std::vector<T2Value *> ret_vals; /* per cloned Return    */
+                std::vector<T2BasicBlock *> ret_blocks;
                 T2Op *ccf = nullptr; /* the cloned CallFun               */
                 T2Op *crc = nullptr; /* the cloned back-edge RC          */
 
@@ -3942,14 +3943,39 @@ namespace erts_t2 {
                             return fail("p1: callee return escapes the "
                                         "value map");
                         }
-                        T2Op *ret_op =
-                                fn.new_op(nb, T2OpKind::Return, T2Type::none());
+                        if (is_tail) {
+                            T2Op *ret_op = fn.new_op(nb,
+                                                     T2OpKind::Return,
+                                                     T2Type::none());
 
-                        fn.set_operands(ret_op, {rv});
-                        ret_op->operand_regs = fn.arena.alloc_array<int32_t>(1);
-                        ret_op->operand_regs[0] = t2_xreg(0);
-                        ret_op->sync = make_map({rv}, cmap);
-                        ret_op->beam_idx = bi;
+                            fn.set_operands(ret_op, {rv});
+                            ret_op->operand_regs =
+                                    fn.arena.alloc_array<int32_t>(1);
+                            ret_op->operand_regs[0] = t2_xreg(0);
+                            ret_op->sync = make_map({rv}, cmap);
+                            ret_op->beam_idx = bi;
+                        } else {
+                            /* BODY site: the fold result feeds the
+                             * join's result phi instead of returning
+                             * (the X0 pin below is the phi home). The
+                             * exit edge charges the erased chain's
+                             * final return — T1 pays one return
+                             * dispatch more at a body site than at a
+                             * tail site (the maps expander's constants
+                             * document the same split); the deopt
+                             * paths return through T1 and pay it
+                             * there. */
+                            T2Op *cr = fn.new_op(nb,
+                                                 T2OpKind::ChargeReds,
+                                                 T2Type::none());
+
+                            fn.set_operands(cr, {});
+                            cr->imm_int = 1;
+                            cr->beam_idx = bi;
+                            fn.emit_jump(nb, b_join);
+                        }
+                        ret_vals.push_back(rv);
+                        ret_blocks.push_back(nb);
                         break;
                     }
                     default:
@@ -3958,8 +3984,8 @@ namespace erts_t2 {
                     }
                     nb->terminator->beam_idx = bi;
                 }
-                if (ccf == nullptr || crc == nullptr) {
-                    return fail("p1: cloned CallFun/RC vanished");
+                if (ccf == nullptr || crc == nullptr || ret_vals.empty()) {
+                    return fail("p1: cloned CallFun/RC/Return vanished");
                 }
 
                 /* ---- keep-sets for the re-homing pass ----------------- */
@@ -3987,30 +4013,26 @@ namespace erts_t2 {
                     keep.insert(mv);
                     latch_vec[i] = mv;
                 }
-                /* Return-value materializations keep X0: the return
-                 * convention pins x0 regardless of the permutation,
-                 * so un-relabel them (exit-path only — the loop's
-                 * phis never write x0's occupant mid-iteration). */
-                for (const auto &e : bmap) {
-                    const T2Op *t = e.second->terminator;
-
-                    if (t != nullptr && t->kind == T2OpKind::Return) {
-                        const T2Value *rv = t->operands[0];
-
-                        if (rv->def == nullptr ||
-                            rv->def->dst_reg != rn(t2_xreg(0))) {
-                            return fail("p1: return value is not in x0");
-                        }
-                        if (rv->def->dst_reg != t2_xreg(0)) {
-                            if (keep.count(rv) != 0) {
-                                return fail("p1: return value doubles as "
-                                            "a latch input under a "
-                                            "permutation");
-                            }
-                            rv->def->dst_reg = t2_xreg(0);
-                        }
-                        keep.insert(rv);
+                /* Return-value materializations keep X0 — the return
+                 * convention (tail) and the join phi's home = the
+                 * call's dst (body) both pin x0 regardless of the
+                 * permutation, so un-relabel them (exit-path only —
+                 * the loop's phis never write x0's occupant
+                 * mid-iteration). */
+                for (const T2Value *rv : ret_vals) {
+                    if (rv->def == nullptr ||
+                        rv->def->dst_reg != rn(t2_xreg(0))) {
+                        return fail("p1: return value is not in x0");
                     }
+                    if (rv->def->dst_reg != t2_xreg(0)) {
+                        if (keep.count(rv) != 0) {
+                            return fail("p1: return value doubles as "
+                                        "a latch input under a "
+                                        "permutation");
+                        }
+                        rv->def->dst_reg = t2_xreg(0);
+                    }
+                    keep.insert(rv);
                 }
 
                 /* ---- re-home iteration-locals off X0..ar-1 and Y ------ */
@@ -4193,7 +4215,11 @@ namespace erts_t2 {
 
                 /* ---- reap dead cloned copies (the fun's save/restore
                  *      round-trip through the dropped frame, the arg
-                 *      shuffle the splice bypassed) ---------------------- */
+                 *      shuffle the splice bypassed). Keep-set values
+                 *      are pinned state (latch materializations, the
+                 *      return values — a BODY site's result phi is not
+                 *      built yet, so its inputs have no visible use
+                 *      here) ------------------------------------------- */
 
                 {
                     bool again = true;
@@ -4202,7 +4228,8 @@ namespace erts_t2 {
                         again = false;
                         for (T2Op *cl : clones) {
                             if (cl->kind != T2OpKind::Copy ||
-                                cl->block == nullptr || cl->result == nullptr) {
+                                cl->block == nullptr || cl->result == nullptr ||
+                                keep.count(cl->result) != 0) {
                                 continue;
                             }
 
@@ -4274,15 +4301,19 @@ namespace erts_t2 {
                  * their side exits enter its body past the entry check
                  * — the back edge pre-charged this iteration's entry —
                  * so T1 re-executes the iteration inside the REAL loop
-                 * function with T1-exact reductions and frames. The
-                 * identity permutation (checked by the caller) makes
-                 * the loop-carried vector the terminal function's own
+                 * function with T1-exact reductions and frames. At a
+                 * BODY site (no T2_OP_TAIL_SITE) the deopt trampoline
+                 * additionally pushes the site's T1 CONT as the CP the
+                 * skipped callee prologue would have pushed
+                 * (fill_spec_cont, t2_isel.cpp). The identity
+                 * permutation (checked by the caller) makes the
+                 * loop-carried vector the terminal function's own
                  * fresh-call vector, already pinned in X0..ar-1. */
                 if (!convert_arith(fb,
                                    acc_idx >= 0 ? cl_phis[acc_idx]->result
                                                 : nullptr,
                                    &need_acc_guard,
-                                   T2_OP_SPEC_REDISPATCH,
+                                   T2_OP_SPEC_REDISPATCH | site_flag,
                                    inner ? (Sint64)(UWord)inner_lf : 0,
                                    vec_map,
                                    bi)) {
@@ -4293,15 +4324,17 @@ namespace erts_t2 {
                     return false;
                 }
 
-                /* ---- back edge: RC_CALLEE (tail), +2 for the erased
-                 *      fun call (fun entry + fun return dispatch).
+                /* ---- back edge: RC_CALLEE, +2 for the erased fun
+                 *      call (fun entry + fun return dispatch).
                  *      Yield/tombstone re-enter the OUTERMOST original
                  *      callee over the outer-ordered continuation
                  *      vector (physically resident by the relabeled
                  *      homes) — the wrapper chain is a correct
-                 *      continuation from any loop state. ------------- */
+                 *      continuation from any loop state. A BODY site's
+                 *      tombstone demote pushes the site's T1 CONT
+                 *      (isel fills it when T2_OP_TAIL_SITE is off). -- */
 
-                crc->flags = T2_OP_RC_CALLEE | T2_OP_TAIL_SITE;
+                crc->flags = T2_OP_RC_CALLEE | site_flag;
                 crc->mfa_m = outer_m;
                 crc->mfa_f = outer_f;
                 crc->live = ar;
@@ -4327,7 +4360,8 @@ namespace erts_t2 {
                     fn.set_operands(g, {cmap->x[perm[acc_idx]]});
                     g->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     g->operand_regs[0] = t2_xreg(perm[acc_idx]);
-                    g->flags = T2_OP_INLINED | T2_OP_SPEC_REDISPATCH;
+                    g->flags =
+                            T2_OP_INLINED | T2_OP_SPEC_REDISPATCH | site_flag;
                     g->sync = cmap;
                     g->beam_idx = bi;
                 }
@@ -4337,7 +4371,7 @@ namespace erts_t2 {
                                           T2Type::none());
 
                     fn.set_operands(rc1, {});
-                    rc1->flags = T2_OP_RC_CALLEE | T2_OP_TAIL_SITE;
+                    rc1->flags = T2_OP_RC_CALLEE | site_flag;
                     rc1->mfa_m = outer_m;
                     rc1->mfa_f = outer_f;
                     rc1->live = ar;
@@ -4394,19 +4428,26 @@ namespace erts_t2 {
                     b_grd->terminator->beam_idx = bi;
                 }
 
-                /* ---- the re-dispatch exit: a genuine tail call to the
-                 *      generic callee. Fallback mode funnels every
+                /* ---- the re-dispatch exit: the generic callee,
+                 *      invoked for real. Fallback mode funnels every
                  *      error edge here over the loop-carried vector;
                  *      inner mode reaches it only from the entry
                  *      pre-screen, where the phis do not dominate — the
                  *      re-dispatch is the untouched call boundary
                  *      itself (nothing before the pre-screen writes
-                 *      it). ------------------------------------------- */
+                 *      it). A TAIL site tail-transfers (a genuine
+                 *      TailCallExt); a BODY site is a resident CallExt
+                 *      whose CP is the site's T1 CONT — the callee
+                 *      returns into T1 and the rest of the invocation
+                 *      runs there (demote-on-return, the maps
+                 *      slow-edge shape), so its edge into the join is
+                 *      structural, never taken at runtime. ----------- */
 
                 {
-                    T2Op *rd = fn.new_op(b_err,
-                                         T2OpKind::TailCallExt,
-                                         T2Type::none());
+                    T2Op *rd = fn.new_op(
+                            b_err,
+                            is_tail ? T2OpKind::TailCallExt : T2OpKind::CallExt,
+                            is_tail ? T2Type::none() : T2Type::any());
                     std::vector<T2Value *> rvec;
 
                     if (inner) {
@@ -4426,6 +4467,26 @@ namespace erts_t2 {
                     rd->index = ar;
                     rd->sync = inner ? cmap : vec_map;
                     rd->beam_idx = bi;
+
+                    if (!is_tail) {
+                        rd->live = ar;
+                        rd->dst_reg = t2_xreg(0);
+                        fn.emit_jump(b_err, b_join);
+                        b_err->terminator->beam_idx = bi;
+
+                        /* The join's result phi replaces the erased
+                         * call's value: the loop's nil exits feed it
+                         * in X0 (the call's dst, pinned above), the
+                         * re-dispatch edge is the structural input. */
+                        T2Op *res = fn.new_phi(b_join, T2Type::any());
+
+                        res->dst_reg = t2_xreg(0);
+                        res->beam_idx = bi;
+                        ret_vals.push_back(rd->result);
+                        ret_blocks.push_back(b_err);
+                        fn.set_phi_inputs(res, ret_vals, ret_blocks);
+                        replace_value(fn, call->result, res->result, res);
+                    }
                 }
 
                 /* ---- the inner demote (error edges, inner mode): a
@@ -4434,8 +4495,9 @@ namespace erts_t2 {
                  *      fresh-call vector — the entry charge was paid by
                  *      the back edge, so T1 re-executes the iteration
                  *      and raises the byte-identical error (the
-                 *      intrinsic tier's helper demote, at a TAIL site:
-                 *      no CP push) ------------------------------------- */
+                 *      intrinsic tier's helper demote: no CP push at a
+                 *      TAIL site, the site's T1 CONT pushed at a BODY
+                 *      site) -------------------------------------------- */
 
                 if (inner) {
                     T2Op *dm = fn.new_op(b_err_in,
@@ -4447,22 +4509,21 @@ namespace erts_t2 {
                     dm->mfa_f = inner_f;
                     dm->live = ar;
                     dm->imm_int = (Sint64)(UWord)inner_lf;
-                    dm->flags = T2_OP_TAIL_SITE;
+                    dm->flags = site_flag;
                     dm->sync = vec_map;
                     dm->beam_idx = bi;
                 }
 
-                /* ---- caller wiring ------------------------------------ */
+                /* ---- caller wiring (a body site's b_pre lost its
+                 *      terminator to the split) ------------------------ */
 
-                ASSERT(fn.blocks[call->block->id] == call->block &&
-                       call->block->terminator == call);
-                {
-                    T2BasicBlock *b_pre = call->block;
-
+                if (is_tail) {
+                    ASSERT(fn.blocks[b_pre->id] == b_pre &&
+                           b_pre->terminator == call);
                     b_pre->terminator = nullptr;
-                    fn.emit_jump(b_pre, b_grd);
-                    b_pre->terminator->beam_idx = bi;
                 }
+                fn.emit_jump(b_pre, b_grd);
+                b_pre->terminator->beam_idx = bi;
 
                 /* Dependencies: EVERY module in the transitive chain
                  * (each one's structure is baked into this blob) and
@@ -4484,7 +4545,7 @@ namespace erts_t2 {
 
                 if (p1_trace() || intrin_trace()) {
                     erts_fprintf(stderr,
-                                 "t2_p1: %T:%T/%u inlined %T:%T/%u (tail "
+                                 "t2_p1: %T:%T/%u inlined %T:%T/%u (%s "
                                  "site, fun arg %u, beam_idx %u, chain "
                                  "reds +%u)\n",
                                  fn.module,
@@ -4493,6 +4554,7 @@ namespace erts_t2 {
                                  callee.module,
                                  callee.function,
                                  (unsigned)ar,
+                                 is_tail ? "tail" : "body",
                                  (unsigned)fun_idx,
                                  (unsigned)bi,
                                  (unsigned)rc1_extra);
@@ -4525,8 +4587,10 @@ namespace erts_t2 {
              * `true` return with changed untouched means the site was
              * (silently or tracedly) left alone. */
             bool expand_p1_site(T2Op *call) {
-                if (call->kind != T2OpKind::TailCallExt) {
-                    p1_reject(call, "body site (P1a implements tail sites)");
+                bool is_tail = call->kind == T2OpKind::TailCallExt;
+
+                if (!is_tail && call->kind != T2OpKind::CallExt) {
+                    p1_reject(call, "not a call_ext/call_ext_only site");
                     return true;
                 }
                 if (call->sync == nullptr ||
@@ -4542,10 +4606,10 @@ namespace erts_t2 {
                     return true;
                 }
 
-                /* Only the frameless call_ext_only shape (mirror the
-                 * maps tail-site rule: a fused call_ext_last's T1 CALL
-                 * PC deallocates again). */
-                {
+                /* Tail sites: only the frameless call_ext_only shape
+                 * (mirror the maps tail-site rule: a fused
+                 * call_ext_last's T1 CALL PC deallocates again). */
+                if (is_tail) {
                     const T2Op *last = call->block->ops_tail;
 
                     if (call->sync->frame_size != T2_NO_FRAME ||
@@ -4602,12 +4666,23 @@ namespace erts_t2 {
                     }
                 }
 
-                /* Every deopt branches to the site's own T1 CALL PC. */
+                /* Every deopt branches to the site's own T1 CALL PC; a
+                 * BODY site also needs the CONT — the CP its resident
+                 * re-dispatch call, inner-mode side exits, tombstone
+                 * demote and DemoteCallee push (mirror the maps
+                 * expander's rule). */
                 if (erts_t2_pc_lookup_kind(ret,
                                            fn.fn_index,
                                            call->beam_idx,
                                            ERTS_T2_PC_CALL) == 0) {
                     p1_reject(call, "no CALL pctab entry");
+                    return true;
+                }
+                if (!is_tail && erts_t2_pc_lookup_kind(ret,
+                                                       fn.fn_index,
+                                                       call->beam_idx,
+                                                       ERTS_T2_PC_CONT) == 0) {
+                    p1_reject(call, "no CONT pctab entry");
                     return true;
                 }
 
@@ -5052,19 +5127,30 @@ namespace erts_t2 {
                             maps_sites.push_back(op);
                             continue;
                         }
-                        if (op->mfa_m != am_lists_mod) {
-                            continue;
-                        }
-                        for (const IntrinsicKind &k : t2_intrinsic_kinds) {
-                            if (op->index == k.call_arity &&
-                                op->mfa_f ==
-                                        erts_atom_put((const byte *)k.wrapper,
-                                                      sys_strlen(k.wrapper),
-                                                      ERTS_ATOM_ENC_LATIN1,
-                                                      1)) {
-                                sites.push_back({op, &k});
-                                break;
+
+                        bool claimed = false;
+
+                        if (op->mfa_m == am_lists_mod) {
+                            for (const IntrinsicKind &k : t2_intrinsic_kinds) {
+                                if (op->index == k.call_arity &&
+                                    op->mfa_f ==
+                                            erts_atom_put(
+                                                    (const byte *)k.wrapper,
+                                                    sys_strlen(k.wrapper),
+                                                    ERTS_ATOM_ENC_LATIN1,
+                                                    1)) {
+                                    sites.push_back({op, &k});
+                                    claimed = true;
+                                    break;
+                                }
                             }
+                        }
+                        if (!claimed && !p1_disabled()) {
+                            /* P1 general trigger (body sites): any
+                             * cross-module non-tail call not claimed by
+                             * a hand-coded recognizer; expand_p1_site
+                             * does the structural screening. */
+                            p1_sites.push_back(op);
                         }
                     }
 
