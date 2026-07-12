@@ -2441,6 +2441,745 @@ namespace erts_t2 {
             static constexpr uint32_t T2_P1_MAX_CALLEE_OPS = 48;
             static constexpr uint32_t T2_P1_MAX_ARITY = 4;
 
+            /* ===================================================== *
+             * P1c-1: transitive wrapper inlining                    *
+             * (PLAN/T2FULL/census/p1c_design.md).                   *
+             *                                                       *
+             * The idiomatic folds are wrappers, not loops:          *
+             * lists:foldl/3 guards is_function(F,2), peels the      *
+             * first element and tail-calls the self-recursive       *
+             * foldl_1/3. The P1 trigger therefore descends          *
+             * transitively: a callee that is not itself a           *
+             * recoverable loop is classified as a THIN WRAPPER —    *
+             * small, non-loop, with a unique fun-passing tail call  *
+             * behind admissible guards — and the trigger re-runs on *
+             * the exposed target with the argument permutation      *
+             * composed (bounded depth, visited set).                *
+             *                                                       *
+             * The wrapper body is never cloned. Its guards are      *
+             * either statically discharged (is_function on the      *
+             * literal fun) or subsumed by the loop's own cons/nil   *
+             * dispatch; its peel is exactly one loop iteration and  *
+             * its nil path exactly the loop's nil exit — both       *
+             * checked structurally against the terminal loop — so   *
+             * wrapper(v) == loop(perm(v)) on every input the        *
+             * inlined fast path handles, and every input it does    *
+             * NOT handle re-dispatches from an unconsumed state.    *
+             * The terminal loop is bound directly to the ORIGINAL   *
+             * call's boundary vector through the composed           *
+             * permutation; deopt/yield/re-dispatch all target the   *
+             * OUTERMOST original M:F/A — the only exported member   *
+             * of the chain, and a correct continuation from any     *
+             * loop state by the congruence above. The loop entry RC *
+             * re-charges the wrapper chain's fixed entry            *
+             * reductions: +1 per NON-peeling level (a peeling       *
+             * wrapper's fun call + loop handoff costs exactly one   *
+             * loop iteration's charge, which the extra inlined      *
+             * iteration already pays).                              *
+             *                                                       *
+             * Under a non-identity permutation the clone relabels   *
+             * every x home below the arity through the permutation, *
+             * so the loop-carried vector is PHYSICALLY resident in  *
+             * the outer argument positions — the P1 backend's sync  *
+             * maps are pin sets over identity placement, never move *
+             * scripts (t2_regalloc.cpp).                            *
+             * ===================================================== */
+
+            static constexpr uint32_t T2_P1_MAX_DEPTH = 3;
+            static constexpr uint32_t T2_P1_MAX_WRAPPER_OPS = 32;
+
+            /* One classified wrapper level: the fun-passing tail
+             * call's target, the argument source mapping, and the
+             * congruence constraints the level imposes on the
+             * terminal loop. All positions are in the NEXT level's
+             * argument space. */
+            struct P1Wrap {
+                Eterm m = NIL, f = NIL;
+                uint32_t arity = 0;
+                uint32_t src[T2_P1_MAX_ARITY] = {0}; /* arg j <- param */
+                uint32_t fun_pos = 0;
+                bool peel = false;
+                int32_t peel_acc = -1;    /* arg = the CallFun result */
+                int32_t peel_list = -1;   /* arg = GetTl(list param)  */
+                int32_t peel_hd_op = -1;  /* CallFun op: GetHd(list)  */
+                int32_t peel_acc_op = -1; /* CallFun op: the acc      */
+                bool nil_ret = false;
+                int32_t nil_cond = -1;    /* the IsNil'd (list) param */
+                int32_t nil_ret_pos = -1; /* the returned (acc) param */
+                uint32_t list_tested = 0; /* spine list-guard mask    */
+                bool has_leaves = false;
+                uint32_t leaf_mask = 0; /* bit p: every err/opaque
+                                         * leaf excludes cons AND nil
+                                         * on param p                 */
+            };
+
+            /* The chain's accumulated constraints, remapped into the
+             * current (deepest) level's argument space at each
+             * descent step. */
+            struct P1Pending {
+                bool peel = false;
+                int32_t peel_acc = -1, peel_list = -1;
+                int32_t peel_hd_op = -1, peel_acc_op = -1;
+                bool nil_ret = false;
+                int32_t nil_cond = -1, nil_ret_pos = -1;
+                uint32_t list_tested = 0;
+                bool has_leaves = false;
+                uint32_t leaf_mask = 0;
+            };
+
+            /* Resolve through Copies AND trivial single-input phis
+             * (Braun leftovers in once-unsealed blocks). The wrapper
+             * is classified, never cloned, so seeing through its
+             * phis is safe. */
+            static const T2Value *resolve_thru(const T2Value *v) {
+                for (int depth = 0; depth < 64; depth++) {
+                    const T2Op *d = v->def;
+
+                    if (d != nullptr &&
+                        (d->kind == T2OpKind::Copy ||
+                         (d->kind == T2OpKind::Phi && d->num_operands == 1))) {
+                        v = d->operands[0];
+                        continue;
+                    }
+                    break;
+                }
+                return v;
+            }
+
+            static int32_t p1_param_index(
+                    const std::vector<const T2Value *> &params,
+                    const T2Value *v) {
+                for (size_t i = 0; i < params.size(); i++) {
+                    if (params[i] == v) {
+                        return (int32_t)i;
+                    }
+                }
+                return -1;
+            }
+
+            /* next-space mask from a current-space mask: next bit j
+             * holds iff current bit src[j] does. */
+            static uint32_t p1_remap_mask(uint32_t mask,
+                                          const uint32_t *src,
+                                          uint32_t ar) {
+                uint32_t out = 0;
+
+                for (uint32_t j = 0; j < ar; j++) {
+                    if ((mask & (1u << src[j])) != 0) {
+                        out |= 1u << j;
+                    }
+                }
+                return out;
+            }
+
+            /* A guard condition on a wrapper CFG path: a list-shape
+             * test on one of the wrapper's own parameters. */
+            struct P1Cond {
+                uint32_t param;
+                T2OpKind kind;
+                bool pol;
+            };
+
+            struct P1WalkState {
+                const T2Function &callee;
+                std::vector<const T2Value *> params;
+                uint32_t fun_idx;
+                uint32_t fun_arity;
+                const char **why;
+
+                const T2Op *callfun = nullptr;
+                const T2Op *tailcall = nullptr;
+                bool tc_crossed_peel = false;
+                uint32_t tc_list_tested = 0;
+                bool nil_ret = false;
+                uint32_t nil_cond = 0, nil_ret_param = 0;
+                bool has_leaves = false;
+                uint32_t leaf_mask = ~0u;
+                std::unordered_set<const T2BasicBlock *> counted;
+                uint32_t region_ops = 0;
+                uint32_t steps = 0;
+            };
+
+            /* An err/opaque leaf is admissible iff the terminal
+             * loop's list parameter can neither be a cons nor nil
+             * under the leaf's path conditions — such inputs never
+             * take the inlined fast path (the loop's own dispatch
+             * re-dispatches them from an unconsumed state), so the
+             * leaf's generic behavior is reproduced exactly. Which
+             * parameter is the list is only known at the terminal
+             * loop; record the exclusion mask and check it there. */
+            static bool p1_leaf(P1WalkState &st,
+                                const std::vector<P1Cond> &conds) {
+                uint32_t excl_cons = 0, excl_nil = 0;
+
+                for (const P1Cond &c : conds) {
+                    uint32_t bit = 1u << c.param;
+
+                    if ((c.kind == T2OpKind::IsNonemptyList && !c.pol) ||
+                        (c.kind == T2OpKind::IsList && !c.pol) ||
+                        (c.kind == T2OpKind::IsNil && c.pol)) {
+                        excl_cons |= bit;
+                    }
+                    if ((c.kind == T2OpKind::IsNil && !c.pol) ||
+                        (c.kind == T2OpKind::IsNonemptyList && c.pol) ||
+                        (c.kind == T2OpKind::IsList && !c.pol)) {
+                        excl_nil |= bit;
+                    }
+                }
+                st.leaf_mask &= excl_cons & excl_nil;
+                st.has_leaves = true;
+                return true;
+            }
+
+            /* DFS over the wrapper CFG from the entry, following
+             * only admissible edges. BEAM function bodies are DAGs
+             * (loops are calls; recovery said this one has none), so
+             * the walk terminates; the step budget caps pathological
+             * diamond fan-out. */
+            bool p1_walk_wrapper(P1WalkState &st,
+                                 const T2BasicBlock *b,
+                                 std::vector<P1Cond> conds,
+                                 bool crossed_peel) {
+                if (++st.steps > 128) {
+                    *st.why = "wrapper region too branchy";
+                    return false;
+                }
+                if (p1_is_err_block(b)) {
+                    return p1_leaf(st, conds);
+                }
+                for (const T2Op *phi = b->phis_head; phi != nullptr;
+                     phi = phi->next) {
+                    if (phi->num_operands != 1) {
+                        *st.why = "wrapper has a real merge";
+                        return false;
+                    }
+                }
+
+                bool entry = b == st.callee.blocks[0];
+                uint32_t nops = 0;
+
+                for (const T2Op *op = b->ops_head; op != nullptr;
+                     op = op->next) {
+                    if (op->kind == T2OpKind::Param) {
+                        if (!entry) {
+                            *st.why = "wrapper param outside the entry";
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (op->kind == T2OpKind::Allocate ||
+                        op->kind == T2OpKind::Deallocate) {
+                        nops++;
+                        continue; /* never cloned; frames stay T1's */
+                    }
+                    if (op->kind == T2OpKind::CallFun) {
+                        if (st.callfun != nullptr && st.callfun != op) {
+                            *st.why = "wrapper applies the fun twice";
+                            return false;
+                        }
+                        if (op->flags != 0 || op->sync == nullptr ||
+                            op->index != st.fun_arity ||
+                            op->num_operands != (uint16_t)(st.fun_arity + 1) ||
+                            resolve_thru(op->operands[st.fun_arity]) !=
+                                    st.params[st.fun_idx]) {
+                            *st.why = "wrapper fun application shape "
+                                      "not admissible";
+                            return false;
+                        }
+                        st.callfun = op;
+                        crossed_peel = true;
+                        nops++;
+                        continue;
+                    }
+                    if (!p1_callee_op_ok(op)) {
+                        /* Opaque block: classified inputs never take
+                         * it on the fast path (leaf mask checked at
+                         * the terminal loop); do not look further. */
+                        return p1_leaf(st, conds);
+                    }
+                    nops++;
+                }
+                if (st.counted.insert(b).second) {
+                    st.region_ops += nops;
+                    if (st.region_ops > T2_P1_MAX_WRAPPER_OPS) {
+                        *st.why = "wrapper region too large";
+                        return false;
+                    }
+                }
+
+                const T2Op *t = b->terminator;
+
+                if (t == nullptr) {
+                    *st.why = "wrapper block without terminator";
+                    return false;
+                }
+                switch (t->kind) {
+                case T2OpKind::Jump:
+                    return p1_walk_wrapper(st,
+                                           t->succ_then,
+                                           std::move(conds),
+                                           crossed_peel);
+                case T2OpKind::Branch: {
+                    const T2Op *test = resolve_thru(t->operands[0])->def;
+
+                    if (test == nullptr) {
+                        return p1_leaf(st, conds);
+                    }
+                    if (test->kind == T2OpKind::IsFunction &&
+                        resolve_thru(test->operands[0]) ==
+                                st.params[st.fun_idx]) {
+                        /* Statically discharged on the literal fun:
+                         * only the taken edge is live for the
+                         * specialized inputs. */
+                        return p1_walk_wrapper(st,
+                                               test->index == st.fun_arity
+                                                       ? t->succ_then
+                                                       : t->succ_else,
+                                               std::move(conds),
+                                               crossed_peel);
+                    }
+                    if (test->kind == T2OpKind::IsList ||
+                        test->kind == T2OpKind::IsNonemptyList ||
+                        test->kind == T2OpKind::IsNil) {
+                        int32_t p =
+                                p1_param_index(st.params,
+                                               resolve_thru(test->operands[0]));
+
+                        if (p < 0) {
+                            return p1_leaf(st, conds);
+                        }
+
+                        std::vector<P1Cond> c1 = conds;
+
+                        c1.push_back({(uint32_t)p, test->kind, true});
+                        if (!p1_walk_wrapper(st,
+                                             t->succ_then,
+                                             std::move(c1),
+                                             crossed_peel)) {
+                            return false;
+                        }
+                        conds.push_back({(uint32_t)p, test->kind, false});
+                        return p1_walk_wrapper(st,
+                                               t->succ_else,
+                                               std::move(conds),
+                                               crossed_peel);
+                    }
+                    return p1_leaf(st, conds);
+                }
+                case T2OpKind::Return: {
+                    /* Admissible only as the nil/acc exit: return of
+                     * a parameter behind an IsNil=true guard on one
+                     * parameter, with no fun application crossed. */
+                    int32_t pr = p1_param_index(st.params,
+                                                resolve_thru(t->operands[0]));
+                    int32_t pl = -1;
+
+                    for (const P1Cond &c : conds) {
+                        if (c.kind == T2OpKind::IsNil && c.pol) {
+                            if (pl >= 0 && pl != (int32_t)c.param) {
+                                pl = -2;
+                                break;
+                            }
+                            pl = (int32_t)c.param;
+                        }
+                    }
+                    if (pr < 0 || pl < 0 || crossed_peel) {
+                        *st.why = "wrapper return path is not the "
+                                  "nil/acc exit";
+                        return false;
+                    }
+                    if (st.nil_ret && (st.nil_cond != (uint32_t)pl ||
+                                       st.nil_ret_param != (uint32_t)pr)) {
+                        *st.why = "wrapper nil returns disagree";
+                        return false;
+                    }
+                    st.nil_ret = true;
+                    st.nil_cond = (uint32_t)pl;
+                    st.nil_ret_param = (uint32_t)pr;
+                    return true;
+                }
+                case T2OpKind::TailCall:
+                case T2OpKind::TailCallExt: {
+                    if (t->flags != 0 || t->sync == nullptr) {
+                        *st.why = "wrapper tail call carries flags or "
+                                  "no sync";
+                        return false;
+                    }
+                    if (st.tailcall != nullptr && st.tailcall != t) {
+                        *st.why = "wrapper has two tail calls";
+                        return false;
+                    }
+                    for (const P1Cond &c : conds) {
+                        /* A nil-positive guard before the tail call
+                         * would send cons inputs elsewhere. */
+                        if ((c.kind == T2OpKind::IsNil && c.pol) ||
+                            (c.kind == T2OpKind::IsNonemptyList && !c.pol) ||
+                            (c.kind == T2OpKind::IsList && !c.pol)) {
+                            *st.why = "wrapper tail call behind a "
+                                      "non-cons guard";
+                            return false;
+                        }
+                        if ((c.kind == T2OpKind::IsList ||
+                             c.kind == T2OpKind::IsNonemptyList) &&
+                            c.pol) {
+                            st.tc_list_tested |= 1u << c.param;
+                        }
+                    }
+                    st.tailcall = t;
+                    st.tc_crossed_peel |= crossed_peel;
+                    return true;
+                }
+                default:
+                    return p1_leaf(st, conds);
+                }
+            }
+
+            /* Classify a non-loop callee as a thin fun-passing
+             * wrapper. Read-only; fills *out on success. */
+            bool p1_classify_wrapper(const T2Function &callee,
+                                     uint32_t fun_idx,
+                                     uint32_t fun_arity,
+                                     P1Wrap *out,
+                                     const char **why) {
+                *why = "wrapper shape not admissible";
+
+                uint32_t ar = callee.arity;
+
+                if (ar == 0 || ar > T2_P1_MAX_ARITY || callee.blocks.empty() ||
+                    fun_idx >= ar) {
+                    return false;
+                }
+
+                std::vector<const T2Value *> params(ar, nullptr);
+
+                for (const T2Op *op = callee.blocks[0]->ops_head;
+                     op != nullptr && op->kind == T2OpKind::Param;
+                     op = op->next) {
+                    if (op->index >= ar || params[op->index] != nullptr) {
+                        *why = "wrapper params not canonical";
+                        return false;
+                    }
+                    params[op->index] = op->result;
+                }
+                for (uint32_t i = 0; i < ar; i++) {
+                    if (params[i] == nullptr) {
+                        *why = "wrapper params not canonical";
+                        return false;
+                    }
+                }
+
+                P1WalkState st{callee, params, fun_idx, fun_arity, why};
+
+                if (!p1_walk_wrapper(st, callee.blocks[0], {}, false)) {
+                    return false;
+                }
+                if (st.tailcall == nullptr) {
+                    *why = "no fun-passing tail call on an admissible "
+                           "spine";
+                    return false;
+                }
+
+                const T2Op *tc = st.tailcall;
+
+                if (tc->index != ar || tc->num_operands != ar) {
+                    *why = "wrapper tail call changes arity";
+                    return false;
+                }
+
+                /* Argument sources: pass-through params, or the
+                 * one-iteration peel (CallFun result + GetTl). */
+                int32_t peel_acc = -1, peel_list = -1;
+                int32_t fun_pos = -1;
+                uint32_t p_list = 0;
+                uint32_t src[T2_P1_MAX_ARITY] = {0};
+
+                for (uint32_t j = 0; j < ar; j++) {
+                    const T2Value *root = resolve_thru(tc->operands[j]);
+                    int32_t p = p1_param_index(params, root);
+
+                    if (p >= 0) {
+                        src[j] = (uint32_t)p;
+                        if ((uint32_t)p == fun_idx) {
+                            fun_pos = (int32_t)j;
+                        }
+                        continue;
+                    }
+                    if (st.callfun != nullptr && root == st.callfun->result) {
+                        if (peel_acc >= 0) {
+                            *why = "wrapper passes the fun result twice";
+                            return false;
+                        }
+                        peel_acc = (int32_t)j;
+                        continue;
+                    }
+                    if (root->def != nullptr &&
+                        root->def->kind == T2OpKind::GetTl) {
+                        int32_t q = p1_param_index(
+                                params,
+                                resolve_thru(root->def->operands[0]));
+
+                        if (q < 0 || peel_list >= 0) {
+                            *why = "wrapper tail advance not from a "
+                                   "parameter";
+                            return false;
+                        }
+                        peel_list = (int32_t)j;
+                        p_list = (uint32_t)q;
+                        src[j] = (uint32_t)q;
+                        continue;
+                    }
+                    *why = "wrapper tail-call argument neither "
+                           "pass-through nor peel";
+                    return false;
+                }
+
+                bool peel = peel_acc >= 0 || peel_list >= 0;
+                int32_t hd_op = -1, acc_op = -1;
+                uint32_t p_acc = 0;
+
+                if (peel) {
+                    if (peel_acc < 0 || peel_list < 0 ||
+                        st.callfun == nullptr || !st.tc_crossed_peel) {
+                        *why = "wrapper peel incomplete";
+                        return false;
+                    }
+                    for (uint32_t k = 0; k < fun_arity; k++) {
+                        const T2Value *r =
+                                resolve_thru(st.callfun->operands[k]);
+
+                        if (r->def != nullptr &&
+                            r->def->kind == T2OpKind::GetHd &&
+                            p1_param_index(params,
+                                           resolve_thru(r->def->operands[0])) ==
+                                    (int32_t)p_list) {
+                            if (hd_op >= 0) {
+                                *why = "wrapper peel reads two heads";
+                                return false;
+                            }
+                            hd_op = (int32_t)k;
+                            continue;
+                        }
+
+                        int32_t q = p1_param_index(params, r);
+
+                        if (q < 0 || acc_op >= 0) {
+                            *why = "wrapper peel operands are not "
+                                   "head + accumulator";
+                            return false;
+                        }
+                        acc_op = (int32_t)k;
+                        p_acc = (uint32_t)q;
+                    }
+                    if (hd_op < 0 || acc_op < 0) {
+                        *why = "wrapper peel operands are not head + "
+                               "accumulator";
+                        return false;
+                    }
+                    src[peel_acc] = p_acc;
+                } else if (st.callfun != nullptr) {
+                    *why = "wrapper drops the fun application result";
+                    return false;
+                }
+
+                /* The mapping must be a bijection (re-dispatch
+                 * reconstructs the OUTER argument vector from the
+                 * loop-carried state; a dropped or duplicated
+                 * position would be unreconstructible). */
+                uint32_t seen = 0;
+
+                for (uint32_t j = 0; j < ar; j++) {
+                    if (src[j] >= ar || (seen & (1u << src[j])) != 0) {
+                        *why = "wrapper argument mapping is not a "
+                               "bijection";
+                        return false;
+                    }
+                    seen |= 1u << src[j];
+                }
+                if (fun_pos < 0 || src[fun_pos] != fun_idx) {
+                    *why = "fun not passed through as an argument";
+                    return false;
+                }
+
+                uint32_t s_inv[T2_P1_MAX_ARITY] = {0};
+
+                for (uint32_t j = 0; j < ar; j++) {
+                    s_inv[src[j]] = j;
+                }
+
+                out->m = tc->mfa_m;
+                out->f = tc->mfa_f;
+                out->arity = ar;
+                for (uint32_t j = 0; j < ar; j++) {
+                    out->src[j] = src[j];
+                }
+                out->fun_pos = (uint32_t)fun_pos;
+                out->peel = peel;
+                out->peel_acc = peel_acc;
+                out->peel_list = peel_list;
+                out->peel_hd_op = hd_op;
+                out->peel_acc_op = acc_op;
+                out->nil_ret = st.nil_ret;
+                out->nil_cond = st.nil_ret ? (int32_t)s_inv[st.nil_cond] : -1;
+                out->nil_ret_pos =
+                        st.nil_ret ? (int32_t)s_inv[st.nil_ret_param] : -1;
+                out->list_tested = p1_remap_mask(st.tc_list_tested, src, ar);
+                out->has_leaves = st.has_leaves;
+                out->leaf_mask =
+                        st.has_leaves
+                                ? p1_remap_mask(st.leaf_mask & ((1u << ar) - 1),
+                                                src,
+                                                ar)
+                                : 0;
+                return true;
+            }
+
+            /* Terminal congruence: the chain's accumulated wrapper
+             * constraints (in the loop's argument space) against the
+             * ADMITTED loop's structure. This is what makes skipping
+             * the wrapper bodies sound: peel == loop step, wrapper
+             * nil exit == loop nil exit, wrapper list guards on the
+             * loop's list param, err/opaque leaves confined to
+             * inputs the loop's own dispatch re-dispatches. */
+            bool p1_chain_congruent(const T2Function &callee,
+                                    const T2Loop &loop,
+                                    uint32_t fun_idx,
+                                    int32_t acc_idx,
+                                    const P1Pending &pend,
+                                    const char **why) {
+                *why = "wrapper chain not congruent with the loop";
+
+                uint32_t ar = callee.arity;
+                const T2BasicBlock *ch = callee.blocks[loop.header];
+                uint32_t latch_id = loop.latches[0];
+
+                std::vector<const T2Op *> phis(ar, nullptr);
+
+                for (const T2Op *phi = ch->phis_head; phi != nullptr;
+                     phi = phi->next) {
+                    phis[t2_reg_index(phi->dst_reg)] = phi;
+                }
+
+                auto latch_input = [&](const T2Op *phi) -> const T2Value * {
+                    for (uint16_t i = 0; i < phi->num_operands; i++) {
+                        if (phi->phi_blocks[i]->id == latch_id) {
+                            return phi->operands[i];
+                        }
+                    }
+                    return nullptr;
+                };
+
+                const T2Op *callfun = nullptr;
+
+                for (const T2Op *op = callee.blocks[latch_id]->ops_head;
+                     op != nullptr;
+                     op = op->next) {
+                    if (op->kind == T2OpKind::CallFun) {
+                        callfun = op;
+                    }
+                }
+
+                /* The loop's list position: the phi advanced by
+                 * GetTl of itself. */
+                int32_t ll = -1;
+
+                for (uint32_t i = 0; i < ar; i++) {
+                    if (i == fun_idx) {
+                        continue;
+                    }
+                    const T2Value *lv = latch_input(phis[i]);
+
+                    if (lv == nullptr) {
+                        continue;
+                    }
+                    lv = resolve_thru(lv);
+                    if (lv->def != nullptr &&
+                        lv->def->kind == T2OpKind::GetTl &&
+                        resolve_thru(lv->def->operands[0]) == phis[i]->result) {
+                        if (ll >= 0) {
+                            *why = "loop advances two list params";
+                            return false;
+                        }
+                        ll = (int32_t)i;
+                    }
+                }
+
+                bool need_ll = pend.peel || pend.nil_ret ||
+                               pend.list_tested != 0 || pend.has_leaves;
+
+                if (need_ll && ll < 0) {
+                    *why = "loop has no list-advancing param";
+                    return false;
+                }
+
+                if (pend.peel) {
+                    if (acc_idx < 0 || callfun == nullptr ||
+                        pend.peel_acc != acc_idx || pend.peel_list != ll) {
+                        *why = "wrapper peel does not match the loop "
+                               "step";
+                        return false;
+                    }
+                    if ((uint32_t)pend.peel_hd_op >=
+                                (uint32_t)(callfun->num_operands - 1) ||
+                        (uint32_t)pend.peel_acc_op >=
+                                (uint32_t)(callfun->num_operands - 1)) {
+                        *why = "wrapper peel does not match the loop "
+                               "step";
+                        return false;
+                    }
+
+                    const T2Value *hd =
+                            resolve_thru(callfun->operands[pend.peel_hd_op]);
+
+                    if (hd->def == nullptr ||
+                        hd->def->kind != T2OpKind::GetHd ||
+                        resolve_thru(hd->def->operands[0]) !=
+                                phis[ll]->result) {
+                        *why = "loop step head operand differs from "
+                               "the peel";
+                        return false;
+                    }
+                    if (resolve_thru(callfun->operands[pend.peel_acc_op]) !=
+                        phis[acc_idx]->result) {
+                        *why = "loop step acc operand differs from "
+                               "the peel";
+                        return false;
+                    }
+                }
+
+                if (pend.nil_ret) {
+                    if (acc_idx < 0 || pend.nil_cond != ll ||
+                        pend.nil_ret_pos != acc_idx) {
+                        *why = "wrapper nil return does not match the "
+                               "loop exit";
+                        return false;
+                    }
+                    for (const T2BasicBlock *b : callee.blocks) {
+                        if (p1_is_err_block(b) || b->terminator == nullptr ||
+                            b->terminator->kind != T2OpKind::Return) {
+                            continue;
+                        }
+                        if (resolve_thru(b->terminator->operands[0]) !=
+                            phis[acc_idx]->result) {
+                            *why = "loop exit does not return the "
+                                   "accumulator";
+                            return false;
+                        }
+                    }
+                }
+
+                if (ll >= 0 && (pend.list_tested & ~(1u << ll)) != 0) {
+                    *why = "wrapper list guard on a non-list param";
+                    return false;
+                }
+                if (pend.has_leaves &&
+                    (ll < 0 || (pend.leaf_mask & (1u << ll)) == 0)) {
+                    *why = "wrapper error paths not confined to "
+                           "non-list inputs";
+                    return false;
+                }
+                return true;
+            }
+
             void p1_reject(const T2Op *call, const char *why) {
                 if (p1_trace()) {
                     erts_fprintf(stderr,
@@ -2594,7 +3333,7 @@ namespace erts_t2 {
                     const T2Value *lv = latch_input(phis[fun_idx]);
 
                     if (lv == nullptr ||
-                        resolve_copies(lv) != phis[fun_idx]->result) {
+                        resolve_thru(lv) != phis[fun_idx]->result) {
                         *why = "callee fun param is not loop-invariant";
                         return false;
                     }
@@ -2706,7 +3445,7 @@ namespace erts_t2 {
                 /* The CallFun's fun operand (last) must be the fun
                  * param's phi, through copies. */
                 if (callfun->num_operands != fun_arity + 1 ||
-                    resolve_copies(
+                    resolve_thru(
                             callfun->operands[callfun->num_operands - 1]) !=
                             phis[fun_idx]->result) {
                     *why = "callee CallFun does not apply the fun param";
@@ -2751,8 +3490,7 @@ namespace erts_t2 {
                     }
                     const T2Value *lv = latch_input(phis[i]);
 
-                    if (lv != nullptr &&
-                        resolve_copies(lv) == callfun->result) {
+                    if (lv != nullptr && resolve_thru(lv) == callfun->result) {
                         *acc_idx_out = (int32_t)i;
                     }
                 }
@@ -2770,16 +3508,34 @@ namespace erts_t2 {
                            uint32_t fun_idx,
                            int32_t acc_idx,
                            const T2Op *mf,
-                           Eterm callee_m,
-                           Eterm callee_f,
-                           const void *callee_lf,
-                           const void *callee_hdr) {
+                           Eterm outer_m,
+                           Eterm outer_f,
+                           const void *outer_lf,
+                           const std::vector<const void *> &chain_hdrs,
+                           const uint32_t *perm,
+                           uint32_t rc1_extra) {
                 uint32_t bi = call->beam_idx;
                 T2SyncMap *cmap = call->sync;
                 uint32_t ar = callee.arity;
                 T2BasicBlock *ce = callee.blocks[0];
                 T2BasicBlock *ch = callee.blocks[loop.header];
                 uint32_t latch_id = loop.latches[0];
+
+                /* Under a non-identity permutation (a transitive
+                 * chain that reorders arguments) the clone relabels
+                 * every x home below the arity, so the loop-carried
+                 * vector is PHYSICALLY resident in the OUTER argument
+                 * positions — sync maps are pins over identity
+                 * placement, never move scripts. Homes at or above
+                 * the arity are iteration-locals; the re-homing pass
+                 * moves them anyway. */
+                auto rn = [&](int32_t reg) -> int32_t {
+                    if (reg != T2_REG_NONE && t2_reg_is_x(reg) &&
+                        t2_reg_index(reg) < ar) {
+                        return t2_xreg(perm[t2_reg_index(reg)]);
+                    }
+                    return reg;
+                };
 
                 /* ---- callee structure (re-derived; admission holds) -- */
 
@@ -2816,9 +3572,9 @@ namespace erts_t2 {
                 for (const T2Op *op = ce->ops_head;
                      op != nullptr && op->kind == T2OpKind::Param;
                      op = op->next) {
-                    vmap[op->result] = cmap->x[op->index];
+                    vmap[op->result] = cmap->x[perm[op->index]];
                 }
-                vmap[phis[fun_idx]->result] = cmap->x[fun_idx];
+                vmap[phis[fun_idx]->result] = cmap->x[perm[fun_idx]];
 
                 /* Block skeleton (entry + error blocks are not cloned;
                  * error edges collapse onto the re-dispatch block). */
@@ -2841,7 +3597,7 @@ namespace erts_t2 {
                     }
                     T2Op *np = fn.new_phi(bmap.at(ch), phis[i]->type);
 
-                    np->dst_reg = t2_xreg(i);
+                    np->dst_reg = t2_xreg(perm[i]);
                     np->flags = T2_OP_INLINED;
                     np->beam_idx = bi;
                     vmap[phis[i]->result] = np->result;
@@ -2883,7 +3639,7 @@ namespace erts_t2 {
                                             "the value map");
                             }
                             if (mv->def == nullptr ||
-                                mv->def->dst_reg != phi->dst_reg) {
+                                mv->def->dst_reg != rn(phi->dst_reg)) {
                                 return fail("p1: trivial phi home differs "
                                             "from its input's home");
                             }
@@ -2918,7 +3674,7 @@ namespace erts_t2 {
                             cl->operand_regs = fn.arena.alloc_array<int32_t>(
                                     op->num_operands);
                             for (uint16_t i = 0; i < op->num_operands; i++) {
-                                cl->operand_regs[i] = op->operand_regs[i];
+                                cl->operand_regs[i] = rn(op->operand_regs[i]);
                             }
                         }
                         cl->imm_int = op->imm_int;
@@ -2928,7 +3684,7 @@ namespace erts_t2 {
                         cl->index = op->index;
                         cl->bif_num = op->bif_num;
                         cl->live = op->live;
-                        cl->dst_reg = op->dst_reg;
+                        cl->dst_reg = rn(op->dst_reg);
                         /* PAIR_HEAD dropped: the re-homing below moves
                          * every pair destination off its source, so the
                          * clones are safe as plain singles. */
@@ -3004,7 +3760,7 @@ namespace erts_t2 {
 
                 for (uint32_t i = 0; i < ar; i++) {
                     if (i == fun_idx) {
-                        latch_vec[i] = cmap->x[fun_idx];
+                        latch_vec[i] = cmap->x[perm[fun_idx]];
                         continue;
                     }
                     T2Value *mv = mapped(latch_input(phis[i]));
@@ -3012,14 +3768,18 @@ namespace erts_t2 {
                     if (mv == nullptr) {
                         return fail("p1: latch input escapes the value map");
                     }
-                    if (mv->def == nullptr || mv->def->dst_reg != t2_xreg(i)) {
+                    if (mv->def == nullptr ||
+                        mv->def->dst_reg != t2_xreg(perm[i])) {
                         return fail("p1: latch materialization is not in "
                                     "the phi home");
                     }
                     keep.insert(mv);
                     latch_vec[i] = mv;
                 }
-                /* Return-value materializations keep X0. */
+                /* Return-value materializations keep X0: the return
+                 * convention pins x0 regardless of the permutation,
+                 * so un-relabel them (exit-path only — the loop's
+                 * phis never write x0's occupant mid-iteration). */
                 for (const auto &e : bmap) {
                     const T2Op *t = e.second->terminator;
 
@@ -3027,8 +3787,16 @@ namespace erts_t2 {
                         const T2Value *rv = t->operands[0];
 
                         if (rv->def == nullptr ||
-                            rv->def->dst_reg != t2_xreg(0)) {
+                            rv->def->dst_reg != rn(t2_xreg(0))) {
                             return fail("p1: return value is not in x0");
+                        }
+                        if (rv->def->dst_reg != t2_xreg(0)) {
+                            if (keep.count(rv) != 0) {
+                                return fail("p1: return value doubles as "
+                                            "a latch input under a "
+                                            "permutation");
+                            }
+                            rv->def->dst_reg = t2_xreg(0);
                         }
                         keep.insert(rv);
                     }
@@ -3208,7 +3976,7 @@ namespace erts_t2 {
                         continue;
                     }
                     fn.set_phi_inputs(cl_phis[i],
-                                      {cmap->x[i], latch_vec[i]},
+                                      {cmap->x[perm[i]], latch_vec[i]},
                                       {b_grd, b_lat2});
                 }
 
@@ -3285,9 +4053,9 @@ namespace erts_t2 {
 
                 /* ---- speculation: re-dispatch class ------------------- */
 
-                T2SyncMap *vec_map = make_map(
-                        latch_vec_entry_map(cl_phis, cmap, fun_idx, ar),
-                        cmap);
+                T2SyncMap *vec_map =
+                        make_map(p1_outer_vec(cl_phis, cmap, fun_idx, ar, perm),
+                                 cmap);
                 bool need_acc_guard = false;
 
                 if (!convert_arith(fb,
@@ -3306,15 +4074,27 @@ namespace erts_t2 {
                 }
 
                 /* ---- back edge: RC_CALLEE (tail), +2 for the erased
-                 *      fun call (fun entry + fun return dispatch) ------- */
+                 *      fun call (fun entry + fun return dispatch).
+                 *      Yield/tombstone re-enter the OUTERMOST original
+                 *      callee over the outer-ordered continuation
+                 *      vector (physically resident by the relabeled
+                 *      homes) — the wrapper chain is a correct
+                 *      continuation from any loop state. ------------- */
 
                 crc->flags = T2_OP_RC_CALLEE | T2_OP_TAIL_SITE;
-                crc->mfa_m = callee_m;
-                crc->mfa_f = callee_f;
+                crc->mfa_m = outer_m;
+                crc->mfa_f = outer_f;
                 crc->live = ar;
-                crc->imm_int = (Sint64)(UWord)callee_lf;
+                crc->imm_int = (Sint64)(UWord)outer_lf;
                 crc->index += 2;
-                crc->sync = make_map(latch_vec, cmap);
+                {
+                    std::vector<T2Value *> crc_vec(ar, nullptr);
+
+                    for (uint32_t i = 0; i < ar; i++) {
+                        crc_vec[perm[i]] = latch_vec[i];
+                    }
+                    crc->sync = make_map(crc_vec, cmap);
+                }
 
                 /* ---- preheader: entry guard + the erased call's own
                  *      entry charge (RC#1) ------------------------------ */
@@ -3324,9 +4104,9 @@ namespace erts_t2 {
                                         T2OpKind::SpeculateType,
                                         T2Type::none());
 
-                    fn.set_operands(g, {cmap->x[acc_idx]});
+                    fn.set_operands(g, {cmap->x[perm[acc_idx]]});
                     g->operand_regs = fn.arena.alloc_array<int32_t>(1);
-                    g->operand_regs[0] = t2_xreg(acc_idx);
+                    g->operand_regs[0] = t2_xreg(perm[acc_idx]);
                     g->flags = T2_OP_INLINED | T2_OP_SPEC_REDISPATCH;
                     g->sync = cmap;
                     g->beam_idx = bi;
@@ -3338,11 +4118,16 @@ namespace erts_t2 {
 
                     fn.set_operands(rc1, {});
                     rc1->flags = T2_OP_RC_CALLEE | T2_OP_TAIL_SITE;
-                    rc1->mfa_m = callee_m;
-                    rc1->mfa_f = callee_f;
+                    rc1->mfa_m = outer_m;
+                    rc1->mfa_f = outer_f;
                     rc1->live = ar;
-                    rc1->imm_int = (Sint64)(UWord)callee_lf;
-                    rc1->index = 0; /* charge 1: the callee's entry check */
+                    rc1->imm_int = (Sint64)(UWord)outer_lf;
+                    /* charge 1 (the callee's entry check) + 1 per
+                     * NON-peeling wrapper level: a peeling wrapper's
+                     * erased fun call + loop handoff is exactly one
+                     * loop iteration's charge, which the extra
+                     * inlined iteration already pays. */
+                    rc1->index = rc1_extra;
                     rc1->sync = cmap;
                     rc1->beam_idx = bi;
                 }
@@ -3360,13 +4145,13 @@ namespace erts_t2 {
 
                     fn.set_operands(
                             rd,
-                            latch_vec_entry_map(cl_phis, cmap, fun_idx, ar));
+                            p1_outer_vec(cl_phis, cmap, fun_idx, ar, perm));
                     rd->operand_regs = fn.arena.alloc_array<int32_t>(ar);
                     for (uint32_t i = 0; i < ar; i++) {
                         rd->operand_regs[i] = t2_xreg(i);
                     }
-                    rd->mfa_m = callee_m;
-                    rd->mfa_f = callee_f;
+                    rd->mfa_m = outer_m;
+                    rd->mfa_f = outer_f;
                     rd->index = ar;
                     rd->sync = vec_map;
                     rd->beam_idx = bi;
@@ -3384,9 +4169,9 @@ namespace erts_t2 {
                     b_pre->terminator->beam_idx = bi;
                 }
 
-                /* Dependencies: the callee module (its loop is baked
-                 * into this blob) and our own instance (the inlined fun
-                 * body). */
+                /* Dependencies: EVERY module in the transitive chain
+                 * (each one's structure is baked into this blob) and
+                 * our own instance (the inlined fun body). */
                 {
                     auto add_dep = [&](const void *hdr) {
                         for (const void *d : fn.dep_hdrs) {
@@ -3396,40 +4181,47 @@ namespace erts_t2 {
                         }
                         fn.dep_hdrs.push_back(hdr);
                     };
-                    add_dep(callee_hdr);
+                    for (const void *hdr : chain_hdrs) {
+                        add_dep(hdr);
+                    }
                     add_dep(own_code_hdr);
                 }
 
                 if (p1_trace() || intrin_trace()) {
                     erts_fprintf(stderr,
                                  "t2_p1: %T:%T/%u inlined %T:%T/%u (tail "
-                                 "site, fun arg %u, beam_idx %u)\n",
+                                 "site, fun arg %u, beam_idx %u, chain "
+                                 "reds +%u)\n",
                                  fn.module,
                                  fn.function,
                                  (unsigned)fn.arity,
-                                 callee_m,
-                                 callee_f,
+                                 callee.module,
+                                 callee.function,
                                  (unsigned)ar,
                                  (unsigned)fun_idx,
-                                 (unsigned)bi);
+                                 (unsigned)bi,
+                                 (unsigned)rc1_extra);
                 }
 
                 changed = true;
                 return true;
             }
 
-            /* The loop-carried vector in param order: the phis, with
-             * the invariant fun slot holding the caller's boundary fun
-             * value. */
-            static std::vector<T2Value *> latch_vec_entry_map(
+            /* The loop-carried vector in OUTER argument order: the
+             * phis (each physically homed at its outer position by
+             * the relabeled clone), with the invariant fun slot
+             * holding the caller's boundary fun value. */
+            static std::vector<T2Value *> p1_outer_vec(
                     const std::vector<T2Op *> &cl_phis,
                     const T2SyncMap *cmap,
                     uint32_t fun_idx,
-                    uint32_t ar) {
+                    uint32_t ar,
+                    const uint32_t *perm) {
                 std::vector<T2Value *> v(ar, nullptr);
 
                 for (uint32_t i = 0; i < ar; i++) {
-                    v[i] = i == fun_idx ? cmap->x[i] : cl_phis[i]->result;
+                    v[perm[i]] = i == fun_idx ? cmap->x[perm[i]]
+                                              : cl_phis[i]->result;
                 }
                 return v;
             }
@@ -3567,72 +4359,289 @@ namespace erts_t2 {
                     }
                 }
 
-                /* Build the callee's HIR (the retained-code path the
-                 * debug BIFs use), recover its loop, admit, and — only
-                 * with every check green — clone + specialize. */
-                bool committed = false;
-                bool hard_err = false;
-                const char *why = "callee build/admission failed";
-                std::string berr;
+                /* ---- transitive descent (P1c-1) -------------------- *
+                 * Build the callee's HIR (the retained-code path the
+                 * debug BIFs use) and classify: a recoverable
+                 * self-recursive loop commits — bound to the ORIGINAL
+                 * call's boundary through the composed permutation —
+                 * while a thin fun-passing wrapper exposes its tail
+                 * call and the trigger re-runs on that target.
+                 * Bounded depth, visited set; anything else stays
+                 * generic. */
+                uint32_t ar = call->index;
+                Eterm cur_m = call->mfa_m;
+                Eterm cur_f = call->mfa_f;
+                const ErtsT2RetainedCode *cur_ret = cret;
+                uint32_t perm[T2_P1_MAX_ARITY];
+                uint32_t fun_pos = (uint32_t)fun_idx;
+                uint32_t wrappers = 0;
+                uint32_t peels = 0;
+                P1Pending pend;
+                std::vector<const void *> chain_hdrs{(const void *)chdr};
+                std::vector<std::pair<Eterm, Eterm>> visited{{cur_m, cur_f}};
 
-                T2BuildStatus bst = t2_build_for_debug(
-                        cret,
-                        call->mfa_f,
-                        (unsigned)call->index,
-                        [&](T2Function &callee) {
-                            bool recovered = false;
-                            std::string rerr;
-
-                            if (!t2_loop_recover(callee, &recovered, &rerr) ||
-                                !recovered) {
-                                why = "callee loop not recoverable";
-                                return;
-                            }
-                            if (!t2_validate(callee, &rerr)) {
-                                why = "callee invalid post-recovery";
-                                return;
-                            }
-
-                            T2LoopInfo cli;
-
-                            t2_loop_info(callee, &cli);
-
-                            int32_t acc_idx = -1;
-
-                            if (!p1_admit_callee(callee,
-                                                 cli,
-                                                 (uint32_t)fun_idx,
-                                                 fun_arity,
-                                                 &acc_idx,
-                                                 &why)) {
-                                return;
-                            }
-
-                            if (!p1_commit(call,
-                                           callee,
-                                           cli.loops[0],
-                                           (uint32_t)fun_idx,
-                                           acc_idx,
-                                           mf,
-                                           call->mfa_m,
-                                           call->mfa_f,
-                                           clf,
-                                           (const void *)chdr)) {
-                                hard_err = true;
-                                return;
-                            }
-                            committed = true;
-                        },
-                        &berr);
-
-                if (hard_err) {
-                    return false; /* *err set by p1_commit */
+                for (uint32_t i = 0; i < ar; i++) {
+                    perm[i] = i;
                 }
-                if (bst != T2BuildStatus::Ok || !committed) {
-                    p1_reject(call, why);
-                    return true;
+
+                for (;;) {
+                    bool committed = false;
+                    bool hard_err = false;
+                    bool wrapped = false;
+                    P1Wrap wr;
+                    const char *why = "callee build/admission failed";
+                    std::string berr;
+
+                    T2BuildStatus bst = t2_build_for_debug(
+                            cur_ret,
+                            cur_f,
+                            (unsigned)ar,
+                            [&](T2Function &callee) {
+                                bool recovered = false;
+                                std::string rerr;
+
+                                if (!t2_loop_recover(callee,
+                                                     &recovered,
+                                                     &rerr)) {
+                                    why = "callee loop recovery failed";
+                                    return;
+                                }
+                                if (recovered) {
+                                    if (!t2_validate(callee, &rerr)) {
+                                        why = "callee invalid "
+                                              "post-recovery";
+                                        return;
+                                    }
+
+                                    T2LoopInfo cli;
+
+                                    t2_loop_info(callee, &cli);
+
+                                    int32_t acc_idx = -1;
+
+                                    if (!p1_admit_callee(callee,
+                                                         cli,
+                                                         fun_pos,
+                                                         fun_arity,
+                                                         &acc_idx,
+                                                         &why)) {
+                                        return;
+                                    }
+                                    if (wrappers > 0 &&
+                                        !p1_chain_congruent(callee,
+                                                            cli.loops[0],
+                                                            fun_pos,
+                                                            acc_idx,
+                                                            pend,
+                                                            &why)) {
+                                        return;
+                                    }
+                                    if (!p1_commit(call,
+                                                   callee,
+                                                   cli.loops[0],
+                                                   fun_pos,
+                                                   acc_idx,
+                                                   mf,
+                                                   call->mfa_m,
+                                                   call->mfa_f,
+                                                   clf,
+                                                   chain_hdrs,
+                                                   perm,
+                                                   wrappers - peels)) {
+                                        hard_err = true;
+                                        return;
+                                    }
+                                    committed = true;
+                                    return;
+                                }
+
+                                /* Not a loop: try the wrapper shape. */
+                                if (wrappers >= T2_P1_MAX_DEPTH) {
+                                    why = "wrapper chain exceeds the "
+                                          "transitive depth bound";
+                                    return;
+                                }
+                                if (!p1_classify_wrapper(callee,
+                                                         fun_pos,
+                                                         fun_arity,
+                                                         &wr,
+                                                         &why)) {
+                                    return;
+                                }
+                                wrapped = true;
+                            },
+                            &berr);
+
+                    if (hard_err) {
+                        if (p1_trace() && err != nullptr) {
+                            erts_fprintf(stderr,
+                                         "t2_p1: %T:%T/%u hard error: "
+                                         "%s\n",
+                                         fn.module,
+                                         fn.function,
+                                         (unsigned)fn.arity,
+                                         err->c_str());
+                        }
+                        return false; /* *err set by p1_commit */
+                    }
+                    if (bst != T2BuildStatus::Ok) {
+                        p1_reject(call,
+                                  "chain callee not buildable "
+                                  "(eligibility/retention)");
+                        return true;
+                    }
+                    if (committed) {
+                        return true;
+                    }
+                    if (!wrapped) {
+                        p1_reject(call, why);
+                        return true;
+                    }
+
+                    /* Descend into the exposed tail-call target. */
+                    if (wr.arity != ar) {
+                        p1_reject(call, "wrapper changes arity");
+                        return true;
+                    }
+                    if (wr.m == fn.module) {
+                        p1_reject(call,
+                                  "own-module callee in the chain "
+                                  "(instance not committed at load "
+                                  "time)");
+                        return true;
+                    }
+                    {
+                        bool cycle = false;
+
+                        for (const auto &v : visited) {
+                            if (v.first == wr.m && v.second == wr.f) {
+                                cycle = true;
+                                break;
+                            }
+                        }
+                        if (cycle) {
+                            p1_reject(call, "wrapper chain cycles");
+                            return true;
+                        }
+                    }
+                    visited.emplace_back(wr.m, wr.f);
+
+                    /* Remap the pending constraints into the next
+                     * level's argument space, then merge this
+                     * level's. */
+                    uint32_t s_inv[T2_P1_MAX_ARITY] = {0};
+
+                    for (uint32_t j = 0; j < ar; j++) {
+                        s_inv[wr.src[j]] = j;
+                    }
+                    if (pend.peel) {
+                        pend.peel_acc = (int32_t)s_inv[pend.peel_acc];
+                        pend.peel_list = (int32_t)s_inv[pend.peel_list];
+                    }
+                    if (pend.nil_ret) {
+                        pend.nil_cond = (int32_t)s_inv[pend.nil_cond];
+                        pend.nil_ret_pos = (int32_t)s_inv[pend.nil_ret_pos];
+                    }
+                    pend.list_tested =
+                            p1_remap_mask(pend.list_tested, wr.src, ar);
+                    if (pend.has_leaves) {
+                        pend.leaf_mask =
+                                p1_remap_mask(pend.leaf_mask, wr.src, ar);
+                    }
+
+                    if (wr.peel) {
+                        if (pend.peel && (pend.peel_acc != wr.peel_acc ||
+                                          pend.peel_list != wr.peel_list ||
+                                          pend.peel_hd_op != wr.peel_hd_op ||
+                                          pend.peel_acc_op != wr.peel_acc_op)) {
+                            p1_reject(call, "chain peels disagree");
+                            return true;
+                        }
+                        pend.peel = true;
+                        pend.peel_acc = wr.peel_acc;
+                        pend.peel_list = wr.peel_list;
+                        pend.peel_hd_op = wr.peel_hd_op;
+                        pend.peel_acc_op = wr.peel_acc_op;
+                    }
+                    if (wr.nil_ret) {
+                        if (pend.nil_ret &&
+                            (pend.nil_cond != wr.nil_cond ||
+                             pend.nil_ret_pos != wr.nil_ret_pos)) {
+                            p1_reject(call, "chain nil exits disagree");
+                            return true;
+                        }
+                        pend.nil_ret = true;
+                        pend.nil_cond = wr.nil_cond;
+                        pend.nil_ret_pos = wr.nil_ret_pos;
+                    }
+                    pend.list_tested |= wr.list_tested;
+                    if (wr.has_leaves) {
+                        pend.leaf_mask =
+                                pend.has_leaves
+                                        ? (pend.leaf_mask & wr.leaf_mask)
+                                        : wr.leaf_mask;
+                        pend.has_leaves = true;
+                    }
+
+                    /* Compose the outer permutation and track the
+                     * fun through the chain. */
+                    {
+                        uint32_t np[T2_P1_MAX_ARITY];
+
+                        for (uint32_t j = 0; j < ar; j++) {
+                            np[j] = perm[wr.src[j]];
+                        }
+                        for (uint32_t j = 0; j < ar; j++) {
+                            perm[j] = np[j];
+                        }
+                    }
+                    fun_pos = wr.fun_pos;
+                    wrappers++;
+                    peels += wr.peel ? 1 : 0;
+
+                    if (wr.m != cur_m) {
+                        Module *nm =
+                                erts_get_module(wr.m, erts_active_code_ix());
+
+                        if (nm == nullptr || nm->curr.code_hdr == nullptr ||
+                            nm->curr.t2_retained == nullptr) {
+                            p1_reject(call,
+                                      "chain module not "
+                                      "loaded/retained");
+                            return true;
+                        }
+                        cur_ret = nm->curr.t2_retained;
+
+                        const void *nh = (const void *)nm->curr.code_hdr;
+                        bool have = false;
+
+                        for (const void *h : chain_hdrs) {
+                            if (h == nh) {
+                                have = true;
+                                break;
+                            }
+                        }
+                        if (!have) {
+                            chain_hdrs.push_back(nh);
+                        }
+                    }
+                    cur_m = wr.m;
+                    cur_f = wr.f;
+
+                    if (p1_trace()) {
+                        erts_fprintf(stderr,
+                                     "t2_p1: %T:%T/%u descending into "
+                                     "%T:%T/%u (depth %u%s)\n",
+                                     fn.module,
+                                     fn.function,
+                                     (unsigned)fn.arity,
+                                     cur_m,
+                                     cur_f,
+                                     (unsigned)ar,
+                                     (unsigned)wrappers,
+                                     wr.peel ? ", peel" : "");
+                    }
                 }
-                return true;
             }
 
             bool run() {

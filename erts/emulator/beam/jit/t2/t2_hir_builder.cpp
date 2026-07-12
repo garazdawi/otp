@@ -1571,6 +1571,25 @@ namespace erts_t2 {
                 break;
             }
 
+            case genop_is_function2_3: {
+                /* is_function2 Fail Src Arity — the eligibility scan
+                 * admitted only the register-source, immediate-arity
+                 * shape. index = the tested arity. Decoded so the P1c
+                 * wrapper classifier sees guard-carrying fold wrappers
+                 * (lists:foldl/3); like CallFun there is deliberately
+                 * NO isel lowering — a function whose blob would still
+                 * contain an IsFunction degrades to T1 at isel. */
+                T2Value *v = emit_result_op(T2OpKind::IsFunction,
+                                            {read_arg_r(dop.args[1])},
+                                            bool_type());
+
+                if (v != nullptr) {
+                    v->def->index = (uint32_t)dop.args[2].val;
+                }
+                guard_branch(v, dop.args[0]);
+                break;
+            }
+
             case genop_is_lt_3:
                 translate_compare(T2OpKind::CmpLt, dop);
                 break;

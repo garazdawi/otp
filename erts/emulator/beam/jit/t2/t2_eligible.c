@@ -103,6 +103,13 @@ int erts_t2_genop_supported(int genop) {
     case genop_is_tuple_2:
     case genop_test_arity_3:
     case genop_is_tagged_tuple_4:
+    /* is_function2 with an immediate arity only (argument-checked in
+     * the scan below, like bs_match). Decoded to the IsFunction HIR op
+     * so the P1c wrapper classifier (t2_intrinsics.cpp) can see
+     * guard-carrying fold wrappers like lists:foldl/3. Like CallFun
+     * there is deliberately NO isel lowering: a function whose blob
+     * would still contain an IsFunction degrades to T1 at isel. */
+    case genop_is_function2_3:
     case genop_is_lt_3:
     case genop_is_ge_3:
     case genop_is_eq_3:
@@ -307,6 +314,19 @@ static int bs_match_op_supported(BeamFile *beam, const BeamOp *op) {
  * comparison the backend lowers via T1's bif_is_* emitters. '=='/'/='
  * (arith equality) are excluded — T1 routes them through the generic
  * i_bif2 C call, which needs a T1 PC a blob does not have. */
+/* is_function2 Fail Src Arity: only the guard shape with a register
+ * source and an immediate small arity is decoded (the T2 builder puts
+ * the arity in the IsFunction op's index field). A register/abstract
+ * arity keeps the function T1. */
+static int is_function2_op_supported(const BeamOp *op) {
+    if (op->arity < 3 || op->a[0].type != TAG_f ||
+        (op->a[1].type != TAG_x && op->a[1].type != TAG_y) ||
+        (op->a[2].type != TAG_i && op->a[2].type != TAG_u)) {
+        return 0;
+    }
+    return op->a[2].val <= MAX_ARG;
+}
+
 static int t2_bif2_op_supported(BeamFile *beam, const BeamOp *op) {
     const BeamFile_ImportEntry *e;
 
@@ -432,6 +452,10 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                     fn_ok = 0;
                 }
             } else if (fn_ok && !erts_t2_genop_supported(op->op)) {
+                fn_ok = 0;
+            } else if (fn_ok && op->op == genop_is_function2_3 &&
+                       !is_function2_op_supported(op)) {
+                /* Register/abstract arity: outside the decoded shape. */
                 fn_ok = 0;
             } else if (fn_ok && op->op == genop_bs_match_3 &&
                        !bs_match_op_supported(beam, op)) {
