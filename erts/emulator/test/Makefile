@@ -118,6 +118,7 @@ MODULES= \
 	statistics_SUITE \
 	system_info_SUITE \
 	system_profile_SUITE \
+	t2_fidelity_SUITE \
 	t2_g1_SUITE \
 	t2_parity_SUITE \
 	t2_smoke_SUITE \
