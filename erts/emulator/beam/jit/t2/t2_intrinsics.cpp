@@ -5483,7 +5483,12 @@ namespace erts_t2 {
                 }
 
                 if (is_local) {
-                    std::vector<std::pair<Eterm, uint32_t>> lvisited{
+                    /* uint64_t, not Eterm/UWord, as the template arg:
+                     * GCC's -Werror=ignored-attributes rejects an
+                     * attributed typedef here (Eterm carries alignment
+                     * attributes); the values are only stored + compared
+                     * by equality, so the plain integer is equivalent. */
+                    std::vector<std::pair<uint64_t, uint32_t>> lvisited{
                             {tgt_f, tgt_ar}};
 
                     for (;;) {
@@ -5666,7 +5671,10 @@ namespace erts_t2 {
                 uint32_t peels = 0;
                 P1Pending pend;
                 std::vector<const void *> chain_hdrs{(const void *)chdr};
-                std::vector<std::pair<Eterm, Eterm>> visited{{cur_m, cur_f}};
+                /* uint64_t, not Eterm: -Werror=ignored-attributes (GCC)
+                 * rejects the attributed typedef as a template arg. */
+                std::vector<std::pair<uint64_t, uint64_t>> visited{
+                        {cur_m, cur_f}};
 
                 for (uint32_t i = 0; i < ar; i++) {
                     perm[i] = i;
