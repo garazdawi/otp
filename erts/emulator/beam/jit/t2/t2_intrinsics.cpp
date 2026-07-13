@@ -6362,4 +6362,618 @@ namespace erts_t2 {
         return true;
     }
 
+    /* ------------------------------------------------------------------ *
+     * P-C increment A1: verbatim xN unroll of the skip-count cursor-IV   *
+     * scan loop (see t2_intrinsics.hpp; PLAN/T2FULL/14 §4)               *
+     * ------------------------------------------------------------------ */
+
+    namespace {
+
+        /* The recognized loop (the P-B output for a `cnt/2`-class
+         * skip-count scanner, post loop recovery, pre speculation):
+         *
+         *   H (header, 2 phis):  ctx_phi @Xc, acc_phi @Xa
+         *                        v2 = start_match ctx_phi
+         *                        ok = succeeded v2
+         *                        branch ok, then: M, else: <err>
+         *   M (match):           [pos = bs_get_position v2]   (optional)
+         *                        lim = bs_limit v2   !raw
+         *                        cur = bs_cursor v2  !raw
+         *                        en  = bs_ensure cur, lim     imm = S
+         *                        branch en, then: LATCH, else: <backtrack>
+         *   LATCH:               cS   = const_int S
+         *                        adv  = add_small cur, cS  !raw !no_ovf
+         *                        bs_sync v2, adv
+         *                        cC   = const_int C
+         *                        acc' = add acc_phi, cC    sync={...}
+         *                        ctx' = copy v2 @Xc
+         *                        reduction_check sync={ctx',acc'}
+         *                        jump H
+         *
+         * (The accumulator is still the GENERIC gc_bif Add at this
+         * point in the pipeline — the speculation pass converts it,
+         * and every verbatim clone of it, to the boundary-class
+         * AddSmall afterwards.) Anything else bails. */
+        struct A1Shape {
+            T2BasicBlock *h;
+            T2BasicBlock *m;
+            T2BasicBlock *latch;
+            T2Op *ctx_phi;
+            T2Op *acc_phi;
+            T2Op *sm;      /* start_match           */
+            T2Op *get_pos; /* optional; may be null */
+            T2Op *limit;
+            T2Op *cursor;
+            T2Op *ensure;
+            T2Op *adv_const;
+            T2Op *adv;
+            T2Op *bsync;
+            T2Op *acc_const;
+            T2Op *acc;
+            T2Op *ctx_copy;
+            T2Op *rc;
+            Sint64 stride; /* bits */
+        };
+
+        bool a1_bail(const T2Function &fn, const char *why) {
+            if (getenv("T2_UNROLL_TRACE") != nullptr) {
+                erts_fprintf(stderr,
+                             "t2_unroll: %T:%T/%u bail: %s\n",
+                             fn.module,
+                             fn.function,
+                             (unsigned)fn.arity,
+                             why);
+            }
+            return false;
+        }
+
+        /* Strict shape match; any mismatch bails (the loop then stays
+         * exactly as P-B emitted it). Safety over coverage. */
+        bool a1_recognize(T2Function &fn,
+                          const T2LoopInfo &li,
+                          size_t idx,
+                          A1Shape *out) {
+            const T2Loop &loop = li.loops[idx];
+
+            if (loop.preheader == T2_NO_LOOP_BLOCK) {
+                return a1_bail(fn, "no preheader");
+            }
+            if (loop.parent != -1) {
+                return a1_bail(fn, "nested loop (has a parent)");
+            }
+            for (size_t i = 0; i < li.loops.size(); i++) {
+                if (li.loops[i].parent == (int32_t)idx) {
+                    return a1_bail(fn, "nested loop (has a child)");
+                }
+            }
+            if (loop.latches.size() != 1) {
+                return a1_bail(fn, "multiple latches");
+            }
+            if (loop.body.size() != 3) {
+                return a1_bail(fn, "body is not header+match+latch");
+            }
+
+            std::unordered_set<uint32_t> body(loop.body.begin(),
+                                              loop.body.end());
+            T2BasicBlock *h = fn.blocks[loop.header];
+            T2BasicBlock *latch = fn.blocks[loop.latches[0]];
+
+            /* --- header: exactly {ctx, acc} phis + start_match +
+             *     succeeded + branch(M, err) --------------------------- */
+            T2Op *p0 = h->phis_head;
+
+            if (p0 == nullptr || p0->next == nullptr ||
+                p0->next->next != nullptr) {
+                return a1_bail(fn, "header phi count != 2");
+            }
+
+            T2Op *p1 = p0->next;
+
+            for (T2Op *p : {p0, p1}) {
+                if (p->num_operands != 2 || p->phi_blocks == nullptr ||
+                    p->dst_reg == T2_REG_NONE || !t2_reg_is_x(p->dst_reg) ||
+                    (p->flags & T2_OP_RAW_MODE) != 0) {
+                    return a1_bail(fn, "header phi shape");
+                }
+                bool from_pre = false, from_latch = false;
+
+                for (uint16_t i = 0; i < 2; i++) {
+                    from_pre |= p->phi_blocks[i]->id == loop.preheader;
+                    from_latch |= p->phi_blocks[i] == latch;
+                }
+                if (!from_pre || !from_latch) {
+                    return a1_bail(fn, "header phi edges");
+                }
+            }
+
+            T2Op *sm = h->ops_head;
+
+            if (sm == nullptr || sm->kind != T2OpKind::StartMatch ||
+                sm->num_operands != 1 || sm->dst_reg == T2_REG_NONE ||
+                !t2_reg_is_x(sm->dst_reg)) {
+                return a1_bail(fn, "header start_match");
+            }
+
+            T2Op *ok = sm->next;
+
+            if (ok == nullptr || ok->kind != T2OpKind::Succeeded ||
+                ok->num_operands != 1 || ok->operands[0] != sm->result ||
+                ok->next != nullptr) {
+                return a1_bail(fn, "header succeeded");
+            }
+
+            const T2Op *hterm = h->terminator;
+
+            if (hterm == nullptr || hterm->kind != T2OpKind::Branch ||
+                hterm->num_operands != 1 || hterm->operands[0] != ok->result ||
+                hterm->succ_then == nullptr || hterm->succ_else == nullptr) {
+                return a1_bail(fn, "header branch");
+            }
+
+            T2BasicBlock *m = hterm->succ_then;
+
+            if (body.count(m->id) == 0 || m == h || m == latch ||
+                body.count(hterm->succ_else->id) != 0) {
+                return a1_bail(fn, "header edges");
+            }
+
+            T2Op *ctx_phi;
+            T2Op *acc_phi;
+
+            if (sm->operands[0] == p0->result) {
+                ctx_phi = p0;
+                acc_phi = p1;
+            } else if (sm->operands[0] == p1->result) {
+                ctx_phi = p1;
+                acc_phi = p0;
+            } else {
+                return a1_bail(fn, "start_match operand is not a header phi");
+            }
+
+            /* --- M: [bs_get_position] bs_limit bs_cursor bs_ensure +
+             *     branch(LATCH, backtrack) ----------------------------- */
+            if (m->phis_head != nullptr) {
+                return a1_bail(fn, "match block has phis");
+            }
+
+            T2Op *op = m->ops_head;
+            T2Op *get_pos = nullptr;
+
+            if (op != nullptr && op->kind == T2OpKind::BsGetPosition) {
+                if (op->num_operands != 1 || op->operands[0] != sm->result ||
+                    op->dst_reg == T2_REG_NONE || !t2_reg_is_x(op->dst_reg)) {
+                    return a1_bail(fn, "bs_get_position shape");
+                }
+                get_pos = op;
+                op = op->next;
+            }
+
+            T2Op *limit = op;
+
+            if (limit == nullptr || limit->kind != T2OpKind::BsLimit ||
+                limit->num_operands != 1 || limit->operands[0] != sm->result ||
+                (limit->flags & T2_OP_RAW_MODE) == 0 ||
+                limit->dst_reg == T2_REG_NONE || !t2_reg_is_x(limit->dst_reg)) {
+                return a1_bail(fn, "bs_limit shape");
+            }
+
+            T2Op *cursor = limit->next;
+
+            if (cursor == nullptr || cursor->kind != T2OpKind::BsCursor ||
+                cursor->num_operands != 1 ||
+                cursor->operands[0] != sm->result ||
+                (cursor->flags & T2_OP_RAW_MODE) == 0 ||
+                cursor->dst_reg == T2_REG_NONE ||
+                !t2_reg_is_x(cursor->dst_reg)) {
+                return a1_bail(fn, "bs_cursor shape");
+            }
+
+            T2Op *ensure = cursor->next;
+
+            if (ensure == nullptr || ensure->kind != T2OpKind::BsEnsure ||
+                ensure->num_operands != 2 ||
+                ensure->operands[0] != cursor->result ||
+                ensure->operands[1] != limit->result ||
+                ensure->next != nullptr) {
+                return a1_bail(fn, "bs_ensure shape");
+            }
+            if (ensure->imm_int <= 0 || ensure->imm_int % 8 != 0) {
+                return a1_bail(fn, "stride is not a whole byte count");
+            }
+
+            const T2Op *mterm = m->terminator;
+
+            if (mterm == nullptr || mterm->kind != T2OpKind::Branch ||
+                mterm->num_operands != 1 ||
+                mterm->operands[0] != ensure->result ||
+                mterm->succ_then != latch || mterm->succ_else == nullptr ||
+                body.count(mterm->succ_else->id) != 0) {
+                return a1_bail(fn, "match branch");
+            }
+
+            /* --- LATCH: exactly the per-byte body ------------------- */
+            if (latch->phis_head != nullptr) {
+                return a1_bail(fn, "latch has phis");
+            }
+
+            T2Op *c1 = latch->ops_head;
+
+            if (c1 == nullptr || c1->kind != T2OpKind::ConstInt ||
+                c1->imm_int != ensure->imm_int) {
+                return a1_bail(fn, "latch advance constant");
+            }
+
+            T2Op *adv = c1->next;
+
+            if (adv == nullptr || adv->kind != T2OpKind::AddSmall ||
+                adv->num_operands != 2 || adv->operands[0] != cursor->result ||
+                adv->operands[1] != c1->result ||
+                (adv->flags & T2_OP_RAW_MODE) == 0 ||
+                (adv->flags & T2_OP_NO_OVF) == 0 ||
+                adv->dst_reg != cursor->dst_reg || adv->sync != nullptr) {
+                return a1_bail(fn, "latch cursor advance");
+            }
+
+            T2Op *bsync = adv->next;
+
+            if (bsync == nullptr || bsync->kind != T2OpKind::BsSync ||
+                bsync->num_operands != 2 || bsync->operands[0] != sm->result ||
+                bsync->operands[1] != adv->result) {
+                return a1_bail(fn, "latch bs_sync");
+            }
+
+            T2Op *c2 = bsync->next;
+
+            if (c2 == nullptr || c2->kind != T2OpKind::ConstInt ||
+                !IS_SSMALL(c2->imm_int)) {
+                return a1_bail(fn, "latch accumulator constant");
+            }
+
+            T2Op *acc = c2->next;
+
+            if (acc == nullptr || acc->kind != T2OpKind::Add ||
+                acc->num_operands != 2 || acc->operands[0] != acc_phi->result ||
+                acc->operands[1] != c2->result || acc->sync == nullptr ||
+                acc->sync->frame_size != T2_NO_FRAME || acc->raw_mask != 0 ||
+                acc->flags != 0 || acc->dst_reg != acc_phi->dst_reg) {
+                return a1_bail(fn,
+                               "latch accumulator (A1 is skip-count "
+                               "add-const only)");
+            }
+
+            T2Op *cpy = acc->next;
+
+            if (cpy == nullptr || cpy->kind != T2OpKind::Copy ||
+                cpy->num_operands != 1 || cpy->operands[0] != sm->result ||
+                cpy->flags != 0 || cpy->dst_reg != ctx_phi->dst_reg) {
+                return a1_bail(fn, "latch context copy");
+            }
+
+            T2Op *rc = cpy->next;
+
+            if (rc == nullptr || rc->kind != T2OpKind::ReductionCheck ||
+                rc->num_operands != 0 || rc->flags != 0 || rc->raw_mask != 0 ||
+                rc->sync == nullptr || rc->sync->frame_size != T2_NO_FRAME ||
+                rc->next != nullptr) {
+                return a1_bail(fn, "latch reduction_check");
+            }
+
+            const T2Op *lterm = latch->terminator;
+
+            if (lterm == nullptr || lterm->kind != T2OpKind::Jump ||
+                lterm->succ_then != h) {
+                return a1_bail(fn, "latch back edge");
+            }
+
+            /* --- phi threading: the latch edge carries {ctx', acc'} - */
+            for (uint16_t i = 0; i < 2; i++) {
+                if (ctx_phi->phi_blocks[i] == latch &&
+                    ctx_phi->operands[i] != cpy->result) {
+                    return a1_bail(fn, "ctx phi latch input");
+                }
+                if (acc_phi->phi_blocks[i] == latch &&
+                    acc_phi->operands[i] != acc->result) {
+                    return a1_bail(fn, "acc phi latch input");
+                }
+            }
+
+            /* --- home disjointness ----------------------------------- *
+             * The transform re-materializes the raw cursor/limit temps
+             * on the fast path (FC), so their homes must not alias the
+             * three term homes the clone sync maps are rebuilt from —
+             * an aliased write would silently invalidate a map. */
+            const int32_t seed_homes[3] = {ctx_phi->dst_reg,
+                                           acc_phi->dst_reg,
+                                           sm->dst_reg};
+
+            if (ctx_phi->dst_reg == acc_phi->dst_reg) {
+                return a1_bail(fn, "phi home collision");
+            }
+            for (int32_t home : seed_homes) {
+                if (cursor->dst_reg == home || limit->dst_reg == home) {
+                    return a1_bail(fn, "raw temp home aliases a term home");
+                }
+            }
+            if (cursor->dst_reg == limit->dst_reg) {
+                return a1_bail(fn, "cursor/limit home collision");
+            }
+
+            /* --- sync maps vs the walked register contents ----------- *
+             * Walk the latch's register state (entered via M) and check
+             * both maps name exactly the walked contents, and only in
+             * homes the fast path re-establishes (the three seed homes;
+             * the transform rebuilds the clone maps from the same walk
+             * over the FL path, which skips M, so the only divergence
+             * is the dead bs_get_position home — it holds the ctx phi's
+             * term there, a valid GC term the T1 continuation never
+             * reads). */
+            std::unordered_map<int32_t, const T2Value *> content;
+
+            content[ctx_phi->dst_reg] = ctx_phi->result;
+            content[acc_phi->dst_reg] = acc_phi->result;
+            content[sm->dst_reg] = sm->result;
+            if (get_pos != nullptr) {
+                content[get_pos->dst_reg] = get_pos->result;
+            }
+
+            auto maps_walked = [&](const T2SyncMap *map) -> bool {
+                for (uint32_t i = 0; i < map->x_live; i++) {
+                    int32_t r = t2_xreg(i);
+                    auto it = content.find(r);
+
+                    if (it == content.end() || it->second != map->x[i]) {
+                        return false;
+                    }
+                    if (r != seed_homes[0] && r != seed_homes[1] &&
+                        r != seed_homes[2]) {
+                        /* Not FL-coverable (e.g. an out-of-line
+                         * bs_get_position home). */
+                        return false;
+                    }
+                }
+                return true;
+            };
+
+            if (!maps_walked(acc->sync)) {
+                return a1_bail(fn, "accumulator sync map contents");
+            }
+            content[acc->dst_reg] = acc->result;
+            content[cpy->dst_reg] = cpy->result;
+            if (!maps_walked(rc->sync)) {
+                return a1_bail(fn, "reduction_check sync map contents");
+            }
+
+            out->h = h;
+            out->m = m;
+            out->latch = latch;
+            out->ctx_phi = ctx_phi;
+            out->acc_phi = acc_phi;
+            out->sm = sm;
+            out->get_pos = get_pos;
+            out->limit = limit;
+            out->cursor = cursor;
+            out->ensure = ensure;
+            out->adv_const = c1;
+            out->adv = adv;
+            out->bsync = bsync;
+            out->acc_const = c2;
+            out->acc = acc;
+            out->ctx_copy = cpy;
+            out->rc = rc;
+            out->stride = ensure->imm_int;
+            return true;
+        }
+
+        /* N = word_bits / stride, overridable by T2_UNROLL_N (decimal,
+         * clamped to 1..16); N <= 1 disables the transform. */
+        int a1_pick_n(Sint64 stride_bits) {
+            long n = stride_bits > 0 ? 64 / stride_bits : 1;
+            const char *e = getenv("T2_UNROLL_N");
+
+            if (e != nullptr) {
+                char *end = nullptr;
+                long v = strtol(e, &end, 10);
+
+                if (end != e) {
+                    n = v;
+                }
+            }
+            if (n < 1) {
+                n = 1;
+            }
+            if (n > 16) {
+                n = 16;
+            }
+            return (int)n;
+        }
+
+    } /* anonymous namespace */
+
+    bool t2_unroll(T2Function &fn,
+                   const T2LoopInfo &li,
+                   bool *changed,
+                   std::string *err) {
+        (void)err;
+        *changed = false;
+
+        if (fn.blocks.empty() || !fn.sync_complete) {
+            return true;
+        }
+
+        for (size_t idx = 0; idx < li.loops.size(); idx++) {
+            A1Shape s;
+
+            if (!a1_recognize(fn, li, idx, &s)) {
+                continue;
+            }
+
+            int n = a1_pick_n(s.stride);
+
+            if (n <= 1) {
+                a1_bail(fn, "N <= 1 (no-op)");
+                continue;
+            }
+
+            /* Register contents along the fast path (header -> FC ->
+             * FL), used to build each clone's sync map: identical to
+             * the recognizer's latch walk except that M is skipped, so
+             * the dead bs_get_position home keeps the ctx phi's term. */
+            std::unordered_map<int32_t, T2Value *> content;
+
+            content[s.ctx_phi->dst_reg] = s.ctx_phi->result;
+            content[s.acc_phi->dst_reg] = s.acc_phi->result;
+            content[s.sm->dst_reg] = s.sm->result;
+
+            auto clone_map = [&](const T2SyncMap *map) -> T2SyncMap * {
+                T2SyncMap *c = fn.arena.create<T2SyncMap>();
+
+                c->x_live = map->x_live;
+                c->x = fn.arena.alloc_array<T2Value *>(map->x_live);
+                for (uint32_t i = 0; i < map->x_live; i++) {
+                    c->x[i] = content.at(t2_xreg(i));
+                }
+                c->frame_size = T2_NO_FRAME;
+                c->y = nullptr;
+                return c;
+            };
+            auto clone_regs = [&](T2Op *dst, const T2Op *src) {
+                if (src->operand_regs == nullptr) {
+                    return;
+                }
+                dst->operand_regs =
+                        fn.arena.alloc_array<int32_t>(src->num_operands);
+                for (uint16_t i = 0; i < src->num_operands; i++) {
+                    dst->operand_regs[i] = src->operand_regs[i];
+                }
+            };
+
+            /* --- FC: the fast-path bounds check ---------------------- */
+            T2BasicBlock *fc = fn.new_block();
+            T2BasicBlock *fl = fn.new_block();
+
+            T2Op *lim2 = fn.new_op(fc, T2OpKind::BsLimit, s.limit->type);
+
+            fn.set_operands(lim2, {s.sm->result});
+            clone_regs(lim2, s.limit);
+            lim2->dst_reg = s.limit->dst_reg;
+            lim2->flags = s.limit->flags;
+            lim2->beam_idx = s.limit->beam_idx;
+
+            T2Op *cur2 = fn.new_op(fc, T2OpKind::BsCursor, s.cursor->type);
+
+            fn.set_operands(cur2, {s.sm->result});
+            clone_regs(cur2, s.cursor);
+            cur2->dst_reg = s.cursor->dst_reg;
+            cur2->flags = s.cursor->flags;
+            cur2->beam_idx = s.cursor->beam_idx;
+
+            T2Op *en2 = fn.new_op(fc, T2OpKind::BsEnsure, s.ensure->type);
+
+            fn.set_operands(en2, {cur2->result, lim2->result});
+            clone_regs(en2, s.ensure);
+            en2->imm_int = (Sint64)n * s.stride;
+            en2->index = s.ensure->index;
+            en2->beam_idx = s.ensure->beam_idx;
+
+            fn.emit_branch(fc, en2->result, fl, s.m);
+            fc->terminator->beam_idx = s.m->terminator->beam_idx;
+
+            /* Re-point the header's success edge at the fast check; M
+             * (and everything behind it) becomes the remainder path. */
+            s.h->terminator->succ_then = fc;
+
+            /* --- FL: N verbatim copies of the per-byte body ---------- */
+            T2Value *cur_k = cur2->result;
+            T2Value *acc_k = s.acc_phi->result;
+
+            for (int k = 0; k < n; k++) {
+                T2Value *cs = fn.emit_const_int(fl, s.stride);
+
+                cs->def->beam_idx = s.adv_const->beam_idx;
+
+                T2Op *adv_k = fn.new_op(fl, T2OpKind::AddSmall, s.adv->type);
+
+                fn.set_operands(adv_k, {cur_k, cs});
+                clone_regs(adv_k, s.adv);
+                adv_k->dst_reg = s.adv->dst_reg;
+                adv_k->flags = s.adv->flags;
+                adv_k->beam_idx = s.adv->beam_idx;
+                cur_k = adv_k->result;
+
+                T2Op *sync_k = fn.new_op(fl, T2OpKind::BsSync, s.bsync->type);
+
+                fn.set_operands(sync_k, {s.sm->result, cur_k});
+                clone_regs(sync_k, s.bsync);
+                sync_k->beam_idx = s.bsync->beam_idx;
+
+                T2Value *cc = fn.emit_const_int(fl, s.acc_const->imm_int);
+
+                cc->def->beam_idx = s.acc_const->beam_idx;
+
+                T2Op *acc_next = fn.new_op(fl, T2OpKind::Add, s.acc->type);
+
+                fn.set_operands(acc_next, {acc_k, cc});
+                clone_regs(acc_next, s.acc);
+                acc_next->dst_reg = s.acc->dst_reg;
+                acc_next->live = s.acc->live;
+                acc_next->mfa_m = s.acc->mfa_m;
+                acc_next->mfa_f = s.acc->mfa_f;
+                acc_next->bif_num = s.acc->bif_num;
+                acc_next->beam_idx = s.acc->beam_idx;
+                acc_next->sync = clone_map(s.acc->sync);
+                acc_k = acc_next->result;
+                content[s.acc->dst_reg] = acc_k;
+            }
+
+            T2Op *cpy2 = fn.new_op(fl, T2OpKind::Copy, s.ctx_copy->type);
+
+            fn.set_operands(cpy2, {s.sm->result});
+            clone_regs(cpy2, s.ctx_copy);
+            cpy2->dst_reg = s.ctx_copy->dst_reg;
+            cpy2->beam_idx = s.ctx_copy->beam_idx;
+            content[s.ctx_copy->dst_reg] = cpy2->result;
+
+            T2Op *rc2 = fn.new_op(fl, T2OpKind::ReductionCheck, s.rc->type);
+
+            fn.set_operands(rc2, {});
+            rc2->index = s.rc->index;
+            rc2->beam_idx = s.rc->beam_idx;
+            rc2->sync = clone_map(s.rc->sync);
+
+            fn.emit_jump(fl, s.h);
+            fl->terminator->beam_idx = s.latch->terminator->beam_idx;
+
+            /* --- third phi inputs: the FL back edge ------------------ */
+            for (T2Op *phi : {s.ctx_phi, s.acc_phi}) {
+                std::vector<T2Value *> vals;
+                std::vector<T2BasicBlock *> preds;
+
+                for (uint16_t i = 0; i < phi->num_operands; i++) {
+                    vals.push_back(phi->operands[i]);
+                    preds.push_back(phi->phi_blocks[i]);
+                }
+                vals.push_back(phi == s.ctx_phi ? cpy2->result : acc_k);
+                preds.push_back(fl);
+                fn.set_phi_inputs(phi, vals, preds);
+            }
+
+            fn.finalize();
+            *changed = true;
+
+            if (getenv("T2_UNROLL_TRACE") != nullptr) {
+                erts_fprintf(stderr,
+                             "t2_unroll: %T:%T/%u x%d (stride %ld bits, "
+                             "header block%u)\n",
+                             fn.module,
+                             fn.function,
+                             (unsigned)fn.arity,
+                             n,
+                             (long)s.stride,
+                             s.h->id);
+            }
+        }
+
+        return true;
+    }
+
 } /* namespace erts_t2 */

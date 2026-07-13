@@ -109,6 +109,31 @@ namespace erts_t2 {
                       bool *changed,
                       std::string *err);
 
+    /* P-C increment A1 (PLAN/T2FULL/14 §4): verbatim xN unroll of the
+     * simplest cursor-IV loop — a skip-count byte scanner whose latch
+     * is exactly {cursor advance, bs_sync, acc += const} (`cnt/2`
+     * shape; no reads). Inserts a fast path: a new bounds check block
+     * (one bs_ensure of N*stride bits) branching to a new N-wide latch
+     * holding N byte-for-byte copies of the per-byte body — same
+     * homes, flags and sync-map shape with the threaded SSA values
+     * substituted — sharing ONE reduction check and ONE back edge; the
+     * original 1-wide body is kept untouched as the remainder. Because
+     * every copy is verbatim, a deopt at any byte re-enters T1 at the
+     * same beam op PC with the same register contract as the 1-wide
+     * loop — deopt-correct by construction, no new deopt shapes.
+     *
+     * N = 64/stride (T2_UNROLL_N overrides, clamped to 1..16; N <= 1
+     * is a no-op). The recognizer bails — the pass makes no change —
+     * on ANY shape mismatch: nested loops, multiple latches, a read in
+     * the latch, a non-constant accumulator, extra ops. Sets *changed
+     * when a loop was unrolled; the caller re-validates and re-runs
+     * loop analysis (the CFG changed). T2_NO_UNROLL=1 disables the
+     * pass; T2_UNROLL_TRACE=1 logs accepts and bail reasons. */
+    bool t2_unroll(T2Function &fn,
+                   const T2LoopInfo &li,
+                   bool *changed,
+                   std::string *err);
+
 } /* namespace erts_t2 */
 
 #endif /* _JIT_T2_INTRINSICS_HPP */

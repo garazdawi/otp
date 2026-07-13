@@ -396,6 +396,47 @@ namespace {
 
                 t2_loop_info(hir, &li);
 
+                /* Cursor-IV loop unroll, increment A1 (PLAN/T2FULL/14
+                 * §4): xN verbatim unroll of the skip-count scan loop.
+                 * Mutates the CFG (two new blocks + a third phi edge
+                 * per header phi), so on change the function is
+                 * re-validated in full and the loop analysis re-run
+                 * before the passes below read `li`. The cloned
+                 * accumulator adds are still generic here; the
+                 * speculation pass below converts them exactly as it
+                 * converts the 1-wide original. T2_NO_UNROLL=1
+                 * disables the pass. */
+                if (getenv("T2_NO_UNROLL") == NULL) {
+                    bool unrolled = false;
+
+                    if (!t2_unroll(hir, li, &unrolled, &err)) {
+                        if (diag) {
+                            *diag = "unroll: " + err;
+                        }
+                        return T2CompileStatus::IselUnsupported;
+                    }
+                    if (unrolled) {
+                        if (getenv("T2_OPT_DUMP") != NULL) {
+                            std::string d = t2_dump(hir);
+
+                            erts_fprintf(stderr,
+                                         "t2_unroll dump %T:%T/%u\n",
+                                         hir.module,
+                                         hir.function,
+                                         (unsigned)hir.arity);
+                            fwrite(d.data(), 1, d.size(), stderr);
+                        }
+                        if (!t2_validate(hir, &err)) {
+                            if (diag) {
+                                *diag = "post-unroll validate: " + err;
+                            }
+                            return T2CompileStatus::IselUnsupported;
+                        }
+                        t2_loop_info(hir, &li);
+                        rewritten = true;
+                    }
+                }
+
                 /* Local leaf inlining + loop shape-up (P2 commit 6):
                  * splice the loop's single leaf callee, drop the frame
                  * the call forced, and preserve the re-call vector.
