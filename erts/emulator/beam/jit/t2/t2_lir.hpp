@@ -481,6 +481,14 @@ namespace erts_t2 {
         uint8_t raw_srcs;
         bool raw_dst;
 
+        /* P3 (T2_OP_NO_OVF): this AddSmall/SubSmall provably cannot
+         * overflow the small range (validator-re-proven range fact);
+         * the emitter uses a plain add/sub — no flag check, no b.vs,
+         * no deopt trampoline. t1_pc_fail still rides along (the LIR
+         * verifier's "every speculative op deopts somewhere" rule is
+         * deliberately untouched), it is just never emitted. */
+        bool no_ovf;
+
         /* CFG edges (block ids into T2LirFunction::blocks, or
          * T2_LIR_NO_BLOCK). Tests/compares/arith-with-fail-edge use
          * succ_else as the in-blob fail target and succ_then as the
@@ -523,11 +531,12 @@ namespace erts_t2 {
                   exp(nullptr), target(nullptr), t1_pc_fail(nullptr),
                   t1_pc_cont(nullptr), beam_idx(0), spec_callsite(false),
                   tail_site(false), raw_mask(0), raw_srcs(0), raw_dst(false),
-                  succ_then(T2_LIR_NO_BLOCK), succ_else(T2_LIR_NO_BLOCK),
-                  first_case(0), num_cases(0), default_target(T2_LIR_NO_BLOCK),
-                  pool_first(0), num_srcs_ext(0), first_bs_cmd(0),
-                  num_bs_cmds(0), dst_value(T2_NO_VALUE),
-                  dst2_value(T2_NO_VALUE), sync(nullptr) {
+                  no_ovf(false), succ_then(T2_LIR_NO_BLOCK),
+                  succ_else(T2_LIR_NO_BLOCK), first_case(0), num_cases(0),
+                  default_target(T2_LIR_NO_BLOCK), pool_first(0),
+                  num_srcs_ext(0), first_bs_cmd(0), num_bs_cmds(0),
+                  dst_value(T2_NO_VALUE), dst2_value(T2_NO_VALUE),
+                  sync(nullptr) {
         }
     };
 

@@ -62,6 +62,7 @@ extern "C"
 #include "global.h"
 #include "big.h"
 #include "erl_fun.h"
+#include "erl_map.h"
 }
 
 #include <cstdio>
@@ -131,6 +132,28 @@ namespace erts_t2 {
                 off = env_flag("T2_NO_SINK") ? 1 : 0;
             }
             return off == 1;
+        }
+
+        /* P3 (redundant-guard elimination + range-based overflow-guard
+         * removal, PLAN/T2FULL/census/opt_landscape.md §P3): its own
+         * lever on top of T2_NO_OPT so P1/P2 A/B runs stay unaffected;
+         * lever-off reproduces the pre-P3 LIR/asm byte-for-byte. */
+        bool p3_disabled() {
+            static int off = -1;
+
+            if (off < 0) {
+                off = env_flag("T2_NO_P3") ? 1 : 0;
+            }
+            return off == 1;
+        }
+
+        bool p3_trace() {
+            static int on = -1;
+
+            if (on < 0) {
+                on = env_flag("T2_P3_TRACE") ? 1 : 0;
+            }
+            return on == 1;
         }
 
         bool is_const_kind(T2OpKind k) {
@@ -207,6 +230,8 @@ namespace erts_t2 {
             unsigned n_phi = 0;
             unsigned n_cse = 0;
             unsigned n_sink = 0;
+            unsigned n_p3g = 0; /* P3a: redundant guards removed  */
+            unsigned n_p3o = 0; /* P3b: overflow checks eliminated */
 
             /* ---- shared use/def bookkeeping (recomputed per pass) - */
 
@@ -215,6 +240,23 @@ namespace erts_t2 {
             std::vector<uint8_t> phi_ref;    /* some phi input       */
 
             explicit OptPass(T2Function &fn_) : fn(fn_) {
+            }
+
+            void trace_p3(const char *what, const T2Op *op) {
+                if (!p3_trace() && !opt_trace()) {
+                    return;
+                }
+                erts_fprintf(stderr,
+                             "t2_opt: %T:%T/%u %s %s%s%u (block %u)\n",
+                             fn.module,
+                             fn.function,
+                             (unsigned)fn.arity,
+                             what,
+                             t2_op_kind_name(op->kind),
+                             op->result != nullptr ? " v" : " #",
+                             op->result != nullptr ? op->result->id
+                                                   : (uint32_t)0,
+                             op->block != nullptr ? op->block->id : 0u);
             }
 
             void trace(const char *what, const T2Op *op) {
@@ -862,9 +904,9 @@ namespace erts_t2 {
                 op->operands = nullptr;
                 op->operand_regs = nullptr;
                 op->sync = nullptr;
-                op->flags &=
-                        (uint16_t)~(T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
-                                    T2_OP_SPEC_ENTRY | T2_OP_WINDOW_CALLEE);
+                op->flags &= (uint16_t)~(
+                        T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
+                        T2_OP_SPEC_ENTRY | T2_OP_WINDOW_CALLEE | T2_OP_NO_OVF);
             }
 
             void run_constfold() {
@@ -948,7 +990,8 @@ namespace erts_t2 {
                             op->sync = nullptr;
                             op->flags &= (uint16_t)~(
                                     T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
-                                    T2_OP_SPEC_ENTRY | T2_OP_WINDOW_CALLEE);
+                                    T2_OP_SPEC_ENTRY | T2_OP_WINDOW_CALLEE |
+                                    T2_OP_NO_OVF);
                             n_fold++;
                             changed = true;
                         }
@@ -1210,6 +1253,301 @@ namespace erts_t2 {
                                 break;
                             }
                         }
+                    }
+                }
+            }
+
+            /* ================================================================
+             * P3a  redundant speculative-guard elimination
+             * ================================================================
+             *
+             * A SpeculateType guard's only runtime effect is its
+             * conditional deopt; when every operand is already proven
+             * SMALL just before it — by a dominating guard on the same
+             * SSA value, a small constant, the committed result of a
+             * flag-checked op, or the phi AND-rule over all incoming
+             * edges — the deopt can never fire and the guard is a pure
+             * no-op, so removing it is observationally invisible for
+             * every deopt class (window/boundary/callsite/entry/
+             * redispatch alike: a deopt that cannot fire has no
+             * contract left to honor).
+             *
+             * The facts engine below is the validator's own
+             * speculative-type dataflow (run_speculation_checks,
+             * t2_hir.cpp) mirrored BY HAND — keep them in lockstep; if
+             * they ever drift, the failure mode is benign in exactly
+             * one direction (this pass weaker: missed removals) and
+             * loud in the other (a wrong removal fails the post-rewrite
+             * t2_validate and the function degrades to T1).
+             *
+             * Batch removal within one fixpoint is sound: a removable
+             * guard's transfer adds nothing (its facts already held
+             * before it), so dropping any subset of removable guards
+             * leaves the fixpoint solution unchanged; and a fact can
+             * never justify itself around a loop, because the entry
+             * block seeds no facts and joins intersect — every true
+             * fact is anchored on ops present on ALL entering paths. */
+
+            struct P3Facts {
+                std::vector<uint64_t> small, raw;
+            };
+
+            static void p3_set(std::vector<uint64_t> &s, uint32_t v) {
+                s[v / 64] |= uint64_t(1) << (v % 64);
+            }
+            static bool p3_test(const std::vector<uint64_t> &s, uint32_t v) {
+                return (s[v / 64] >> (v % 64)) & 1;
+            }
+
+            /* One op's fact effects — the validator's spec_transfer_op,
+             * mirrored (see the lockstep note above). */
+            static void p3_transfer_op(const T2Op *op, P3Facts &f) {
+                switch (op->kind) {
+                case T2OpKind::ConstInt:
+                    if ((op->flags & T2_OP_RAW_MODE) != 0) {
+                        p3_set(f.raw, op->result->id);
+                    } else if (IS_SSMALL(op->imm_int)) {
+                        p3_set(f.small, op->result->id);
+                    }
+                    break;
+                case T2OpKind::Copy:
+                    if (p3_test(f.small, op->operands[0]->id) ||
+                        t2_type_proves_small(op->operands[0]->type)) {
+                        p3_set(f.small, op->result->id);
+                    }
+                    if (p3_test(f.raw, op->operands[0]->id)) {
+                        p3_set(f.raw, op->result->id);
+                    }
+                    break;
+                case T2OpKind::SpeculateType:
+                    for (uint16_t i = 0; i < op->num_operands; i++) {
+                        p3_set(f.small, op->operands[i]->id);
+                    }
+                    break;
+                case T2OpKind::AddSmall:
+                case T2OpKind::SubSmall:
+                    if ((op->flags & T2_OP_RAW_MODE) != 0) {
+                        p3_set(f.raw, op->result->id);
+                    } else {
+                        p3_set(f.small, op->result->id);
+                    }
+                    break;
+                case T2OpKind::TagInt:
+                    p3_set(f.small, op->result->id);
+                    break;
+                case T2OpKind::FlatmapSize:
+                    if ((op->flags & T2_OP_RAW_MODE) != 0) {
+                        p3_set(f.raw, op->result->id);
+                    }
+                    break;
+                case T2OpKind::UntagInt:
+                case T2OpKind::MulRaw:
+                    p3_set(f.raw, op->result->id);
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            void run_p3_guard_elim() {
+                if (p3_disabled()) {
+                    return;
+                }
+
+                bool any = false;
+
+                for (const T2BasicBlock *b : fn.blocks) {
+                    for (const T2Op *op = b->ops_head; op != nullptr && !any;
+                         op = op->next) {
+                        any = op->kind == T2OpKind::SpeculateType;
+                    }
+                    if (any) {
+                        break;
+                    }
+                }
+                if (!any) {
+                    return;
+                }
+
+                compute_dominators(); /* for `reach` */
+
+                size_t n = fn.blocks.size();
+                size_t vwords = (fn.values.size() + 63) / 64;
+                std::vector<P3Facts> out(n);
+
+                /* Optimistic init (everything proven except at the
+                 * entry), then intersect down to the fixpoint — the
+                 * validator's exact scheme. */
+                for (size_t i = 0; i < n; i++) {
+                    bool top = reach[i] && i != 0;
+
+                    out[i].small.assign(vwords, top ? ~uint64_t(0) : 0);
+                    out[i].raw.assign(vwords, top ? ~uint64_t(0) : 0);
+                }
+
+                auto block_in = [&](const T2BasicBlock *b) {
+                    P3Facts in;
+
+                    in.small.assign(vwords, b->id == 0 ? 0 : ~uint64_t(0));
+                    in.raw.assign(vwords, b->id == 0 ? 0 : ~uint64_t(0));
+                    if (b->id == 0) {
+                        return in;
+                    }
+
+                    bool any_pred = false;
+
+                    for (uint32_t p = 0; p < b->num_preds; p++) {
+                        const T2BasicBlock *pred = b->preds[p];
+
+                        if (!reach[pred->id]) {
+                            continue;
+                        }
+                        any_pred = true;
+                        for (size_t w = 0; w < vwords; w++) {
+                            in.small[w] &= out[pred->id].small[w];
+                            in.raw[w] &= out[pred->id].raw[w];
+                        }
+                    }
+                    if (!any_pred) {
+                        in.small.assign(vwords, 0);
+                        in.raw.assign(vwords, 0);
+                    }
+                    return in;
+                };
+
+                auto apply_phis = [&](const T2BasicBlock *b, P3Facts &f) {
+                    for (const T2Op *phi = b->phis_head; phi != nullptr;
+                         phi = phi->next) {
+                        bool all_small = phi->num_operands > 0;
+                        bool all_raw = phi->num_operands > 0;
+
+                        for (uint16_t i = 0; i < phi->num_operands; i++) {
+                            const T2BasicBlock *pred = phi->phi_blocks[i];
+
+                            if (!reach[pred->id]) {
+                                continue;
+                            }
+
+                            uint32_t vid = phi->operands[i]->id;
+
+                            all_small = all_small &&
+                                        (p3_test(out[pred->id].small, vid) ||
+                                         t2_type_proves_small(
+                                                 phi->operands[i]->type));
+                            all_raw =
+                                    all_raw && p3_test(out[pred->id].raw, vid);
+                        }
+                        if (all_small) {
+                            p3_set(f.small, phi->result->id);
+                        }
+                        if (all_raw) {
+                            p3_set(f.raw, phi->result->id);
+                        }
+                    }
+                };
+
+                bool ch = true;
+
+                while (ch) {
+                    ch = false;
+                    for (const T2BasicBlock *b : fn.blocks) {
+                        if (!reach[b->id]) {
+                            continue;
+                        }
+
+                        P3Facts f = block_in(b);
+
+                        apply_phis(b, f);
+                        for (const T2Op *op = b->ops_head; op != nullptr;
+                             op = op->next) {
+                            p3_transfer_op(op, f);
+                        }
+                        if (f.small != out[b->id].small ||
+                            f.raw != out[b->id].raw) {
+                            out[b->id] = std::move(f);
+                            ch = true;
+                        }
+                    }
+                }
+
+                /* Exact pass at the fixpoint: drop every guard whose
+                 * operands are all proven just before it. A removed
+                 * guard's transfer is skipped, which is equivalent —
+                 * its facts were already in `f`. */
+                for (T2BasicBlock *b : fn.blocks) {
+                    if (!reach[b->id]) {
+                        continue;
+                    }
+
+                    P3Facts f = block_in(b);
+
+                    apply_phis(b, f);
+
+                    T2Op *op = b->ops_head;
+
+                    while (op != nullptr) {
+                        T2Op *next = op->next;
+
+                        if (op->kind == T2OpKind::SpeculateType &&
+                            !is_pair_member(op)) {
+                            bool proven = true;
+
+                            for (uint16_t i = 0; proven && i < op->num_operands;
+                                 i++) {
+                                proven =
+                                        p3_test(f.small, op->operands[i]->id) ||
+                                        t2_type_proves_small(
+                                                op->operands[i]->type);
+                            }
+                            if (proven) {
+                                trace_p3("p3 guard-elim", op);
+                                unlink_body(b, op);
+                                n_p3g++;
+                                changed = true;
+                                op = next;
+                                continue;
+                            }
+                        }
+                        p3_transfer_op(op, f);
+                        op = next;
+                    }
+                }
+            }
+
+            /* ================================================================
+             * P3b  range-based overflow-guard elimination
+             * ================================================================
+             *
+             * Mark every AddSmall whose overflow deopt provably cannot
+             * fire (t2_addsub_no_ovf_provable: the bounded-IV shape of
+             * the maps:fold flatmap loop — increment by a small
+             * positive constant under a dominating i < FlatmapSize
+             * bound with the map IsFlatmapBounded-guarded, so the
+             * result stays <= MAP_SMALL_MAP_LIMIT + c, far inside the
+             * small range). The emitter then omits the b.vs and its
+             * trampoline. The ACCUMULATOR's overflow guard has no such
+             * bound (element magnitudes are unbounded) and is never
+             * touched: the prover requires the constant-increment +
+             * loop-bound shape, which a data-dependent sum can never
+             * satisfy. The validator re-proves every claimed flag. */
+            void run_p3_no_ovf() {
+                if (p3_disabled()) {
+                    return;
+                }
+
+                for (T2BasicBlock *b : fn.blocks) {
+                    for (T2Op *op = b->ops_head; op != nullptr; op = op->next) {
+                        if (op->kind != T2OpKind::AddSmall ||
+                            (op->flags & T2_OP_NO_OVF) != 0) {
+                            continue;
+                        }
+                        if (!t2_addsub_no_ovf_provable(fn, op)) {
+                            continue;
+                        }
+                        trace_p3("p3 no-ovf", op);
+                        op->flags |= T2_OP_NO_OVF;
+                        n_p3o++;
+                        changed = true;
                     }
                 }
             }
@@ -1723,6 +2061,8 @@ namespace erts_t2 {
                     run_constfold();
                     run_copyprop();
                     run_cse();
+                    run_p3_guard_elim();
+                    run_p3_no_ovf();
 
                     bool this_round = changed;
 
@@ -1735,7 +2075,8 @@ namespace erts_t2 {
                 if (opt_trace() && changed) {
                     erts_fprintf(stderr,
                                  "t2_opt: %T:%T/%u summary: dce=%u fold=%u "
-                                 "copy=%u phi=%u cse=%u sink=%u\n",
+                                 "copy=%u phi=%u cse=%u sink=%u p3g=%u "
+                                 "p3o=%u\n",
                                  fn.module,
                                  fn.function,
                                  (unsigned)fn.arity,
@@ -1744,7 +2085,9 @@ namespace erts_t2 {
                                  n_copy,
                                  n_phi,
                                  n_cse,
-                                 n_sink);
+                                 n_sink,
+                                 n_p3g,
+                                 n_p3o);
                 }
                 return true;
             }
@@ -1780,6 +2123,261 @@ namespace erts_t2 {
         default:
             return false;
         }
+    }
+
+    /* ------------------------------------------------------------------ *
+     * P3b shared prover (also the validator's re-proof; t2_hir.hpp)      *
+     * ------------------------------------------------------------------ */
+
+    /* Edge-sensitive single-bit "must hold" dataflow. The fact is
+     * established on the TRUE edge out of `est` (whose terminator is a
+     * two-way Branch with distinct successors, testing a condition
+     * evaluated in `est` itself, so it holds for the CURRENT values on
+     * exit), killed by any block in `kill` (a block whose execution
+     * re-evaluates a value the fact talks about) and holds at a block
+     * only when every reachable incoming edge carries it; the entry
+     * block seeds nothing, so a cycle cannot justify itself — every
+     * true fact is anchored on establishing edges crossed on ALL
+     * entering paths since the last kill. Conservative in every
+     * unknown: an unreachable/killed/est `at` is a NO. */
+    static bool t2_edge_fact_holds_at(const T2Function &fn,
+                                      const T2BasicBlock *est,
+                                      const T2BasicBlock *est_true,
+                                      const std::vector<uint8_t> &kill,
+                                      const T2BasicBlock *at) {
+        size_t n = fn.blocks.size();
+
+        /* Reachability from the entry block. */
+        std::vector<uint8_t> reach(n, 0);
+        std::vector<const T2BasicBlock *> work{fn.blocks[0]};
+
+        reach[0] = 1;
+        while (!work.empty()) {
+            const T2BasicBlock *b = work.back();
+            const T2Op *t = b->terminator;
+
+            work.pop_back();
+            if (t == nullptr) {
+                continue;
+            }
+
+            auto push = [&](const T2BasicBlock *s) {
+                if (s != nullptr && !reach[s->id]) {
+                    reach[s->id] = 1;
+                    work.push_back(s);
+                }
+            };
+
+            switch (t->kind) {
+            case T2OpKind::Branch:
+                push(t->succ_then);
+                push(t->succ_else);
+                break;
+            case T2OpKind::Jump:
+                push(t->succ_then);
+                break;
+            case T2OpKind::Switch:
+                for (uint32_t i = 0; i < t->num_cases; i++) {
+                    push(t->cases[i].target);
+                }
+                push(t->default_target);
+                break;
+            default:
+                break;
+            }
+        }
+
+        if (!reach[at->id] || at == est || kill[at->id]) {
+            return false;
+        }
+
+        /* in[b]: the fact holds on b's entry on EVERY path. Optimistic
+         * init, monotone intersection to the fixpoint. `est`'s outgoing
+         * facts do not depend on in[est] (the branch re-establishes the
+         * fact at exit regardless of entry state — kill-then-retest is
+         * exactly the loop header's behavior). */
+        std::vector<uint8_t> in(n, 1);
+
+        in[0] = 0;
+
+        auto edge_out = [&](const T2BasicBlock *p,
+                            const T2BasicBlock *b) -> uint8_t {
+            if (p == est) {
+                return b == est_true ? 1 : 0;
+            }
+            if (kill[p->id]) {
+                return 0;
+            }
+            return in[p->id];
+        };
+
+        bool ch = true;
+
+        while (ch) {
+            ch = false;
+            for (const T2BasicBlock *b : fn.blocks) {
+                if (!reach[b->id] || b->id == 0) {
+                    continue;
+                }
+
+                uint8_t nv = 1;
+                bool any_pred = false;
+
+                for (uint32_t i = 0; i < b->num_preds; i++) {
+                    const T2BasicBlock *p = b->preds[i];
+
+                    if (!reach[p->id]) {
+                        continue;
+                    }
+                    any_pred = true;
+                    nv = (uint8_t)(nv & edge_out(p, b));
+                }
+                if (!any_pred) {
+                    nv = 0;
+                }
+                if (nv != in[b->id]) {
+                    in[b->id] = nv;
+                    ch = true;
+                }
+            }
+        }
+        return in[at->id] != 0;
+    }
+
+    /* True when `op` (an AddSmall) provably cannot overflow the small
+     * range, so its b.vs deopt may be omitted (T2_OP_NO_OVF).
+     *
+     * The proof — the bounded-IV shape of the maps:fold flatmap loop:
+     *
+     *   1. op = AddSmall(v, ConstInt c) with 0 < c and the static
+     *      headroom MAP_SMALL_MAP_LIMIT + c a small. Adding a positive
+     *      constant can only overflow UPWARD (a small plus a positive
+     *      constant moving toward zero cannot leave the small range),
+     *      so an upper bound on v alone suffices.
+     *   2. Some block H ends in Branch(CmpLt(v, n)) — same-block cmp,
+     *      distinct successors — with n a FlatmapSize result: on the
+     *      true edge, value(v) < value(n) for the CURRENT evaluations.
+     *      Numeric semantics hold on every execution that reaches op:
+     *      the post-rewrite validator independently proves v SMALL/RAW
+     *      at op on every path (run_speculation_checks; the same term
+     *      was compared), n is a small by FlatmapSize's construction,
+     *      and both the raw compare (value<<4, order-preserving) and
+     *      the generic CmpLt order numbers numerically.
+     *   3. n's map operand passed IsFlatmapBounded on an edge that
+     *      must-reach n's load (edge dataflow; kill = the map value's
+     *      def block), so value(n) <= MAP_SMALL_MAP_LIMIT — flatmap
+     *      headers are immutable, GC moves but never resizes.
+     *   4. The H-true fact must-holds at op (edge dataflow; kill = v's
+     *      def block — for the loop IV that is the header itself, so
+     *      each new evaluation of v is re-tested before op — and,
+     *      conservatively, n's def block).
+     *
+     *   Therefore at op: value(v) < value(n) <= MAP_SMALL_MAP_LIMIT,
+     *   and value(v) + c <= MAP_SMALL_MAP_LIMIT + c is a small — the
+     *   flag-setting add's V bit cannot be set. The accumulator of a
+     *   fold can never satisfy this shape (its increment is data-
+     *   dependent, not a positive constant), so its overflow deopt is
+     *   structurally out of reach of this prover — by design. */
+    bool t2_addsub_no_ovf_provable(const T2Function &fn, const T2Op *op) {
+        if (op == nullptr || op->block == nullptr ||
+            op->kind != T2OpKind::AddSmall || op->num_operands != 2 ||
+            fn.blocks.empty()) {
+            return false;
+        }
+
+        const T2Value *lhs = op->operands[0];
+        const T2Op *cdef = op->operands[1]->def;
+
+        if (cdef == nullptr || cdef->kind != T2OpKind::ConstInt) {
+            return false;
+        }
+
+        Sint64 c = cdef->imm_int;
+
+        if (c <= 0 || c > 4096 || !IS_SSMALL((Sint64)MAP_SMALL_MAP_LIMIT + c)) {
+            return false;
+        }
+
+        size_t n = fn.blocks.size();
+
+        for (const T2BasicBlock *H : fn.blocks) {
+            const T2Op *term = H->terminator;
+
+            if (term == nullptr || term->kind != T2OpKind::Branch ||
+                term->num_operands != 1 || term->succ_then == term->succ_else) {
+                continue;
+            }
+
+            const T2Op *cmp = term->operands[0]->def;
+
+            if (cmp == nullptr || cmp->kind != T2OpKind::CmpLt ||
+                cmp->block != H || cmp->num_operands != 2 ||
+                cmp->operands[0] != lhs) {
+                continue;
+            }
+
+            const T2Op *ndef = cmp->operands[1]->def;
+
+            if (ndef == nullptr || ndef->kind != T2OpKind::FlatmapSize ||
+                ndef->block == nullptr || ndef->num_operands != 1) {
+                continue;
+            }
+
+            /* 3. the bound: IsFlatmapBounded must-reaches n's load. */
+            const T2Value *mapv = ndef->operands[0];
+            std::vector<uint8_t> kill2(n, 0);
+
+            if (mapv->def != nullptr && mapv->def->block != nullptr) {
+                kill2[mapv->def->block->id] = 1;
+            }
+
+            bool bounded = false;
+
+            for (const T2BasicBlock *Bg : fn.blocks) {
+                const T2Op *bt = Bg->terminator;
+
+                if (bt == nullptr || bt->kind != T2OpKind::Branch ||
+                    bt->num_operands != 1 || bt->succ_then == bt->succ_else) {
+                    continue;
+                }
+
+                const T2Op *g = bt->operands[0]->def;
+
+                if (g == nullptr || g->kind != T2OpKind::IsFlatmapBounded ||
+                    g->block != Bg || g->num_operands != 1 ||
+                    g->operands[0] != mapv) {
+                    continue;
+                }
+                if (t2_edge_fact_holds_at(fn,
+                                          Bg,
+                                          bt->succ_then,
+                                          kill2,
+                                          ndef->block)) {
+                    bounded = true;
+                    break;
+                }
+            }
+            if (!bounded) {
+                continue;
+            }
+
+            /* 4. the compare: H-true must-reaches op. */
+            std::vector<uint8_t> kill1(n, 0);
+
+            if (lhs->def != nullptr && lhs->def->block != nullptr) {
+                kill1[lhs->def->block->id] = 1;
+            }
+            kill1[ndef->block->id] = 1;
+
+            if (t2_edge_fact_holds_at(fn,
+                                      H,
+                                      term->succ_then,
+                                      kill1,
+                                      op->block)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool t2_opt(T2Function &fn,

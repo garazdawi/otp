@@ -326,6 +326,9 @@ namespace erts_t2 {
                     os << " [retag 0x" << std::hex << op.raw_mask << std::dec
                        << "]";
                 }
+                if (op.no_ovf) {
+                    os << " [no_ovf]";
+                }
                 os << "\n";
             }
         }

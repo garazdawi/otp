@@ -1060,19 +1060,26 @@ namespace erts_t2 {
                 return;
             }
 
-            const Label &fl =
-                    fail_override != nullptr
-                            ? *fail_override
-                            : rawLabels.at(fail_label_num(op.t1_pc_fail,
-                                                          op.t1_pc_cont,
-                                                          op.spec_callsite,
-                                                          op.raw_mask));
-            if (fail_override == nullptr) {
-                fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+            /* P3 (T2_OP_NO_OVF, validator-re-proven): the overflow
+             * deopt provably cannot fire — plain add/sub, no b.vs, and
+             * no trampoline is materialized for this op at all. */
+            const Label *flp = nullptr;
+
+            if (!op.no_ovf) {
+                flp = fail_override != nullptr
+                              ? fail_override
+                              : &rawLabels.at(fail_label_num(op.t1_pc_fail,
+                                                             op.t1_pc_cont,
+                                                             op.spec_callsite,
+                                                             op.raw_mask));
+                if (fail_override == nullptr) {
+                    fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+                }
             }
 
-            comment("T2 %s small (flag-checked%s)",
+            comment("T2 %s small (%s%s)",
                     is_add ? "add" : "sub",
+                    op.no_ovf ? "no-ovf" : "flag-checked",
                     op.raw_dst ? ", raw" : "");
 
             /* Raw mode (P2 loop unboxing): every operand is brought to
@@ -1106,22 +1113,61 @@ namespace erts_t2 {
              * window-shaped ops with non-prefix register-backed
              * destinations is legal (the deopt reads only
              * X0..arity-1) but measured ~5% slower on Apple Silicon —
-             * likely loop-alignment/port effects — so it is not used. */
+             * likely loop-alignment/port effects — so it is not used.
+             * A NO-OVF op has no deopt to order against, so when its
+             * destination is the physical lhs it commits in place
+             * (one `add`, the IV-increment fast form). */
             a64::Gp out = ARG1;
+            bool direct = false;
+
+            if (op.no_ovf && !op.srcs[0].is_const && op.srcs[0].loc == op.dst) {
+                /* The destination's machine register: a Phys loc or a
+                 * register-backed X slot (whose backing register is
+                 * authoritative in straight-line code — load_source
+                 * always returns it, exactly like the fused scan's
+                 * direct-commit form). */
+                a64::Gp backing;
+                bool have_backing = false;
+
+                if (op.dst.is_phys()) {
+                    backing = phys_gp(op.dst);
+                    have_backing = true;
+                } else if (op.dst.is_xreg() &&
+                           op.dst.num < num_register_backed_xregs) {
+                    backing = register_backed_xregs[op.dst.num];
+                    have_backing = true;
+                }
+                if (have_backing && lhs == backing) {
+                    out = backing;
+                    direct = true;
+                }
+            }
 
             if (op.srcs[1].is_const) {
                 Uint64 cleared =
                         (Uint64)op.srcs[1].term & ~(Uint64)_TAG_IMMED1_MASK;
 
                 if (cleared <= 0xFFF) {
-                    if (is_add) {
+                    if (op.no_ovf) {
+                        if (is_add) {
+                            a.add(out, lhs, imm(cleared));
+                        } else {
+                            a.sub(out, lhs, imm(cleared));
+                        }
+                    } else if (is_add) {
                         a.adds(out, lhs, imm(cleared));
                     } else {
                         a.subs(out, lhs, imm(cleared));
                     }
                 } else {
                     mov_imm(TMP1, cleared);
-                    if (is_add) {
+                    if (op.no_ovf) {
+                        if (is_add) {
+                            a.add(out, lhs, TMP1);
+                        } else {
+                            a.sub(out, lhs, TMP1);
+                        }
+                    } else if (is_add) {
                         a.adds(out, lhs, TMP1);
                     } else {
                         a.subs(out, lhs, TMP1);
@@ -1139,20 +1185,31 @@ namespace erts_t2 {
                     a.and_(TMP1, rhs, imm(~_TAG_IMMED1_MASK));
                     rhs = TMP1;
                 }
-                if (is_add) {
+                if (op.no_ovf) {
+                    if (is_add) {
+                        a.add(out, lhs, rhs);
+                    } else {
+                        a.sub(out, lhs, rhs);
+                    }
+                } else if (is_add) {
                     a.adds(out, lhs, rhs);
                 } else {
                     a.subs(out, lhs, rhs);
                 }
             }
 
-            /* Deopt before the *commit* (PLAN/T2/08 §4.4). */
-            a.b_vs(resolve_label(fl, disp1MB));
+            /* Deopt before the *commit* (PLAN/T2/08 §4.4); a NO-OVF op
+             * has no deopt at all. */
+            if (!op.no_ovf) {
+                a.b_vs(resolve_label(*flp, disp1MB));
+            }
 
-            if (op.dst.is_phys()) {
-                a.mov(phys_gp(op.dst), ARG1);
-            } else {
-                mov_arg(loc_argval(op.dst), ARG1);
+            if (!direct) {
+                if (op.dst.is_phys()) {
+                    a.mov(phys_gp(op.dst), ARG1);
+                } else {
+                    mov_arg(loc_argval(op.dst), ARG1);
+                }
             }
         }
 
@@ -2967,6 +3024,16 @@ namespace erts_t2 {
                  * just this op — the T1-true position at this point. */
                 bool is_add = op.kind == T2LirKind::AddSmall;
                 bool adv = op.sync != nullptr && cur_scan_adv;
+
+                /* A NO-OVF op (P3) has no deopt: no write-back
+                 * trampoline to key, the shared emitter handles it
+                 * whole. (Unreachable today — the prover's bound
+                 * requires a FlatmapSize, which no scan region
+                 * contains — but kept total.) */
+                if (op.no_ovf) {
+                    emit_lir_addsub_small(op);
+                    break;
+                }
 
                 /* Direct-commit form for the loop accumulator: dst ==
                  * lhs slot, small-constant rhs, register-backed X —

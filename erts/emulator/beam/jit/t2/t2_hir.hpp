@@ -613,7 +613,23 @@ namespace erts_t2 {
          * them in the cold path — a raw word reaching T1 as a term is
          * memory corruption, so the validator makes a missed mask a
          * hard error. */
-        T2_OP_RAW_MODE = 1 << 14
+        T2_OP_RAW_MODE = 1 << 14,
+        /* P3 (range-based overflow-guard elimination): this AddSmall
+         * provably cannot overflow the small range, so the emitter
+         * omits the flag-check deopt (plain `add`, no b.vs, no
+         * trampoline). The proof is the bounded-IV shape of the
+         * maps:fold flatmap template: the op adds a small positive
+         * constant to a value that a loop-bound compare (CmpLt against
+         * a FlatmapSize result whose map passed IsFlatmapBounded, so
+         * bound <= MAP_SMALL_MAP_LIMIT) proves < the bound on every
+         * path since its last redefinition — see
+         * t2_addsub_no_ovf_provable. Everything else about the op
+         * (deopt-class flags, sync map, t1_pc_fail plumbing) is kept,
+         * so the validators' class rules apply unchanged; the flag is
+         * set only by the P3 pass (t2_opt.cpp) and RE-PROVEN by the
+         * validator — an unprovable claim is a hard validate error,
+         * never a silently missing guard. */
+        T2_OP_NO_OVF = 1 << 15
     };
 
     /* One arm of a `switch` terminator. */
@@ -852,6 +868,14 @@ namespace erts_t2 {
      * property of the def. Shared between the validator (t2_hir.cpp)
      * and isel (t2_isel.cpp). */
     bool t2_value_is_raw_home(const T2Value *v);
+
+    /* P3: true when `op` (an AddSmall) provably cannot overflow the
+     * small range, so its b.vs deopt guard may be omitted
+     * (T2_OP_NO_OVF). The proof is range-based and edge-sensitive; see
+     * the implementation (t2_opt.cpp). Shared fact between the P3 pass
+     * (which sets the flag only when this holds) and the validator
+     * (which re-proves every claimed flag — a hard error otherwise). */
+    bool t2_addsub_no_ovf_provable(const T2Function &fn, const T2Op *op);
 
     /* A compact human-readable dump of the CFG and ops. */
     std::string t2_dump(const T2Function &fn);

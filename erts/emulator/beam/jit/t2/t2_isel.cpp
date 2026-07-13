@@ -1401,6 +1401,12 @@ namespace erts_t2 {
                             (op->flags &
                              (T2_OP_SPEC_CALLSITE | T2_OP_SPEC_ENTRY |
                               T2_OP_SPEC_REDISPATCH)) != 0;
+                    /* P3: validated no-overflow claim — the emitter
+                     * omits the b.vs and its trampoline. The deopt-PC
+                     * plumbing below is kept (the LIR verifier's
+                     * "every speculative op deopts somewhere" rule),
+                     * it is just never emitted. */
+                    lop.no_ovf = (op->flags & T2_OP_NO_OVF) != 0;
                     if (op->dst_reg == T2_REG_NONE) {
                         return fail_op(op, "arith result without a home");
                     }

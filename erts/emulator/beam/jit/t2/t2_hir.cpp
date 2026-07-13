@@ -2179,6 +2179,38 @@ namespace erts_t2 {
                 return true;
             }
 
+            /* -------------------------------------------------------- *
+             * P3: every claimed T2_OP_NO_OVF (the emitter omits the    *
+             * overflow deopt) is RE-PROVEN by the shared range prover  *
+             * (t2_addsub_no_ovf_provable, t2_opt.cpp) — a flag the     *
+             * prover cannot re-establish is a hard error, so a         *
+             * silently missing overflow guard cannot install.          *
+             * -------------------------------------------------------- */
+            bool run_no_ovf_checks() {
+                for (const T2BasicBlock *b : fn.blocks) {
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if ((op->flags & T2_OP_NO_OVF) == 0) {
+                            continue;
+                        }
+                        if (op->kind != T2OpKind::AddSmall) {
+                            return fail("block %u: T2_OP_NO_OVF on %s "
+                                        "(only AddSmall is provable)",
+                                        b->id,
+                                        t2_op_kind_name(op->kind));
+                        }
+                        if (!t2_addsub_no_ovf_provable(fn, op)) {
+                            return fail("block %u: T2_OP_NO_OVF claim on "
+                                        "add_small (v%u) is not provable",
+                                        b->id,
+                                        op->result != nullptr ? op->result->id
+                                                              : 0);
+                        }
+                    }
+                }
+                return true;
+            }
+
             bool run_speculation_checks() {
                 bool any = false;
 
@@ -2425,6 +2457,11 @@ namespace erts_t2 {
                  * sync-map mentions are covered by the raw_mask rule
                  * inside run_sync_checks). */
                 if (!run_raw_checks()) {
+                    return false;
+                }
+
+                /* P3: re-prove every claimed elided overflow guard. */
+                if (!run_no_ovf_checks()) {
                     return false;
                 }
 
