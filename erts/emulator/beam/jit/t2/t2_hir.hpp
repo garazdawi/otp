@@ -231,6 +231,26 @@ namespace erts_t2 {
         BsGetTail,
         BsTestTail,
 
+        /* Cursor-IV binary matching (PLAN/T2FULL/14). Decomposes a match
+         * context into an explicit raw bit-cursor induction variable so
+         * byte-scan loops can later unroll + SWAR. BsBase/BsLimit/BsCursor
+         * project the boxed ErlSubBits: base pointer (GC-clobbered,
+         * rematerializable), end bit-count (loop-invariant), start
+         * bit-offset (the initial cursor). BsEnsure is a separable bounds
+         * guard (imm_int = need bits; index = mode, 0 at_least / 1
+         * exactly) folded into guard_branch like BsTestTail. BsRead is a
+         * PURE non-allocating extraction at base+cursor (imm_int = size
+         * bits; index = read kind). BsSync writes the raw cursor back to
+         * ErlSubBits.start at every sync/exit/deopt. The cursor advances
+         * via a raw AddSmall (T2_OP_RAW_MODE); bs_get/set_position
+         * tag/untag it as pure SSA. See §2 of the design doc. */
+        BsBase,
+        BsLimit,
+        BsCursor,
+        BsEnsure,
+        BsRead,
+        BsSync,
+
         /* Funs and calls */
         Call,
         CallExt,

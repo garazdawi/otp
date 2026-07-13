@@ -2117,6 +2117,17 @@ namespace erts_t2 {
         case T2OpKind::FlatmapSize:
         case T2OpKind::FlatmapKeyAt:
         case T2OpKind::FlatmapValAt:
+        /* Cursor-IV context reads: pure, non-allocating, no trap
+         * (PLAN/T2FULL/14 §2). BsBase's result is additionally
+         * GC-clobbered (see clobbers_reg), so availability analysis stops
+         * a CSE from spanning a GC; BsLimit/BsCursor read immutable /
+         * initial fields; BsRead loads at base+cursor. BsEnsure is a
+         * control-flow guard (not pure, like BsTestTail); BsSync mutates
+         * the context (an effect). */
+        case T2OpKind::BsBase:
+        case T2OpKind::BsLimit:
+        case T2OpKind::BsCursor:
+        case T2OpKind::BsRead:
         /* Dead speculated arithmetic: the overflow guard is dead with
          * the result (see t2_opt.hpp). */
         case T2OpKind::AddSmall:

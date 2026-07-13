@@ -187,6 +187,18 @@ namespace erts_t2 {
             return "bs_get_tail";
         case T2OpKind::BsTestTail:
             return "bs_test_tail";
+        case T2OpKind::BsBase:
+            return "bs_base";
+        case T2OpKind::BsLimit:
+            return "bs_limit";
+        case T2OpKind::BsCursor:
+            return "bs_cursor";
+        case T2OpKind::BsEnsure:
+            return "bs_ensure";
+        case T2OpKind::BsRead:
+            return "bs_read";
+        case T2OpKind::BsSync:
+            return "bs_sync";
         case T2OpKind::Call:
             return "call";
         case T2OpKind::CallExt:
@@ -324,6 +336,11 @@ namespace erts_t2 {
         case T2OpKind::BsMatch:
         case T2OpKind::BsGetTail:
         case T2OpKind::BsTestTail:
+        case T2OpKind::BsBase:
+        case T2OpKind::BsLimit:
+        case T2OpKind::BsCursor:
+        case T2OpKind::BsEnsure:
+        case T2OpKind::BsRead:
         case T2OpKind::Call:
         case T2OpKind::CallExt:
         case T2OpKind::CallFun:

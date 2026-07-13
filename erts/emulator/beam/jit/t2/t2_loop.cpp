@@ -307,6 +307,9 @@ namespace erts_t2 {
             case T2OpKind::Call:
             case T2OpKind::CallExt:
             case T2OpKind::Bif:
+            /* BsSync writes the raw cursor back to ErlSubBits.start —
+             * an observable heap mutation (PLAN/T2FULL/14 §2). */
+            case T2OpKind::BsSync:
                 return true;
             default:
                 return false;
