@@ -2120,13 +2120,17 @@ namespace erts_t2 {
         /* Cursor-IV context reads: pure, non-allocating, no trap
          * (PLAN/T2FULL/14 §2). BsBase's result is additionally
          * GC-clobbered (see clobbers_reg), so availability analysis stops
-         * a CSE from spanning a GC; BsLimit/BsCursor read immutable /
-         * initial fields; BsRead loads at base+cursor. BsEnsure is a
-         * control-flow guard (not pure, like BsTestTail); BsSync mutates
-         * the context (an effect). */
+         * a CSE from spanning a GC; BsLimit reads the immutable .end;
+         * BsRead loads at base+cursor (keyed on its cursor operand).
+         * BsCursor and BsGetPosition are intentionally NOT here: they
+         * read the MUTABLE .start, which BsSync and BsSetPosition write
+         * between reads (P-B), so a hoisted/merged read could observe a
+         * stale cursor — they are re-loaded per use (P-C registerizes
+         * the cursor as a loop phi instead). BsEnsure is a control-flow
+         * guard (not pure, like BsTestTail); BsSync/BsSetPosition mutate
+         * the context (effects). */
         case T2OpKind::BsBase:
         case T2OpKind::BsLimit:
-        case T2OpKind::BsCursor:
         case T2OpKind::BsRead:
         /* Dead speculated arithmetic: the overflow guard is dead with
          * the result (see t2_opt.hpp). */

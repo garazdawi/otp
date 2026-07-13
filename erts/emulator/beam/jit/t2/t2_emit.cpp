@@ -867,6 +867,12 @@ namespace erts_t2 {
             case T2LirKind::BsSync:
                 emit_lir_bs_sync(op);
                 break;
+            case T2LirKind::BsGetPosition:
+                emit_lir_bs_get_position(op);
+                break;
+            case T2LirKind::BsSetPosition:
+                emit_lir_bs_set_position(op);
+                break;
             default:
                 fail("unsupported LIR op kind in P1 identity emit");
                 break;
@@ -1578,6 +1584,49 @@ namespace erts_t2 {
             a64::Gp cur = load_source(src_argval(op.srcs[1]), TMP2).reg;
 
             a.lsr(TMP3, cur, imm(_TAG_IMMED1_SIZE));
+            a.str(TMP3, a64::Mem(TMP1, offsetof(ErlSubBits, start)));
+        }
+
+        /* dst := make_small(ErlSubBits.start) — T1's i_bs_get_position
+         * verbatim (load .start; lsl tag size; orr small tag). */
+        void emit_lir_bs_get_position(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const || op.dst.is_none()) {
+                fail("malformed bs_get_position");
+                return;
+            }
+
+            comment("T2 bs_get_position");
+
+            a64::Gp ctx = load_source(src_argval(op.srcs[0]), TMP1).reg;
+
+            emit_untag_ptr(TMP1, ctx);
+            a.ldr(TMP2, a64::Mem(TMP1, offsetof(ErlSubBits, start)));
+            a.lsl(TMP2, TMP2, imm(_TAG_IMMED1_SIZE));
+            a.orr(TMP2, TMP2, imm(_TAG_IMMED1_SMALL));
+            mov_arg(loc_argval(op.dst), TMP2);
+        }
+
+        /* ErlSubBits.start := unsigned_val(pos) — T1's bs_set_position
+         * verbatim. The same store as bs_sync: a tagged small and the
+         * raw <<4 cursor shift identically (the tag nibble is below
+         * _TAG_IMMED1_SIZE); only the operand's representation
+         * (tagged vs raw-in-home) differs. */
+        void emit_lir_bs_set_position(const T2LirOp &op) {
+            if (op.num_srcs != 2 || op.srcs[0].is_const ||
+                op.srcs[1].is_const) {
+                fail("malformed bs_set_position");
+                return;
+            }
+
+            comment("T2 bs_set_position");
+
+            a64::Gp ctx = load_source(src_argval(op.srcs[0]), TMP1).reg;
+
+            emit_untag_ptr(TMP1, ctx);
+
+            a64::Gp pos = load_source(src_argval(op.srcs[1]), TMP2).reg;
+
+            a.lsr(TMP3, pos, imm(_TAG_IMMED1_SIZE));
             a.str(TMP3, a64::Mem(TMP1, offsetof(ErlSubBits, start)));
         }
 

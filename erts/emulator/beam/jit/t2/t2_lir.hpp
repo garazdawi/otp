@@ -261,13 +261,22 @@ namespace erts_t2 {
          * BsTestTail. BsRead (imm = size bits, only 8 today) is the
          * pure extraction at base+cursor via T1's emit_read_bits (any
          * runtime bit alignment). BsSync stores the raw cursor back
-         * to ErlSubBits.start (srcs = context, cursor). */
+         * to ErlSubBits.start (srcs = context, cursor).
+         * BsGetPosition/BsSetPosition (P-B) are the decoded
+         * bs_get/set_position ops over the TAGGED small: get loads
+         * .start and make_smalls it into dst; set stores
+         * unsigned_val(pos) to .start (srcs = context, position) —
+         * byte-identical to T1's i_bs_get/set_position and kept
+         * distinct from BsCursor/BsSync so raw and tagged cursor forms
+         * never mix. */
         BsBase,
         BsLimit,
         BsCursor,
         BsEnsure,
         BsRead,
         BsSync,
+        BsGetPosition,
+        BsSetPosition,
 
         /* Value-producing total comparison (P2 commit 8; the bif2
          * {f,0} erlang:CMP/2 subset): imm = the originating T2OpKind;

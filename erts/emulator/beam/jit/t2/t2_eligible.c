@@ -154,11 +154,16 @@ int erts_t2_genop_supported(int genop) {
     /* The byte-aligned binary scan subset (P2 commit 7; PLAN/T2FULL/09
      * §7, PLAN/T2/08 §3). bs_match/3 is additionally argument-checked
      * (erts_t2_bs_match_check) — only its byte-aligned command subset
-     * is supported, and the scan rejects anything else up front. */
+     * is supported, and the scan rejects anything else up front.
+     * bs_start_match4 + the position ops widen the subset to the
+     * multi-clause byte scanners (PLAN/T2FULL/14 P-B). */
     case genop_bs_start_match3_4:
+    case genop_bs_start_match4_4:
     case genop_bs_match_3:
     case genop_bs_test_tail2_3:
     case genop_bs_get_tail_3:
+    case genop_bs_get_position_3:
+    case genop_bs_set_position_2:
         return 1;
 
     default:
@@ -286,9 +291,22 @@ int erts_t2_bs_match_check(const UWord *types,
             cmd.dst_arg = i + 3;
             dsts++;
             i += 4;
+        } else if (vals[i] == am_ensure_exactly) {
+            /* ensure_exactly Size — remaining == Size, byte-aligned
+             * (P-B; the empty-clause terminator is Size 0). */
+            if (i + 1 >= nargs || types[i + 1] != TAG_u) {
+                return -1;
+            }
+            cmd.kind = ERTS_T2_BS_ENSURE;
+            cmd.size = vals[i + 1];
+            cmd.exactly = 1;
+            if ((cmd.size % 8) != 0) {
+                return -1;
+            }
+            i += 2;
         } else {
-            /* ensure_exactly, '=:=', binary, non-byte shapes, ...:
-             * outside the subset. */
+            /* '=:=', binary, non-byte shapes, ...: outside the
+             * subset. */
             return -1;
         }
 
@@ -1023,9 +1041,6 @@ int erts_t2_blocker_class(BeamFile *beam, const BeamOp *op) {
     case genop_bs_skip_utf16_4:
     case genop_bs_get_utf32_5:
     case genop_bs_skip_utf32_4:
-    case genop_bs_get_position_3:
-    case genop_bs_set_position_2:
-    case genop_bs_start_match4_4:
     case genop_bs_scan_5:
         return ERTS_T2_BLK_BS_POSITION;
 

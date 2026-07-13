@@ -250,14 +250,22 @@ namespace erts_t2 {
          * base+cursor (imm_int = size bits; index = read kind). BsSync
          * writes the raw cursor back to ErlSubBits.start at every
          * sync/exit/deopt (P-A: once per bs_match, before BsGetTail and
-         * the dst writes). bs_get/set_position tag/untag the cursor as
-         * pure SSA (P-B). See §2 of the design doc. */
+         * the dst writes). BsGetPosition/BsSetPosition (P-B) are the
+         * decoded bs_get/set_position ops over the TAGGED small:
+         * BsGetPosition loads .start and make_smalls it (a value op —
+         * NOT pure, .start is mutable, exactly like BsCursor);
+         * BsSetPosition stores unsigned_val(Pos) to .start (an effect,
+         * like BsSync but with a tagged-small operand — kept distinct
+         * from BsSync so raw and tagged cursors never mix). See §2 of
+         * the design doc. */
         BsBase,
         BsLimit,
         BsCursor,
         BsEnsure,
         BsRead,
         BsSync,
+        BsGetPosition,
+        BsSetPosition,
 
         /* Funs and calls */
         Call,

@@ -308,8 +308,11 @@ namespace erts_t2 {
             case T2OpKind::CallExt:
             case T2OpKind::Bif:
             /* BsSync writes the raw cursor back to ErlSubBits.start —
-             * an observable heap mutation (PLAN/T2FULL/14 §2). */
+             * an observable heap mutation (PLAN/T2FULL/14 §2) — and
+             * BsSetPosition (P-B) is the same store off the tagged
+             * small. */
             case T2OpKind::BsSync:
+            case T2OpKind::BsSetPosition:
                 return true;
             default:
                 return false;

@@ -1441,6 +1441,42 @@ namespace erts_t2 {
                     return true;
                 }
 
+                case T2OpKind::BsGetPosition: {
+                    /* Dst := make_small(ErlSubBits.start) — the
+                     * backtrack anchor (P-B). A plain tagged value op
+                     * (dst home from regalloc, not a raw temp). */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "bs_get_position without a home");
+                    }
+                    lop.kind = T2LirKind::BsGetPosition;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "bs_get_position of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
+                case T2OpKind::BsSetPosition: {
+                    /* ErlSubBits.start := unsigned_val(pos) — the
+                     * backtrack restore (P-B); srcs = context,
+                     * tagged-small position. */
+                    lop.kind = T2LirKind::BsSetPosition;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const || lop.srcs[1].is_const) {
+                        return fail_op(op, "bs_set_position of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
                 case T2OpKind::SpeculateType:
                     /* The fused tag-bit deopt guard (P2 commit 4): AND
                      * the values, require every small-tag bit, deopt on

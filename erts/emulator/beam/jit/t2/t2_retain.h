@@ -204,18 +204,21 @@ int erts_t2_genop_build_only(int genop);
  * and the SSA builder, exactly like erts_t2_genop_supported. */
 
 typedef enum {
-    ERTS_T2_BS_ENSURE = 0,  /* ensure_at_least Size Unit (Size%8==0)    */
-    ERTS_T2_BS_READ_INT8,   /* integer, Size*Unit==8, no flags          */
-    ERTS_T2_BS_SKIP,        /* skip Size (Size%8==0)                    */
-    ERTS_T2_BS_GET_TAIL     /* get_tail                                 */
+    ERTS_T2_BS_ENSURE = 0, /* ensure_at_least Size Unit (Size%8==0) or
+                            * ensure_exactly Size (Size%8==0, may be 0;
+                            * see `exactly`)                            */
+    ERTS_T2_BS_READ_INT8,  /* integer, Size*Unit==8, no flags          */
+    ERTS_T2_BS_SKIP,       /* skip Size (Size%8==0)                    */
+    ERTS_T2_BS_GET_TAIL    /* get_tail                                 */
 } ErtsT2BsCmdKind;
 
 typedef struct ErtsT2BsCmd {
-    int kind;     /* ErtsT2BsCmdKind                                    */
-    UWord size;   /* bits (ENSURE/SKIP/READ_INT8)                       */
-    UWord unit;   /* ENSURE trailing unit                               */
-    UWord live;   /* READ_INT8 / GET_TAIL GC live count                 */
-    int dst_arg;  /* generic-op arg index of the Dst operand, or -1     */
+    int kind;      /* ErtsT2BsCmdKind                                    */
+    UWord size;    /* bits (ENSURE/SKIP/READ_INT8)                       */
+    UWord unit;    /* ENSURE trailing unit                               */
+    UWord live;    /* READ_INT8 / GET_TAIL GC live count                 */
+    UWord exactly; /* ENSURE: 1 = ensure_exactly (P-B), 0 = at_least     */
+    int dst_arg;   /* generic-op arg index of the Dst operand, or -1     */
 } ErtsT2BsCmd;
 
 /* At most this many decoded commands per bs_match op (the scan subset

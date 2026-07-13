@@ -2124,6 +2124,54 @@ namespace erts_t2 {
                 break;
             }
 
+            case genop_bs_start_match4_4: {
+                /* Arg0 Live Src Dst — the external-position variant
+                 * (PLAN/T2FULL/14 P-B). Arg0 dispatches three forms
+                 * (emu/ops.tab): {f,Fail} and no_fail lower to the
+                 * bs_start_match3 shape (StartMatch reuses an existing
+                 * context exactly like start_match3, no_fail just has
+                 * no fail edge — T1's `p` label); resume means Src IS
+                 * a positioned context and the op is a plain move
+                 * (Live is ignored). */
+                const DecodedArg &arg0 = dop.args[0];
+                UWord live = dop.args[1].val;
+                SrcVal src = read_arg_r(dop.args[2]);
+
+                if (src.v == nullptr) {
+                    return;
+                }
+
+                if (arg0.type == TAG_a && arg0.val == am_resume) {
+                    write_dst_new(
+                            dop.args[3],
+                            emit_result_op(T2OpKind::Copy, {src}, src.v->type));
+                    break;
+                }
+                if (arg0.type != TAG_f &&
+                    !(arg0.type == TAG_a && arg0.val == am_no_fail)) {
+                    fail_op(dop, "unexpected bs_start_match4 arg0");
+                    return;
+                }
+
+                T2Value *v = emit_result_op(T2OpKind::StartMatch,
+                                            {src},
+                                            T2Type::of(BEAM_TYPE_BITSTRING));
+                if (v == nullptr) {
+                    return;
+                }
+                v->def->live = (uint32_t)live;
+                v->def->sync = snapshot_sync((uint32_t)live);
+
+                if (arg0.type == TAG_f) {
+                    T2Value *ok = emit_result_op(T2OpKind::Succeeded,
+                                                 {SrcVal{v, T2_REG_NONE}},
+                                                 bool_type());
+                    guard_branch(ok, arg0);
+                }
+                write_dst_new(dop.args[3], v);
+                break;
+            }
+
             case genop_bs_match_3: {
                 /* Fail Ctx N Cmds... — the eligibility scan admitted
                  * only the byte-aligned subset; re-parse through the
@@ -2331,9 +2379,12 @@ namespace erts_t2 {
                             return;
                         }
                         ok->def->imm_int = (Sint64)c.size;
-                        /* bit 0 = exactly (P-B), bit 1 = trailing
+                        /* bit 0 = exactly (P-B; the unit bit is
+                         * ignored there — T1's ensure_exactly is a
+                         * plain remaining==Size), bit 1 = trailing
                          * unit-8 divisibility of the remainder. */
-                        ok->def->index = c.unit == 8 ? 2 : 0;
+                        ok->def->index = (c.exactly != 0 ? 1 : 0) |
+                                         (c.unit == 8 ? 2 : 0);
                         guard_branch(ok, fail);
                         break;
                     }
@@ -2414,6 +2465,52 @@ namespace erts_t2 {
                 if (tail_val != nullptr && tail_dst >= 0) {
                     write_dst_new(dop.args[tail_dst], tail_val);
                 }
+                break;
+            }
+
+            case genop_bs_get_position_3: {
+                /* Ctx Dst Live — Dst := make_small(ErlSubBits.start),
+                 * the multi-clause scanner's backtrack anchor
+                 * (PLAN/T2FULL/14 P-B). A plain non-pure load: no fail
+                 * edge, no alloc, no sync (T1's i_bs_get_position
+                 * ignores Live). NOT pure — .start is mutated by
+                 * BsSync/BsSetPosition between reads. */
+                SrcVal ctx = read_arg_r(dop.args[0]);
+
+                if (ctx.v == nullptr) {
+                    return;
+                }
+
+                T2Value *v = emit_result_op(T2OpKind::BsGetPosition,
+                                            {ctx},
+                                            T2Type::integer(0, MAX_SMALL));
+
+                if (v == nullptr) {
+                    return;
+                }
+                write_dst_new(dop.args[1], v);
+                break;
+            }
+
+            case genop_bs_set_position_2: {
+                /* Ctx Pos — ErlSubBits.start := unsigned_val(Pos), the
+                 * backtrack restore (PLAN/T2FULL/14 P-B). An effect,
+                 * like BsSync, but over the TAGGED small position (the
+                 * operand is NOT raw). */
+                SrcVal ctx = read_arg_r(dop.args[0]);
+                SrcVal pos = read_arg_r(dop.args[1]);
+
+                if (ctx.v == nullptr || pos.v == nullptr) {
+                    return;
+                }
+
+                T2Op *op = fn->new_op(cur,
+                                      T2OpKind::BsSetPosition,
+                                      T2Type::none());
+
+                op->beam_idx = cur_op->beam_idx;
+                fn->set_operands(op, {ctx.v, pos.v});
+                set_operand_regs(op, {ctx, pos});
                 break;
             }
 

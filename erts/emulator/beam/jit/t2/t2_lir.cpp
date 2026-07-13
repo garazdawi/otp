@@ -211,6 +211,10 @@ namespace erts_t2 {
             return "bs_read";
         case T2LirKind::BsSync:
             return "bs_sync";
+        case T2LirKind::BsGetPosition:
+            return "bs_get_position";
+        case T2LirKind::BsSetPosition:
+            return "bs_set_position";
         case T2LirKind::Invalid:
             return "invalid";
         }
