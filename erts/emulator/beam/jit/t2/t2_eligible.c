@@ -558,6 +558,171 @@ static int t2_gc_bif_inst_supported(BeamFile *beam, const BeamOp *op) {
     return 0;
 }
 
+/* ------------------------------------------------------------------ *
+ * Mutual-tail-recursion loop detection (idea 2 / SCC arming).         *
+ *                                                                     *
+ * A parser state machine loops through several functions by tail-     *
+ * calling one another (parse_a -> parse_b -> parse_a ...), so no       *
+ * single function is self-recursive and the per-function self-tail    *
+ * test never fires. Such a cycle is a strongly-connected component     *
+ * (size > 1) of the intra-module tail-call graph. Every member is a    *
+ * loop the fixed-frame model already hosts -- all edges are tail       *
+ * calls, so no frame growth and no CPs -- so we mark each member       *
+ * loop-shaped and let the same (installs & loops) gate arm it.         *
+ *                                                                      *
+ * Edges are the local tail calls call_only/call_last (a[1] = target    *
+ * label); cross-module call_ext_* and non-tail body calls are          *
+ * excluded by construction. Self-tail recursion (a size-1 SCC) is      *
+ * already handled by fn_loop, so only size > 1 components are marked   *
+ * here. Tarjan, iterative to bound the loader-thread stack. Fills      *
+ * scc_member[0..nfns-1] (byte-per-function). */
+static void t2_tail_call_sccs(Sint32 nfns,
+                              UWord label_count,
+                              const UWord *entry_labels,
+                              const Uint32 *edge_src,
+                              const UWord *edge_label,
+                              Uint32 edge_count,
+                              byte *scc_member) {
+    Sint32 *label_to_fn;
+    Uint32 *edge_start; /* CSR row offsets, nfns + 1 */
+    Uint32 *adj = NULL; /* CSR resolved targets */
+    Uint32 *fill = NULL;
+    Uint32 nadj = 0;
+    Uint32 k;
+    Sint32 v, s;
+    Sint32 idx = 0, ssp = 0, wsp;
+    /* Tarjan scratch, one slot per function. */
+    Sint32 *ndx, *low, *sstk, *wnode, *scc;
+    Uint32 *wedge;
+    byte *onstk;
+
+    if (nfns <= 1 || edge_count == 0) {
+        return;
+    }
+
+    /* Resolve target labels to function indices in O(1) via a dense
+     * table (labels are dense integers 1..label_count). */
+    label_to_fn = erts_alloc(ERTS_ALC_T_T2_CODE,
+                             (size_t)(label_count + 1) * sizeof(Sint32));
+    for (v = 0; v <= (Sint32)label_count; v++) {
+        label_to_fn[v] = -1;
+    }
+    for (v = 0; v < nfns; v++) {
+        if (entry_labels[v] != 0 && entry_labels[v] <= label_count) {
+            label_to_fn[entry_labels[v]] = v;
+        }
+    }
+
+    /* CSR build: count out-edges per source (dropping unresolved and
+     * self edges), prefix-sum, then fill. */
+    edge_start =
+            erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)(nfns + 1) * sizeof(Uint32));
+    sys_memset(edge_start, 0, (size_t)(nfns + 1) * sizeof(Uint32));
+    for (k = 0; k < edge_count; k++) {
+        Sint32 dst = (edge_label[k] <= label_count) ? label_to_fn[edge_label[k]]
+                                                    : -1;
+        if (dst >= 0 && dst != (Sint32)edge_src[k]) {
+            edge_start[edge_src[k] + 1]++;
+            nadj++;
+        }
+    }
+    for (v = 0; v < nfns; v++) {
+        edge_start[v + 1] += edge_start[v];
+    }
+    if (nadj > 0) {
+        adj = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nadj * sizeof(Uint32));
+        fill = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(Uint32));
+        for (v = 0; v < nfns; v++) {
+            fill[v] = edge_start[v];
+        }
+        for (k = 0; k < edge_count; k++) {
+            Sint32 dst = (edge_label[k] <= label_count)
+                                 ? label_to_fn[edge_label[k]]
+                                 : -1;
+            if (dst >= 0 && dst != (Sint32)edge_src[k]) {
+                adj[fill[edge_src[k]]++] = (Uint32)dst;
+            }
+        }
+        erts_free(ERTS_ALC_T_T2_CODE, fill);
+    }
+
+    if (nadj == 0) {
+        erts_free(ERTS_ALC_T_T2_CODE, edge_start);
+        erts_free(ERTS_ALC_T_T2_CODE, label_to_fn);
+        return;
+    }
+
+    /* Iterative Tarjan over the resolved tail-call graph. */
+    ndx = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(Sint32));
+    low = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(Sint32));
+    sstk = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(Sint32));
+    wnode = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(Sint32));
+    scc = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(Sint32));
+    wedge = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(Uint32));
+    onstk = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(byte));
+    for (v = 0; v < nfns; v++) {
+        ndx[v] = -1;
+        onstk[v] = 0;
+    }
+
+    for (s = 0; s < nfns; s++) {
+        if (ndx[s] != -1) {
+            continue;
+        }
+        wsp = 0;
+        wnode[0] = s;
+        wedge[0] = edge_start[s];
+        ndx[s] = low[s] = idx++;
+        sstk[ssp++] = s;
+        onstk[s] = 1;
+        while (wsp >= 0) {
+            v = wnode[wsp];
+            if (wedge[wsp] < edge_start[v + 1]) {
+                Uint32 w = adj[wedge[wsp]++];
+                if (ndx[w] == -1) {
+                    ndx[w] = low[w] = idx++;
+                    sstk[ssp++] = (Sint32)w;
+                    onstk[w] = 1;
+                    wsp++;
+                    wnode[wsp] = (Sint32)w;
+                    wedge[wsp] = edge_start[w];
+                } else if (onstk[w] && ndx[w] < low[v]) {
+                    low[v] = ndx[w];
+                }
+            } else {
+                if (low[v] == ndx[v]) {
+                    Sint32 cnt = 0, u, j;
+                    do {
+                        u = sstk[--ssp];
+                        onstk[u] = 0;
+                        scc[cnt++] = u;
+                    } while (u != v);
+                    if (cnt > 1) {
+                        for (j = 0; j < cnt; j++) {
+                            scc_member[scc[j]] = 1;
+                        }
+                    }
+                }
+                wsp--;
+                if (wsp >= 0 && low[v] < low[wnode[wsp]]) {
+                    low[wnode[wsp]] = low[v];
+                }
+            }
+        }
+    }
+
+    erts_free(ERTS_ALC_T_T2_CODE, onstk);
+    erts_free(ERTS_ALC_T_T2_CODE, wedge);
+    erts_free(ERTS_ALC_T_T2_CODE, scc);
+    erts_free(ERTS_ALC_T_T2_CODE, wnode);
+    erts_free(ERTS_ALC_T_T2_CODE, sstk);
+    erts_free(ERTS_ALC_T_T2_CODE, low);
+    erts_free(ERTS_ALC_T_T2_CODE, ndx);
+    erts_free(ERTS_ALC_T_T2_CODE, adj);
+    erts_free(ERTS_ALC_T_T2_CODE, edge_start);
+    erts_free(ERTS_ALC_T_T2_CODE, label_to_fn);
+}
+
 Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                                  int *any_eligible,
                                  Uint32 **install_bitmap_out,
@@ -581,6 +746,12 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
     int expect_entry = 0;
     UWord entry_label = 0;
     int done = 0;
+    /* Intra-module tail-call graph, collected during the walk and
+     * resolved to SCCs afterwards (mutual-recursion loop arming). */
+    UWord *entry_labels = NULL;
+    Uint32 *edge_src = NULL;
+    UWord *edge_label = NULL;
+    Uint32 edge_count = 0, edge_cap = 0;
 
     *any_eligible = 0;
     if (install_bitmap_out != NULL) {
@@ -610,6 +781,22 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
         loops = erts_alloc(ERTS_ALC_T_T2_CODE, bitmap_words * sizeof(Uint32));
         sys_memset(loops, 0, bitmap_words * sizeof(Uint32));
         *loop_bitmap_out = loops;
+
+        /* The SCC pass only feeds the loop bitmap, so collect the graph
+         * only when the caller wants loops. */
+        entry_labels =
+                erts_alloc(ERTS_ALC_T_T2_CODE,
+                           (size_t)beam->code.function_count * sizeof(UWord));
+        sys_memset(entry_labels,
+                   0,
+                   (size_t)beam->code.function_count * sizeof(UWord));
+        edge_cap = (beam->code.function_count > 16)
+                           ? (Uint32)beam->code.function_count
+                           : 16;
+        edge_src = erts_alloc(ERTS_ALC_T_T2_CODE,
+                              (size_t)edge_cap * sizeof(Uint32));
+        edge_label = erts_alloc(ERTS_ALC_T_T2_CODE,
+                                (size_t)edge_cap * sizeof(UWord));
     }
 
     beamopallocator_init(&op_alloc);
@@ -661,6 +848,10 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                  * label callers (and self tail calls) target. */
                 entry_label = op->a[0].val;
                 expect_entry = 0;
+                if (entry_labels != NULL && fn_idx >= 0 &&
+                    fn_idx < beam->code.function_count) {
+                    entry_labels[fn_idx] = entry_label;
+                }
             }
             break;
         case genop_call_only_2:
@@ -670,6 +861,22 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
             if (op->a[1].type == TAG_f && op->a[1].val == entry_label &&
                 entry_label != 0) {
                 fn_loop = 1;
+            } else if (edge_src != NULL && op->a[1].type == TAG_f &&
+                       fn_idx >= 0) {
+                /* A local tail call to another function: a candidate
+                 * mutual-recursion (SCC) edge for the loop arming below. */
+                if (edge_count == edge_cap) {
+                    edge_cap *= 2;
+                    edge_src = erts_realloc(ERTS_ALC_T_T2_CODE,
+                                            edge_src,
+                                            (size_t)edge_cap * sizeof(Uint32));
+                    edge_label = erts_realloc(ERTS_ALC_T_T2_CODE,
+                                              edge_label,
+                                              (size_t)edge_cap * sizeof(UWord));
+                }
+                edge_src[edge_count] = (Uint32)fn_idx;
+                edge_label[edge_count] = op->a[1].val;
+                edge_count++;
             }
             break;
         default:
@@ -727,6 +934,42 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
 
     beamcodereader_close(reader);
     beamopallocator_dtor(&op_alloc);
+
+    /* Mutual-tail-recursion arming: mark every member of a size > 1 SCC
+     * of the tail-call graph loop-shaped (self-tail loops were handled
+     * inline via fn_loop). */
+    if (loops != NULL && edge_count > 0) {
+        byte *scc_member =
+                erts_alloc(ERTS_ALC_T_T2_CODE,
+                           (size_t)beam->code.function_count * sizeof(byte));
+        Sint32 i;
+
+        sys_memset(scc_member,
+                   0,
+                   (size_t)beam->code.function_count * sizeof(byte));
+        t2_tail_call_sccs((Sint32)beam->code.function_count,
+                          beam->code.label_count,
+                          entry_labels,
+                          edge_src,
+                          edge_label,
+                          edge_count,
+                          scc_member);
+        for (i = 0; i < beam->code.function_count; i++) {
+            if (scc_member[i]) {
+                loops[i / 32] |= ((Uint32)1) << (i % 32);
+            }
+        }
+        erts_free(ERTS_ALC_T_T2_CODE, scc_member);
+    }
+    if (entry_labels != NULL) {
+        erts_free(ERTS_ALC_T_T2_CODE, entry_labels);
+    }
+    if (edge_src != NULL) {
+        erts_free(ERTS_ALC_T_T2_CODE, edge_src);
+    }
+    if (edge_label != NULL) {
+        erts_free(ERTS_ALC_T_T2_CODE, edge_label);
+    }
 
     return bitmap;
 }
@@ -880,6 +1123,12 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
     UWord entry_label = 0;
     int done = 0;
     int c;
+    /* Tail-call graph, mirrored from erts_t2_eligibility_scan so the
+     * loop_shaped column reflects mutual-recursion (SCC) arming too. */
+    UWord *entry_labels;
+    Uint32 *edge_src;
+    UWord *edge_label;
+    Uint32 edge_count = 0, edge_cap;
 
     /* Per-basic-block blocker accumulator, distributed to in/out-loop at
      * the block terminator. The default (in-loop) is the conservative
@@ -897,6 +1146,14 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
     for (c = 0; c < ERTS_T2_BLK__COUNT; c++) {
         block_cnt[c] = 0;
     }
+
+    entry_labels = erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(UWord));
+    sys_memset(entry_labels, 0, (size_t)nfns * sizeof(UWord));
+    edge_cap = (nfns > 16) ? (Uint32)nfns : 16;
+    edge_src =
+            erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)edge_cap * sizeof(Uint32));
+    edge_label =
+            erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)edge_cap * sizeof(UWord));
 
     beamopallocator_init(&op_alloc);
     reader = beamfile_get_code(beam, &op_alloc);
@@ -935,6 +1192,9 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
             if (expect_entry) {
                 entry_label = op->a[0].val;
                 expect_entry = 0;
+                if (fn_idx >= 0 && fn_idx < nfns) {
+                    entry_labels[fn_idx] = entry_label;
+                }
             }
             /* A label starts a new block; any un-terminated fall-through
              * blockers are flushed conservatively as in-loop. */
@@ -998,6 +1258,24 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
                     fns[fn_idx].loop_shaped = 1;
                     placement_out = 0; /* the recursion edge: in-loop */
                 } else {
+                    if (op->a[1].type == TAG_f && fn_idx >= 0) {
+                        /* Tail call to another local function: a candidate
+                         * mutual-recursion (SCC) edge. */
+                        if (edge_count == edge_cap) {
+                            edge_cap *= 2;
+                            edge_src = erts_realloc(ERTS_ALC_T_T2_CODE,
+                                                    edge_src,
+                                                    (size_t)edge_cap *
+                                                            sizeof(Uint32));
+                            edge_label = erts_realloc(ERTS_ALC_T_T2_CODE,
+                                                      edge_label,
+                                                      (size_t)edge_cap *
+                                                              sizeof(UWord));
+                        }
+                        edge_src[edge_count] = (Uint32)fn_idx;
+                        edge_label[edge_count] = op->a[1].val;
+                        edge_count++;
+                    }
                     placement_out = 1; /* tail call away: leaves the loop */
                 }
             } else {
@@ -1014,6 +1292,34 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
 
     beamcodereader_close(reader);
     beamopallocator_dtor(&op_alloc);
+
+    /* Mutual-tail SCC members are loop-shaped too (mirror of the arming
+     * pass in erts_t2_eligibility_scan). Placement of the cross-function
+     * edge is left out-of-loop above -- conservative for the region
+     * measurement -- since only the flag drives arming. */
+    if (edge_count > 0) {
+        byte *scc_member =
+                erts_alloc(ERTS_ALC_T_T2_CODE, (size_t)nfns * sizeof(byte));
+        int i;
+
+        sys_memset(scc_member, 0, (size_t)nfns * sizeof(byte));
+        t2_tail_call_sccs((Sint32)nfns,
+                          beam->code.label_count,
+                          entry_labels,
+                          edge_src,
+                          edge_label,
+                          edge_count,
+                          scc_member);
+        for (i = 0; i < nfns; i++) {
+            if (scc_member[i]) {
+                fns[i].loop_shaped = 1;
+            }
+        }
+        erts_free(ERTS_ALC_T_T2_CODE, scc_member);
+    }
+    erts_free(ERTS_ALC_T_T2_CODE, entry_labels);
+    erts_free(ERTS_ALC_T_T2_CODE, edge_src);
+    erts_free(ERTS_ALC_T_T2_CODE, edge_label);
 
     *out = fns;
     *count_out = nfns;
