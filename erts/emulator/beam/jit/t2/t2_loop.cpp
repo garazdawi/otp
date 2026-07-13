@@ -603,6 +603,7 @@ namespace erts_t2 {
 
         fn.finalize();
 
+        erts_t2_opt_stats.p1_loops_recovered++;
         *recovered = true;
         return true;
     }

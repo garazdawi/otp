@@ -682,6 +682,10 @@ static struct {
     Uint64 compile_ns;       /* wall time inside the driver            */
 } t2_stats;
 
+/* P1/P2/P3 fire-counters (t2_hir.hpp): same advisory-read discipline
+ * as t2_stats above, bumped at the passes' commit points. */
+ErtsT2OptStats erts_t2_opt_stats;
+
 /* Bisection knobs (debugging aids for the identity gate):
  *   T2_INSTALL_LIMIT=N   install at most N blobs process-wide (the
  *                        pipeline still runs; only the install is
@@ -911,6 +915,21 @@ extern "C" Eterm erts_t2_debug_stats(Process *p) {
     hp[7] = make_small((Uint)t2_stats.gate_rejected);
     hp[8] = make_small((Uint)t2_stats.build_failed);
     hp[9] = make_small((Uint)(t2_stats.compile_ns / 1000));
+    return tup;
+}
+
+extern "C" Eterm erts_t2_debug_opt_stats(Process *p) {
+    /* Six fields -> past the TUPLE5 macro; build the tuple by hand. */
+    Eterm *hp = HAlloc(p, 1 + 6);
+    Eterm tup = make_tuple(hp);
+
+    hp[0] = make_arityval(6);
+    hp[1] = make_small((Uint)erts_t2_opt_stats.p1_sites_inlined);
+    hp[2] = make_small((Uint)erts_t2_opt_stats.p1_loops_recovered);
+    hp[3] = make_small((Uint)erts_t2_opt_stats.p2_acc_unboxed);
+    hp[4] = make_small((Uint)erts_t2_opt_stats.p2_iv_unboxed);
+    hp[5] = make_small((Uint)erts_t2_opt_stats.p3_guards_removed);
+    hp[6] = make_small((Uint)erts_t2_opt_stats.p3_iv_ovf_removed);
     return tup;
 }
 

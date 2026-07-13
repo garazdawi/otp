@@ -949,6 +949,32 @@ namespace erts_t2 {
 } /* namespace erts_t2 */
 
 /* ------------------------------------------------------------------ *
+ * Optimization fire-counters (erts_debug:get_internal_state(         *
+ * t2_opt_stats))                                                     *
+ * ------------------------------------------------------------------ */
+
+/* Cumulative-since-boot counts of committed P1/P2/P3 transforms, one
+ * bump per commit point (the same points the T2_P1_TRACE /
+ * T2_INTRIN_TRACE / T2_P3_TRACE lines report). Racy monitoring
+ * counters in the t2_yield_stats tradition: plain non-atomic words,
+ * bumped only downstream of the pass levers (T2_NO_P2 / T2_NO_P3), so
+ * they never influence codegen or control flow — reads are advisory.
+ * Defined in t2_compile.cpp next to t2_stats; the debug hook is
+ * erts_t2_debug_opt_stats (t2_install.h). */
+struct ErtsT2OptStats {
+    uint64_t p1_sites_inlined;   /* P1: fold call sites inlined
+                                  * (tail/body/wrapper commits)     */
+    uint64_t p1_loops_recovered; /* t2_loop_recover successes       */
+    uint64_t p2_acc_unboxed;     /* P2: loop accumulators unboxed   */
+    uint64_t p2_iv_unboxed;      /* P2: induction-var/bound pairs
+                                  * made raw (maps:fold flatmap)    */
+    uint64_t p3_guards_removed;  /* P3a: redundant guards removed   */
+    uint64_t p3_iv_ovf_removed;  /* P3b: IV overflow guards removed */
+};
+
+extern ErtsT2OptStats erts_t2_opt_stats;
+
+/* ------------------------------------------------------------------ *
  * Self-test (P0 commit 2 test hook)                                  *
  * ------------------------------------------------------------------ */
 

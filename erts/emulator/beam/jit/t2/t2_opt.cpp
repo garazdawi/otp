@@ -1503,6 +1503,7 @@ namespace erts_t2 {
                                 trace_p3("p3 guard-elim", op);
                                 unlink_body(b, op);
                                 n_p3g++;
+                                erts_t2_opt_stats.p3_guards_removed++;
                                 changed = true;
                                 op = next;
                                 continue;
@@ -1547,6 +1548,7 @@ namespace erts_t2 {
                         trace_p3("p3 no-ovf", op);
                         op->flags |= T2_OP_NO_OVF;
                         n_p3o++;
+                        erts_t2_opt_stats.p3_iv_ovf_removed++;
                         changed = true;
                     }
                 }

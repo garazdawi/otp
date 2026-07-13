@@ -2170,6 +2170,7 @@ namespace erts_t2 {
 
                         apply_acc_unbox(plan, acc_phi_op);
                         unbox_entry_seed(acc_phi_op, a0, t2_xreg(1), b_grd, bi);
+                        erts_t2_opt_stats.p2_acc_unboxed++;
 
                         if (intrin_trace()) {
                             erts_fprintf(stderr,
@@ -2198,6 +2199,14 @@ namespace erts_t2 {
                 add_dep(ce.lists_hdr);
                 add_dep(own_code_hdr);
 
+                /* A committed inlined fold site (this hand-coded lists
+                 * recognizer only ever fires on CallExt — i.e. body /
+                 * non-tail sites; the tail lists:foldl and pass-through
+                 * wrapper sites commit via p1_commit). Bumps the shared
+                 * P1SitesInlined counter exactly once, in parity with
+                 * the p1_commit tail/wrapper path. */
+                erts_t2_opt_stats.p1_sites_inlined++;
+
                 if (intrin_trace()) {
                     erts_fprintf(stderr,
                                  "t2_intrinsics: %T:%T/%u expanded "
@@ -2207,6 +2216,19 @@ namespace erts_t2 {
                                  (unsigned)fn.arity,
                                  ce.wrapper_f,
                                  (unsigned)k.call_arity,
+                                 (unsigned)bi);
+                }
+                if (p1_trace() || intrin_trace()) {
+                    erts_fprintf(stderr,
+                                 "t2_p1: %T:%T/%u inlined lists:%T/%u (%s "
+                                 "site, beam_idx %u)\n",
+                                 fn.module,
+                                 fn.function,
+                                 (unsigned)fn.arity,
+                                 ce.wrapper_f,
+                                 (unsigned)k.call_arity,
+                                 call->kind == T2OpKind::TailCallExt ? "tail"
+                                                                     : "body",
                                  (unsigned)bi);
                 }
 
@@ -2787,6 +2809,7 @@ namespace erts_t2 {
                         cmp->flags |= T2_OP_RAW_MODE;
                         kv->def->flags |= T2_OP_RAW_MODE;
                         vv->def->flags |= T2_OP_RAW_MODE;
+                        erts_t2_opt_stats.p2_iv_unboxed++;
                     }
 
                     UnboxPlan plan;
@@ -2799,6 +2822,7 @@ namespace erts_t2 {
                          * entry guard above proved a0 small. */
                         acc_in->def->kind = T2OpKind::UntagInt;
                         acc_in->def->flags |= T2_OP_RAW_MODE;
+                        erts_t2_opt_stats.p2_acc_unboxed++;
 
                         if (intrin_trace()) {
                             erts_fprintf(stderr,
@@ -5253,6 +5277,7 @@ namespace erts_t2 {
                                          t2_xreg(perm[acc_idx]),
                                          b_seed,
                                          bi);
+                        erts_t2_opt_stats.p2_acc_unboxed++;
 
                         if (p1_trace() || intrin_trace()) {
                             erts_fprintf(stderr,
@@ -5283,6 +5308,8 @@ namespace erts_t2 {
                     }
                     add_dep(own_code_hdr);
                 }
+
+                erts_t2_opt_stats.p1_sites_inlined++;
 
                 if (p1_trace() || intrin_trace()) {
                     erts_fprintf(stderr,

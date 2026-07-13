@@ -217,6 +217,13 @@ void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
  *  InstallRejected, BuildFailed, CompileMicros} */
 Eterm erts_t2_debug_stats(Process *p);
 
+/* Cumulative P1/P2/P3 fire-counters (one bump per committed
+ * transform, at the passes' trace/commit points), for
+ * erts_debug:get_internal_state(t2_opt_stats):
+ * {P1SitesInlined, P1LoopsRecovered, P2AccUnboxed, P2IvUnboxed,
+ *  P3GuardsRemoved, P3IvOvfRemoved} */
+Eterm erts_t2_debug_opt_stats(Process *p);
+
 /* beam_jit_main.cpp: C bridge over the global JitAllocator. */
 int beamasm_t2_jit_alloc(void **rx, void **rw, size_t size);
 void beamasm_t2_jit_release(void *rx);

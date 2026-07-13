@@ -74,6 +74,7 @@ Eterm erts_t2_debug_exec(Process *p, Eterm mod, Eterm func, Eterm arity,
                          Eterm args);
 Eterm erts_t2_debug_in_blob(Process *p, Eterm pid);
 Eterm erts_t2_debug_yield_stats(Process *p);
+Eterm erts_t2_debug_opt_stats(Process *p);
 Eterm erts_t2_tier_stats_term(Process *p);
 Eterm erts_t2_profile_census_term(Process *p);
 Eterm erts_t2_debug_census(Process *p, Eterm beam_binary);
@@ -4334,6 +4335,17 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	       ("re-execute the erased call") deopt trampolines. */
 #ifdef BEAMASM
 	    BIF_RET(erts_t2_debug_yield_stats(BIF_P));
+#else
+	    BIF_RET(am_undefined);
+#endif
+	}
+	else if (ERTS_IS_ATOM_STR("t2_opt_stats", BIF_ARG_1)) {
+	    /* T2-Full P1/P2/P3 fire-counters (cumulative, one bump per
+	       committed transform): {P1SitesInlined, P1LoopsRecovered,
+	       P2AccUnboxed, P2IvUnboxed, P3GuardsRemoved,
+	       P3IvOvfRemoved}. */
+#ifdef BEAMASM
+	    BIF_RET(erts_t2_debug_opt_stats(BIF_P));
 #else
 	    BIF_RET(am_undefined);
 #endif
