@@ -2307,7 +2307,42 @@ namespace erts_t2 {
 
         Sint64 c = cdef->imm_int;
 
-        if (c <= 0 || c > 4096 || !IS_SSMALL((Sint64)MAP_SMALL_MAP_LIMIT + c)) {
+        if (c <= 0) {
+            return false;
+        }
+
+        /* Rule 2 — the bs cursor advance (PLAN/T2FULL/14 P-A): a raw
+         * AddSmall whose lhs chains through raw no-ovf advances to a
+         * BsCursor projection. The cursor is a stored ErlSubBits.start
+         * bit offset, which always fits a small — T1's own
+         * bs_get_position tags it with no range check — so it is
+         * < 2^59, and a bs_match advances it by at most
+         * ERTS_T2_BS_MAX_CMDS compile-time command sizes before the
+         * next projection re-reads the stored (small) offset. The
+         * <<4 RAW-IN-HOME add therefore cannot set V. The size bound
+         * below is far above any real command size while keeping the
+         * headroom argument trivial. */
+        if ((op->flags & T2_OP_RAW_MODE) != 0 && c <= (Sint64)1 << 32) {
+            const T2Op *d = lhs->def;
+
+            for (int depth = 0; d != nullptr && depth < 64; depth++) {
+                if (d->kind == T2OpKind::BsCursor &&
+                    (d->flags & T2_OP_RAW_MODE) != 0) {
+                    return true;
+                }
+                if (d->kind == T2OpKind::AddSmall &&
+                    (d->flags & T2_OP_RAW_MODE) != 0 &&
+                    (d->flags & T2_OP_NO_OVF) != 0 && d->num_operands == 2 &&
+                    d->operands[1]->def != nullptr &&
+                    d->operands[1]->def->kind == T2OpKind::ConstInt) {
+                    d = d->operands[0]->def;
+                    continue;
+                }
+                break;
+            }
+        }
+
+        if (c > 4096 || !IS_SSMALL((Sint64)MAP_SMALL_MAP_LIMIT + c)) {
             return false;
         }
 

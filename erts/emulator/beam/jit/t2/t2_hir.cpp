@@ -1924,6 +1924,12 @@ namespace erts_t2 {
                 case T2OpKind::MulRaw:
                     sf_set(f.raw, op->result->id);
                     break;
+                case T2OpKind::BsCursor:
+                    /* The cursor-IV projection (PLAN/T2FULL/14): a
+                     * RAW-IN-HOME bit count (<< 4), the raw AddSmall
+                     * advance's lhs. */
+                    sf_set(f.raw, op->result->id);
+                    break;
                 default:
                     break;
                 }
@@ -2020,6 +2026,12 @@ namespace erts_t2 {
                     case T2OpKind::CmpLt:
                     case T2OpKind::FlatmapKeyAt:
                     case T2OpKind::FlatmapValAt:
+                    /* Cursor-IV projections (PLAN/T2FULL/14): raw
+                     * producers off the context term — the byte
+                     * pointer and the <<4 bit counts. */
+                    case T2OpKind::BsBase:
+                    case T2OpKind::BsLimit:
+                    case T2OpKind::BsCursor:
                         break;
                     default:
                         return fail("block %u: T2_OP_RAW_MODE on %s (not a "
@@ -2120,6 +2132,37 @@ namespace erts_t2 {
                     /* The batch charge untags its operand with a plain
                      * shift, which reads the same value from the tagged
                      * and the tag-cleared forms — both admissible. */
+                    return true;
+                case T2OpKind::BsEnsure:
+                    /* Cursor-IV bounds guard: both operands (cursor,
+                     * limit) are raw <<4 bit counts. */
+                    if (op->num_operands != 2 || !is_raw(op->operands[0]) ||
+                        !is_raw(op->operands[1])) {
+                        return fail("block %u: bs_ensure needs a raw "
+                                    "cursor and a raw limit",
+                                    op->block->id);
+                    }
+                    return true;
+                case T2OpKind::BsRead:
+                    /* Pure extraction at base+cursor: a raw pointer
+                     * and a raw <<4 bit count; the result is a proper
+                     * tagged term. */
+                    if (op->num_operands != 2 || !is_raw(op->operands[0]) ||
+                        !is_raw(op->operands[1])) {
+                        return fail("block %u: bs_read needs a raw base "
+                                    "and a raw cursor",
+                                    op->block->id);
+                    }
+                    return true;
+                case T2OpKind::BsSync:
+                    /* Cursor write-back: the context is a term, the
+                     * cursor a raw <<4 bit count. */
+                    if (op->num_operands != 2 || is_raw(op->operands[0]) ||
+                        !is_raw(op->operands[1])) {
+                        return fail("block %u: bs_sync needs the context "
+                                    "term and a raw cursor",
+                                    op->block->id);
+                    }
                     return true;
                 case T2OpKind::Call:
                 case T2OpKind::CallExt:

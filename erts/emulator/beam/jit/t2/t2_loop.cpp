@@ -348,10 +348,18 @@ namespace erts_t2 {
              * as to plain window guards (T1 re-executes the current
              * iteration inside the real callee); their extra
              * obligations (sync map presence, out-of-loop prefix) are
-             * checked by the redispatch rule in t2_validate_windows. */
+             * checked by the redispatch rule in t2_validate_windows.
+             *
+             * A T2_OP_NO_OVF op is exempt: its claim is re-proven by
+             * the validator (run_no_ovf_checks, strictly before this
+             * pass runs) and the emitter then omits the deopt
+             * entirely — an op with no deopt is not a deopt guard.
+             * The bs cursor advance (PLAN/T2FULL/14 P-A) rides this:
+             * it sits after StartMatch/BsRead dirt in every bs_match
+             * decode. */
             return op_is_speculative_kind(op) &&
                    (op->flags & (T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
-                                 T2_OP_SPEC_ENTRY)) == 0;
+                                 T2_OP_SPEC_ENTRY | T2_OP_NO_OVF)) == 0;
         }
 
         bool is_self_tail_call(const T2Function &fn, const T2Op *term) {

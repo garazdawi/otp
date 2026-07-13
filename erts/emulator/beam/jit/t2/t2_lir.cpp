@@ -199,6 +199,18 @@ namespace erts_t2 {
             return "bs_get_tail";
         case T2LirKind::BsTestTail:
             return "bs_test_tail";
+        case T2LirKind::BsBase:
+            return "bs_base";
+        case T2LirKind::BsLimit:
+            return "bs_limit";
+        case T2LirKind::BsCursor:
+            return "bs_cursor";
+        case T2LirKind::BsEnsure:
+            return "bs_ensure";
+        case T2LirKind::BsRead:
+            return "bs_read";
+        case T2LirKind::BsSync:
+            return "bs_sync";
         case T2LirKind::Invalid:
             return "invalid";
         }

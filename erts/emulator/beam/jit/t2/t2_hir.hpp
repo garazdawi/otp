@@ -236,14 +236,22 @@ namespace erts_t2 {
          * byte-scan loops can later unroll + SWAR. BsBase/BsLimit/BsCursor
          * project the boxed ErlSubBits: base pointer (GC-clobbered,
          * rematerializable), end bit-count (loop-invariant), start
-         * bit-offset (the initial cursor). BsEnsure is a separable bounds
-         * guard (imm_int = need bits; index = mode, 0 at_least / 1
-         * exactly) folded into guard_branch like BsTestTail. BsRead is a
-         * PURE non-allocating extraction at base+cursor (imm_int = size
-         * bits; index = read kind). BsSync writes the raw cursor back to
-         * ErlSubBits.start at every sync/exit/deopt. The cursor advances
-         * via a raw AddSmall (T2_OP_RAW_MODE); bs_get/set_position
-         * tag/untag it as pure SSA. See §2 of the design doc. */
+         * bit-offset (the initial cursor). The cursor and limit use the
+         * RAW-IN-HOME representation (bit count << 4, T2_OP_RAW_MODE —
+         * a tagged small with its tag nibble cleared, §3 of the design
+         * doc) so the cursor advance is the raw AddSmall verbatim; the
+         * advance additionally carries T2_OP_NO_OVF (validator-re-proven
+         * by the cursor rule in t2_addsub_no_ovf_provable — a stored bit
+         * offset always fits a small, exactly as T1's bs_get_position
+         * assumes). BsEnsure is a separable bounds guard (imm_int = need
+         * bits; index bit 0 = exactly-mode, bit 1 = trailing unit-8
+         * divisibility of the remainder) folded into guard_branch like
+         * BsTestTail. BsRead is a PURE non-allocating extraction at
+         * base+cursor (imm_int = size bits; index = read kind). BsSync
+         * writes the raw cursor back to ErlSubBits.start at every
+         * sync/exit/deopt (P-A: once per bs_match, before BsGetTail and
+         * the dst writes). bs_get/set_position tag/untag the cursor as
+         * pure SSA (P-B). See §2 of the design doc. */
         BsBase,
         BsLimit,
         BsCursor,

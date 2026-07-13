@@ -1352,6 +1352,95 @@ namespace erts_t2 {
                     return true;
                 }
 
+                case T2OpKind::BsBase:
+                case T2OpKind::BsLimit:
+                case T2OpKind::BsCursor: {
+                    /* Cursor-IV context projections (PLAN/T2FULL/14
+                     * P-A): 1-2 instruction field loads off the boxed
+                     * ErlSubBits into an X-homed raw temp. */
+                    lop.kind = op->kind == T2OpKind::BsBase
+                                       ? T2LirKind::BsBase
+                                       : (op->kind == T2OpKind::BsLimit
+                                                  ? T2LirKind::BsLimit
+                                                  : T2LirKind::BsCursor);
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "bs projection without a home");
+                    }
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "bs projection of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
+                case T2OpKind::BsEnsure: {
+                    /* Separable bounds guard: folds into the branch
+                     * exactly like BsTestTail. */
+                    if (!feeds_branch(op) || op->next != nullptr) {
+                        return fail_op(op,
+                                       "bs_ensure result not consumed by "
+                                       "this block's branch");
+                    }
+                    const T2Op *term = op->block->terminator;
+
+                    lop.kind = T2LirKind::BsEnsure;
+                    lop.imm = op->imm_int;        /* need, bits */
+                    lop.imm2 = (Sint64)op->index; /* mode/unit bits */
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const || lop.srcs[1].is_const) {
+                        return fail_op(op, "bs_ensure of a constant");
+                    }
+                    lop.succ_then = term->succ_then->id;
+                    lop.succ_else = term->succ_else->id;
+                    *consumed_terminator = true;
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
+                case T2OpKind::BsRead: {
+                    /* Pure non-allocating extraction at base+cursor;
+                     * only the byte-integer form exists today. */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "bs_read without a home");
+                    }
+                    if (op->imm_int != 8) {
+                        return fail_op(op, "bs_read outside the byte subset");
+                    }
+                    lop.kind = T2LirKind::BsRead;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.imm = op->imm_int; /* size, bits */
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const || lop.srcs[1].is_const) {
+                        return fail_op(op, "bs_read of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
+                case T2OpKind::BsSync: {
+                    /* Cursor write-back to ErlSubBits.start. */
+                    lop.kind = T2LirKind::BsSync;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const || lop.srcs[1].is_const) {
+                        return fail_op(op, "bs_sync of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
                 case T2OpKind::SpeculateType:
                     /* The fused tag-bit deopt guard (P2 commit 4): AND
                      * the values, require every small-tag bit, deopt on

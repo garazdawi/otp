@@ -250,6 +250,25 @@ namespace erts_t2 {
         BsGetTail,
         BsTestTail,
 
+        /* Cursor-IV binary matching (PLAN/T2FULL/14, P-A). BsBase
+         * loads the context's raw byte pointer (base_flags & ~3);
+         * BsLimit/BsCursor load the end/start bit counts in the
+         * RAW-IN-HOME form (bit count << 4 — the tagged small with a
+         * cleared tag nibble), so the cursor advance reuses the raw
+         * AddSmall emitter verbatim. BsEnsure is the separable bounds
+         * guard (imm = need bits; imm2 bit 0 = exactly, bit 1 =
+         * trailing unit-8 divisibility), folded into the branch like
+         * BsTestTail. BsRead (imm = size bits, only 8 today) is the
+         * pure extraction at base+cursor via T1's emit_read_bits (any
+         * runtime bit alignment). BsSync stores the raw cursor back
+         * to ErlSubBits.start (srcs = context, cursor). */
+        BsBase,
+        BsLimit,
+        BsCursor,
+        BsEnsure,
+        BsRead,
+        BsSync,
+
         /* Value-producing total comparison (P2 commit 8; the bif2
          * {f,0} erlang:CMP/2 subset): imm = the originating T2OpKind;
          * lowers via T1's bif_is_ge/bif_is_lt/bif_is_eq_exact/

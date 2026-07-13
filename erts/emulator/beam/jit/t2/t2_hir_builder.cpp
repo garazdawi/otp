@@ -346,6 +346,11 @@ namespace erts_t2 {
             std::vector<std::vector<std::pair<uint32_t, T2Op *>>> incomplete;
             std::vector<std::vector<T2BasicBlock *>> preds;
 
+            /* High-water mark of X slots ever defined via write_var
+             * (see there); the floor for the bs cursor-IV raw temp
+             * homes. */
+            uint32_t max_x_written = 0;
+
             bool failed = false;
             std::string error;
 
@@ -385,6 +390,15 @@ namespace erts_t2 {
             /* ---- Braun on-the-fly SSA ------------------------------------ */
 
             void write_var(T2BasicBlock *b, uint32_t var, T2Value *v) {
+                /* High-water mark of DEFINED X slots (any path, ever):
+                 * a later live/arity annotation can only cover
+                 * initialized slots (params + writes, all funneled
+                 * here), so X slots at/above this mark can never hold
+                 * a live term — the bs cursor-IV decode homes its raw
+                 * temps there (PLAN/T2FULL/14 P-A). */
+                if (var < Y_VAR_BASE && var + 1 > max_x_written) {
+                    max_x_written = var + 1;
+                }
                 defs[b->id][var] = v;
             }
 
@@ -2154,59 +2168,251 @@ namespace erts_t2 {
                     return;
                 }
 
-                Sint64 heap = 0;
-                uint32_t live = 0;
-                int dst_arg = -1;
-                T2Type ty = T2Type::any();
+                /* Cursor-IV re-expression (PLAN/T2FULL/14 P-A): the
+                 * command list lowers to context projections + per
+                 * command BsEnsure/BsRead + a raw SSA cursor advance,
+                 * with ONE BsSync writing .start back at the end of
+                 * the op (T1 writes it eagerly per command, but
+                 * nothing can observe the difference between the
+                 * per-command writes and the end-of-op write unless a
+                 * fail edge fires after an advance). Bail — the
+                 * function stays T1 — on shapes where that could
+                 * happen: an ensure after a read/skip already moved
+                 * the cursor, or any command after get_tail. The
+                 * compiler emits ensure-first / get_tail-last lists
+                 * only, so these never occur in practice. */
+                {
+                    bool moved = false, tail = false;
 
-                for (int i = 0; i < ncmds; i++) {
-                    switch (cmds[i].kind) {
-                    case ERTS_T2_BS_READ_INT8:
-                        live = std::max(live, (uint32_t)cmds[i].live);
-                        dst_arg = cmds[i].dst_arg;
-                        ty = T2Type::integer(0, 255);
-                        break;
-                    case ERTS_T2_BS_GET_TAIL:
-                        heap += BUILD_SUB_BITSTRING_HEAP_NEED;
-                        live = std::max(live, (uint32_t)cmds[i].live);
-                        dst_arg = cmds[i].dst_arg;
-                        ty = T2Type::of(BEAM_TYPE_BITSTRING);
-                        break;
-                    default:
-                        break;
+                    for (int i = 0; i < ncmds; i++) {
+                        if (tail) {
+                            fail_op(dop, "bs_match command after get_tail");
+                            return;
+                        }
+                        switch (cmds[i].kind) {
+                        case ERTS_T2_BS_ENSURE:
+                            if (moved) {
+                                fail_op(dop,
+                                        "bs_match ensure after a cursor "
+                                        "advance");
+                                return;
+                            }
+                            break;
+                        case ERTS_T2_BS_READ_INT8:
+                        case ERTS_T2_BS_SKIP:
+                            moved = true;
+                            break;
+                        case ERTS_T2_BS_GET_TAIL:
+                            tail = true;
+                            break;
+                        default:
+                            break;
+                        }
                     }
                 }
 
-                T2Value *v = emit_result_op(T2OpKind::BsMatch, {ctx}, ty);
+                /* Fresh X homes for the raw projection temps, above
+                 * every slot that can hold a live term anywhere across
+                 * this op: the defined-X high-water mark (a later
+                 * live/arity annotation can only cover initialized
+                 * slots — params or earlier writes, all through
+                 * write_var), the window re-call vector (X0..arity-1),
+                 * the commands' GC live prefix, the context's own slot
+                 * and the decoded destination. Slots above every live
+                 * count are never GC-scanned and never named by a sync
+                 * map, so the raw words are walker-invisible. */
+                uint32_t hb = std::max(fn->arity, max_x_written);
 
-                if (v == nullptr) {
+                for (int i = 0; i < ncmds; i++) {
+                    hb = std::max(hb, (uint32_t)cmds[i].live);
+                    if (cmds[i].dst_arg >= 0 &&
+                        dop.args[cmds[i].dst_arg].type == TAG_x) {
+                        hb = std::max(hb,
+                                      reg_var(dop.args[cmds[i].dst_arg]) + 1);
+                    }
+                }
+                if (ctx.reg != T2_REG_NONE && t2_reg_is_x(ctx.reg)) {
+                    hb = std::max(hb, t2_reg_index(ctx.reg) + 1);
+                }
+
+                const int32_t cursor_home = t2_xreg(hb);
+                const int32_t limit_home = t2_xreg(hb + 1);
+                const int32_t base_home = t2_xreg(hb + 2);
+
+                /* Lazily materialized projections. cursor/limit are
+                 * RAW-IN-HOME (bit count << 4); base is a raw byte
+                 * pointer, reloaded per bs_match and never carried
+                 * across an allocating op (reads cannot follow the
+                 * allocating get_tail — the single-dst rule). */
+                T2Value *cursor0 = nullptr, *cursor = nullptr;
+                T2Value *limit = nullptr, *base = nullptr;
+
+                auto project = [&](T2OpKind kind, int32_t home) -> T2Value * {
+                    T2Value *v = emit_result_op(kind, {ctx}, T2Type::any());
+
+                    if (v != nullptr) {
+                        v->def->dst_reg = home;
+                        v->def->flags |= T2_OP_RAW_MODE;
+                    }
+                    return v;
+                };
+                auto get_cursor = [&]() -> T2Value * {
+                    if (cursor == nullptr) {
+                        cursor0 = cursor =
+                                project(T2OpKind::BsCursor, cursor_home);
+                    }
+                    return cursor;
+                };
+
+                T2Value *read_val = nullptr, *tail_val = nullptr;
+                int read_dst = -1, tail_dst = -1;
+
+                /* Advance the SSA cursor by `bits`: the raw AddSmall
+                 * (the P-C loop IV). T2_OP_NO_OVF is re-proven by the
+                 * validator's cursor rule — a stored bit offset always
+                 * fits a small (T1's bs_get_position tags it without a
+                 * check), so the <<4 add cannot set V. */
+                auto advance = [&](UWord bits) {
+                    T2Value *c = get_cursor();
+                    T2Value *k = fn->emit_const_int(cur, (Sint64)bits);
+
+                    if (c == nullptr || k == nullptr) {
+                        return;
+                    }
+
+                    T2Value *n = emit_result_op(
+                            T2OpKind::AddSmall,
+                            {SrcVal{c, cursor_home}, SrcVal{k, T2_REG_NONE}},
+                            T2Type::any());
+
+                    if (n != nullptr) {
+                        n->def->dst_reg = cursor_home;
+                        n->def->flags |= T2_OP_RAW_MODE | T2_OP_NO_OVF;
+                        cursor = n;
+                    }
+                };
+                /* ErlSubBits.start := cursor — before anything T1 may
+                 * re-observe the context (get_tail, the op boundary). */
+                auto sync_cursor = [&]() {
+                    if (cursor == nullptr || cursor == cursor0 || failed) {
+                        return;
+                    }
+
+                    T2Op *op =
+                            fn->new_op(cur, T2OpKind::BsSync, T2Type::none());
+
+                    op->beam_idx = cur_op->beam_idx;
+                    fn->set_operands(op, {ctx.v, cursor});
+                    set_operand_regs(op, {ctx, SrcVal{cursor, cursor_home}});
+                };
+
+                for (int i = 0; i < ncmds && !failed; i++) {
+                    const ErtsT2BsCmd &c = cmds[i];
+
+                    switch (c.kind) {
+                    case ERTS_T2_BS_ENSURE: {
+                        if (limit == nullptr) {
+                            limit = project(T2OpKind::BsLimit, limit_home);
+                        }
+
+                        T2Value *cu = get_cursor();
+
+                        if (cu == nullptr || limit == nullptr) {
+                            return;
+                        }
+
+                        T2Value *ok =
+                                emit_result_op(T2OpKind::BsEnsure,
+                                               {SrcVal{cu, cursor_home},
+                                                SrcVal{limit, limit_home}},
+                                               bool_type());
+
+                        if (ok == nullptr) {
+                            return;
+                        }
+                        ok->def->imm_int = (Sint64)c.size;
+                        /* bit 0 = exactly (P-B), bit 1 = trailing
+                         * unit-8 divisibility of the remainder. */
+                        ok->def->index = c.unit == 8 ? 2 : 0;
+                        guard_branch(ok, fail);
+                        break;
+                    }
+                    case ERTS_T2_BS_READ_INT8: {
+                        if (base == nullptr) {
+                            base = project(T2OpKind::BsBase, base_home);
+                        }
+
+                        T2Value *cu = get_cursor();
+
+                        if (cu == nullptr || base == nullptr) {
+                            return;
+                        }
+
+                        T2Value *v = emit_result_op(T2OpKind::BsRead,
+                                                    {SrcVal{base, base_home},
+                                                     SrcVal{cu, cursor_home}},
+                                                    T2Type::integer(0, 255));
+
+                        if (v == nullptr) {
+                            return;
+                        }
+                        v->def->imm_int = 8; /* size, bits */
+                        v->def->index = (uint32_t)ERTS_T2_BS_READ_INT8;
+                        read_val = v;
+                        read_dst = c.dst_arg;
+                        advance(8);
+                        break;
+                    }
+                    case ERTS_T2_BS_SKIP:
+                        advance(c.size);
+                        break;
+                    case ERTS_T2_BS_GET_TAIL: {
+                        /* T1 re-observes .start inside the get_tail
+                         * fragment: reconcile the cursor first. The
+                         * tail extraction itself does not advance the
+                         * position (T1 parity). */
+                        sync_cursor();
+                        if (failed) {
+                            return;
+                        }
+
+                        T2Value *v =
+                                emit_result_op(T2OpKind::BsGetTail,
+                                               {ctx},
+                                               T2Type::of(BEAM_TYPE_BITSTRING));
+
+                        if (v == nullptr) {
+                            return;
+                        }
+                        v->def->live = (uint32_t)c.live;
+                        v->def->sync = snapshot_sync((uint32_t)c.live);
+                        tail_val = v;
+                        tail_dst = c.dst_arg;
+                        cursor0 = cursor; /* synced: nothing pending */
+                        break;
+                    }
+                    default:
+                        fail_op(dop, "unknown bs_match command kind");
+                        return;
+                    }
+                }
+                if (failed) {
                     return;
                 }
 
-                T2Op *op = v->def;
-                ErtsT2BsCmd *ac =
-                        fn->arena.alloc_array<ErtsT2BsCmd>((size_t)ncmds);
-
-                sys_memcpy(ac, cmds, sizeof(ErtsT2BsCmd) * (size_t)ncmds);
-                op->bs_cmds = ac;
-                op->num_bs_cmds = (uint16_t)ncmds;
-                op->live = live;
-                op->imm_int = heap;
-                if (heap != 0) {
-                    /* The reused T1 emitter inserts an internal
-                     * TEST_HEAP with this live count; X/Y state at
-                     * that point equals the op boundary (nothing is
-                     * written before it). */
-                    op->sync = snapshot_sync(live);
+                /* End-of-op reconciliation: T1 leaves .start advanced
+                 * past every read/skip. Then the (single) destination
+                 * write — after the sync so a destination aliasing the
+                 * context slot cannot be observed early. */
+                sync_cursor();
+                if (failed) {
+                    return;
                 }
-
-                T2Value *ok = emit_result_op(T2OpKind::Succeeded,
-                                             {SrcVal{v, T2_REG_NONE}},
-                                             bool_type());
-                guard_branch(ok, fail);
-
-                if (dst_arg >= 0) {
-                    write_dst_new(dop.args[dst_arg], v);
+                if (read_val != nullptr && read_dst >= 0) {
+                    write_dst_new(dop.args[read_dst], read_val);
+                }
+                if (tail_val != nullptr && tail_dst >= 0) {
+                    write_dst_new(dop.args[tail_dst], tail_val);
                 }
                 break;
             }

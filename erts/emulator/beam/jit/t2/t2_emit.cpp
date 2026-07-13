@@ -853,6 +853,20 @@ namespace erts_t2 {
                     emit_goto(op.succ_then);
                 }
                 break;
+            case T2LirKind::BsBase:
+            case T2LirKind::BsLimit:
+            case T2LirKind::BsCursor:
+                emit_lir_bs_projection(op);
+                break;
+            case T2LirKind::BsEnsure:
+                emit_lir_bs_ensure(op);
+                break;
+            case T2LirKind::BsRead:
+                emit_lir_bs_read(op);
+                break;
+            case T2LirKind::BsSync:
+                emit_lir_bs_sync(op);
+                break;
             default:
                 fail("unsupported LIR op kind in P1 identity emit");
                 break;
@@ -1436,6 +1450,135 @@ namespace erts_t2 {
             if (!failed()) {
                 emit_goto(op.succ_then);
             }
+        }
+
+        /* --- Cursor-IV binary matching (PLAN/T2FULL/14, P-A) -----------
+         *
+         * The context projections and the raw cursor dataflow. The
+         * cursor and limit SSA values use the RAW-IN-HOME form (bit
+         * count << 4 — a tagged small with a cleared tag nibble) so
+         * the cursor advance is the raw AddSmall emitter verbatim;
+         * base is the raw byte pointer. All three live in X homes
+         * above every sync map's live prefix, so no GC/walker ever
+         * sees them (isel/regalloc keep them out of Y slots and sync
+         * maps by the HIR raw discipline). */
+
+        void emit_lir_bs_projection(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const || op.dst.is_none()) {
+                fail("malformed bs projection");
+                return;
+            }
+
+            comment("T2 %s", t2_lir_kind_name(op.kind));
+
+            a64::Gp ctx = load_source(src_argval(op.srcs[0]), TMP1).reg;
+
+            emit_untag_ptr(TMP1, ctx);
+            switch (op.kind) {
+            case T2LirKind::BsBase:
+                a.ldr(TMP2, a64::Mem(TMP1, offsetof(ErlSubBits, base_flags)));
+                a.and_(TMP2, TMP2, imm(~(Uint64)ERL_SUB_BITS_FLAG_MASK));
+                break;
+            case T2LirKind::BsLimit:
+                a.ldr(TMP2, a64::Mem(TMP1, offsetof(ErlSubBits, end)));
+                a.lsl(TMP2, TMP2, imm(_TAG_IMMED1_SIZE));
+                break;
+            case T2LirKind::BsCursor:
+                a.ldr(TMP2, a64::Mem(TMP1, offsetof(ErlSubBits, start)));
+                a.lsl(TMP2, TMP2, imm(_TAG_IMMED1_SIZE));
+                break;
+            default:
+                fail("not a bs projection");
+                return;
+            }
+            mov_arg(loc_argval(op.dst), TMP2);
+        }
+
+        /* sub t, limit, cursor; cmp t, need; b_lo (at_least) / b_ne
+         * (exactly) -> the in-blob fail edge. imm2 bit 1 adds T1's
+         * trailing unit-8 divisibility check of the remainder
+         * (ENSURE_AT_LEAST's unit path: need % 8 == 0, so remaining
+         * mod 8 == (remaining - need) mod 8). All quantities are in
+         * the <<4 raw form, which preserves both comparisons. */
+        void emit_lir_bs_ensure(const T2LirOp &op) {
+            if (op.num_srcs != 2 || op.srcs[0].is_const ||
+                op.srcs[1].is_const || op.succ_then == T2_LIR_NO_BLOCK ||
+                op.succ_else == T2_LIR_NO_BLOCK) {
+                fail("malformed bs_ensure");
+                return;
+            }
+
+            bool exactly = (op.imm2 & 1) != 0;
+            bool unit8 = (op.imm2 & 2) != 0;
+
+            comment("T2 bs_ensure %s%ld bits%s",
+                    exactly ? "exactly " : "",
+                    (long)op.imm,
+                    unit8 ? " unit 8" : "");
+
+            a64::Gp cur = load_source(src_argval(op.srcs[0]), TMP1).reg;
+            a64::Gp lim = load_source(src_argval(op.srcs[1]), TMP2).reg;
+            const Label &else_l = block_label(op.succ_else);
+
+            a.sub(TMP3, lim, cur);
+            cmp(TMP3, (Sint64)op.imm << _TAG_IMMED1_SIZE);
+            if (exactly) {
+                a.b_ne(resolve_label(else_l, disp1MB));
+            } else {
+                a.b_lo(resolve_label(else_l, disp1MB));
+                if (unit8) {
+                    a.tst(TMP3, imm(7 << _TAG_IMMED1_SIZE));
+                    a.b_ne(resolve_label(else_l, disp1MB));
+                }
+            }
+            if (!failed()) {
+                emit_goto(op.succ_then);
+            }
+        }
+
+        /* The pure byte read at base+cursor, through T1's own
+         * emit_read_bits/emit_extract_integer pair so any runtime bit
+         * alignment of the context extracts byte-identically to T1's
+         * bs_match READ_INTEGER action. */
+        void emit_lir_bs_read(const T2LirOp &op) {
+            if (op.num_srcs != 2 || op.srcs[0].is_const ||
+                op.srcs[1].is_const || op.dst.is_none() || op.imm != 8) {
+                fail("malformed bs_read");
+                return;
+            }
+
+            comment("T2 bs_read int8");
+            mov_arg(ARG2, src_argval(op.srcs[0])); /* raw base pointer  */
+            mov_arg(ARG3, src_argval(op.srcs[1])); /* cursor, <<4 form  */
+            a.lsr(ARG3, ARG3, imm(_TAG_IMMED1_SIZE));
+            emit_read_bits(8, ARG2, ARG3, ARG8);
+            mov_imm(ARG5, _TAG_IMMED1_SMALL);
+            emit_extract_integer(ARG8,
+                                 ARG5,
+                                 0,
+                                 64 - 8,
+                                 8,
+                                 ArgRegister(loc_argval(op.dst)));
+        }
+
+        /* ErlSubBits.start := cursor >> 4 (the raw bit offset). */
+        void emit_lir_bs_sync(const T2LirOp &op) {
+            if (op.num_srcs != 2 || op.srcs[0].is_const ||
+                op.srcs[1].is_const) {
+                fail("malformed bs_sync");
+                return;
+            }
+
+            comment("T2 bs_sync");
+
+            a64::Gp ctx = load_source(src_argval(op.srcs[0]), TMP1).reg;
+
+            emit_untag_ptr(TMP1, ctx);
+
+            a64::Gp cur = load_source(src_argval(op.srcs[1]), TMP2).reg;
+
+            a.lsr(TMP3, cur, imm(_TAG_IMMED1_SIZE));
+            a.str(TMP3, a64::Mem(TMP1, offsetof(ErlSubBits, start)));
         }
 
         void emit_lir_guard(const T2LirOp &op) {
