@@ -174,11 +174,25 @@ namespace erts_t2 {
      * non-byte read, home aliasing, extra ops. Sets *changed when a
      * loop was unrolled; the caller re-validates and re-runs loop
      * analysis (the CFG changed). T2_NO_UNROLL=1 disables the pass;
-     * T2_UNROLL_TRACE=1 logs accepts and bail reasons. */
+     * T2_UNROLL_TRACE=1 logs accepts and bail reasons.
+     *
+     * *fused_unrolls counts ONLY the roll-back-pinned FUSED unrolls
+     * (B1 skip-count + B2 SWAR read-sum; both admissions require
+     * N >= 2), the install-gate `cursor_unroll` signal (P-C increment
+     * C). The A2 verbatim read-sum FL is deliberately NOT counted:
+     * its interleaved read/add lanes hoist a raw base over generic
+     * adds, which is only sound when the speculation pass converts
+     * them to non-allocating AddSmall — a profile that WITHHOLDS acc
+     * speculation (x-reg observed non-small) leaves them allocating,
+     * and a GC mid-lane strands the hoisted base (stale bytes, the
+     * T2_NO_SPEC hazard class reached via profile facts). Keeping the
+     * verbatim FL out of the signal keeps that shape out of gated
+     * (production) installs. */
     bool t2_unroll(T2Function &fn,
                    const T2LoopInfo &li,
                    const ErtsT2RetainedCode *ret,
                    bool *changed,
+                   unsigned *fused_unrolls,
                    std::string *err);
 
 } /* namespace erts_t2 */

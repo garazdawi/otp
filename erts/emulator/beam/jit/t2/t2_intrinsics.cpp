@@ -6912,9 +6912,11 @@ namespace erts_t2 {
                    const T2LoopInfo &li,
                    const ErtsT2RetainedCode *ret,
                    bool *changed,
+                   unsigned *fused_unrolls,
                    std::string *err) {
         (void)err;
         *changed = false;
+        *fused_unrolls = 0;
 
         if (fn.blocks.empty() || !fn.sync_complete) {
             return true;
@@ -7429,6 +7431,16 @@ namespace erts_t2 {
 
             fn.finalize();
             *changed = true;
+            if (fuse || swar) {
+                /* The install-gate `cursor_unroll` signal (P-C
+                 * increment C): ONLY the roll-back-pinned fused FLs
+                 * (both admitted with N >= 2 above). The A2 verbatim
+                 * read-sum FL must NOT be credited — its generic adds
+                 * stay allocating when the profiler withholds acc
+                 * speculation, and a GC mid-lane strands the hoisted
+                 * raw base (see the header comment). */
+                (*fused_unrolls)++;
+            }
 
             if (getenv("T2_UNROLL_TRACE") != nullptr) {
                 erts_fprintf(stderr,

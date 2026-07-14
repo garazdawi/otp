@@ -151,6 +151,17 @@ namespace {
                                     * that beats T1. bs_scan>=1 with
                                     * scan_runs==0 is the un-fused per-byte
                                     * loser (lex_wl:classify/4)            */
+        unsigned cursor_unroll;    /* roll-back-pinned FUSED cursor-IV
+                                    * unrolls (B1 skip-count + B2 SWAR,
+                                    * both N>=2) t2_unroll laid down: the
+                                    * bs shape that beats T1 WITHOUT a
+                                    * fused scan-run (measured 3.4-6x).
+                                    * The A2 verbatim read-sum FL is NOT
+                                    * counted (profile-withheld acc
+                                    * speculation would leave its hoisted
+                                    * raw base allocating-add-stale), so
+                                    * that shape stays out of gated
+                                    * installs                            */
         unsigned switch_max_cases; /* widest Switch (T2 lowers linear;
                                     * T1 binary-searches)                 */
         unsigned spec_guards;      /* SpeculateSmall                       */
@@ -164,6 +175,7 @@ namespace {
     void t2_collect_install_signals(const T2LirFunction &lir,
                                     bool leaf_inlined,
                                     unsigned scan_runs,
+                                    unsigned cursor_unroll,
                                     unsigned blob_size,
                                     T2InstallSignals *s) {
         unsigned intrinsic_loop = 0;
@@ -173,6 +185,7 @@ namespace {
         s->fused_arith = 0;
         s->bs_scan = 0;
         s->scan_runs = scan_runs;
+        s->cursor_unroll = cursor_unroll;
         s->switch_max_cases = 0;
         s->spec_guards = 0;
         s->spills = 0;
@@ -253,10 +266,18 @@ namespace {
          * it re-emits T1's per-byte match 1:1 and is measured slower
          * (lex_wl:classify/4: T1 193 us -> T2 268 us, +38%). Requiring a
          * real scan-run here is memo 10's original intent; the drift to
-         * bs_scan >= 1 was the false-accept. */
-        bool bs_unfused = s.bs_scan >= 1 && s.scan_runs == 0;
-        bool eliminated =
-                s.calls_inlined >= 1 || s.fused_arith >= 2 || s.scan_runs >= 1;
+         * bs_scan >= 1 was the false-accept.
+         *
+         * A roll-back-pinned fused cursor-IV unroll (P-C increment C)
+         * is the OTHER bs shape that beats T1 (measured 3.4-6x): it
+         * keeps StartMatch (bs_scan >= 1) but no scan-run, so without
+         * its own signal it would be mistaken for the un-fused
+         * per-byte loser. An unrolled scan is HANDLED, not un-fused,
+         * and IS the eliminated work. */
+        bool bs_unfused =
+                s.bs_scan >= 1 && s.scan_runs == 0 && s.cursor_unroll == 0;
+        bool eliminated = s.calls_inlined >= 1 || s.fused_arith >= 2 ||
+                          s.scan_runs >= 1 || s.cursor_unroll >= 1;
         /* An un-fused per-byte bs loop is a *tax*, not merely a missing
          * win: it can trip the eliminated-work arm on the side (its
          * mutually-exclusive per-clause increments over-count fused_arith
@@ -280,7 +301,8 @@ namespace {
                 } else if (s.switch_max_cases > 4) {
                     *reason = "wide switch (linear scan)";
                 } else if (bs_unfused) {
-                    *reason = "un-fused per-byte bs loop (slower than T1)";
+                    *reason = "un-fused per-byte bs loop, no cursor "
+                              "unroll (slower than T1)";
                 } else {
                     *reason = "speculation without fusion";
                 }
@@ -330,6 +352,9 @@ namespace {
         std::string err;
         bool leaf_inlined = false; /* the leaf inliner erased a local call
                                     * (install-quality gate signal)        */
+        /* Roll-back-pinned fused cursor-IV unrolls t2_unroll laid down
+         * (install-quality gate signal). */
+        unsigned cursor_unroll = 0;
 
         ctx.ret = ret;
         ctx.code_hdr = (const void *)code_hdr;
@@ -412,7 +437,12 @@ namespace {
                 if (getenv("T2_NO_UNROLL") == NULL) {
                     bool unrolled = false;
 
-                    if (!t2_unroll(hir, li, ret, &unrolled, &err)) {
+                    if (!t2_unroll(hir,
+                                   li,
+                                   ret,
+                                   &unrolled,
+                                   &cursor_unroll,
+                                   &err)) {
                         if (diag) {
                             *diag = "unroll: " + err;
                         }
@@ -636,6 +666,7 @@ namespace {
             t2_collect_install_signals(lir,
                                        leaf_inlined,
                                        blob.scan_runs,
+                                       cursor_unroll,
                                        (unsigned)blob.size,
                                        &sig);
 
@@ -644,8 +675,8 @@ namespace {
                     getenv("T2_INSTALL_TRACE") != NULL) {
                     erts_fprintf(stderr,
                                  "t2_gate: REJECT %T:%T/%u -- %s "
-                                 "(inl=%u ret=%u fus=%u bs=%u run=%u sw=%u "
-                                 "spec=%u sz=%u)\n",
+                                 "(inl=%u ret=%u fus=%u bs=%u run=%u "
+                                 "unroll=%u sw=%u spec=%u sz=%u)\n",
                                  hir.module,
                                  hir.function,
                                  (unsigned)hir.arity,
@@ -655,6 +686,7 @@ namespace {
                                  sig.fused_arith,
                                  sig.bs_scan,
                                  sig.scan_runs,
+                                 sig.cursor_unroll,
                                  sig.switch_max_cases,
                                  sig.spec_guards,
                                  sig.blob_size);
