@@ -175,6 +175,8 @@ namespace erts_t2 {
             return "speculate_small";
         case T2LirKind::SpeculateRange:
             return "speculate_range";
+        case T2LirKind::SwarAsciiTest:
+            return "swar_ascii_test";
         case T2LirKind::AddSmall:
             return "add_small";
         case T2LirKind::SubSmall:

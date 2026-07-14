@@ -298,6 +298,14 @@ namespace erts_t2 {
         BsLoadWord,
         SwarByteSum,
 
+        /* Fused ASCII guard (P-C L2): one raw source (the wide word),
+         * no dst. Emits `tst word, #0x8080808080808080; b.ne
+         * <rollback>` — the roll-back trampoline (t1_pc_fail = the
+         * loop header's clause-entry EFFECT PC, no un-commit) branches
+         * to T1 with the cursor un-advanced. Reuses B1's RollbackTramp
+         * (bumps erts_t2_rollback_deopts). */
+        SwarAsciiTest,
+
         /* Value-producing total comparison (P2 commit 8; the bif2
          * {f,0} erlang:CMP/2 subset): imm = the originating T2OpKind;
          * lowers via T1's bif_is_ge/bif_is_lt/bif_is_eq_exact/

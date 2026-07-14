@@ -6430,6 +6430,20 @@ namespace erts_t2 {
             T2Op *ensure;
             T2Op *base; /* A2 read prefix; may be null   */
             T2Op *read; /* A2 read prefix; may be null   */
+            /* P-C L2 utf8 shape: the ASCII SpeculateRange guard that
+             * sits between the BsRead and the advance (byte < 0x80);
+             * null for the plain cnt/sumt single-latch shapes. When
+             * set, the latch was SPLIT by one intermediate bs_ensure
+             * (a bounds re-check subsumed by FC's N*stride ensure and
+             * dropped in the fused FL) — see a1_recognize_utf8. */
+            T2Op *spec;
+            /* P-C L2: the intermediate (dropped) bs_ensure's mode bits
+             * — its unit-8 divisibility check (the `R/binary` tail
+             * byte-alignment requirement) is loop-invariant and must be
+             * carried into FC's N*stride ensure, else the SWAR FL would
+             * process 8 bytes of a bit-unaligned binary that T1 rejects
+             * on iteration 1. 0 for the cnt/sumt single-latch shape. */
+            Sint64 tail_ensure_index;
             T2Op *adv_const;
             T2Op *adv;
             T2Op *bsync;
@@ -6453,6 +6467,511 @@ namespace erts_t2 {
             return false;
         }
 
+        /* ---------------------------------------------------------------- *
+         * P-C L2: recognize the utf8 count loop's TWO-block latch (the L1  *
+         * ASCII fastpath topology). Fills the SAME A1Shape the single-     *
+         * latch recognizer does, plus out->spec (the ASCII SpeculateRange  *
+         * guard); the transform's SWAR-fused FL then reuses B1's roll-back *
+         * and B2's wide load. Strict shape match; any mismatch bails,      *
+         * leaving the loop on L1's 1-wide path (verbatim unroll is NOT a   *
+         * fallback here — it would drop the per-byte ASCII guard).         *
+         *                                                                  *
+         *   H (header, 2 phis): ctx_phi, acc_phi; v=start_match; ok; ...   *
+         *   M:  [bs_get_position] cursor=bs_cursor limit=bs_limit          *
+         *       bs_ensure(cursor,limit); branch(L-a, backtrack)            *
+         *   L-a: base=bs_base; byte=bs_read base,cursor;                   *
+         *        speculate_range byte<0x80;   %% the ASCII guard           *
+         *        adv=add_small cursor,S !raw; bs_sync ctx,adv;             *
+         *        bs_limit; bs_cursor; bs_ensure;  %% INTERMEDIATE (dropped)*
+         *        branch(L-b, backtrack)          %% same backtrack as M    *
+         *   L-b (=latch): cC=const; acc'=add acc_phi,cC; ctx'=copy v;      *
+         *        reduction_check; jump H                                   *
+         *                                                                  *
+         * The accumulator is a CONST increment only (count); a byte-read   *
+         * into acc (sumc) stays on L1's 1-wide path — for utf8 the value   *
+         * is the codepoint, which count/validate discard. Anything else    *
+         * bails.                                                           *
+         * ---------------------------------------------------------------- */
+        bool a1_recognize_utf8(T2Function &fn,
+                               const T2LoopInfo &li,
+                               size_t idx,
+                               A1Shape *out) {
+            const T2Loop &loop = li.loops[idx];
+
+            std::unordered_set<uint32_t> body(loop.body.begin(),
+                                              loop.body.end());
+            T2BasicBlock *h = fn.blocks[loop.header];
+            T2BasicBlock *latch = fn.blocks[loop.latches[0]];
+
+            /* --- header: {ctx, acc} phis + start_match + succeeded +
+             *     branch(M, err) — identical to the single-latch shape. */
+            T2Op *p0 = h->phis_head;
+
+            if (p0 == nullptr || p0->next == nullptr ||
+                p0->next->next != nullptr) {
+                return a1_bail(fn, "utf8: header phi count != 2");
+            }
+
+            T2Op *p1 = p0->next;
+
+            for (T2Op *p : {p0, p1}) {
+                if (p->num_operands != 2 || p->phi_blocks == nullptr ||
+                    p->dst_reg == T2_REG_NONE || !t2_reg_is_x(p->dst_reg) ||
+                    (p->flags & T2_OP_RAW_MODE) != 0) {
+                    return a1_bail(fn, "utf8: header phi shape");
+                }
+                bool from_pre = false, from_latch = false;
+
+                for (uint16_t i = 0; i < 2; i++) {
+                    from_pre |= p->phi_blocks[i]->id == loop.preheader;
+                    from_latch |= p->phi_blocks[i] == latch;
+                }
+                if (!from_pre || !from_latch) {
+                    return a1_bail(fn, "utf8: header phi edges");
+                }
+            }
+
+            T2Op *sm = h->ops_head;
+
+            if (sm == nullptr || sm->kind != T2OpKind::StartMatch ||
+                sm->num_operands != 1 || sm->dst_reg == T2_REG_NONE ||
+                !t2_reg_is_x(sm->dst_reg)) {
+                return a1_bail(fn, "utf8: header start_match");
+            }
+
+            T2Op *ok = sm->next;
+
+            if (ok == nullptr || ok->kind != T2OpKind::Succeeded ||
+                ok->num_operands != 1 || ok->operands[0] != sm->result ||
+                ok->next != nullptr) {
+                return a1_bail(fn, "utf8: header succeeded");
+            }
+
+            const T2Op *hterm = h->terminator;
+
+            if (hterm == nullptr || hterm->kind != T2OpKind::Branch ||
+                hterm->num_operands != 1 || hterm->operands[0] != ok->result ||
+                hterm->succ_then == nullptr || hterm->succ_else == nullptr) {
+                return a1_bail(fn, "utf8: header branch");
+            }
+
+            T2BasicBlock *m = hterm->succ_then;
+
+            if (body.count(m->id) == 0 || m == h || m == latch ||
+                body.count(hterm->succ_else->id) != 0) {
+                return a1_bail(fn, "utf8: header edges");
+            }
+
+            T2Op *ctx_phi;
+            T2Op *acc_phi;
+
+            if (sm->operands[0] == p0->result) {
+                ctx_phi = p0;
+                acc_phi = p1;
+            } else if (sm->operands[0] == p1->result) {
+                ctx_phi = p1;
+                acc_phi = p0;
+            } else {
+                return a1_bail(fn,
+                               "utf8: start_match operand is not a header phi");
+            }
+
+            /* A raw {cursor, limit} projection pair off sm (in EITHER
+             * textual order — the utf8 op lowering emits cursor-first,
+             * the bs_match lowering limit-first) followed by a BsEnsure
+             * of (cursor, limit) with a whole-byte stride. Writes the
+             * three ops and advances *after past the ensure. */
+            auto match_cl = [&](T2Op *first,
+                                bool is_read_bound,
+                                T2Op **cursor_out,
+                                T2Op **limit_out,
+                                T2Op **ensure_out,
+                                T2Op **after) -> bool {
+                T2Op *a = first;
+
+                if (a == nullptr || (a->kind != T2OpKind::BsLimit &&
+                                     a->kind != T2OpKind::BsCursor)) {
+                    return false;
+                }
+                T2Op *b = a->next;
+
+                if (b == nullptr ||
+                    (b->kind != T2OpKind::BsLimit &&
+                     b->kind != T2OpKind::BsCursor) ||
+                    b->kind == a->kind) {
+                    return false;
+                }
+                T2Op *cursor = a->kind == T2OpKind::BsCursor ? a : b;
+                T2Op *limit = a->kind == T2OpKind::BsLimit ? a : b;
+
+                for (T2Op *pr : {cursor, limit}) {
+                    if (pr->num_operands != 1 ||
+                        pr->operands[0] != sm->result ||
+                        (pr->flags & T2_OP_RAW_MODE) == 0 ||
+                        pr->dst_reg == T2_REG_NONE ||
+                        !t2_reg_is_x(pr->dst_reg)) {
+                        return false;
+                    }
+                }
+                if (cursor->dst_reg == limit->dst_reg) {
+                    return false;
+                }
+
+                T2Op *en = b->next;
+
+                if (en == nullptr || en->kind != T2OpKind::BsEnsure ||
+                    en->num_operands != 2 ||
+                    en->operands[0] != cursor->result ||
+                    en->operands[1] != limit->result) {
+                    return false;
+                }
+                /* M's read bound sets the per-byte stride (need == the
+                 * read size, a whole byte count). The intermediate
+                 * bounds re-check that SPLIT the latch is a vacuous
+                 * `ensure at least 0 bits` (the `R/binary` tail match's
+                 * always-true check, whose real exit is M's read
+                 * bound): its need is dropped in the fused FL — the
+                 * FC's N*stride ensure subsumes it — so any non-negative
+                 * whole-byte need is fine there. */
+                if (is_read_bound) {
+                    if (en->imm_int <= 0 || en->imm_int % 8 != 0) {
+                        return false;
+                    }
+                } else {
+                    if (en->imm_int < 0 || en->imm_int % 8 != 0) {
+                        return false;
+                    }
+                }
+                *cursor_out = cursor;
+                *limit_out = limit;
+                *ensure_out = en;
+                *after = en->next;
+                return true;
+            };
+
+            /* --- M: [bs_get_position] {cursor,limit} bs_ensure +
+             *     branch(L-a, backtrack) ----------------------------- */
+            if (m->phis_head != nullptr) {
+                return a1_bail(fn, "utf8: match block has phis");
+            }
+
+            T2Op *op = m->ops_head;
+            T2Op *get_pos = nullptr;
+
+            if (op != nullptr && op->kind == T2OpKind::BsGetPosition) {
+                if (op->num_operands != 1 || op->operands[0] != sm->result ||
+                    op->dst_reg == T2_REG_NONE || !t2_reg_is_x(op->dst_reg)) {
+                    return a1_bail(fn, "utf8: bs_get_position shape");
+                }
+                get_pos = op;
+                op = op->next;
+            }
+
+            T2Op *cursor;
+            T2Op *limit;
+            T2Op *ensure;
+            T2Op *after;
+
+            if (!match_cl(op,
+                          /*is_read_bound=*/true,
+                          &cursor,
+                          &limit,
+                          &ensure,
+                          &after)) {
+                return a1_bail(fn, "utf8: match cursor/limit/ensure");
+            }
+            if (after != nullptr) {
+                return a1_bail(fn, "utf8: extra op after match ensure");
+            }
+
+            const T2Op *mterm = m->terminator;
+            T2BasicBlock *la = mterm != nullptr ? mterm->succ_then : nullptr;
+            T2BasicBlock *backtrack =
+                    mterm != nullptr ? mterm->succ_else : nullptr;
+
+            if (mterm == nullptr || mterm->kind != T2OpKind::Branch ||
+                mterm->num_operands != 1 ||
+                mterm->operands[0] != ensure->result || la == nullptr ||
+                backtrack == nullptr || body.count(la->id) == 0 || la == h ||
+                la == m || la == latch || body.count(backtrack->id) != 0) {
+                return a1_bail(fn, "utf8: match branch");
+            }
+
+            /* --- L-a: base, read, speculate_range, advance, bs_sync,
+             *     intermediate bs_ensure + branch(L-b, backtrack) ---- */
+            if (la->phis_head != nullptr) {
+                return a1_bail(fn, "utf8: L-a has phis");
+            }
+
+            T2Op *base = la->ops_head;
+
+            if (base == nullptr || base->kind != T2OpKind::BsBase ||
+                base->num_operands != 1 || base->operands[0] != sm->result ||
+                (base->flags & T2_OP_RAW_MODE) == 0 ||
+                base->dst_reg == T2_REG_NONE || !t2_reg_is_x(base->dst_reg) ||
+                base->sync != nullptr) {
+                return a1_bail(fn, "utf8: bs_base shape");
+            }
+
+            T2Op *read = base->next;
+
+            if (read == nullptr || read->kind != T2OpKind::BsRead ||
+                read->num_operands != 2 || read->operands[0] != base->result ||
+                read->operands[1] != cursor->result || read->imm_int != 8 ||
+                read->flags != 0 || read->raw_mask != 0 ||
+                read->sync != nullptr || read->dst_reg == T2_REG_NONE ||
+                !t2_reg_is_x(read->dst_reg)) {
+                return a1_bail(fn, "utf8: bs_read shape");
+            }
+
+            T2Op *spec = read->next;
+
+            if (spec == nullptr || spec->kind != T2OpKind::SpeculateRange ||
+                spec->num_operands != 1 || spec->operands[0] != read->result ||
+                (spec->flags & T2_OP_SPEC_BOUNDARY) == 0 ||
+                spec->sync == nullptr ||
+                spec->sync->frame_size != T2_NO_FRAME) {
+                return a1_bail(fn, "utf8: ascii speculate_range guard");
+            }
+
+            T2Op *c1 = spec->next;
+
+            if (c1 == nullptr || c1->kind != T2OpKind::ConstInt ||
+                c1->imm_int != ensure->imm_int) {
+                return a1_bail(fn, "utf8: advance constant");
+            }
+
+            T2Op *adv = c1->next;
+
+            if (adv == nullptr || adv->kind != T2OpKind::AddSmall ||
+                adv->num_operands != 2 || adv->operands[0] != cursor->result ||
+                adv->operands[1] != c1->result ||
+                (adv->flags & T2_OP_RAW_MODE) == 0 ||
+                (adv->flags & T2_OP_NO_OVF) == 0 ||
+                adv->dst_reg != cursor->dst_reg || adv->sync != nullptr) {
+                return a1_bail(fn, "utf8: cursor advance");
+            }
+
+            T2Op *bsync = adv->next;
+
+            if (bsync == nullptr || bsync->kind != T2OpKind::BsSync ||
+                bsync->num_operands != 2 || bsync->operands[0] != sm->result ||
+                bsync->operands[1] != adv->result) {
+                return a1_bail(fn, "utf8: bs_sync");
+            }
+
+            /* The intermediate bs_ensure that split the latch: a pure
+             * bounds RE-check of the SAME context (cursor/limit
+             * projections off sm), subsumed by FC's N*stride ensure and
+             * DROPPED in the fused FL. Its then-edge is L-b, its
+             * else-edge the SAME backtrack as M's ensure — nothing else
+             * (any extra op after it bails). */
+            T2Op *cursor2;
+            T2Op *limit2;
+            T2Op *ensure2;
+            T2Op *after2;
+
+            if (!match_cl(bsync->next,
+                          /*is_read_bound=*/false,
+                          &cursor2,
+                          &limit2,
+                          &ensure2,
+                          &after2)) {
+                return a1_bail(fn, "utf8: intermediate cursor/limit/ensure");
+            }
+            if (after2 != nullptr) {
+                return a1_bail(fn, "utf8: extra op after intermediate ensure");
+            }
+            /* The intermediate ensure must be a plain AT-LEAST bounds
+             * check, optionally with the unit-8 divisibility bit (bit 1
+             * = the `R/binary` tail byte-alignment requirement). That
+             * bit is loop-invariant and MUST be carried into the fused
+             * FC (else the SWAR FL would consume 8 bytes of a bit-
+             * unaligned binary T1 rejects on iteration 1). An exactly-
+             * mode (bit 0) or any other mode has divergent branch
+             * semantics we cannot fold — bail. */
+            if (ensure2->index != 0 && ensure2->index != 2) {
+                return a1_bail(fn,
+                               "utf8: intermediate ensure mode "
+                               "(not a plain at-least / unit-8 "
+                               "bounds re-check)");
+            }
+
+            const T2Op *laterm = la->terminator;
+
+            if (laterm == nullptr || laterm->kind != T2OpKind::Branch ||
+                laterm->num_operands != 1 ||
+                laterm->operands[0] != ensure2->result ||
+                laterm->succ_then != latch || laterm->succ_else != backtrack) {
+                return a1_bail(fn,
+                               "utf8: L-a branch (not L-b / same backtrack)");
+            }
+
+            /* --- L-b (the back-edge latch): const, acc add, ctx copy,
+             *     reduction_check, jump(H). Const increment only (count)
+             *     — a byte-read into acc (sumc) bails to L1's 1-wide. -- */
+            if (latch->phis_head != nullptr) {
+                return a1_bail(fn, "utf8: latch has phis");
+            }
+
+            T2Op *c2 = latch->ops_head;
+
+            if (c2 == nullptr || c2->kind != T2OpKind::ConstInt ||
+                !IS_SSMALL(c2->imm_int)) {
+                return a1_bail(fn, "utf8: latch accumulator constant");
+            }
+
+            T2Op *acc = c2->next;
+
+            if (acc == nullptr || acc->kind != T2OpKind::Add ||
+                acc->num_operands != 2 || acc->operands[0] != acc_phi->result ||
+                acc->operands[1] != c2->result || acc->sync == nullptr ||
+                acc->sync->frame_size != T2_NO_FRAME || acc->raw_mask != 0 ||
+                acc->flags != 0 || acc->dst_reg != acc_phi->dst_reg) {
+                return a1_bail(fn, "utf8: latch accumulator (const increment)");
+            }
+
+            T2Op *cpy = acc->next;
+
+            if (cpy == nullptr || cpy->kind != T2OpKind::Copy ||
+                cpy->num_operands != 1 || cpy->operands[0] != sm->result ||
+                cpy->flags != 0 || cpy->dst_reg != ctx_phi->dst_reg) {
+                return a1_bail(fn, "utf8: latch context copy");
+            }
+
+            T2Op *rc = cpy->next;
+
+            if (rc == nullptr || rc->kind != T2OpKind::ReductionCheck ||
+                rc->num_operands != 0 || rc->flags != 0 || rc->raw_mask != 0 ||
+                rc->sync == nullptr || rc->sync->frame_size != T2_NO_FRAME ||
+                rc->next != nullptr) {
+                return a1_bail(fn, "utf8: latch reduction_check");
+            }
+
+            const T2Op *lterm = latch->terminator;
+
+            if (lterm == nullptr || lterm->kind != T2OpKind::Jump ||
+                lterm->succ_then != h) {
+                return a1_bail(fn, "utf8: latch back edge");
+            }
+
+            /* --- phi threading: the latch edge carries {ctx', acc'} - */
+            for (uint16_t i = 0; i < 2; i++) {
+                if (ctx_phi->phi_blocks[i] == latch &&
+                    ctx_phi->operands[i] != cpy->result) {
+                    return a1_bail(fn, "utf8: ctx phi latch input");
+                }
+                if (acc_phi->phi_blocks[i] == latch &&
+                    acc_phi->operands[i] != acc->result) {
+                    return a1_bail(fn, "utf8: acc phi latch input");
+                }
+            }
+
+            /* --- home disjointness (same contract as the single-latch
+             *     shape: FC re-materializes the raw cursor/limit/base
+             *     temps, so their homes must not alias the three term
+             *     homes the clone maps rebuild from). ----------------- */
+            const int32_t seed_homes[3] = {ctx_phi->dst_reg,
+                                           acc_phi->dst_reg,
+                                           sm->dst_reg};
+
+            if (ctx_phi->dst_reg == acc_phi->dst_reg) {
+                return a1_bail(fn, "utf8: phi home collision");
+            }
+            for (int32_t home : seed_homes) {
+                if (cursor->dst_reg == home || limit->dst_reg == home ||
+                    base->dst_reg == home) {
+                    return a1_bail(fn,
+                                   "utf8: raw temp home aliases a term home");
+                }
+            }
+            if (cursor->dst_reg == limit->dst_reg ||
+                cursor->dst_reg == base->dst_reg ||
+                limit->dst_reg == base->dst_reg) {
+                return a1_bail(fn, "utf8: cursor/limit/base home collision");
+            }
+            /* The read (the byte the guard consumes) may write the dead
+             * ctx phi home — its value is not carried into the fused FL
+             * (which does ONE wide load, no per-byte read) — but never a
+             * live term/temp home. */
+            if (read->dst_reg == acc_phi->dst_reg ||
+                read->dst_reg == sm->dst_reg ||
+                read->dst_reg == cursor->dst_reg ||
+                read->dst_reg == limit->dst_reg ||
+                read->dst_reg == base->dst_reg) {
+                return a1_bail(fn, "utf8: bs_read home aliases a live home");
+            }
+
+            /* --- sync-map contents (same walk as the single-latch
+             *     shape; the intermediate ensure/2nd projections are
+             *     dropped, so only the guard's, ACC's and reduction_
+             *     check's maps are walked). --------------------------- */
+            std::unordered_map<int32_t, const T2Value *> content;
+
+            content[ctx_phi->dst_reg] = ctx_phi->result;
+            content[acc_phi->dst_reg] = acc_phi->result;
+            content[sm->dst_reg] = sm->result;
+            if (get_pos != nullptr) {
+                content[get_pos->dst_reg] = get_pos->result;
+            }
+            /* The read executes (feeding the guard) before the acc add;
+             * its home holds the byte when the acc's map is taken. */
+            content[read->dst_reg] = read->result;
+
+            auto maps_walked = [&](const T2SyncMap *map) -> bool {
+                for (uint32_t i = 0; i < map->x_live; i++) {
+                    int32_t r = t2_xreg(i);
+                    auto it = content.find(r);
+
+                    if (it == content.end() || it->second != map->x[i]) {
+                        return false;
+                    }
+                    if (r != seed_homes[0] && r != seed_homes[1] &&
+                        r != seed_homes[2] && r != read->dst_reg) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+
+            if (!maps_walked(spec->sync)) {
+                return a1_bail(fn, "utf8: speculate_range sync map contents");
+            }
+            if (!maps_walked(acc->sync)) {
+                return a1_bail(fn, "utf8: accumulator sync map contents");
+            }
+            content[acc->dst_reg] = acc->result;
+            content[cpy->dst_reg] = cpy->result;
+            if (!maps_walked(rc->sync)) {
+                return a1_bail(fn, "utf8: reduction_check sync map contents");
+            }
+
+            out->h = h;
+            out->m = m;
+            out->latch = latch;
+            out->ctx_phi = ctx_phi;
+            out->acc_phi = acc_phi;
+            out->sm = sm;
+            out->get_pos = get_pos;
+            out->limit = limit;
+            out->cursor = cursor;
+            out->ensure = ensure;
+            out->base = base;
+            out->read = read;
+            out->spec = spec;
+            out->tail_ensure_index = ensure2->index;
+            out->adv_const = c1;
+            out->adv = adv;
+            out->bsync = bsync;
+            out->acc_const = c2;
+            out->acc = acc;
+            out->ctx_copy = cpy;
+            out->rc = rc;
+            out->stride = ensure->imm_int;
+            out->acc_is_read = false;
+            return true;
+        }
+
         /* Strict shape match; any mismatch bails (the loop then stays
          * exactly as P-B emitted it). Safety over coverage. */
         bool a1_recognize(T2Function &fn,
@@ -6474,6 +6993,15 @@ namespace erts_t2 {
             }
             if (loop.latches.size() != 1) {
                 return a1_bail(fn, "multiple latches");
+            }
+            /* P-C L2: the utf8 count/validate loop's latch is SPLIT by
+             * one intermediate bs_ensure (the L1 ASCII fastpath's
+             * two-block latch), so its body is header + match + L-a +
+             * L-b = 4 blocks. A dedicated recognizer folds L-a/L-b and
+             * records the ASCII SpeculateRange guard; the cnt/sumt
+             * single-latch path (body == 3) below is unchanged. */
+            if (loop.body.size() == 4) {
+                return a1_recognize_utf8(fn, li, idx, out);
             }
             if (loop.body.size() != 3) {
                 return a1_bail(fn, "body is not header+match+latch");
@@ -6855,6 +7383,8 @@ namespace erts_t2 {
             out->ensure = ensure;
             out->base = base;
             out->read = read;
+            out->spec = nullptr; /* cnt/sumt single latch (no ASCII guard) */
+            out->tail_ensure_index = 0; /* no intermediate ensure */
             out->adv_const = c1;
             out->adv = adv;
             out->bsync = bsync;
@@ -6990,6 +7520,12 @@ namespace erts_t2 {
                 if (s.acc_is_read || s.acc_const == nullptr) {
                     return false; /* A2 read-sum: B2 territory, no trace */
                 }
+                if (s.spec != nullptr) {
+                    /* P-C L2 utf8 count: it looks like a skip-count but
+                     * has a per-byte ASCII guard the plain B1 FL would
+                     * DROP — the SWAR ascii_ok path handles it. */
+                    return false;
+                }
                 if (!a1_fuse_enabled()) {
                     return fuse_bail("disabled (T2_NO_FUSE)");
                 }
@@ -7044,6 +7580,9 @@ namespace erts_t2 {
             auto swar_ok = [&]() -> bool {
                 if (!s.acc_is_read) {
                     return false; /* skip-count: B1 territory, no trace */
+                }
+                if (s.spec != nullptr) {
+                    return false; /* utf8 shape: ascii_ok, not B2 */
                 }
                 if (!a1_fuse_enabled()) {
                     return fuse_bail("disabled (T2_NO_FUSE)");
@@ -7102,8 +7641,99 @@ namespace erts_t2 {
                 }
                 return true;
             };
+
+            /* --- P-C L2 SWAR-fused ASCII admission (utf8 count). The N
+             * per-byte reads + N ASCII guards + N const-increments
+             * collapse to ONE 64-bit wide load + ONE SwarAsciiTest
+             * (all-8-bytes < 0x80, rolling back to the header on any
+             * non-ASCII byte) + ONE checked accumulator add (B1's
+             * roll-back deopt: overflow also rolls back). Fires ONLY
+             * for the recognized utf8 shape (s.spec set); the plain
+             * cnt/sumt shapes never reach here. A miss LEAVES THE LOOP
+             * ON L1's 1-wide path (the verbatim FL is NOT a fallback —
+             * it would drop the ASCII guard). --------------------------- */
+            auto ascii_ok = [&]() -> bool {
+                if (s.spec == nullptr) {
+                    return false; /* not the utf8 shape: B1/B2 territory */
+                }
+                if (s.acc_is_read) {
+                    /* sumc-style byte-into-acc utf8: OUT of L2 scope (the
+                     * codepoint, not the byte, is the value) — stays
+                     * 1-wide. The recognizer already refuses it, but keep
+                     * the invariant explicit. */
+                    return fuse_bail("utf8 read-sum accumulator (1-wide)");
+                }
+                if (!a1_fuse_enabled()) {
+                    return fuse_bail("disabled (T2_NO_FUSE)");
+                }
+                if (n < 2 || (Sint64)n * s.stride != 64) {
+                    /* One 64-bit word exactly (8 ASCII bytes): the SWAR
+                     * guard's precondition. Else fall back to 1-wide. */
+                    return fuse_bail("SWAR width is not one 64-bit word");
+                }
+                /* count: the fused increment must be a small (validate
+                 * has no acc — acc_const null — and is exempt). */
+                if (s.acc_const != nullptr &&
+                    !IS_SSMALL(s.acc_const->imm_int * (Sint64)n)) {
+                    return fuse_bail("fused increment is not a small");
+                }
+                if ((Sint64)n * (1 + (Sint64)s.rc->index) >= 4096) {
+                    return fuse_bail("fused reduction charge out of range");
+                }
+                /* Roll-back deopt state: identical to B1/B2 — the header
+                 * start_match's own sync map IS "T1 about to run the
+                 * clause", the roll-back resume state for BOTH the ASCII
+                 * guard and the overflow. */
+                if (s.sm->sync == nullptr ||
+                    s.sm->sync->frame_size != T2_NO_FRAME) {
+                    return fuse_bail("header start_match has no frameless "
+                                     "sync map");
+                }
+                for (uint32_t i = 0; i < s.sm->sync->x_live; i++) {
+                    auto it = content.find(t2_xreg(i));
+
+                    if (it == content.end() || it->second != s.sm->sync->x[i]) {
+                        return fuse_bail("header sync map does not match "
+                                         "the FL-top state");
+                    }
+                }
+                /* The FL-tail reduction_check map is rebuilt from the
+                 * walked contents; the SWAR lane re-establishes only the
+                 * three seed homes (ctx by the copy, acc by the fused
+                 * add, sm untouched) — no per-byte read home. */
+                for (uint32_t i = 0; i < s.rc->sync->x_live; i++) {
+                    int32_t r = t2_xreg(i);
+
+                    if (r != s.ctx_phi->dst_reg && r != s.acc_phi->dst_reg &&
+                        r != s.sm->dst_reg) {
+                        return fuse_bail("reduction_check map names a home "
+                                         "the SWAR lane does not "
+                                         "re-establish");
+                    }
+                }
+                if (s.sm->beam_idx == 0 || ret == nullptr ||
+                    erts_t2_pc_lookup_kind(ret,
+                                           fn.fn_index,
+                                           s.sm->beam_idx,
+                                           ERTS_T2_PC_EFFECT) == nullptr) {
+                    return fuse_bail("no EFFECT pctab entry for the "
+                                     "header start_match");
+                }
+                return true;
+            };
             bool fuse = fuse_ok();
             bool swar = swar_ok();
+            bool ascii = ascii_ok();
+
+            /* A recognized utf8 shape that could not be SWAR-admitted
+             * must NOT be transformed: the verbatim FL clones the read/
+             * advance but DROPS the ASCII SpeculateRange guard, which
+             * would count/validate non-ASCII bytes as ASCII. Leave it
+             * on L1's correct (unoptimized) 1-wide path. */
+            if (s.spec != nullptr && !ascii) {
+                a1_bail(fn, "utf8 shape not SWAR-admissible (staying 1-wide)");
+                continue;
+            }
 
             auto clone_map = [&](const T2SyncMap *map) -> T2SyncMap * {
                 T2SyncMap *c = fn.arena.create<T2SyncMap>();
@@ -7155,14 +7785,26 @@ namespace erts_t2 {
             en2->imm_int = (Sint64)n * s.stride;
             en2->index = s.ensure->index;
             en2->beam_idx = s.ensure->beam_idx;
-            if (swar) {
-                /* B2 alignment guard (index bit 2): the wide load's
+            if (swar || ascii) {
+                /* B2/L2 alignment guard (index bit 2): the wide load's
                  * 64-bit ldr needs a byte-aligned cursor. Alignment is
                  * loop-invariant (+N*8 bits per trip), so an unaligned
                  * scan takes the else edge to the 1-wide M remainder
                  * (emit_read_bits, alignment-agnostic) every
                  * iteration — correct, just not SWAR. */
                 en2->index |= 4;
+            }
+            if (ascii) {
+                /* P-C L2: carry the intermediate ensure's unit-8 bit
+                 * (the `R/binary` tail byte-alignment check the utf8
+                 * latch performs per byte). It is loop-invariant (the
+                 * remainder's mod-8 is unchanged by advancing whole
+                 * bytes), so checking it once in FC is exact: a bit-
+                 * unaligned binary takes the else edge to the 1-wide M
+                 * remainder EVERY iteration, where T1 rejects it at the
+                 * SAME point (iteration 1, backtracked to the clause
+                 * entry) it would without the unroll — byte-identical. */
+                en2->index |= (s.tail_ensure_index & 2);
             }
 
             fn.emit_branch(fc, en2->result, fl, s.m);
@@ -7287,6 +7929,87 @@ namespace erts_t2 {
                 facc->flags = T2_OP_ROLLBACK;
                 acc_k = facc->result;
                 content[s.acc->dst_reg] = acc_k;
+            } else if (ascii) {
+                /* P-C L2 utf8 count/validate: the header-entry snapshot
+                 * FIRST (content holds the pre-iteration FL-top state,
+                 * verified against the start_match map in ascii_ok) —
+                 * the roll-back deopt state for BOTH the ASCII guard and
+                 * the count overflow. */
+                T2SyncMap *hdr_map = clone_map(s.sm->sync);
+
+                /* The hoisted base projection, consumed by the single
+                 * wide load below BEFORE any acc add — no GC point in
+                 * FL, so the raw pointer cannot go stale. */
+                base2 = fn.new_op(fl, T2OpKind::BsBase, s.base->type);
+                fn.set_operands(base2, {s.sm->result});
+                clone_regs(base2, s.base);
+                base2->dst_reg = s.base->dst_reg;
+                base2->flags = s.base->flags;
+                base2->beam_idx = s.base->beam_idx;
+
+                /* ONE 64-bit wide load (the 8 ASCII bytes). Its raw temp
+                 * reuses the limit home — dead once FC's bs_ensure
+                 * consumed it, disjoint from every seed/cursor/base home
+                 * by the recognizer's checks. */
+                T2Op *word = fn.new_op(fl, T2OpKind::BsLoadWord, T2Type::any());
+
+                fn.set_operands(word, {base2->result, cur_k});
+                word->operand_regs = fn.arena.alloc_array<int32_t>(2);
+                word->operand_regs[0] = s.base->dst_reg;
+                word->operand_regs[1] = s.cursor->dst_reg;
+                word->dst_reg = s.limit->dst_reg;
+                word->flags = T2_OP_RAW_MODE;
+                word->imm_int = (Sint64)n * s.stride; /* 64 */
+                word->beam_idx = s.read->beam_idx;
+
+                /* The fused ASCII guard: all 8 bytes < 0x80 (word &
+                 * 0x8080808080808080 == 0). On ANY non-ASCII byte it
+                 * ROLLS BACK to the header — cursor un-advanced (the
+                 * guard precedes the advance/BsSync), acc pre-iteration
+                 * (it precedes the acc add), x0/x1 still holding the
+                 * pre-iteration ctx/acc — exactly like B1's overflow,
+                 * and T1 then re-processes all N bytes one at a time
+                 * (byte-identical). It commits nothing, so its roll-back
+                 * trampoline has no un-commit. beam_idx = the header
+                 * start_match ordinal (its EFFECT PC is the clause
+                 * entry); sync = the header snapshot. */
+                T2Op *guard =
+                        fn.new_op(fl, T2OpKind::SwarAsciiTest, T2Type::none());
+
+                fn.set_operands(guard, {word->result});
+                guard->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                guard->operand_regs[0] = s.limit->dst_reg;
+                guard->beam_idx = s.sm->beam_idx;
+                guard->flags = T2_OP_SPEC_BOUNDARY | T2_OP_ROLLBACK;
+                guard->sync = hdr_map;
+
+                /* count: acc' = acc_phi + N*C, CHECKED (overflow also
+                 * rolls back to the header, per B1); validate: NO acc op
+                 * (acc_const null). Still the generic gc_bif Add here;
+                 * the speculation pass converts it to the boundary-class
+                 * AddSmall exactly like B1's fused add. */
+                if (s.acc_const != nullptr) {
+                    T2Value *inc =
+                            fn.emit_const_int(fl,
+                                              s.acc_const->imm_int * (Sint64)n);
+
+                    inc->def->beam_idx = s.acc_const->beam_idx;
+
+                    T2Op *facc = fn.new_op(fl, T2OpKind::Add, s.acc->type);
+
+                    fn.set_operands(facc, {acc_k, inc});
+                    clone_regs(facc, s.acc);
+                    facc->dst_reg = s.acc->dst_reg;
+                    facc->live = s.acc->live;
+                    facc->mfa_m = s.acc->mfa_m;
+                    facc->mfa_f = s.acc->mfa_f;
+                    facc->bif_num = s.acc->bif_num;
+                    facc->beam_idx = s.sm->beam_idx;
+                    facc->sync = hdr_map;
+                    facc->flags = T2_OP_ROLLBACK;
+                    acc_k = facc->result;
+                    content[s.acc->dst_reg] = acc_k;
+                }
             } else if (s.read != nullptr) {
                 /* One hoisted base projection serves every copy: FL
                  * has no GC point before its last read (the cloned
@@ -7302,7 +8025,7 @@ namespace erts_t2 {
                 base2->beam_idx = s.base->beam_idx;
             }
 
-            if (fuse || swar) {
+            if (fuse || swar || ascii) {
                 /* ONE cursor advance + ONE .start commit for the whole
                  * block (the bs_ensure in FC covered N*stride bits). */
                 T2Value *cs = fn.emit_const_int(fl, (Sint64)n * s.stride);
@@ -7325,7 +8048,7 @@ namespace erts_t2 {
                 sync1->beam_idx = s.bsync->beam_idx;
             }
 
-            for (int k = 0; !fuse && !swar && k < n; k++) {
+            for (int k = 0; !fuse && !swar && !ascii && k < n; k++) {
                 T2Op *read_k = nullptr;
 
                 if (s.read != nullptr) {
@@ -7405,7 +8128,7 @@ namespace erts_t2 {
              * i_test_yield-at-entry discipline — reduction counts stay
              * T1-exact. The verbatim FL keeps its historical charge. */
             rc2->index =
-                    (fuse || swar)
+                    (fuse || swar || ascii)
                             ? (uint32_t)((Sint64)n * (1 + (Sint64)s.rc->index) -
                                          1)
                             : s.rc->index;
@@ -7431,30 +8154,33 @@ namespace erts_t2 {
 
             fn.finalize();
             *changed = true;
-            if (fuse || swar) {
+            if (fuse || swar || ascii) {
                 /* The install-gate `cursor_unroll` signal (P-C
                  * increment C): ONLY the roll-back-pinned fused FLs
-                 * (both admitted with N >= 2 above). The A2 verbatim
-                 * read-sum FL must NOT be credited — its generic adds
-                 * stay allocating when the profiler withholds acc
-                 * speculation, and a GC mid-lane strands the hoisted
-                 * raw base (see the header comment). */
+                 * (all admitted with N >= 2 above, incl. the L2 utf8
+                 * ASCII FL). The A2 verbatim read-sum FL must NOT be
+                 * credited — its generic adds stay allocating when the
+                 * profiler withholds acc speculation, and a GC mid-lane
+                 * strands the hoisted raw base (see the header comment). */
                 (*fused_unrolls)++;
             }
 
             if (getenv("T2_UNROLL_TRACE") != nullptr) {
-                erts_fprintf(stderr,
-                             "t2_unroll: %T:%T/%u x%d (%s, %s, stride %ld "
-                             "bits, header block%u)\n",
-                             fn.module,
-                             fn.function,
-                             (unsigned)fn.arity,
-                             n,
-                             s.acc_is_read ? "read-sum" : "skip-count",
-                             swar ? "swar-fused"
-                                  : (fuse ? "fused" : "verbatim"),
-                             (long)s.stride,
-                             s.h->id);
+                erts_fprintf(
+                        stderr,
+                        "t2_unroll: %T:%T/%u x%d (%s, %s, stride %ld "
+                        "bits, header block%u)\n",
+                        fn.module,
+                        fn.function,
+                        (unsigned)fn.arity,
+                        n,
+                        ascii ? "utf8-count"
+                              : (s.acc_is_read ? "read-sum" : "skip-count"),
+                        ascii ? "swar-ascii"
+                              : (swar ? "swar-fused"
+                                      : (fuse ? "fused" : "verbatim")),
+                        (long)s.stride,
+                        s.h->id);
             }
         }
 

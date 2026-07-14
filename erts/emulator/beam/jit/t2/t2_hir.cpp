@@ -207,6 +207,8 @@ namespace erts_t2 {
             return "bs_load_word";
         case T2OpKind::SwarByteSum:
             return "swar_byte_sum";
+        case T2OpKind::SwarAsciiTest:
+            return "swar_ascii_test";
         case T2OpKind::Call:
             return "call";
         case T2OpKind::CallExt:
@@ -2233,6 +2235,16 @@ namespace erts_t2 {
                      * raw <<4-form byte sum. */
                     if (op->num_operands != 1 || !is_raw(op->operands[0])) {
                         return fail("block %u: swar_byte_sum needs the raw "
+                                    "word",
+                                    op->block->id);
+                    }
+                    return true;
+                case T2OpKind::SwarAsciiTest:
+                    /* P-C L2 guard: consumes the raw word; no result
+                     * (a `tst word, #0x80..80` rolls back on any high
+                     * bit). */
+                    if (op->num_operands != 1 || !is_raw(op->operands[0])) {
+                        return fail("block %u: swar_ascii_test needs the raw "
                                     "word",
                                     op->block->id);
                     }

@@ -237,6 +237,7 @@ namespace erts_t2 {
                             break;
                         case T2LirKind::SpeculateSmall:
                         case T2LirKind::SpeculateRange:
+                        case T2LirKind::SwarAsciiTest:
                         case T2LirKind::AddSmall:
                         case T2LirKind::SubSmall:
                             /* Every speculative op deopts somewhere. */

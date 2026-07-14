@@ -1611,6 +1611,46 @@ namespace erts_t2 {
                     b.ops.push_back(lop);
                     return true;
 
+                case T2OpKind::SwarAsciiTest:
+                    /* P-C L2: the fused ASCII guard over the wide word.
+                     * Boundary + ROLL-BACK class — the deopt PC is the
+                     * loop header start_match's own T1 EFFECT site (the
+                     * clause entry), reached with the bs cursor still
+                     * unadvanced (the guard precedes the advance/BsSync
+                     * by construction, exactly like the B1 fused add it
+                     * shares a trampoline shape with). The single raw
+                     * word operand is never a proven small (it is the
+                     * tag-cleared BsLoadWord result) — spec_check_op
+                     * skips it and run_raw_checks covers it. */
+                    lop.kind = T2LirKind::SwarAsciiTest;
+                    if (op->num_operands != 1) {
+                        return fail_op(op,
+                                       "ascii guard without exactly one "
+                                       "operand");
+                    }
+                    if ((op->flags & T2_OP_SPEC_BOUNDARY) == 0) {
+                        return fail_op(op,
+                                       "ascii guard outside the boundary "
+                                       "deopt class");
+                    }
+                    if (op->sync == nullptr) {
+                        return fail_op(op,
+                                       "ascii guard without a sync map "
+                                       "(the roll-back pin set)");
+                    }
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "ascii guard of a constant");
+                    }
+                    lop.t1_pc_fail = spec_deopt_pc(op);
+                    if (lop.t1_pc_fail == nullptr) {
+                        return fail_op(op, "no deopt PC for the ascii guard");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
                 case T2OpKind::AddSmall:
                 case T2OpKind::SubSmall:
                     /* Flag-checked one-untag arithmetic; deopt (b.vs)

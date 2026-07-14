@@ -895,6 +895,9 @@ namespace erts_t2 {
             case T2LirKind::SpeculateRange:
                 emit_lir_speculate_range(op);
                 break;
+            case T2LirKind::SwarAsciiTest:
+                emit_lir_swar_ascii_test(op);
+                break;
             case T2LirKind::AddSmall:
             case T2LirKind::SubSmall:
                 emit_lir_addsub_small(op);
@@ -1205,6 +1208,55 @@ namespace erts_t2 {
 
             cmp(val, (Sint64)op.imm << _TAG_IMMED1_SIZE);
             a.b_hs(resolve_label(range_tramps.back().label, disp1MB));
+        }
+
+        /* P-C L2: the fused ASCII guard over the wide word BsLoadWord
+         * produced. `tst word, #0x8080808080808080` sets Z=0 iff ANY
+         * of the 8 bytes has its high bit set (>= 0x80) — the exact
+         * "all 8 bytes < 0x80" predicate (byte order is irrelevant to
+         * a per-byte high-bit test). On failure (b.ne) it ROLLS BACK
+         * to the loop header exactly like the B1/B2 checked add's
+         * overflow: the guard has committed nothing (it precedes both
+         * the accumulator add and the cursor advance/BsSync), so its
+         * trampoline has no un-commit (uncommit_slot None) — it just
+         * re-tags any masked raw homes, bumps erts_t2_rollback_deopts
+         * and redispatches T1 at the header's clause-entry PC with the
+         * cursor un-advanced, where T1 re-processes all N bytes one at
+         * a time (ASCII-fast-pathing the leading ASCII, multibyte-
+         * decoding the first >= 0x80 byte). Byte-identical to the
+         * 1-wide L1 path by construction. */
+        void emit_lir_swar_ascii_test(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const ||
+                op.t1_pc_fail == nullptr) {
+                fail("malformed swar_ascii_test guard");
+                return;
+            }
+
+            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+            a64::Gp word;
+
+            if (op.srcs[0].loc.is_phys()) {
+                word = phys_gp(op.srcs[0].loc);
+            } else {
+                word = load_source(src_argval(op.srcs[0]), TMP2).reg;
+            }
+
+            comment("T2 swar ascii test (all 8 bytes < 0x80)");
+
+            RollbackTramp rt;
+
+            rt.label = a.new_label();
+            rt.t1_pc = op.t1_pc_fail;
+            rt.uncommit_slot = PhysLoc::none();
+            rt.uncommit_imm = 0;
+            rt.uncommit_add = false;
+            rt.raw_mask = op.raw_mask;
+            rt.beam_idx = op.beam_idx;
+            rollback_tramps.push_back(rt);
+
+            a.tst(word, imm(0x8080808080808080ull));
+            a.b_ne(resolve_label(rollback_tramps.back().label, disp1MB));
         }
 
         /* Flag-checked one-untag add/sub (P2 commit 4; PLAN/T2/03 §9.4,

@@ -285,6 +285,19 @@ namespace erts_t2 {
         BsLoadWord,
         SwarByteSum,
 
+        /* P-C L2 (unroll + SWAR the utf8 ASCII run). The fused ASCII
+         * guard over the wide word BsLoadWord produced: "all 8 bytes <
+         * 0x80" iff `word & 0x8080808080808080 == 0`. A pure guard
+         * (one raw operand, no result) whose FAILURE ROLLS BACK to the
+         * loop header exactly like the B1/B2 checked add's overflow —
+         * carries T2_OP_SPEC_BOUNDARY | T2_OP_ROLLBACK, the header
+         * start_match's beam_idx (its EFFECT PC is the clause entry)
+         * and the header-entry sync snapshot; on any byte >= 0x80 it
+         * side-exits with the cursor un-advanced (placed before the
+         * advance/BsSync) so T1 re-processes all N bytes one at a time.
+         * Byte-identical to the 1-wide L1 path by construction. */
+        SwarAsciiTest,
+
         /* Funs and calls */
         Call,
         CallExt,

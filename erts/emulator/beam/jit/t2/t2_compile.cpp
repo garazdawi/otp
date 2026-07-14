@@ -208,6 +208,7 @@ namespace {
                     break;
                 case T2LirKind::SpeculateSmall:
                 case T2LirKind::SpeculateRange:
+                case T2LirKind::SwarAsciiTest:
                     s->spec_guards++;
                     break;
                 case T2LirKind::StartMatch:

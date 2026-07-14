@@ -323,6 +323,10 @@ namespace erts_t2 {
             switch (op->kind) {
             case T2OpKind::SpeculateType:
             case T2OpKind::SpeculateRange:
+            /* P-C L2 fused ASCII guard: a boundary-class deopt (rolls
+             * back to the header), hence exempt from the window rule
+             * below just like SpeculateRange. */
+            case T2OpKind::SwarAsciiTest:
             case T2OpKind::UntagInt:
             case T2OpKind::AddSmall:
             case T2OpKind::SubSmall:
