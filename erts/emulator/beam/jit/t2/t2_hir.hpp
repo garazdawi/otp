@@ -487,7 +487,7 @@ namespace erts_t2 {
     };
 
     /* T2Op::flags bits. */
-    enum : uint16_t {
+    enum : uint32_t {
         /* A decoded error-exit op (badmatch/case_end/if_end): lowers to
          * a side exit to the op's own T1 PC. Carries a sync map. */
         T2_OP_ERR_EXIT_OP = 1 << 0,
@@ -665,7 +665,24 @@ namespace erts_t2 {
          * set only by the P3 pass (t2_opt.cpp) and RE-PROVEN by the
          * validator — an unprovable claim is a hard validate error,
          * never a silently missing guard. */
-        T2_OP_NO_OVF = 1 << 15
+        T2_OP_NO_OVF = 1 << 15,
+        /* P-C increment B1 (roll-back deopt): a fused-block accumulator
+         * update that matches no single BEAM op — the t2_unroll fused
+         * path's ONE `acc + N*C` standing in for the N per-iteration
+         * adds. Boundary-class speculation applies (the pass converts
+         * it to AddSmall exactly like the verbatim clones), but its
+         * beam_idx is the LOOP HEADER's start_match ordinal and its
+         * sync map the header-entry (pre-iteration) state, so the
+         * overflow deopt ROLLS the whole fused block BACK: T1 resumes
+         * at the clause entry (spec_deopt_pc, ERTS_T2_PC_EFFECT) with
+         * the pre-add accumulator and the un-advanced cursor (the op
+         * is placed before the fused advance/sync) and re-executes all
+         * N iterations, producing the small->bignum overflow result
+         * byte-identically. The emitter may commit the add in place
+         * (adds to the register-backed home) and must then UN-COMMIT
+         * it in the deopt trampoline (sub of the same immediate)
+         * before branching to the header T1 PC. */
+        T2_OP_ROLLBACK = 1 << 16
     };
 
     /* One arm of a `switch` terminator. */
@@ -712,7 +729,7 @@ namespace erts_t2 {
         int32_t dst_reg = T2_REG_NONE; /* NSDMI: arena zero-init would be x0 */
         int32_t *operand_regs;         /* arena array [num_operands] or null */
 
-        uint16_t flags; /* T2_OP_* bits */
+        uint32_t flags; /* T2_OP_* bits */
 
         /* P2 loop unboxing: bit i set = the value this op's sync map
          * names at X i is RAW-IN-HOME (see T2_OP_RAW_MODE) and the

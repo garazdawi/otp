@@ -1518,10 +1518,18 @@ namespace erts_t2 {
                 case T2OpKind::AddSmall:
                 case T2OpKind::SubSmall:
                     /* Flag-checked one-untag arithmetic; deopt (b.vs)
-                     * fires before the commit. */
+                     * fires before the commit — except the roll-back
+                     * class (P-C B1), which may commit in place and
+                     * un-commit in its trampoline. */
                     lop.kind = op->kind == T2OpKind::AddSmall
                                        ? T2LirKind::AddSmall
                                        : T2LirKind::SubSmall;
+                    lop.rollback = (op->flags & T2_OP_ROLLBACK) != 0;
+                    if (lop.rollback && op->sync == nullptr) {
+                        return fail_op(op,
+                                       "roll-back arithmetic without a "
+                                       "sync map");
+                    }
                     lop.spec_callsite =
                             (op->flags &
                              (T2_OP_SPEC_CALLSITE | T2_OP_SPEC_ENTRY |

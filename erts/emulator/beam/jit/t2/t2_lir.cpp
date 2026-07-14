@@ -326,6 +326,9 @@ namespace erts_t2 {
                 if (op.t1_pc_fail != nullptr) {
                     os << " [fail=" << op.t1_pc_fail << "]";
                 }
+                if (op.rollback) {
+                    os << " [rollback beam_idx=" << op.beam_idx << "]";
+                }
                 if (op.raw_dst || op.raw_srcs != 0) {
                     os << " [raw";
                     if (op.raw_dst) {

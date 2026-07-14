@@ -2747,6 +2747,12 @@ namespace erts_t2 {
         if (op->flags & T2_OP_RAW_MODE) {
             out += " !raw";
         }
+        if (op->flags & T2_OP_ROLLBACK) {
+            /* P-C B1: the fused checked add; hdr = the loop header's
+             * start_match ordinal its overflow deopt resumes at. */
+            snprintf(buf, sizeof(buf), " !rollback(hdr=%u)", op->beam_idx);
+            out += buf;
+        }
         if (op->raw_mask != 0) {
             snprintf(buf, sizeof(buf), " !retag=0x%x", op->raw_mask);
             out += buf;

@@ -712,6 +712,15 @@ void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
     case op_bif_node_jSd:
     case op_bif_hd_sd:
     case op_bif_tl_sd:
+    /* Clause-entry match starts (P-C B1, the roll-back deopt): a fused
+     * unrolled block's overflow deopt resumes T1 at its loop header's
+     * bs_start_match3 site with the pre-iteration state. Every generic
+     * bs_start_match3 with a register Bin lowers to exactly one of
+     * these (a constant Bin transforms to `jump` and records nothing;
+     * bs_start_match4 lowers to bs_start_match3 except its `resume`
+     * form, which becomes a move) — decode-side mirror:
+     * pctab_start_match_effect in t2_pctab.c. */
+    case op_i_bs_start_match3_Stjd:
         t2_pc_record(before, ERTS_T2_PC_EFFECT);
         break;
 

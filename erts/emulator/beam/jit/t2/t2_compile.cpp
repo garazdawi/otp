@@ -396,13 +396,15 @@ namespace {
 
                 t2_loop_info(hir, &li);
 
-                /* Cursor-IV loop unroll, increments A1+A2
-                 * (PLAN/T2FULL/14 §4): xN verbatim unroll of the
-                 * skip-count and read-and-sum scan loops.
-                 * Mutates the CFG (two new blocks + a third phi edge
-                 * per header phi), so on change the function is
-                 * re-validated in full and the loop analysis re-run
-                 * before the passes below read `li`. The cloned
+                /* Cursor-IV loop unroll, increments A1+A2+B1
+                 * (PLAN/T2FULL/14 §4): xN unroll of the skip-count and
+                 * read-and-sum scan loops — fused fast-path latch with
+                 * the roll-back deopt for the skip-count shape (B1;
+                 * `ret` resolves the header deopt PC), verbatim copies
+                 * otherwise. Mutates the CFG (two new blocks + a third
+                 * phi edge per header phi), so on change the function
+                 * is re-validated in full and the loop analysis re-run
+                 * before the passes below read `li`. The cloned/fused
                  * accumulator adds are still generic here; the
                  * speculation pass below converts them exactly as it
                  * converts the 1-wide original. T2_NO_UNROLL=1
@@ -410,7 +412,7 @@ namespace {
                 if (getenv("T2_NO_UNROLL") == NULL) {
                     bool unrolled = false;
 
-                    if (!t2_unroll(hir, li, &unrolled, &err)) {
+                    if (!t2_unroll(hir, li, ret, &unrolled, &err)) {
                         if (diag) {
                             *diag = "unroll: " + err;
                         }

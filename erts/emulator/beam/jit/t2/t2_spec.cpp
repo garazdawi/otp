@@ -325,7 +325,16 @@ namespace erts_t2 {
                              op = op->next) {
                             if (op_is_candidate_kind(op) &&
                                 cand_of.find(op) == cand_of.end()) {
-                                bool window = !dirty;
+                                /* A roll-back op (P-C B1) is boundary
+                                 * by contract: its attached header map
+                                 * + header beam_idx ARE the deopt state
+                                 * (window class would null the map and
+                                 * re-call the iteration instead). Its
+                                 * prefix is dirty anyway (the header's
+                                 * start_match); this keeps the contract
+                                 * explicit. */
+                                bool window = !dirty &&
+                                              (op->flags & T2_OP_ROLLBACK) == 0;
 
                                 if (window || boundary_available(op)) {
                                     cand_of.emplace(op, cands.size());

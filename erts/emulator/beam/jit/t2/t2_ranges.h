@@ -99,6 +99,13 @@ extern Uint64 erts_t2_backedge_resumes;
  * deopt storms are visible — no re-tier machinery exists. */
 extern Uint64 erts_t2_callsite_deopts;
 
+/* Roll-back deopt counter (racy, monitoring only; P-C B1): incremented
+ * by the dedicated trampoline of every T2_OP_ROLLBACK overflow deopt —
+ * the fused unrolled block's "un-commit and redispatch T1 at the loop
+ * header" exits. Exposed as erts_debug:get_internal_state(
+ * t2_rollback_deopts). */
+extern Uint64 erts_t2_rollback_deopts;
+
 /* One-time init (mutex + accounting). Called from beamasm_init(). */
 void erts_t2_ranges_init(void);
 

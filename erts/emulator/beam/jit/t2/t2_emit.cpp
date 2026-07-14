@@ -143,6 +143,26 @@ namespace erts_t2 {
                 fail_labels;
         unsigned next_label;
 
+        /* Roll-back deopt trampolines (P-C B1): one per fused-block
+         * accumulator op. When the checked add committed in place
+         * (uncommit_slot is a register-backed X), the trampoline first
+         * UN-COMMITS it — the wrapped sum minus the addend is the
+         * exact pre-add value (two's complement) — then re-tags any
+         * masked raw homes, bumps the erts_t2_rollback_deopts
+         * monitoring counter and branches to the loop header's T1 PC,
+         * where T1 re-executes the whole fused block from the
+         * pre-iteration state. */
+        struct RollbackTramp {
+            Label label;
+            const void *t1_pc;
+            PhysLoc uncommit_slot; /* None: the add never committed */
+            Uint64 uncommit_imm;
+            bool uncommit_add;
+            uint32_t raw_mask;
+            uint32_t beam_idx;
+        };
+        std::vector<RollbackTramp> rollback_tramps;
+
         /* When non-null, emit_all lays down the install entry stub
          * (PLAN/T2/06 §2.3) instead of the exec-harness frame prologue;
          * the value is the function's public T1 entry L_f. */
@@ -617,6 +637,42 @@ namespace erts_t2 {
                 a.br(TMP1);
                 mark_unreachable();
             }
+
+            /* Roll-back deopt trampolines (P-C B1): un-commit the
+             * in-place fused add (the wrapped sum minus the addend is
+             * the exact pre-add value, two's complement), re-tag any
+             * masked raw homes, count the roll-back, and redispatch T1
+             * at the loop header — the cursor was never advanced (the
+             * fused add precedes the advance/sync), so no position
+             * write-back is needed; T1 re-executes the whole fused
+             * block from the pre-iteration state. */
+            for (const RollbackTramp &t : rollback_tramps) {
+                reg_cache.invalidate();
+                bind_veneer_target(t.label);
+                comment("T2 rollback deopt: un-commit + header "
+                        "redispatch (beam_idx=%u)",
+                        t.beam_idx);
+                if (!t.uncommit_slot.is_none()) {
+                    a64::Gp r = t.uncommit_slot.is_phys()
+                                        ? phys_gp(t.uncommit_slot)
+                                        : register_backed_xregs[t.uncommit_slot
+                                                                        .num];
+
+                    if (t.uncommit_add) {
+                        a.sub(r, r, imm(t.uncommit_imm));
+                    } else {
+                        a.add(r, r, imm(t.uncommit_imm));
+                    }
+                }
+                fixup_raw_homes(t.raw_mask, /*retag=*/true);
+                mov_imm(TMP2, (Uint64)&erts_t2_rollback_deopts);
+                a.ldr(TMP3, a64::Mem(TMP2));
+                a.add(TMP3, TMP3, imm(1));
+                a.str(TMP3, a64::Mem(TMP2));
+                mov_imm(TMP1, (Uint64)t.t1_pc);
+                a.br(TMP1);
+                mark_unreachable();
+            }
         }
 
         /* ---- ArgVal synthesis ---------------------------------------- */
@@ -1080,6 +1136,14 @@ namespace erts_t2 {
                 return;
             }
 
+            /* P-C B1 roll-back class: a dedicated trampoline
+             * (un-commit + header redispatch + counter) instead of the
+             * shared fail trampoline. */
+            if (op.rollback && !op.no_ovf && fail_override == nullptr) {
+                emit_lir_addsub_rollback(op);
+                return;
+            }
+
             /* P3 (T2_OP_NO_OVF, validator-re-proven): the overflow
              * deopt provably cannot fire — plain add/sub, no b.vs, and
              * no trampoline is materialized for this op at all. */
@@ -1230,6 +1294,117 @@ namespace erts_t2 {
                 } else {
                     mov_arg(loc_argval(op.dst), ARG1);
                 }
+            }
+        }
+
+        /* P-C B1: the fused-block accumulator's checked add with the
+         * ROLL-BACK deopt (see RollbackTramp). Direct-commit form when
+         * the destination is the register-backed lhs slot and the
+         * addend fits the 12-bit immediate — `adds dst, dst, #imm`
+         * makes the loop-carried dependency one cycle (exactly the
+         * fused-scan accumulator pattern), and the trampoline
+         * un-commits the wrapped sum before handing the register file
+         * to T1. Otherwise scratch-then-commit ("deopt before the
+         * commit") with the same dedicated trampoline, minus the
+         * un-commit. */
+        void emit_lir_addsub_rollback(const T2LirOp &op) {
+            bool is_add = op.kind == T2LirKind::AddSmall;
+
+            if (op.raw_dst || op.raw_srcs != 0) {
+                fail("roll-back arithmetic in raw mode (unsupported)");
+                return;
+            }
+            if (op.srcs[0].is_const || !op.srcs[1].is_const) {
+                fail("roll-back arithmetic without a constant addend");
+                return;
+            }
+
+            Uint64 cleared =
+                    (Uint64)op.srcs[1].term & ~(Uint64)_TAG_IMMED1_MASK;
+
+            RollbackTramp t;
+
+            t.label = a.new_label();
+            t.t1_pc = op.t1_pc_fail;
+            t.uncommit_imm = cleared;
+            t.uncommit_add = is_add;
+            t.raw_mask = op.raw_mask;
+            t.beam_idx = op.beam_idx;
+
+            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+            a64::Gp lhs;
+
+            if (op.srcs[0].loc.is_phys()) {
+                lhs = phys_gp(op.srcs[0].loc);
+            } else {
+                lhs = load_source(src_argval(op.srcs[0]), TMP2).reg;
+            }
+
+            /* The destination's machine register (a Phys loc or a
+             * register-backed X slot, whose backing register is
+             * authoritative in straight-line code — load_source
+             * always returns it). */
+            a64::Gp out = ARG1;
+            bool direct = false;
+
+            if (op.srcs[0].loc == op.dst && cleared <= 0xFFF) {
+                a64::Gp backing;
+                bool have_backing = false;
+
+                if (op.dst.is_phys()) {
+                    backing = phys_gp(op.dst);
+                    have_backing = true;
+                } else if (op.dst.is_xreg() &&
+                           op.dst.num < num_register_backed_xregs) {
+                    backing = register_backed_xregs[op.dst.num];
+                    have_backing = true;
+                }
+                if (have_backing && lhs == backing) {
+                    out = backing;
+                    direct = true;
+                }
+            }
+
+            comment("T2 rollback %s small (fused block, %s)",
+                    is_add ? "add" : "sub",
+                    direct ? "direct commit" : "scratch");
+
+            if (direct) {
+                /* In-place commit; the trampoline un-commits. */
+                t.uncommit_slot = op.dst;
+                rollback_tramps.push_back(t);
+                if (is_add) {
+                    a.adds(out, lhs, imm(cleared));
+                } else {
+                    a.subs(out, lhs, imm(cleared));
+                }
+                a.b_vs(resolve_label(rollback_tramps.back().label, disp1MB));
+                return;
+            }
+
+            /* Scratch-then-commit: the deopt fires before the commit,
+             * so there is nothing to un-commit (uncommit_slot None). */
+            rollback_tramps.push_back(t);
+            if (cleared <= 0xFFF) {
+                if (is_add) {
+                    a.adds(ARG1, lhs, imm(cleared));
+                } else {
+                    a.subs(ARG1, lhs, imm(cleared));
+                }
+            } else {
+                mov_imm(TMP1, cleared);
+                if (is_add) {
+                    a.adds(ARG1, lhs, TMP1);
+                } else {
+                    a.subs(ARG1, lhs, TMP1);
+                }
+            }
+            a.b_vs(resolve_label(rollback_tramps.back().label, disp1MB));
+            if (op.dst.is_phys()) {
+                a.mov(phys_gp(op.dst), ARG1);
+            } else {
+                mov_arg(loc_argval(op.dst), ARG1);
             }
         }
 

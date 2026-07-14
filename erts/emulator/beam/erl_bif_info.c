@@ -74,6 +74,7 @@ Eterm erts_t2_debug_exec(Process *p, Eterm mod, Eterm func, Eterm arity,
                          Eterm args);
 Eterm erts_t2_debug_in_blob(Process *p, Eterm pid);
 Eterm erts_t2_debug_yield_stats(Process *p);
+extern Uint64 erts_t2_rollback_deopts;
 Eterm erts_t2_debug_opt_stats(Process *p);
 Eterm erts_t2_tier_stats_term(Process *p);
 Eterm erts_t2_profile_census_term(Process *p);
@@ -4335,6 +4336,16 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 	       ("re-execute the erased call") deopt trampolines. */
 #ifdef BEAMASM
 	    BIF_RET(erts_t2_debug_yield_stats(BIF_P));
+#else
+	    BIF_RET(am_undefined);
+#endif
+	}
+	else if (ERTS_IS_ATOM_STR("t2_rollback_deopts", BIF_ARG_1)) {
+	    /* T2-Full P-C B1: the racy monitoring counter bumped by the
+	       fused unrolled blocks' roll-back deopt trampolines
+	       (un-commit + redispatch T1 at the loop header). */
+#ifdef BEAMASM
+	    BIF_RET(erts_make_integer((Uint)erts_t2_rollback_deopts, BIF_P));
 #else
 	    BIF_RET(am_undefined);
 #endif

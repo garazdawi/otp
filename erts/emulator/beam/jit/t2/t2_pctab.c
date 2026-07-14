@@ -226,6 +226,30 @@ static int pctab_guard_bif_effect(const ErtsT2RetainedCode *ret,
     return 0;
 }
 
+/* Clause-entry match starts (P-C B1, the roll-back deopt): decode-side
+ * mirror of the op_i_bs_start_match3_Stjd EFFECT record
+ * (beam_asm_module.cpp), following the loader's ops.tab transforms
+ * exactly:
+ *
+ *   - bs_start_match3 with a non-register Bin transforms to `jump`
+ *     (i/c/a operand classes) and records nothing; a register Bin
+ *     lowers to exactly one i_bs_start_match3;
+ *   - bs_start_match4 lowers to bs_start_match3 (both the {f,Fail}
+ *     and the no_fail forms), except `resume`, which becomes a move
+ *     (or nothing) and records nothing. */
+static int pctab_start_match_effect(const BeamOp *op) {
+    if (op->op == genop_bs_start_match3_4) {
+        return op->a[1].type == TAG_x || op->a[1].type == TAG_y;
+    }
+    if (op->op == genop_bs_start_match4_4) {
+        if (op->a[0].type == TAG_a && op->a[0].val == am_resume) {
+            return 0;
+        }
+        return op->a[2].type == TAG_x || op->a[2].type == TAG_y;
+    }
+    return 0;
+}
+
 /* Error-exit ops. Note the case_end/badmatch NotInX=cy transform emits a
  * separate leading move, so the specific op count still matches 1:1. */
 static int pctab_is_error(int op) {
@@ -311,7 +335,8 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                             fns[fn_idx].bif_ords[bif_cur++] = ord;
                         }
                     } else if (pctab_is_effect(op->op) ||
-                               pctab_guard_bif_effect(ret, op)) {
+                               pctab_guard_bif_effect(ret, op) ||
+                               pctab_start_match_effect(op)) {
                         if (pass == 0) {
                             fns[fn_idx].effect_count++;
                         } else {

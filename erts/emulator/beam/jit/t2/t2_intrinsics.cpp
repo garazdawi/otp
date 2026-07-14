@@ -1012,7 +1012,7 @@ namespace erts_t2 {
             bool convert_arith(FunBody &fb,
                                T2Value *acc_phi, /* null for arity-1 funs */
                                bool *need_acc_entry_guard,
-                               uint16_t spec_flags,
+                               uint32_t spec_flags,
                                Sint64 spec_imm,
                                T2SyncMap *spec_sync,
                                uint32_t call_beam_idx) {
@@ -6867,6 +6867,22 @@ namespace erts_t2 {
             return true;
         }
 
+        /* B1 fused-FL gate: default ON for the skip-count shape;
+         * T2_NO_FUSE=1 (or T2_FUSE=0) forces the A1 verbatim FL (the
+         * differential-testing lever). */
+        bool a1_fuse_enabled() {
+            const char *no = getenv("T2_NO_FUSE");
+            const char *f = getenv("T2_FUSE");
+
+            if (no != nullptr && no[0] != '\0' && no[0] != '0') {
+                return false;
+            }
+            if (f != nullptr && f[0] == '0') {
+                return false;
+            }
+            return true;
+        }
+
         /* N = word_bits / stride, overridable by T2_UNROLL_N (decimal,
          * clamped to 1..16); N <= 1 disables the transform. */
         int a1_pick_n(Sint64 stride_bits) {
@@ -6894,6 +6910,7 @@ namespace erts_t2 {
 
     bool t2_unroll(T2Function &fn,
                    const T2LoopInfo &li,
+                   const ErtsT2RetainedCode *ret,
                    bool *changed,
                    std::string *err) {
         (void)err;
@@ -6926,6 +6943,71 @@ namespace erts_t2 {
             content[s.ctx_phi->dst_reg] = s.ctx_phi->result;
             content[s.acc_phi->dst_reg] = s.acc_phi->result;
             content[s.sm->dst_reg] = s.sm->result;
+
+            /* --- B1 fused-FL admission (skip-count only; A2 shapes
+             * stay verbatim until B2). Any miss falls back to the A1
+             * verbatim FL — never to a compile failure. ---------------- */
+            auto fuse_bail = [&](const char *why) -> bool {
+                if (getenv("T2_UNROLL_TRACE") != nullptr) {
+                    erts_fprintf(stderr,
+                                 "t2_unroll: %T:%T/%u fuse bail (verbatim "
+                                 "FL): %s\n",
+                                 fn.module,
+                                 fn.function,
+                                 (unsigned)fn.arity,
+                                 why);
+                }
+                return false;
+            };
+            auto fuse_ok = [&]() -> bool {
+                if (s.acc_is_read || s.acc_const == nullptr) {
+                    return false; /* A2 read-sum: B2 territory, no trace */
+                }
+                if (!a1_fuse_enabled()) {
+                    return fuse_bail("disabled (T2_NO_FUSE)");
+                }
+                if (n < 2) {
+                    return fuse_bail("N < 2");
+                }
+                if (!IS_SSMALL(s.acc_const->imm_int * (Sint64)n)) {
+                    return fuse_bail("fused increment is not a small");
+                }
+                if ((Sint64)n * (1 + (Sint64)s.rc->index) >= 4096) {
+                    return fuse_bail("fused reduction charge out of range");
+                }
+                /* The roll-back deopt state: the header start_match's
+                 * own sync map IS "T1 about to run the clause". It
+                 * must name exactly the FL-top walked contents (the
+                 * pre-iteration state physically live at the fused
+                 * add) — anything else cannot be pinned there. */
+                if (s.sm->sync == nullptr ||
+                    s.sm->sync->frame_size != T2_NO_FRAME) {
+                    return fuse_bail("header start_match has no frameless "
+                                     "sync map");
+                }
+                for (uint32_t i = 0; i < s.sm->sync->x_live; i++) {
+                    auto it = content.find(t2_xreg(i));
+
+                    if (it == content.end() || it->second != s.sm->sync->x[i]) {
+                        return fuse_bail("header sync map does not match "
+                                         "the FL-top state");
+                    }
+                }
+                /* The roll-back resume PC: the header's clause-entry
+                 * EFFECT site (recorded at i_bs_start_match3; P-C B1).
+                 * Checked here so a missing entry degrades to the
+                 * verbatim FL instead of failing isel. */
+                if (s.sm->beam_idx == 0 || ret == nullptr ||
+                    erts_t2_pc_lookup_kind(ret,
+                                           fn.fn_index,
+                                           s.sm->beam_idx,
+                                           ERTS_T2_PC_EFFECT) == nullptr) {
+                    return fuse_bail("no EFFECT pctab entry for the "
+                                     "header start_match");
+                }
+                return true;
+            };
+            bool fuse = fuse_ok();
 
             auto clone_map = [&](const T2SyncMap *map) -> T2SyncMap * {
                 T2SyncMap *c = fn.arena.create<T2SyncMap>();
@@ -6985,12 +7067,69 @@ namespace erts_t2 {
              * (and everything behind it) becomes the remainder path. */
             s.h->terminator->succ_then = fc;
 
-            /* --- FL: N verbatim copies of the per-byte body ---------- */
+            /* --- FL: ONE fused block (B1) or N verbatim copies (A1/A2) */
             T2Value *cur_k = cur2->result;
             T2Value *acc_k = s.acc_phi->result;
             T2Op *base2 = nullptr;
 
-            if (s.read != nullptr) {
+            if (fuse) {
+                /* The header-entry snapshot FIRST — content still holds
+                 * the pre-iteration FL-top state (verified against the
+                 * start_match map above), which the roll-back deopt
+                 * hands back to T1. */
+                T2SyncMap *hdr_map = clone_map(s.sm->sync);
+
+                /* The fused accumulator: acc' = acc_phi + N*C, CHECKED,
+                 * placed BEFORE the advance/sync so .start is still
+                 * un-advanced at its deopt. beam_idx = the header's
+                 * start_match ordinal: the overflow deopt redispatches
+                 * T1 at the clause entry and re-executes all N
+                 * iterations from the pre-add accumulator (the
+                 * trampoline un-commits the in-place add first). Still
+                 * the generic gc_bif Add here; the speculation pass
+                 * converts it to boundary-class AddSmall exactly like
+                 * the verbatim clones. */
+                T2Value *inc =
+                        fn.emit_const_int(fl, s.acc_const->imm_int * (Sint64)n);
+
+                inc->def->beam_idx = s.acc_const->beam_idx;
+
+                T2Op *facc = fn.new_op(fl, T2OpKind::Add, s.acc->type);
+
+                fn.set_operands(facc, {acc_k, inc});
+                clone_regs(facc, s.acc);
+                facc->dst_reg = s.acc->dst_reg;
+                facc->live = s.acc->live;
+                facc->mfa_m = s.acc->mfa_m;
+                facc->mfa_f = s.acc->mfa_f;
+                facc->bif_num = s.acc->bif_num;
+                facc->beam_idx = s.sm->beam_idx;
+                facc->sync = hdr_map;
+                facc->flags = T2_OP_ROLLBACK;
+                acc_k = facc->result;
+                content[s.acc->dst_reg] = acc_k;
+
+                /* ONE cursor advance + ONE .start commit for the whole
+                 * block (the bs_ensure in FC covered N*stride bits). */
+                T2Value *cs = fn.emit_const_int(fl, (Sint64)n * s.stride);
+
+                cs->def->beam_idx = s.adv_const->beam_idx;
+
+                T2Op *adv1 = fn.new_op(fl, T2OpKind::AddSmall, s.adv->type);
+
+                fn.set_operands(adv1, {cur_k, cs});
+                clone_regs(adv1, s.adv);
+                adv1->dst_reg = s.adv->dst_reg;
+                adv1->flags = s.adv->flags;
+                adv1->beam_idx = s.adv->beam_idx;
+                cur_k = adv1->result;
+
+                T2Op *sync1 = fn.new_op(fl, T2OpKind::BsSync, s.bsync->type);
+
+                fn.set_operands(sync1, {s.sm->result, cur_k});
+                clone_regs(sync1, s.bsync);
+                sync1->beam_idx = s.bsync->beam_idx;
+            } else if (s.read != nullptr) {
                 /* One hoisted base projection serves every copy: FL
                  * has no GC point before its last read (the cloned
                  * adds deopt on overflow instead of allocating, and
@@ -7005,7 +7144,7 @@ namespace erts_t2 {
                 base2->beam_idx = s.base->beam_idx;
             }
 
-            for (int k = 0; k < n; k++) {
+            for (int k = 0; !fuse && k < n; k++) {
                 T2Op *read_k = nullptr;
 
                 if (s.read != nullptr) {
@@ -7078,7 +7217,15 @@ namespace erts_t2 {
             T2Op *rc2 = fn.new_op(fl, T2OpKind::ReductionCheck, s.rc->type);
 
             fn.set_operands(rc2, {});
-            rc2->index = s.rc->index;
+            /* isel charges 1 + index at the back edge. The fused FL ran
+             * N iterations' work, so it charges N of the 1-wide loop's
+             * per-iteration amount (task #46): every iteration is paid
+             * exactly once, just before it starts, mirroring T1's
+             * i_test_yield-at-entry discipline — reduction counts stay
+             * T1-exact. The verbatim FL keeps its historical charge. */
+            rc2->index =
+                    fuse ? (uint32_t)((Sint64)n * (1 + (Sint64)s.rc->index) - 1)
+                         : s.rc->index;
             rc2->beam_idx = s.rc->beam_idx;
             rc2->sync = clone_map(s.rc->sync);
 
@@ -7104,13 +7251,14 @@ namespace erts_t2 {
 
             if (getenv("T2_UNROLL_TRACE") != nullptr) {
                 erts_fprintf(stderr,
-                             "t2_unroll: %T:%T/%u x%d (%s, stride %ld "
+                             "t2_unroll: %T:%T/%u x%d (%s, %s, stride %ld "
                              "bits, header block%u)\n",
                              fn.module,
                              fn.function,
                              (unsigned)fn.arity,
                              n,
                              s.acc_is_read ? "read-sum" : "skip-count",
+                             fuse ? "fused" : "verbatim",
                              (long)s.stride,
                              s.h->id);
             }

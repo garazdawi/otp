@@ -517,6 +517,16 @@ namespace erts_t2 {
          * deliberately untouched), it is just never emitted. */
         bool no_ovf;
 
+        /* P-C B1 (T2_OP_ROLLBACK): a fused-block accumulator whose
+         * overflow deopt ROLLS BACK: t1_pc_fail is the loop header's
+         * clause-entry T1 PC and the sync map the pre-iteration state.
+         * The emitter commits the add in place when the destination is
+         * register-backed (adds dst, dst, #imm) and its dedicated
+         * trampoline UN-COMMITS it (sub of the same immediate, exact
+         * by two's complement) before branching to the header — and
+         * bumps the erts_t2_rollback_deopts monitoring counter. */
+        bool rollback;
+
         /* CFG edges (block ids into T2LirFunction::blocks, or
          * T2_LIR_NO_BLOCK). Tests/compares/arith-with-fail-edge use
          * succ_else as the in-blob fail target and succ_then as the
@@ -559,7 +569,7 @@ namespace erts_t2 {
                   exp(nullptr), target(nullptr), t1_pc_fail(nullptr),
                   t1_pc_cont(nullptr), beam_idx(0), spec_callsite(false),
                   tail_site(false), raw_mask(0), raw_srcs(0), raw_dst(false),
-                  no_ovf(false), succ_then(T2_LIR_NO_BLOCK),
+                  no_ovf(false), rollback(false), succ_then(T2_LIR_NO_BLOCK),
                   succ_else(T2_LIR_NO_BLOCK), first_case(0), num_cases(0),
                   default_target(T2_LIR_NO_BLOCK), pool_first(0),
                   num_srcs_ext(0), first_bs_cmd(0), num_bs_cmds(0),

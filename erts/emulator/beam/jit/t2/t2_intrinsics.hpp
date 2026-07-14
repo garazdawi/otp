@@ -128,6 +128,22 @@ namespace erts_t2 {
      * same register contract as the 1-wide loop — deopt-correct by
      * construction, no new deopt shapes.
      *
+     * P-C increment B1 (the ROLL-BACK deopt): for the skip-count (A1)
+     * shape the default is a FUSED fast-path latch instead of the
+     * verbatim copies — the N accumulator adds collapse to ONE checked
+     * `acc + N*C` (T2_OP_ROLLBACK) placed BEFORE one N*stride advance
+     * and ONE bs_sync, so at its overflow deopt the cursor is still
+     * un-advanced and the accumulator un-committed. The op carries the
+     * loop header's start_match beam_idx and a clone of its sync map
+     * (the pre-iteration clause-entry state), so the deopt redispatches
+     * T1 at the header (ERTS_T2_PC_EFFECT — `ret` is consulted up
+     * front; no entry, no fusion) and T1 re-executes all N iterations
+     * from the pre-add accumulator, producing the small->bignum result
+     * byte-identically. The fused reduction check charges N (one per
+     * fused iteration, task #46), keeping reduction counts T1-exact.
+     * T2_NO_FUSE=1 (or T2_FUSE=0) falls back to the A1 verbatim FL;
+     * read-and-sum (A2) shapes always stay verbatim (B2 fuses those).
+     *
      * N = 64/stride (T2_UNROLL_N overrides, clamped to 1..16; N <= 1
      * is a no-op). The recognizer bails — the pass makes no change —
      * on ANY shape mismatch: nested loops, multiple latches, more
@@ -138,6 +154,7 @@ namespace erts_t2 {
      * T2_UNROLL_TRACE=1 logs accepts and bail reasons. */
     bool t2_unroll(T2Function &fn,
                    const T2LoopInfo &li,
+                   const ErtsT2RetainedCode *ret,
                    bool *changed,
                    std::string *err);
 
