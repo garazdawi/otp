@@ -396,8 +396,9 @@ namespace {
 
                 t2_loop_info(hir, &li);
 
-                /* Cursor-IV loop unroll, increment A1 (PLAN/T2FULL/14
-                 * §4): xN verbatim unroll of the skip-count scan loop.
+                /* Cursor-IV loop unroll, increments A1+A2
+                 * (PLAN/T2FULL/14 §4): xN verbatim unroll of the
+                 * skip-count and read-and-sum scan loops.
                  * Mutates the CFG (two new blocks + a third phi edge
                  * per header phi), so on change the function is
                  * re-validated in full and the loop analysis re-run

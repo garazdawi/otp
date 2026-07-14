@@ -6393,7 +6393,30 @@ namespace erts_t2 {
          * (The accumulator is still the GENERIC gc_bif Add at this
          * point in the pipeline — the speculation pass converts it,
          * and every verbatim clone of it, to the boundary-class
-         * AddSmall afterwards.) Anything else bails. */
+         * AddSmall afterwards.)
+         *
+         * Increment A2 additionally accepts the read-and-sum latch (a
+         * `sumt/2`-class byte summer) — an optional read prefix ahead
+         * of the advance, with the accumulator consuming the byte
+         * instead of a constant:
+         *
+         *   LATCH:               base = bs_base v2  !raw
+         *                        byte = bs_read base, cur   (imm = 8)
+         *                        cS   = const_int S
+         *                        adv  = add_small cur, cS  !raw !no_ovf
+         *                        bs_sync v2, adv
+         *                        acc' = add acc_phi, byte  sync={..byte..}
+         *                        ...as above...
+         *
+         * The byte home may alias the (dead-in-latch) ctx phi home —
+         * the accumulator's sync map then names the byte there, which
+         * both the recognizer's walk and the transform's per-copy walk
+         * carry in `content`, so the k-th cloned add's map names
+         * byte_k: a deopt there redispatches the beam gc_bif '+' with
+         * the very byte being added and .start already advanced past
+         * it — deopt-correct exactly like the 1-wide loop.
+         *
+         * Anything else bails. */
         struct A1Shape {
             T2BasicBlock *h;
             T2BasicBlock *m;
@@ -6405,14 +6428,17 @@ namespace erts_t2 {
             T2Op *limit;
             T2Op *cursor;
             T2Op *ensure;
+            T2Op *base; /* A2 read prefix; may be null   */
+            T2Op *read; /* A2 read prefix; may be null   */
             T2Op *adv_const;
             T2Op *adv;
             T2Op *bsync;
-            T2Op *acc_const;
+            T2Op *acc_const; /* null when acc_is_read    */
             T2Op *acc;
             T2Op *ctx_copy;
             T2Op *rc;
-            Sint64 stride; /* bits */
+            Sint64 stride;    /* bits */
+            bool acc_is_read; /* acc rhs is the read result (A2) */
         };
 
         bool a1_bail(const T2Function &fn, const char *why) {
@@ -6596,7 +6622,45 @@ namespace erts_t2 {
                 return a1_bail(fn, "latch has phis");
             }
 
-            T2Op *c1 = latch->ops_head;
+            /* A2: optional single byte-read prefix (bs_base + bs_read
+             * off THIS context and THIS cursor). Strict: exactly one
+             * read, byte-sized, feeding the accumulator below; a
+             * second read (or any other op) fails the positional walk
+             * that follows. */
+            T2Op *lop = latch->ops_head;
+            T2Op *base = nullptr;
+            T2Op *read = nullptr;
+
+            if (lop != nullptr && lop->kind == T2OpKind::BsBase) {
+                if (lop->num_operands != 1 || lop->operands[0] != sm->result ||
+                    (lop->flags & T2_OP_RAW_MODE) == 0 ||
+                    lop->dst_reg == T2_REG_NONE || !t2_reg_is_x(lop->dst_reg) ||
+                    lop->sync != nullptr) {
+                    return a1_bail(fn, "bs_base shape");
+                }
+                base = lop;
+                lop = lop->next;
+            }
+            if (lop != nullptr && lop->kind == T2OpKind::BsRead) {
+                if (base == nullptr) {
+                    return a1_bail(fn, "bs_read without a bs_base");
+                }
+                if (lop->num_operands != 2 ||
+                    lop->operands[0] != base->result ||
+                    lop->operands[1] != cursor->result || lop->imm_int != 8 ||
+                    lop->flags != 0 || lop->raw_mask != 0 ||
+                    lop->sync != nullptr || lop->dst_reg == T2_REG_NONE ||
+                    !t2_reg_is_x(lop->dst_reg)) {
+                    return a1_bail(fn, "bs_read shape");
+                }
+                read = lop;
+                lop = lop->next;
+            }
+            if (base != nullptr && read == nullptr) {
+                return a1_bail(fn, "bs_base without a bs_read");
+            }
+
+            T2Op *c1 = lop;
 
             if (c1 == nullptr || c1->kind != T2OpKind::ConstInt ||
                 c1->imm_int != ensure->imm_int) {
@@ -6622,23 +6686,31 @@ namespace erts_t2 {
                 return a1_bail(fn, "latch bs_sync");
             }
 
-            T2Op *c2 = bsync->next;
+            /* The accumulator rhs: the skip-count constant (A1) or the
+             * byte read (A2) — nothing else; a read whose result the
+             * accumulator does not consume also bails here. */
+            T2Op *c2 = nullptr;
+            T2Op *acc = bsync->next;
 
-            if (c2 == nullptr || c2->kind != T2OpKind::ConstInt ||
-                !IS_SSMALL(c2->imm_int)) {
-                return a1_bail(fn, "latch accumulator constant");
+            if (read == nullptr) {
+                c2 = acc;
+                if (c2 == nullptr || c2->kind != T2OpKind::ConstInt ||
+                    !IS_SSMALL(c2->imm_int)) {
+                    return a1_bail(fn, "latch accumulator constant");
+                }
+                acc = c2->next;
             }
-
-            T2Op *acc = c2->next;
 
             if (acc == nullptr || acc->kind != T2OpKind::Add ||
                 acc->num_operands != 2 || acc->operands[0] != acc_phi->result ||
-                acc->operands[1] != c2->result || acc->sync == nullptr ||
-                acc->sync->frame_size != T2_NO_FRAME || acc->raw_mask != 0 ||
-                acc->flags != 0 || acc->dst_reg != acc_phi->dst_reg) {
+                acc->operands[1] !=
+                        (read != nullptr ? read->result : c2->result) ||
+                acc->sync == nullptr || acc->sync->frame_size != T2_NO_FRAME ||
+                acc->raw_mask != 0 || acc->flags != 0 ||
+                acc->dst_reg != acc_phi->dst_reg) {
                 return a1_bail(fn,
-                               "latch accumulator (A1 is skip-count "
-                               "add-const only)");
+                               "latch accumulator (rhs must be the "
+                               "skip-count constant or the byte read)");
             }
 
             T2Op *cpy = acc->next;
@@ -6697,6 +6769,27 @@ namespace erts_t2 {
             if (cursor->dst_reg == limit->dst_reg) {
                 return a1_bail(fn, "cursor/limit home collision");
             }
+            if (base != nullptr) {
+                for (int32_t home : seed_homes) {
+                    if (base->dst_reg == home) {
+                        return a1_bail(fn, "bs_base home aliases a term home");
+                    }
+                }
+                if (base->dst_reg == cursor->dst_reg ||
+                    base->dst_reg == limit->dst_reg) {
+                    return a1_bail(fn, "bs_base/raw temp home collision");
+                }
+                /* The read may write the (dead-in-latch) ctx phi home
+                 * — `content` carries the byte there — but never a
+                 * home some later op in the copy still reads. */
+                if (read->dst_reg == acc_phi->dst_reg ||
+                    read->dst_reg == sm->dst_reg ||
+                    read->dst_reg == cursor->dst_reg ||
+                    read->dst_reg == limit->dst_reg ||
+                    read->dst_reg == base->dst_reg) {
+                    return a1_bail(fn, "bs_read home aliases a live home");
+                }
+            }
 
             /* --- sync maps vs the walked register contents ----------- *
              * Walk the latch's register state (entered via M) and check
@@ -6715,6 +6808,11 @@ namespace erts_t2 {
             if (get_pos != nullptr) {
                 content[get_pos->dst_reg] = get_pos->result;
             }
+            if (read != nullptr) {
+                /* The read executes before the accumulator add: its
+                 * home holds the byte when the add's map is taken. */
+                content[read->dst_reg] = read->result;
+            }
 
             auto maps_walked = [&](const T2SyncMap *map) -> bool {
                 for (uint32_t i = 0; i < map->x_live; i++) {
@@ -6725,9 +6823,11 @@ namespace erts_t2 {
                         return false;
                     }
                     if (r != seed_homes[0] && r != seed_homes[1] &&
-                        r != seed_homes[2]) {
+                        r != seed_homes[2] &&
+                        (read == nullptr || r != read->dst_reg)) {
                         /* Not FL-coverable (e.g. an out-of-line
-                         * bs_get_position home). */
+                         * bs_get_position home). The read home IS
+                         * coverable: every copy re-establishes it. */
                         return false;
                     }
                 }
@@ -6753,6 +6853,8 @@ namespace erts_t2 {
             out->limit = limit;
             out->cursor = cursor;
             out->ensure = ensure;
+            out->base = base;
+            out->read = read;
             out->adv_const = c1;
             out->adv = adv;
             out->bsync = bsync;
@@ -6761,6 +6863,7 @@ namespace erts_t2 {
             out->ctx_copy = cpy;
             out->rc = rc;
             out->stride = ensure->imm_int;
+            out->acc_is_read = read != nullptr;
             return true;
         }
 
@@ -6885,8 +6988,42 @@ namespace erts_t2 {
             /* --- FL: N verbatim copies of the per-byte body ---------- */
             T2Value *cur_k = cur2->result;
             T2Value *acc_k = s.acc_phi->result;
+            T2Op *base2 = nullptr;
+
+            if (s.read != nullptr) {
+                /* One hoisted base projection serves every copy: FL
+                 * has no GC point before its last read (the cloned
+                 * adds deopt on overflow instead of allocating, and
+                 * the shared reduction_check runs after all N copies),
+                 * so the raw pointer cannot go stale within one trip.
+                 * The next trip re-projects it here. */
+                base2 = fn.new_op(fl, T2OpKind::BsBase, s.base->type);
+                fn.set_operands(base2, {s.sm->result});
+                clone_regs(base2, s.base);
+                base2->dst_reg = s.base->dst_reg;
+                base2->flags = s.base->flags;
+                base2->beam_idx = s.base->beam_idx;
+            }
 
             for (int k = 0; k < n; k++) {
+                T2Op *read_k = nullptr;
+
+                if (s.read != nullptr) {
+                    read_k = fn.new_op(fl, T2OpKind::BsRead, s.read->type);
+                    fn.set_operands(read_k, {base2->result, cur_k});
+                    clone_regs(read_k, s.read);
+                    read_k->dst_reg = s.read->dst_reg;
+                    read_k->flags = s.read->flags;
+                    read_k->imm_int = s.read->imm_int;
+                    read_k->index = s.read->index;
+                    read_k->beam_idx = s.read->beam_idx;
+                    /* BEFORE this copy's clone_map: the k-th add's map
+                     * must name byte_k in the read home (the 1-wide
+                     * deopt contract — the redispatched gc_bif '+'
+                     * consumes the very byte that was read). */
+                    content[s.read->dst_reg] = read_k->result;
+                }
+
                 T2Value *cs = fn.emit_const_int(fl, s.stride);
 
                 cs->def->beam_idx = s.adv_const->beam_idx;
@@ -6906,13 +7043,18 @@ namespace erts_t2 {
                 clone_regs(sync_k, s.bsync);
                 sync_k->beam_idx = s.bsync->beam_idx;
 
-                T2Value *cc = fn.emit_const_int(fl, s.acc_const->imm_int);
+                T2Value *rhs;
 
-                cc->def->beam_idx = s.acc_const->beam_idx;
+                if (s.acc_is_read) {
+                    rhs = read_k->result;
+                } else {
+                    rhs = fn.emit_const_int(fl, s.acc_const->imm_int);
+                    rhs->def->beam_idx = s.acc_const->beam_idx;
+                }
 
                 T2Op *acc_next = fn.new_op(fl, T2OpKind::Add, s.acc->type);
 
-                fn.set_operands(acc_next, {acc_k, cc});
+                fn.set_operands(acc_next, {acc_k, rhs});
                 clone_regs(acc_next, s.acc);
                 acc_next->dst_reg = s.acc->dst_reg;
                 acc_next->live = s.acc->live;
@@ -6962,12 +7104,13 @@ namespace erts_t2 {
 
             if (getenv("T2_UNROLL_TRACE") != nullptr) {
                 erts_fprintf(stderr,
-                             "t2_unroll: %T:%T/%u x%d (stride %ld bits, "
-                             "header block%u)\n",
+                             "t2_unroll: %T:%T/%u x%d (%s, stride %ld "
+                             "bits, header block%u)\n",
                              fn.module,
                              fn.function,
                              (unsigned)fn.arity,
                              n,
+                             s.acc_is_read ? "read-sum" : "skip-count",
                              (long)s.stride,
                              s.h->id);
             }
