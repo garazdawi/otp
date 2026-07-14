@@ -278,6 +278,17 @@ namespace erts_t2 {
         BsGetPosition,
         BsSetPosition,
 
+        /* SWAR read-sum (P-C B2). BsLoadWord (imm = 64): ONE 64-bit
+         * ldr at base + (cursor>>3) bytes into a raw dst — no byte
+         * swap (the word only feeds the order-free byte sum); the FC
+         * alignment guard (BsEnsure imm2 bit 2) proved the cursor
+         * byte-aligned. SwarByteSum: the fixed mask-and-fold of the
+         * word's 8 bytes into their sum in the RAW-IN-HOME <<4 form
+         * (NOT the *0x0101..>>56 multiply trick — the per-lane sum
+         * 0..2040 overflows the top byte). */
+        BsLoadWord,
+        SwarByteSum,
+
         /* Value-producing total comparison (P2 commit 8; the bif2
          * {f,0} erlang:CMP/2 subset): imm = the originating T2OpKind;
          * lowers via T1's bif_is_ge/bif_is_lt/bif_is_eq_exact/

@@ -920,6 +920,12 @@ namespace erts_t2 {
             case T2LirKind::BsRead:
                 emit_lir_bs_read(op);
                 break;
+            case T2LirKind::BsLoadWord:
+                emit_lir_bs_load_word(op);
+                break;
+            case T2LirKind::SwarByteSum:
+                emit_lir_swar_byte_sum(op);
+                break;
             case T2LirKind::BsSync:
                 emit_lir_bs_sync(op);
                 break;
@@ -1310,12 +1316,72 @@ namespace erts_t2 {
         void emit_lir_addsub_rollback(const T2LirOp &op) {
             bool is_add = op.kind == T2LirKind::AddSmall;
 
-            if (op.raw_dst || op.raw_srcs != 0) {
-                fail("roll-back arithmetic in raw mode (unsupported)");
+            if (op.raw_dst || (op.raw_srcs & 1) != 0) {
+                fail("roll-back arithmetic with a raw lhs/dst "
+                     "(unsupported)");
                 return;
             }
-            if (op.srcs[0].is_const || !op.srcs[1].is_const) {
-                fail("roll-back arithmetic without a constant addend");
+            if (op.srcs[0].is_const) {
+                fail("roll-back arithmetic with a constant accumulator");
+                return;
+            }
+
+            /* P-C B2: a REGISTER addend — the SWAR byte sum, already in
+             * the tag-cleared <<4 form ((raw_srcs & 2), validator-
+             * enforced), so no untag AND is needed. Always scratch-
+             * then-commit: the deopt fires before the commit, the acc
+             * home still holds the pre-add value, and the trampoline
+             * has nothing to un-commit (uncommit_slot None) — it just
+             * redispatches T1 at the header PC. */
+            if (!op.srcs[1].is_const) {
+                if ((op.raw_srcs & 2) == 0) {
+                    fail("roll-back register addend is not raw");
+                    return;
+                }
+
+                RollbackTramp rt;
+
+                rt.label = a.new_label();
+                rt.t1_pc = op.t1_pc_fail;
+                rt.uncommit_imm = 0;
+                rt.uncommit_add = is_add;
+                rt.raw_mask = op.raw_mask;
+                rt.beam_idx = op.beam_idx;
+
+                fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+                a64::Gp acc;
+
+                if (op.srcs[0].loc.is_phys()) {
+                    acc = phys_gp(op.srcs[0].loc);
+                } else {
+                    acc = load_source(src_argval(op.srcs[0]), TMP2).reg;
+                }
+
+                a64::Gp addend;
+
+                if (op.srcs[1].loc.is_phys()) {
+                    addend = phys_gp(op.srcs[1].loc);
+                } else {
+                    addend = load_source(src_argval(op.srcs[1]), TMP3).reg;
+                }
+
+                comment("T2 rollback %s small (fused block, register "
+                        "addend, scratch)",
+                        is_add ? "add" : "sub");
+
+                rollback_tramps.push_back(rt);
+                if (is_add) {
+                    a.adds(ARG1, acc, addend);
+                } else {
+                    a.subs(ARG1, acc, addend);
+                }
+                a.b_vs(resolve_label(rollback_tramps.back().label, disp1MB));
+                if (op.dst.is_phys()) {
+                    a.mov(phys_gp(op.dst), ARG1);
+                } else {
+                    mov_arg(loc_argval(op.dst), ARG1);
+                }
                 return;
             }
 
@@ -1691,11 +1757,13 @@ namespace erts_t2 {
 
             bool exactly = (op.imm2 & 1) != 0;
             bool unit8 = (op.imm2 & 2) != 0;
+            bool aligned = (op.imm2 & 4) != 0;
 
-            comment("T2 bs_ensure %s%ld bits%s",
+            comment("T2 bs_ensure %s%ld bits%s%s",
                     exactly ? "exactly " : "",
                     (long)op.imm,
-                    unit8 ? " unit 8" : "");
+                    unit8 ? " unit 8" : "",
+                    aligned ? " byte-aligned" : "");
 
             a64::Gp cur = load_source(src_argval(op.srcs[0]), TMP1).reg;
             a64::Gp lim = load_source(src_argval(op.srcs[1]), TMP2).reg;
@@ -1711,6 +1779,17 @@ namespace erts_t2 {
                     a.tst(TMP3, imm(7 << _TAG_IMMED1_SIZE));
                     a.b_ne(resolve_label(else_l, disp1MB));
                 }
+            }
+            if (aligned) {
+                /* P-C B2 alignment guard: the SWAR wide load needs a
+                 * byte-aligned cursor ((bits & 7) == 0; the raw form
+                 * is bits << 4). Alignment is loop-invariant (the
+                 * fused advance adds N*8 bits), so an unaligned scan
+                 * takes the else edge — the 1-wide M remainder, whose
+                 * emit_read_bits path is alignment-agnostic — on
+                 * every iteration. */
+                a.tst(cur, imm(7 << _TAG_IMMED1_SIZE));
+                a.b_ne(resolve_label(else_l, disp1MB));
             }
             if (!failed()) {
                 emit_goto(op.succ_then);
@@ -1740,6 +1819,64 @@ namespace erts_t2 {
                                  64 - 8,
                                  8,
                                  ArgRegister(loc_argval(op.dst)));
+        }
+
+        /* P-C B2: ONE 64-bit load at base + (cursor >> 3) bytes. The
+         * FC alignment guard (BsEnsure imm2 bit 2) proved the cursor
+         * byte-aligned, and the raw cursor form is bits << 4, so the
+         * byte offset is cursor_raw >> 7 — the same shifted-register
+         * add the fused scan's pointer-gen uses. NO byte swap: the
+         * word only ever feeds the order-free byte SUM. */
+        void emit_lir_bs_load_word(const T2LirOp &op) {
+            if (op.num_srcs != 2 || op.srcs[0].is_const ||
+                op.srcs[1].is_const || op.dst.is_none() || op.imm != 64) {
+                fail("malformed bs_load_word");
+                return;
+            }
+
+            comment("T2 bs_load_word");
+
+            a64::Gp base = load_source(src_argval(op.srcs[0]), TMP1).reg;
+            a64::Gp cur = load_source(src_argval(op.srcs[1]), TMP2).reg;
+
+            a.add(TMP3, base, cur, a64::lsr(_TAG_IMMED1_SIZE + 3));
+            a.ldr(TMP3, a64::Mem(TMP3));
+            mov_arg(loc_argval(op.dst), TMP3);
+        }
+
+        /* P-C B2: dst := (sum of the 8 bytes of src) << 4 — the
+         * RAW-IN-HOME form the fused ROLLBACK add consumes directly.
+         * The fixed mask-and-fold (NOT the *0x0101010101010101 >> 56
+         * multiply trick: the per-lane sum is 0..2040 and overflows
+         * the top byte):
+         *   t = (w & M1) + ((w >> 8) & M1);   M1 = 0x00FF00FF00FF00FF
+         *   t = (t & M2) + ((t >> 16) & M2);  M2 = 0x0000FFFF0000FFFF
+         *   s = (t & M3) + (t >> 32);         M3 = 0x00000000FFFFFFFF
+         * All three masks are valid AArch64 bitmask immediates, so the
+         * ANDs encode directly (no mov_imm materialization). */
+        void emit_lir_swar_byte_sum(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const || op.dst.is_none()) {
+                fail("malformed swar_byte_sum");
+                return;
+            }
+
+            comment("T2 swar_byte_sum");
+
+            a64::Gp w = load_source(src_argval(op.srcs[0]), TMP1).reg;
+
+            a.lsr(TMP2, w, imm(8));
+            a.and_(TMP3, w, imm(0x00FF00FF00FF00FFull));
+            a.and_(TMP2, TMP2, imm(0x00FF00FF00FF00FFull));
+            a.add(TMP2, TMP2, TMP3);
+            a.lsr(TMP3, TMP2, imm(16));
+            a.and_(TMP2, TMP2, imm(0x0000FFFF0000FFFFull));
+            a.and_(TMP3, TMP3, imm(0x0000FFFF0000FFFFull));
+            a.add(TMP2, TMP2, TMP3);
+            a.lsr(TMP3, TMP2, imm(32));
+            a.and_(TMP2, TMP2, imm(0x00000000FFFFFFFFull));
+            a.add(TMP2, TMP2, TMP3);
+            a.lsl(TMP2, TMP2, imm(_TAG_IMMED1_SIZE));
+            mov_arg(loc_argval(op.dst), TMP2);
         }
 
         /* ErlSubBits.start := cursor >> 4 (the raw bit offset). */

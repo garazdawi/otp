@@ -627,6 +627,18 @@ namespace erts_t2 {
                     if (!fill_srcs(op, &lop)) {
                         return false;
                     }
+                    if (lop.raw_srcs != 0) {
+                        /* P-C B2 backstop: a raw operand may reach only
+                         * the flag-checked AddSmall/SubSmall (the
+                         * converted ROLLBACK accumulator). If the
+                         * speculation pass did not convert it (struck
+                         * candidate), refuse loudly — the generic
+                         * gc_bif would consume the raw word as a term. */
+                        return fail_op(op,
+                                       "raw operand reaching generic "
+                                       "arithmetic (unconverted roll-back "
+                                       "accumulator)");
+                    }
 
                     const T2Op *succ = op->next;
                     if (succ != nullptr && succ->kind == T2OpKind::Succeeded &&
@@ -1423,6 +1435,50 @@ namespace erts_t2 {
                     }
                     if (lop.srcs[0].is_const || lop.srcs[1].is_const) {
                         return fail_op(op, "bs_read of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
+                case T2OpKind::BsLoadWord: {
+                    /* P-C B2: ONE 64-bit load at base+cursor (the FC
+                     * alignment guard proved the cursor byte-aligned). */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "bs_load_word without a home");
+                    }
+                    if (op->imm_int != 64) {
+                        return fail_op(op,
+                                       "bs_load_word outside the one-word "
+                                       "subset");
+                    }
+                    lop.kind = T2LirKind::BsLoadWord;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.imm = op->imm_int; /* size, bits */
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const || lop.srcs[1].is_const) {
+                        return fail_op(op, "bs_load_word of a constant");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
+                case T2OpKind::SwarByteSum: {
+                    /* P-C B2: the horizontal byte sum (raw <<4 dst). */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "swar_byte_sum without a home");
+                    }
+                    lop.kind = T2LirKind::SwarByteSum;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.num_srcs = 1;
+                    if (!src_of(op, 0, &lop.srcs[0])) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "swar_byte_sum of a constant");
                     }
                     b.ops.push_back(lop);
                     return true;

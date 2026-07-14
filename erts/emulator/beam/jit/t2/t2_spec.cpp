@@ -545,6 +545,18 @@ namespace erts_t2 {
                             }
                             continue;
                         }
+                        if (t2_value_is_raw_home(v)) {
+                            /* P-C B2: the fused read-sum accumulator's
+                             * SWAR addend is a RAW-IN-HOME word (the
+                             * <<4-form byte sum) — admissible to the
+                             * flag-checked add by construction
+                             * (spec_check_op's raw_ok; the validator's
+                             * raw rules pin it to operand 1 of the
+                             * ROLLBACK class), and never guarded: a
+                             * tag test on a tag-cleared word always
+                             * fails. */
+                            continue;
+                        }
                         if (!operand_guardable(op, i)) {
                             viable = false;
                             break;

@@ -203,6 +203,10 @@ namespace erts_t2 {
             return "bs_get_position";
         case T2OpKind::BsSetPosition:
             return "bs_set_position";
+        case T2OpKind::BsLoadWord:
+            return "bs_load_word";
+        case T2OpKind::SwarByteSum:
+            return "swar_byte_sum";
         case T2OpKind::Call:
             return "call";
         case T2OpKind::CallExt:
@@ -346,6 +350,8 @@ namespace erts_t2 {
         case T2OpKind::BsEnsure:
         case T2OpKind::BsRead:
         case T2OpKind::BsGetPosition:
+        case T2OpKind::BsLoadWord:
+        case T2OpKind::SwarByteSum:
         case T2OpKind::Call:
         case T2OpKind::CallExt:
         case T2OpKind::CallFun:
@@ -1935,6 +1941,13 @@ namespace erts_t2 {
                      * advance's lhs. */
                     sf_set(f.raw, op->result->id);
                     break;
+                case T2OpKind::BsLoadWord:
+                case T2OpKind::SwarByteSum:
+                    /* P-C B2: raw producers — the wide word and the
+                     * <<4-form byte sum (the fused ROLLBACK add's rhs,
+                     * which spec_check_op admits via raw_ok). */
+                    sf_set(f.raw, op->result->id);
+                    break;
                 default:
                     break;
                 }
@@ -2037,6 +2050,9 @@ namespace erts_t2 {
                     case T2OpKind::BsBase:
                     case T2OpKind::BsLimit:
                     case T2OpKind::BsCursor:
+                    /* P-C B2: the wide word and the <<4-form byte sum. */
+                    case T2OpKind::BsLoadWord:
+                    case T2OpKind::SwarByteSum:
                         break;
                     default:
                         return fail("block %u: T2_OP_RAW_MODE on %s (not a "
@@ -2080,12 +2096,49 @@ namespace erts_t2 {
                 case T2OpKind::SubSmall:
                     /* Raw mode clears every tagged operand and commits
                      * raw; tagged mode relies on the tag riding the
-                     * add, so no raw operand may reach it. */
+                     * add, so no raw operand may reach it — EXCEPT the
+                     * ROLLBACK class's rhs (P-C B2): the SWAR byte sum
+                     * arrives in the tag-cleared <<4 form, exactly the
+                     * value the tagged emitter's own rhs-AND would
+                     * produce, so `acc_tagged + sum_raw` keeps the lhs
+                     * tag riding the add. The lhs must stay tagged. */
                     if (!raw_mode) {
+                        if ((op->flags & T2_OP_ROLLBACK) != 0) {
+                            if (op->num_operands == 2 &&
+                                is_raw(op->operands[0])) {
+                                return fail("block %u: roll-back %s lhs "
+                                            "(v%u) is raw (the tag must "
+                                            "ride the add)",
+                                            op->block->id,
+                                            t2_op_kind_name(op->kind),
+                                            op->operands[0]->id);
+                            }
+                            return true;
+                        }
                         return no_raw_operands("tagged flag-checked "
                                                "arithmetic");
                     }
                     return true;
+                case T2OpKind::Add:
+                    /* P-C B2, pre-speculation form: the unroll emits
+                     * the fused read-sum accumulator as the generic
+                     * gc_bif Add carrying T2_OP_ROLLBACK with the raw
+                     * SWAR addend as operand 1; the speculation pass
+                     * converts it to the flag-checked AddSmall above.
+                     * ISel refuses the unconverted form (a raw word
+                     * must never reach the generic gc_bif), so this
+                     * admission cannot leak a raw term to runtime. */
+                    if ((op->flags & T2_OP_ROLLBACK) != 0) {
+                        if (op->num_operands == 2 && is_raw(op->operands[0])) {
+                            return fail("block %u: roll-back add lhs "
+                                        "(v%u) is raw (the accumulator "
+                                        "must stay tagged)",
+                                        op->block->id,
+                                        op->operands[0]->id);
+                        }
+                        return true;
+                    }
+                    return no_raw_operands("generic arithmetic");
                 case T2OpKind::TagInt:
                     if (op->num_operands != 1 || !is_raw(op->operands[0])) {
                         return fail("block %u: tag_int operand is not a "
@@ -2156,6 +2209,25 @@ namespace erts_t2 {
                         !is_raw(op->operands[1])) {
                         return fail("block %u: bs_read needs a raw base "
                                     "and a raw cursor",
+                                    op->block->id);
+                    }
+                    return true;
+                case T2OpKind::BsLoadWord:
+                    /* P-C B2 wide load: a raw pointer and a raw <<4
+                     * bit count; the result is the raw word. */
+                    if (op->num_operands != 2 || !is_raw(op->operands[0]) ||
+                        !is_raw(op->operands[1])) {
+                        return fail("block %u: bs_load_word needs a raw "
+                                    "base and a raw cursor",
+                                    op->block->id);
+                    }
+                    return true;
+                case T2OpKind::SwarByteSum:
+                    /* P-C B2 fold: consumes the raw word; produces the
+                     * raw <<4-form byte sum. */
+                    if (op->num_operands != 1 || !is_raw(op->operands[0])) {
+                        return fail("block %u: swar_byte_sum needs the raw "
+                                    "word",
                                     op->block->id);
                     }
                     return true;

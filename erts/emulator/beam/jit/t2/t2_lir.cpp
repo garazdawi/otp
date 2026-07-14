@@ -215,6 +215,10 @@ namespace erts_t2 {
             return "bs_get_position";
         case T2LirKind::BsSetPosition:
             return "bs_set_position";
+        case T2LirKind::BsLoadWord:
+            return "bs_load_word";
+        case T2LirKind::SwarByteSum:
+            return "swar_byte_sum";
         case T2LirKind::Invalid:
             return "invalid";
         }

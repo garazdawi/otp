@@ -141,8 +141,31 @@ namespace erts_t2 {
      * from the pre-add accumulator, producing the small->bignum result
      * byte-identically. The fused reduction check charges N (one per
      * fused iteration, task #46), keeping reduction counts T1-exact.
-     * T2_NO_FUSE=1 (or T2_FUSE=0) falls back to the A1 verbatim FL;
-     * read-and-sum (A2) shapes always stay verbatim (B2 fuses those).
+     * T2_NO_FUSE=1 (or T2_FUSE=0) falls back to the A1 verbatim FL.
+     *
+     * P-C increment B2 (SWAR wide-load + horizontal byte-sum): for the
+     * read-and-sum (A2) shape with N*stride == 64 the default is a
+     * SWAR-fused latch — the N byte reads + N adds collapse to ONE
+     * 64-bit BsLoadWord (no byte swap; the sum is order-free), ONE
+     * SwarByteSum fold (the raw <<4-form byte sum) and ONE checked
+     * `acc + sum8` reusing B1's T2_OP_ROLLBACK contract verbatim
+     * (header beam_idx + header sync map, placed before the single
+     * advance/sync; the only difference is the REGISTER addend, which
+     * the emitter handles scratch-then-commit — nothing to un-commit).
+     * The wide load needs a byte-aligned cursor, so the fast-path
+     * bs_ensure additionally carries the alignment guard (index bit
+     * 2): a loop-invariantly unaligned scan takes the 1-wide M
+     * remainder every iteration, correct but not SWAR. The raw temps
+     * reuse the FC-dead limit home and the post-load-dead base home.
+     * T2_NO_FUSE keeps A2 verbatim; N*stride != 64 (e.g. T2_UNROLL_N
+     * overrides) falls back to A2 verbatim. T2_NO_SPEC=1 disables
+     * READ-SUM unrolling entirely (verbatim included): the FL's
+     * hoisted base projection is only sound when the speculation pass
+     * converts the lane's adds to non-allocating flag-checked
+     * AddSmall — a generic gc_bif add can GC mid-lane and leave the
+     * raw base stale (a pre-existing A2 hazard found and closed while
+     * validating B2; the 1-wide loop re-projects the base per
+     * iteration and stays sound).
      *
      * N = 64/stride (T2_UNROLL_N overrides, clamped to 1..16; N <= 1
      * is a no-op). The recognizer bails — the pass makes no change —

@@ -246,7 +246,10 @@ namespace erts_t2 {
          * assumes). BsEnsure is a separable bounds guard (imm_int = need
          * bits; index bit 0 = exactly-mode, bit 1 = trailing unit-8
          * divisibility of the remainder) folded into guard_branch like
-         * BsTestTail. BsRead is a PURE non-allocating extraction at
+         * BsTestTail (index bit 2, P-C B2: additionally require the
+         * cursor byte-aligned — the SWAR wide load's precondition; an
+         * unaligned scan takes the else edge every iteration). BsRead
+         * is a PURE non-allocating extraction at
          * base+cursor (imm_int = size bits; index = read kind). BsSync
          * writes the raw cursor back to ErlSubBits.start at every
          * sync/exit/deopt (P-A: once per bs_match, before BsGetTail and
@@ -266,6 +269,21 @@ namespace erts_t2 {
         BsSync,
         BsGetPosition,
         BsSetPosition,
+
+        /* SWAR read-sum (P-C B2). BsLoadWord loads imm_int (= 64) bits
+         * at base + (cursor>>3) bytes as ONE raw 64-bit word — no
+         * byte swap, because the word only ever feeds the order-free
+         * byte SUM below; the FC alignment guard (BsEnsure index bit
+         * 2) proves the cursor byte-aligned. SwarByteSum folds the 8
+         * bytes of that word into their sum in the RAW-IN-HOME form
+         * ((b0+..+b7) << _TAG_IMMED1_SIZE, i.e. 0..2040 tag-cleared) —
+         * the fixed mask-and-fold sequence as ONE dedicated op, so no
+         * general AND/LSR op vocabulary (and no ISel/regalloc plumbing
+         * for it) is needed. Both are raw value ops (T2_OP_RAW_MODE,
+         * X-homed above every sync map's live prefix, never
+         * term-scanned) — exactly the BsBase/BsCursor discipline. */
+        BsLoadWord,
+        SwarByteSum,
 
         /* Funs and calls */
         Call,
@@ -681,7 +699,17 @@ namespace erts_t2 {
          * byte-identically. The emitter may commit the add in place
          * (adds to the register-backed home) and must then UN-COMMIT
          * it in the deopt trampoline (sub of the same immediate)
-         * before branching to the header T1 PC. */
+         * before branching to the header T1 PC.
+         *
+         * P-C increment B2 (SWAR read-sum) reuses the class with a
+         * REGISTER addend — the SwarByteSum result in the raw <<4
+         * form, the only raw operand a tagged Add/AddSmall may carry
+         * (operand 1, validator-enforced). The emitter then always
+         * takes the scratch-then-commit form (the deopt fires before
+         * the commit, so the trampoline has nothing to un-commit),
+         * and ISel refuses a ROLLBACK Add the speculation pass did
+         * not convert — a raw word must never reach the generic
+         * gc_bif. */
         T2_OP_ROLLBACK = 1 << 16
     };
 

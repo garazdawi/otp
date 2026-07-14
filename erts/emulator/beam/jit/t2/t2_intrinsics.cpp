@@ -6927,6 +6927,30 @@ namespace erts_t2 {
                 continue;
             }
 
+            /* A READING loop may only unroll when the speculation pass
+             * will convert the FL accumulator adds to flag-checked
+             * AddSmall (deopt-before-commit, never allocating): the FL
+             * hoists ONE raw base projection over all N reads, which
+             * is sound precisely because the fused/verbatim lane has
+             * no GC point. With T2_NO_SPEC=1 the adds stay generic
+             * gc_bif adds that can allocate a bignum and GC mid-lane,
+             * leaving the hoisted base (a raw pointer into the moved
+             * binary) stale for the remaining reads — wrong bytes, not
+             * a crash. Found while validating B2: forced install +
+             * T2_NO_SPEC=1 + a small->bignum crossing seed reproduces
+             * it on the A2 verbatim FL. The 1-wide loop re-projects
+             * the base every iteration, so not unrolling is the sound
+             * (and cheap) fallback. The skip-count shape has no reads
+             * and its raw temps are bit counts (GC-stable), so it
+             * stays unrollable. */
+            if (s.acc_is_read && getenv("T2_NO_SPEC") != nullptr) {
+                a1_bail(fn,
+                        "read-sum unroll needs the speculation pass "
+                        "(T2_NO_SPEC): the hoisted base cannot survive "
+                        "a generic add's GC");
+                continue;
+            }
+
             int n = a1_pick_n(s.stride);
 
             if (n <= 1) {
@@ -6944,9 +6968,10 @@ namespace erts_t2 {
             content[s.acc_phi->dst_reg] = s.acc_phi->result;
             content[s.sm->dst_reg] = s.sm->result;
 
-            /* --- B1 fused-FL admission (skip-count only; A2 shapes
-             * stay verbatim until B2). Any miss falls back to the A1
-             * verbatim FL — never to a compile failure. ---------------- */
+            /* --- B1 fused-FL admission (skip-count; the read-sum
+             * shape has its own B2 SWAR admission below). Any miss
+             * falls back to the A1/A2 verbatim FL — never to a
+             * compile failure. ---------------------------------------- */
             auto fuse_bail = [&](const char *why) -> bool {
                 if (getenv("T2_UNROLL_TRACE") != nullptr) {
                     erts_fprintf(stderr,
@@ -7007,7 +7032,76 @@ namespace erts_t2 {
                 }
                 return true;
             };
+
+            /* --- B2 SWAR-fused admission (read-sum only). The N
+             * byte-reads + N adds collapse to ONE 64-bit wide load +
+             * ONE SwarByteSum fold + ONE checked accumulator add with
+             * B1's roll-back deopt (identical contract: header
+             * beam_idx, header sync map, add placed before the
+             * advance). Any miss falls back to the A2 verbatim FL. */
+            auto swar_ok = [&]() -> bool {
+                if (!s.acc_is_read) {
+                    return false; /* skip-count: B1 territory, no trace */
+                }
+                if (!a1_fuse_enabled()) {
+                    return fuse_bail("disabled (T2_NO_FUSE)");
+                }
+                if (n < 2 || (Sint64)n * s.stride != 64) {
+                    /* One 64-bit word exactly — N=16/128-bit is a
+                     * follow-up (two ldp halves + two folds). Note the
+                     * fused add's raw SWAR addend is only legal on the
+                     * flag-checked AddSmall the speculation pass
+                     * converts it to; T2_NO_SPEC was already refused
+                     * for every reading loop above (the hoisted-base
+                     * GC hazard), and isel refuses the generic form as
+                     * the backstop. */
+                    return fuse_bail("SWAR width is not one 64-bit word");
+                }
+                if ((Sint64)n * (1 + (Sint64)s.rc->index) >= 4096) {
+                    return fuse_bail("fused reduction charge out of range");
+                }
+                /* Roll-back deopt state: identical to B1 (fuse_ok). */
+                if (s.sm->sync == nullptr ||
+                    s.sm->sync->frame_size != T2_NO_FRAME) {
+                    return fuse_bail("header start_match has no frameless "
+                                     "sync map");
+                }
+                for (uint32_t i = 0; i < s.sm->sync->x_live; i++) {
+                    auto it = content.find(t2_xreg(i));
+
+                    if (it == content.end() || it->second != s.sm->sync->x[i]) {
+                        return fuse_bail("header sync map does not match "
+                                         "the FL-top state");
+                    }
+                }
+                /* The FL-tail reduction_check map is rebuilt from the
+                 * walked contents. Unlike the verbatim FL, the SWAR
+                 * lane never re-establishes the byte home (there is no
+                 * per-byte read), so the map must only name the three
+                 * seed homes (ctx re-established by the copy, acc by
+                 * the fused add, sm untouched). */
+                for (uint32_t i = 0; i < s.rc->sync->x_live; i++) {
+                    int32_t r = t2_xreg(i);
+
+                    if (r != s.ctx_phi->dst_reg && r != s.acc_phi->dst_reg &&
+                        r != s.sm->dst_reg) {
+                        return fuse_bail("reduction_check map names a home "
+                                         "the SWAR lane does not "
+                                         "re-establish");
+                    }
+                }
+                if (s.sm->beam_idx == 0 || ret == nullptr ||
+                    erts_t2_pc_lookup_kind(ret,
+                                           fn.fn_index,
+                                           s.sm->beam_idx,
+                                           ERTS_T2_PC_EFFECT) == nullptr) {
+                    return fuse_bail("no EFFECT pctab entry for the "
+                                     "header start_match");
+                }
+                return true;
+            };
             bool fuse = fuse_ok();
+            bool swar = swar_ok();
 
             auto clone_map = [&](const T2SyncMap *map) -> T2SyncMap * {
                 T2SyncMap *c = fn.arena.create<T2SyncMap>();
@@ -7059,6 +7153,15 @@ namespace erts_t2 {
             en2->imm_int = (Sint64)n * s.stride;
             en2->index = s.ensure->index;
             en2->beam_idx = s.ensure->beam_idx;
+            if (swar) {
+                /* B2 alignment guard (index bit 2): the wide load's
+                 * 64-bit ldr needs a byte-aligned cursor. Alignment is
+                 * loop-invariant (+N*8 bits per trip), so an unaligned
+                 * scan takes the else edge to the 1-wide M remainder
+                 * (emit_read_bits, alignment-agnostic) every
+                 * iteration — correct, just not SWAR. */
+                en2->index |= 4;
+            }
 
             fn.emit_branch(fc, en2->result, fl, s.m);
             fc->terminator->beam_idx = s.m->terminator->beam_idx;
@@ -7067,7 +7170,8 @@ namespace erts_t2 {
              * (and everything behind it) becomes the remainder path. */
             s.h->terminator->succ_then = fc;
 
-            /* --- FL: ONE fused block (B1) or N verbatim copies (A1/A2) */
+            /* --- FL: ONE fused block (B1 skip-count / B2 SWAR
+             * read-sum) or N verbatim copies (A1/A2) ------------------ */
             T2Value *cur_k = cur2->result;
             T2Value *acc_k = s.acc_phi->result;
             T2Op *base2 = nullptr;
@@ -7108,7 +7212,95 @@ namespace erts_t2 {
                 facc->flags = T2_OP_ROLLBACK;
                 acc_k = facc->result;
                 content[s.acc->dst_reg] = acc_k;
+            } else if (swar) {
+                /* B2 SWAR read-sum: the header-entry snapshot FIRST
+                 * (content still holds the pre-iteration FL-top state,
+                 * verified against the start_match map in swar_ok). */
+                T2SyncMap *hdr_map = clone_map(s.sm->sync);
 
+                /* The hoisted base projection (no GC point in FL, so
+                 * the raw pointer cannot go stale within one trip —
+                 * same argument as the verbatim A2 hoist below). */
+                base2 = fn.new_op(fl, T2OpKind::BsBase, s.base->type);
+                fn.set_operands(base2, {s.sm->result});
+                clone_regs(base2, s.base);
+                base2->dst_reg = s.base->dst_reg;
+                base2->flags = s.base->flags;
+                base2->beam_idx = s.base->beam_idx;
+
+                /* ONE 64-bit wide load. Its raw temp reuses the limit
+                 * home — dead once FC's bs_ensure consumed it, and
+                 * disjoint from every seed/cursor/base home by the
+                 * recognizer's checks — so no fresh home is needed and
+                 * every sync map's live prefix stays untouched. */
+                T2Op *word = fn.new_op(fl, T2OpKind::BsLoadWord, T2Type::any());
+
+                fn.set_operands(word, {base2->result, cur_k});
+                word->operand_regs = fn.arena.alloc_array<int32_t>(2);
+                word->operand_regs[0] = s.base->dst_reg;
+                word->operand_regs[1] = s.cursor->dst_reg;
+                word->dst_reg = s.limit->dst_reg;
+                word->flags = T2_OP_RAW_MODE;
+                word->imm_int = (Sint64)n * s.stride; /* 64 */
+                word->beam_idx = s.read->beam_idx;
+
+                /* ONE horizontal fold: sum8 = (b0+..+b7) << 4, the raw
+                 * <<4 form the checked add consumes directly. Reuses
+                 * the base home (dead after the wide load). */
+                T2Op *sum8 =
+                        fn.new_op(fl, T2OpKind::SwarByteSum, T2Type::any());
+
+                fn.set_operands(sum8, {word->result});
+                sum8->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                sum8->operand_regs[0] = s.limit->dst_reg;
+                sum8->dst_reg = s.base->dst_reg;
+                sum8->flags = T2_OP_RAW_MODE;
+                sum8->beam_idx = s.read->beam_idx;
+
+                /* The fused accumulator: acc' = acc_phi + sum8,
+                 * CHECKED, placed BEFORE the advance/sync so .start is
+                 * still un-advanced at its deopt — the B1 roll-back
+                 * contract verbatim, the ONLY difference being the
+                 * REGISTER addend (raw <<4), which the emitter handles
+                 * with the scratch-then-commit form (nothing to
+                 * un-commit; the trampoline just branches to the
+                 * header PC). beam_idx = the header start_match
+                 * ordinal; sync = the header-entry snapshot. Still the
+                 * generic gc_bif Add here; the speculation pass
+                 * converts it to the boundary-class AddSmall (isel
+                 * refuses the unconverted form). */
+                T2Op *facc = fn.new_op(fl, T2OpKind::Add, s.acc->type);
+
+                fn.set_operands(facc, {acc_k, sum8->result});
+                facc->operand_regs = fn.arena.alloc_array<int32_t>(2);
+                facc->operand_regs[0] = s.acc_phi->dst_reg;
+                facc->operand_regs[1] = s.base->dst_reg;
+                facc->dst_reg = s.acc->dst_reg;
+                facc->live = s.acc->live;
+                facc->mfa_m = s.acc->mfa_m;
+                facc->mfa_f = s.acc->mfa_f;
+                facc->bif_num = s.acc->bif_num;
+                facc->beam_idx = s.sm->beam_idx;
+                facc->sync = hdr_map;
+                facc->flags = T2_OP_ROLLBACK;
+                acc_k = facc->result;
+                content[s.acc->dst_reg] = acc_k;
+            } else if (s.read != nullptr) {
+                /* One hoisted base projection serves every copy: FL
+                 * has no GC point before its last read (the cloned
+                 * adds deopt on overflow instead of allocating, and
+                 * the shared reduction_check runs after all N copies),
+                 * so the raw pointer cannot go stale within one trip.
+                 * The next trip re-projects it here. */
+                base2 = fn.new_op(fl, T2OpKind::BsBase, s.base->type);
+                fn.set_operands(base2, {s.sm->result});
+                clone_regs(base2, s.base);
+                base2->dst_reg = s.base->dst_reg;
+                base2->flags = s.base->flags;
+                base2->beam_idx = s.base->beam_idx;
+            }
+
+            if (fuse || swar) {
                 /* ONE cursor advance + ONE .start commit for the whole
                  * block (the bs_ensure in FC covered N*stride bits). */
                 T2Value *cs = fn.emit_const_int(fl, (Sint64)n * s.stride);
@@ -7129,22 +7321,9 @@ namespace erts_t2 {
                 fn.set_operands(sync1, {s.sm->result, cur_k});
                 clone_regs(sync1, s.bsync);
                 sync1->beam_idx = s.bsync->beam_idx;
-            } else if (s.read != nullptr) {
-                /* One hoisted base projection serves every copy: FL
-                 * has no GC point before its last read (the cloned
-                 * adds deopt on overflow instead of allocating, and
-                 * the shared reduction_check runs after all N copies),
-                 * so the raw pointer cannot go stale within one trip.
-                 * The next trip re-projects it here. */
-                base2 = fn.new_op(fl, T2OpKind::BsBase, s.base->type);
-                fn.set_operands(base2, {s.sm->result});
-                clone_regs(base2, s.base);
-                base2->dst_reg = s.base->dst_reg;
-                base2->flags = s.base->flags;
-                base2->beam_idx = s.base->beam_idx;
             }
 
-            for (int k = 0; !fuse && k < n; k++) {
+            for (int k = 0; !fuse && !swar && k < n; k++) {
                 T2Op *read_k = nullptr;
 
                 if (s.read != nullptr) {
@@ -7224,8 +7403,10 @@ namespace erts_t2 {
              * i_test_yield-at-entry discipline — reduction counts stay
              * T1-exact. The verbatim FL keeps its historical charge. */
             rc2->index =
-                    fuse ? (uint32_t)((Sint64)n * (1 + (Sint64)s.rc->index) - 1)
-                         : s.rc->index;
+                    (fuse || swar)
+                            ? (uint32_t)((Sint64)n * (1 + (Sint64)s.rc->index) -
+                                         1)
+                            : s.rc->index;
             rc2->beam_idx = s.rc->beam_idx;
             rc2->sync = clone_map(s.rc->sync);
 
@@ -7258,7 +7439,8 @@ namespace erts_t2 {
                              (unsigned)fn.arity,
                              n,
                              s.acc_is_read ? "read-sum" : "skip-count",
-                             fuse ? "fused" : "verbatim",
+                             swar ? "swar-fused"
+                                  : (fuse ? "fused" : "verbatim"),
                              (long)s.stride,
                              s.h->id);
             }
