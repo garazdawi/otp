@@ -721,6 +721,15 @@ void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
      * form, which becomes a move) — decode-side mirror:
      * pctab_start_match_effect in t2_pctab.c. */
     case op_i_bs_start_match3_Stjd:
+    /* utf8 scan sites (P-C L1, the ASCII-speculation side exit): the
+     * SpeculateRange deopt re-executes the whole bs_get/skip_utf8 at
+     * T1 from the UNADVANCED cursor. Both genops lower 1:1 to these
+     * specific ops (ops.tab: bs_get_utf8 Fail=f Ms=xy => i_bs_get_utf8;
+     * bs_skip_utf8 likewise — no other rule exists, so a non-matching
+     * shape cannot load) — decode-side mirror: pctab_utf8_effect in
+     * t2_pctab.c. */
+    case op_i_bs_get_utf8_Sfd:
+    case op_i_bs_skip_utf8_Sf:
         t2_pc_record(before, ERTS_T2_PC_EFFECT);
         break;
 

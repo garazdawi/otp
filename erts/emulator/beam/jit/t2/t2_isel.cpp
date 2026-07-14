@@ -1571,6 +1571,46 @@ namespace erts_t2 {
                     b.ops.push_back(lop);
                     return true;
 
+                case T2OpKind::SpeculateRange:
+                    /* The ASCII range deopt guard (P-C L1): side-exit
+                     * when the tagged-small operand >= imm_int.
+                     * Boundary class only — the deopt PC is the utf8
+                     * op's own T1 EFFECT site, reached with the bs
+                     * cursor still unadvanced (the guard precedes the
+                     * advance/BsSync by construction). */
+                    lop.kind = T2LirKind::SpeculateRange;
+                    if (op->num_operands != 1) {
+                        return fail_op(op,
+                                       "range guard without exactly one "
+                                       "operand");
+                    }
+                    if (op->imm_int <= 0) {
+                        return fail_op(op, "range guard without a bound");
+                    }
+                    if ((op->flags & T2_OP_SPEC_BOUNDARY) == 0) {
+                        return fail_op(op,
+                                       "range guard outside the boundary "
+                                       "deopt class");
+                    }
+                    lop.imm = op->imm_int;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op,
+                                       "constant operand in a "
+                                       "speculation guard (must be "
+                                       "proven, never guarded)");
+                    }
+                    lop.t1_pc_fail = spec_deopt_pc(op);
+                    if (lop.t1_pc_fail == nullptr) {
+                        return fail_op(op,
+                                       "no deopt PC for the speculation "
+                                       "guard");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
                 case T2OpKind::AddSmall:
                 case T2OpKind::SubSmall:
                     /* Flag-checked one-untag arithmetic; deopt (b.vs)

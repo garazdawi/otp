@@ -250,6 +250,23 @@ static int pctab_start_match_effect(const BeamOp *op) {
     return 0;
 }
 
+/* utf8 scan sites (P-C L1, the ASCII-speculation side exit):
+ * decode-side mirror of the op_i_bs_get_utf8_Sfd /
+ * op_i_bs_skip_utf8_Sf EFFECT records (beam_asm_module.cpp),
+ * following the loader's ops.tab transforms exactly: each genop has
+ * ONE rule (bs_get_utf8 Fail=f Ms=xy u u Dst=d => i_bs_get_utf8;
+ * bs_skip_utf8 Fail=f Ms=xy u u => i_bs_skip_utf8) and no fallback,
+ * so a register-context op lowers to exactly one specific op and a
+ * non-register context cannot load at all. The fail label is not
+ * discriminated (the decoder normalizes {f,0} to TAG_p; the loader
+ * pattern matches either). */
+static int pctab_utf8_effect(const BeamOp *op) {
+    if (op->op == genop_bs_get_utf8_5 || op->op == genop_bs_skip_utf8_4) {
+        return op->a[1].type == TAG_x || op->a[1].type == TAG_y;
+    }
+    return 0;
+}
+
 /* Error-exit ops. Note the case_end/badmatch NotInX=cy transform emits a
  * separate leading move, so the specific op count still matches 1:1. */
 static int pctab_is_error(int op) {
@@ -336,7 +353,8 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                         }
                     } else if (pctab_is_effect(op->op) ||
                                pctab_guard_bif_effect(ret, op) ||
-                               pctab_start_match_effect(op)) {
+                               pctab_start_match_effect(op) ||
+                               pctab_utf8_effect(op)) {
                         if (pass == 0) {
                             fns[fn_idx].effect_count++;
                         } else {

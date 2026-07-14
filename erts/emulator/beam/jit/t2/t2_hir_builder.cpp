@@ -1665,6 +1665,9 @@ namespace erts_t2 {
             case genop_is_tuple_2:
                 translate_type_test(T2OpKind::IsTuple, dop);
                 break;
+            case genop_is_binary_2:
+                translate_type_test(T2OpKind::IsBinary, dop);
+                break;
             case genop_is_map_2:
                 translate_type_test(T2OpKind::IsMap, dop);
                 break;
@@ -2546,6 +2549,189 @@ namespace erts_t2 {
                     v->def->index = (uint32_t)dop.args[2].val;
                 }
                 guard_branch(v, dop.args[0]);
+                break;
+            }
+
+            case genop_bs_get_utf8_5:
+            case genop_bs_skip_utf8_4: {
+                /* Fail Ctx Live Flags (Dst) — the latin1/UTF-8
+                 * fastpath L1 (PLAN/T2FULL/14 P-C L1). Speculate the
+                 * 1-byte (ASCII) codepoint: T1's erts_bs_get_utf8
+                 * (erl_bits.c) returns make_small(byte) and advances
+                 * exactly 8 bits when byte < 0x80 (trailing-bytes
+                 * table case 0); EVERY >= 0x80 first byte — valid
+                 * 2/3/4-byte sequences AND each malformed class
+                 * (truncated, lone continuation, overlong, surrogate,
+                 * > 0x10FFFF, illegal lead) — either advances by the
+                 * whole sequence or returns THE_NON_VALUE with .start
+                 * untouched. The SpeculateRange guard (byte < 0x80)
+                 * therefore side-exits any >= 0x80 first byte to the
+                 * op's OWN T1 PC (boundary class) BEFORE the cursor
+                 * advance/BsSync: T1 re-runs bs_get/skip_utf8 from
+                 * the unadvanced .start and reproduces the multibyte
+                 * decode or the match failure byte-identically.
+                 * BsEnsure(8)'s fail edge is the op's Fail label
+                 * (T1: remaining < 8 -> THE_NON_VALUE -> Fail).
+                 * skip_utf8 is the same decode with the result
+                 * discarded (arm instr_bs.cpp emit_i_bs_skip_utf8). */
+                const DecodedArg &fail = dop.args[0];
+                SrcVal ctx = read_arg_r(dop.args[1]);
+                UWord live = dop.args[2].val;
+                bool is_get = dop.op == genop_bs_get_utf8_5;
+
+                if (ctx.v == nullptr) {
+                    return;
+                }
+                if (fail.type != TAG_f) {
+                    fail_op(dop, "unexpected bs_*_utf8 fail tag");
+                    return;
+                }
+                if (dop.args[3].type != TAG_u || dop.args[3].val != 0) {
+                    fail_op(dop,
+                            "bs_*_utf8 outside the plain no-flags form "
+                            "(eligibility/builder drift)");
+                    return;
+                }
+
+                /* Fresh X homes above every live term (the bs_match
+                 * rule above): three raw projections plus the TAGGED
+                 * byte temp. The byte must NOT materialize into the
+                 * decoded Dst before the guard — Dst may alias a slot
+                 * the guard's sync map names, and the side exit must
+                 * hand T1 the pre-op register state. */
+                uint32_t hb = std::max(fn->arity, max_x_written);
+
+                hb = std::max(hb, (uint32_t)live);
+                if (ctx.reg != T2_REG_NONE && t2_reg_is_x(ctx.reg)) {
+                    hb = std::max(hb, t2_reg_index(ctx.reg) + 1);
+                }
+                if (is_get && dop.args[4].type == TAG_x) {
+                    hb = std::max(hb, reg_var(dop.args[4]) + 1);
+                }
+
+                const int32_t cursor_home = t2_xreg(hb);
+                const int32_t limit_home = t2_xreg(hb + 1);
+                const int32_t base_home = t2_xreg(hb + 2);
+                const int32_t byte_home = t2_xreg(hb + 3);
+
+                auto project = [&](T2OpKind kind, int32_t home) -> T2Value * {
+                    T2Value *v = emit_result_op(kind, {ctx}, T2Type::any());
+
+                    if (v != nullptr) {
+                        v->def->dst_reg = home;
+                        v->def->flags |= T2_OP_RAW_MODE;
+                    }
+                    return v;
+                };
+
+                T2Value *cursor = project(T2OpKind::BsCursor, cursor_home);
+                T2Value *limit = project(T2OpKind::BsLimit, limit_home);
+
+                if (cursor == nullptr || limit == nullptr) {
+                    return;
+                }
+
+                /* Need at least one byte; the fail edge is the op's
+                 * own Fail label (T1 parity for the short binary). */
+                T2Value *ok = emit_result_op(T2OpKind::BsEnsure,
+                                             {SrcVal{cursor, cursor_home},
+                                              SrcVal{limit, limit_home}},
+                                             bool_type());
+
+                if (ok == nullptr) {
+                    return;
+                }
+                ok->def->imm_int = 8;
+                ok->def->index = 0;
+                guard_branch(ok, fail);
+                if (failed) {
+                    return;
+                }
+
+                T2Value *base = project(T2OpKind::BsBase, base_home);
+
+                if (base == nullptr) {
+                    return;
+                }
+
+                T2Value *byte = emit_result_op(
+                        T2OpKind::BsRead,
+                        {SrcVal{base, base_home}, SrcVal{cursor, cursor_home}},
+                        T2Type::integer(0, 255));
+
+                if (byte == nullptr) {
+                    return;
+                }
+                byte->def->imm_int = 8; /* size, bits */
+                byte->def->index = (uint32_t)ERTS_T2_BS_READ_INT8;
+                byte->def->dst_reg = byte_home;
+
+                /* The ASCII speculation guard — byte < 0x80 — BEFORE
+                 * the advance/BsSync, so its side exit reaches T1
+                 * with the cursor unadvanced. Boundary class: the
+                 * op's own beam_idx resolves to its T1 EFFECT PC
+                 * (t2_pc_classify/pctab_utf8_effect), with the sync
+                 * map naming the pre-op live X prefix. */
+                {
+                    T2Op *g = fn->new_op(cur,
+                                         T2OpKind::SpeculateRange,
+                                         T2Type::none());
+
+                    g->beam_idx = cur_op->beam_idx;
+                    g->flags |= T2_OP_SPEC_BOUNDARY;
+                    g->sync = snapshot_sync((uint32_t)live);
+                    g->imm_int = 0x80;
+                    fn->set_operands(g, {byte});
+                    set_operand_regs(g, {SrcVal{byte, byte_home}});
+                }
+                if (failed) {
+                    return;
+                }
+
+                /* Hot path: advance 8 bits (the raw AddSmall NO_OVF —
+                 * re-proven by the validator's cursor rule, exactly
+                 * like the bs_match advance above) and write .start
+                 * back. */
+                T2Value *k = fn->emit_const_int(cur, (Sint64)8);
+
+                if (k == nullptr) {
+                    return;
+                }
+
+                T2Value *ncur = emit_result_op(
+                        T2OpKind::AddSmall,
+                        {SrcVal{cursor, cursor_home}, SrcVal{k, T2_REG_NONE}},
+                        T2Type::any());
+
+                if (ncur == nullptr) {
+                    return;
+                }
+                ncur->def->dst_reg = cursor_home;
+                ncur->def->flags |= T2_OP_RAW_MODE | T2_OP_NO_OVF;
+
+                {
+                    T2Op *op =
+                            fn->new_op(cur, T2OpKind::BsSync, T2Type::none());
+
+                    op->beam_idx = cur_op->beam_idx;
+                    fn->set_operands(op, {ctx.v, ncur});
+                    set_operand_regs(op, {ctx, SrcVal{ncur, cursor_home}});
+                }
+                if (failed) {
+                    return;
+                }
+
+                if (is_get) {
+                    /* Dst := the byte (already a tagged small — the
+                     * ASCII codepoint IS the byte). Via a Copy so the
+                     * destination write lands after the sync,
+                     * mirroring bs_match's end-of-op dst write. */
+                    T2Value *res = emit_result_op(T2OpKind::Copy,
+                                                  {SrcVal{byte, byte_home}},
+                                                  byte->type);
+
+                    write_dst_new(dop.args[4], res);
+                }
                 break;
             }
 

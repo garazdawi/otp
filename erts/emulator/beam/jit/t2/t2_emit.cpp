@@ -163,6 +163,22 @@ namespace erts_t2 {
         };
         std::vector<RollbackTramp> rollback_tramps;
 
+        /* Range-guard deopt trampolines (P-C L1, the utf8 ASCII
+         * fastpath): one per SpeculateRange op. The trampoline re-tags
+         * any masked raw homes, bumps the erts_t2_range_deopts
+         * monitoring counter and branches to the utf8 op's own T1
+         * EFFECT PC — the guard precedes the cursor advance/BsSync, so
+         * ErlSubBits.start is still unadvanced and T1 re-executes the
+         * whole bs_get/skip_utf8 (full multibyte decode or match
+         * failure) byte-identically. */
+        struct RangeTramp {
+            Label label;
+            const void *t1_pc;
+            uint32_t raw_mask;
+            uint32_t beam_idx;
+        };
+        std::vector<RangeTramp> range_tramps;
+
         /* When non-null, emit_all lays down the install entry stub
          * (PLAN/T2/06 §2.3) instead of the exec-harness frame prologue;
          * the value is the function's public T1 entry L_f. */
@@ -673,6 +689,27 @@ namespace erts_t2 {
                 a.br(TMP1);
                 mark_unreachable();
             }
+
+            /* Range-guard deopt trampolines (P-C L1): count the
+             * side exit and hand off to the op's own T1 site. No
+             * un-commit and no cursor write-back: the guard fires
+             * before anything of the op's state is committed
+             * (ErlSubBits.start still holds the unadvanced cursor). */
+            for (const RangeTramp &t : range_tramps) {
+                reg_cache.invalidate();
+                bind_veneer_target(t.label);
+                comment("T2 range deopt: side-exit to the op's own T1 "
+                        "PC (beam_idx=%u)",
+                        t.beam_idx);
+                fixup_raw_homes(t.raw_mask, /*retag=*/true);
+                mov_imm(TMP2, (Uint64)&erts_t2_range_deopts);
+                a.ldr(TMP3, a64::Mem(TMP2));
+                a.add(TMP3, TMP3, imm(1));
+                a.str(TMP3, a64::Mem(TMP2));
+                mov_imm(TMP1, (Uint64)t.t1_pc);
+                a.br(TMP1);
+                mark_unreachable();
+            }
         }
 
         /* ---- ArgVal synthesis ---------------------------------------- */
@@ -753,6 +790,7 @@ namespace erts_t2 {
             case T2LirKind::IsNonemptyList:
             case T2LirKind::IsTuple:
             case T2LirKind::IsMap:
+            case T2LirKind::IsBinary:
             case T2LirKind::TestArity:
             case T2LirKind::IsTupleOfArity:
             case T2LirKind::IsTaggedTuple:
@@ -853,6 +891,9 @@ namespace erts_t2 {
                 break;
             case T2LirKind::SpeculateSmall:
                 emit_lir_speculate_small(op);
+                break;
+            case T2LirKind::SpeculateRange:
+                emit_lir_speculate_range(op);
                 break;
             case T2LirKind::AddSmall:
             case T2LirKind::SubSmall:
@@ -1123,6 +1164,47 @@ namespace erts_t2 {
             }
             a.cmp(TMP1, imm(_TAG_IMMED1_SMALL));
             a.b_ne(resolve_label(fl, disp1MB));
+        }
+
+        /* The ASCII range deopt guard (P-C L1): `cmp val, #(bound <<
+         * TAG_SIZE); b.hs -> deopt`. The operand is the TAGGED small
+         * BsRead byte (validator-proven small): tagged(b) =
+         * (b << TAG_SIZE) | tag with tag < (1 << TAG_SIZE), so
+         * tagged(b) >= (bound << TAG_SIZE) iff b >= bound — the
+         * compare is exact without untagging. The fail edge is a
+         * dedicated trampoline (see RangeTramp): count + side-exit to
+         * the utf8 op's own T1 EFFECT PC with the cursor UNADVANCED,
+         * where T1 re-runs the full decode (valid multibyte AND every
+         * malformed class) byte-identically. */
+        void emit_lir_speculate_range(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const ||
+                op.t1_pc_fail == nullptr || op.imm <= 0) {
+                fail("malformed range speculation guard");
+                return;
+            }
+
+            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+            a64::Gp val;
+
+            if (op.srcs[0].loc.is_phys()) {
+                val = phys_gp(op.srcs[0].loc);
+            } else {
+                val = load_source(src_argval(op.srcs[0]), TMP2).reg;
+            }
+
+            comment("T2 speculate range (< %ld)", (long)op.imm);
+
+            RangeTramp rt;
+
+            rt.label = a.new_label();
+            rt.t1_pc = op.t1_pc_fail;
+            rt.raw_mask = op.raw_mask;
+            rt.beam_idx = op.beam_idx;
+            range_tramps.push_back(rt);
+
+            cmp(val, (Sint64)op.imm << _TAG_IMMED1_SIZE);
+            a.b_hs(resolve_label(range_tramps.back().label, disp1MB));
         }
 
         /* Flag-checked one-untag add/sub (P2 commit 4; PLAN/T2/03 §9.4,
@@ -1998,6 +2080,9 @@ namespace erts_t2 {
                 break;
             case T2LirKind::IsMap:
                 emit_is_map(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsBinary:
+                emit_is_binary(failL, ArgSource(src_argval(op.srcs[0])));
                 break;
             case T2LirKind::TestArity:
                 /* Matching the empty tuple {} is legal, so the arity can

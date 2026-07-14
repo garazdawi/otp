@@ -207,6 +207,7 @@ namespace {
                     s->fused_arith++;
                     break;
                 case T2LirKind::SpeculateSmall:
+                case T2LirKind::SpeculateRange:
                     s->spec_guards++;
                     break;
                 case T2LirKind::StartMatch:

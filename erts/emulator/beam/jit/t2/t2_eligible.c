@@ -107,6 +107,10 @@ int erts_t2_genop_supported(int genop) {
     case genop_is_list_2:
     case genop_is_nonempty_list_2:
     case genop_is_tuple_2:
+    /* is_binary (P-C L1): a pure guard like the tests above, needed by
+     * the utf8 validators' binary-tail clauses (unicode:do_i_utf8_chk's
+     * `Bin when is_binary(Bin)`). Lowers to T1's emit_is_binary. */
+    case genop_is_binary_2:
     case genop_test_arity_3:
     case genop_is_tagged_tuple_4:
     /* is_function2 with an immediate arity only (argument-checked in
@@ -164,6 +168,14 @@ int erts_t2_genop_supported(int genop) {
     case genop_bs_get_tail_3:
     case genop_bs_get_position_3:
     case genop_bs_set_position_2:
+
+    /* The latin1/UTF-8 fastpath L1 (PLAN/T2FULL/14 P-C L1): both are
+     * additionally argument-checked (utf8_op_supported below) — only
+     * the plain (no-flags) form the compiler emits for <<_/utf8>> is
+     * supported; the builder speculates the 1-byte ASCII codepoint and
+     * side-exits every >= 0x80 first byte to the op's own T1 PC. */
+    case genop_bs_get_utf8_5:
+    case genop_bs_skip_utf8_4:
         return 1;
 
     default:
@@ -222,7 +234,15 @@ int erts_t2_bs_match_check(const UWord *types,
         cmd.dst_arg = -1;
 
         if (vals[i] == am_ensure_at_least) {
-            /* ensure_at_least Size Unit */
+            /* ensure_at_least Size Unit. Size 0 (P-C L1) is the open
+             * `_/binary` tail guard the compiler emits after a utf8
+             * (or other variable-width) segment: T1 skips the size
+             * compare entirely and only tests remaining % Unit == 0
+             * (arm instr_bs.cpp ENSURE_AT_LEAST, stride == 0), which
+             * is exactly what BsEnsure emits for size 0 — the b.lo
+             * against 0 cannot fire and the unit-8 tst carries the
+             * whole guard. Unit 1 with size 0 is a no-op guard on
+             * both tiers. */
             if (i + 2 >= nargs || types[i + 1] != TAG_u ||
                 types[i + 2] != TAG_u) {
                 return -1;
@@ -230,8 +250,7 @@ int erts_t2_bs_match_check(const UWord *types,
             cmd.kind = ERTS_T2_BS_ENSURE;
             cmd.size = vals[i + 1];
             cmd.unit = vals[i + 2];
-            if (cmd.size == 0 || (cmd.size % 8) != 0 ||
-                (cmd.unit != 1 && cmd.unit != 8)) {
+            if ((cmd.size % 8) != 0 || (cmd.unit != 1 && cmd.unit != 8)) {
                 return -1;
             }
             i += 3;
@@ -432,6 +451,30 @@ static int get_map_elements_op_supported(const BeamOp *op) {
         if (d->type != TAG_x && d->type != TAG_y) {
             return 0;
         }
+    }
+    return 1;
+}
+
+/* bs_get_utf8 Fail Ctx Live Flags Dst / bs_skip_utf8 Fail Ctx Live
+ * Flags (P-C L1): only the plain form — a real fail label, a register
+ * context and an EMPTY flags word (the compiler emits {field_flags,[]}
+ * (+ zero-bit annos) for every <<_/utf8>> segment, and T1's own
+ * emit_bs_get_utf8 ignores the word entirely) — with an X/Y
+ * destination for the get. Anything else stays T1. Mirrored 1:1 by
+ * the builder's decode — a mismatch there is scan/builder drift. */
+static int utf8_op_supported(const BeamOp *op) {
+    int is_get = op->op == genop_bs_get_utf8_5;
+
+    if (op->arity < (is_get ? 5 : 4) || op->a[0].type != TAG_f ||
+        (op->a[1].type != TAG_x && op->a[1].type != TAG_y) ||
+        op->a[2].type != TAG_u) {
+        return 0;
+    }
+    if (op->a[3].type != TAG_u || op->a[3].val != 0) {
+        return 0;
+    }
+    if (is_get && op->a[4].type != TAG_x && op->a[4].type != TAG_y) {
+        return 0;
     }
     return 1;
 }
@@ -930,6 +973,13 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                 /* Constant source / malformed shape: outside the
                  * decoded subset, stays T1. */
                 fn_ok = 0;
+            } else if (fn_ok &&
+                       (op->op == genop_bs_get_utf8_5 ||
+                        op->op == genop_bs_skip_utf8_4) &&
+                       !utf8_op_supported(op)) {
+                /* Non-empty flags / malformed shape: outside the
+                 * plain utf8 form (P-C L1), stays T1. */
+                fn_ok = 0;
             }
             if (fn_inst && erts_t2_genop_build_only(op->op)) {
                 /* Buildable as a P1 chain callee, but not
@@ -1027,7 +1077,10 @@ int erts_t2_blocker_class(BeamFile *beam, const BeamOp *op) {
         return ERTS_T2_BLK_BS_CONSTRUCTION;
 
     /* General bit matching + match-context position ops. A rejecting
-     * bs_match/3 (outside the byte-aligned subset) lands here too. */
+     * bs_match/3 (outside the byte-aligned subset) lands here too, as
+     * does a rejecting bs_get/skip_utf8 (outside the plain no-flags
+     * form; P-C L1) — the supported shapes moved to the supported set
+     * and never reach this classifier. */
     case genop_bs_match_3:
     case genop_bs_get_integer2_7:
     case genop_bs_get_float2_7:
@@ -1236,6 +1289,9 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
                     supported = bs_match_op_supported(beam, op);
                 } else if (op->op == genop_get_map_elements_3) {
                     supported = get_map_elements_op_supported(op);
+                } else if (op->op == genop_bs_get_utf8_5 ||
+                           op->op == genop_bs_skip_utf8_4) {
+                    supported = utf8_op_supported(op);
                 } else {
                     supported = erts_t2_genop_supported(op->op);
                 }

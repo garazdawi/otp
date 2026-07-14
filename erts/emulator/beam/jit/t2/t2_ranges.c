@@ -46,6 +46,7 @@ Uint64 erts_t2_backedge_yields;
 Uint64 erts_t2_backedge_resumes;
 Uint64 erts_t2_callsite_deopts;
 Uint64 erts_t2_rollback_deopts;
+Uint64 erts_t2_range_deopts;
 
 static ErtsT2Blob *blobs;   /* sorted by start */
 static Sint blob_count;

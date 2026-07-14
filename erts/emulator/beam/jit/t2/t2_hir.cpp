@@ -1989,6 +1989,12 @@ namespace erts_t2 {
                 case T2OpKind::SubSmall:
                     return need(0, true, true, "a proven small/raw") &&
                            need(1, true, true, "a proven small/raw");
+                case T2OpKind::SpeculateRange:
+                    /* P-C L1: the tagged `cmp val, #(bound << TAG_SIZE)`
+                     * is exact only on non-negative proven smalls (the
+                     * BsRead byte); an arbitrary term must never reach
+                     * it. */
+                    return need(0, true, false, "a proven small");
                 default:
                     return true;
                 }

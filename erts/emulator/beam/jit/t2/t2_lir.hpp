@@ -204,6 +204,15 @@ namespace erts_t2 {
          * commit the (still-tagged) result to dst afterwards — deopt
          * fires strictly before the commit. */
         SpeculateSmall,
+        /* SpeculateRange (P-C L1, the utf8 ASCII fastpath): one
+         * TAGGED-small source, imm = the exclusive upper bound in
+         * untagged units (0x80). Emits `cmp src, #(imm << TAG_SIZE);
+         * b.hs -> deopt` — exact on tagged smalls because the tag
+         * nibble is below bit _TAG_IMMED1_SIZE — side-exiting to
+         * t1_pc_fail (boundary shape: the op's own T1 EFFECT site,
+         * with the bs cursor still unadvanced) through a dedicated
+         * trampoline that bumps erts_t2_range_deopts. */
+        SpeculateRange,
         AddSmall,
         SubSmall,
 

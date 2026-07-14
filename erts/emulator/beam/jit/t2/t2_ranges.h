@@ -106,6 +106,13 @@ extern Uint64 erts_t2_callsite_deopts;
  * t2_rollback_deopts). */
 extern Uint64 erts_t2_rollback_deopts;
 
+/* Range-guard deopt counter (racy, monitoring only; P-C L1):
+ * incremented by the dedicated trampoline of every SpeculateRange
+ * side exit — the utf8 ASCII fastpath handing a >= 0x80 first byte
+ * to T1's own bs_get/skip_utf8 with the cursor unadvanced. Exposed
+ * as erts_debug:get_internal_state(t2_range_deopts). */
+extern Uint64 erts_t2_range_deopts;
+
 /* One-time init (mutex + accounting). Called from beamasm_init(). */
 void erts_t2_ranges_init(void);
 
