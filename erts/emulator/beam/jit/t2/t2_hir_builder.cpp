@@ -3052,6 +3052,17 @@ namespace erts_t2 {
             std::unique_ptr<T2Function> fn = builder.build(&local_err);
 
             if (fn == nullptr || !t2_validate(*fn, &local_err)) {
+                if (getenv("T2_DEBUG") != NULL) {
+                    const FunctionCode &fc = md.functions[i];
+                    erts_fprintf(stderr,
+                                 "t2_build: %T:%T/%u %s: %s\n",
+                                 fc.module,
+                                 fc.function,
+                                 (unsigned)fc.arity,
+                                 fn == nullptr ? "build failed"
+                                               : "validate failed",
+                                 local_err.c_str());
+                }
                 continue; /* degrade to T1 for this function */
             }
 
@@ -3096,6 +3107,16 @@ namespace erts_t2 {
             if (fn == nullptr || !t2_validate(*fn, &local_err)) {
                 /* Degrade to T1 for this function; never abort the
                  * load (map §5). */
+                if (getenv("T2_DEBUG") != NULL) {
+                    erts_fprintf(stderr,
+                                 "t2_build: %T:%T/%u %s: %s\n",
+                                 fc.module,
+                                 fc.function,
+                                 (unsigned)fc.arity,
+                                 fn == nullptr ? "build failed"
+                                               : "validate failed",
+                                 local_err.c_str());
+                }
                 failed++;
                 continue;
             }

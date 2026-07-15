@@ -835,11 +835,22 @@ extern "C" void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
                     return;
                 }
 
-                switch (t2_compile_install_one(hir,
-                                               ret,
-                                               code_hdr,
-                                               mi,
-                                               nullptr)) {
+                std::string diag;
+                bool want_diag = getenv("T2_DEBUG") != NULL;
+                T2CompileStatus st = t2_compile_install_one(
+                        hir, ret, code_hdr, mi, want_diag ? &diag : nullptr);
+
+                if (want_diag && st != T2CompileStatus::Installed &&
+                    st != T2CompileStatus::RejectedGate) {
+                    erts_fprintf(stderr,
+                                 "t2_install: %T:%T/%u failed: %s\n",
+                                 hir.module,
+                                 hir.function,
+                                 (unsigned)hir.arity,
+                                 diag.c_str());
+                }
+
+                switch (st) {
                 case T2CompileStatus::Installed:
                     t2_stats.installed++;
                     if (t2_install_trace()) {
