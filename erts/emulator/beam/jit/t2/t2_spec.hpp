@@ -87,6 +87,18 @@ namespace erts_t2 {
          * argument `idx` is a small integer? Returning false leaves
          * consumers of that argument on the generic path. */
         virtual bool speculate_param_small(uint32_t idx) const = 0;
+
+        /* The observed entry type-class bitmask (ERTS_T2_TY_*, t2_retain.h)
+         * for function-entry argument `idx`, unioned across profile trips,
+         * or 0 when there is no profile evidence (forced mode, an unsampled
+         * argument, or the profile-less default). Exactly one bit set means
+         * the argument was monomorphically that class. Consumers treat 0 as
+         * "no evidence" and fall back to the AOT Type chunk — profile
+         * narrows, never contradicts (02 §1). The default returns 0. */
+        virtual uint16_t param_seen_types(uint32_t idx) const {
+            (void)idx;
+            return 0;
+        }
     };
 
     /* Profile-less default: speculate on every entry argument whose

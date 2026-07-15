@@ -321,19 +321,27 @@ namespace {
     class T2ProfileFactSource : public T2FactSource {
     public:
         T2ProfileFactSource(const T2Function &fn, const ErtsT2Profile *rec)
-                : dflt(fn), nonsmall(rec != nullptr ? rec->nonsmall : 0) {
+                : dflt(fn), rec(rec) {
         }
 
         bool speculate_param_small(uint32_t idx) const override {
-            if (idx < 4 && (nonsmall & (1u << idx)) != 0) {
+            Uint32 nonsmall = (rec != nullptr) ? rec->nonsmall : 0;
+            if (idx < ERTS_T2_PROFILE_ARGS && (nonsmall & (1u << idx)) != 0) {
                 return false;
             }
             return dflt.speculate_param_small(idx);
         }
 
+        uint16_t param_seen_types(uint32_t idx) const override {
+            if (rec != nullptr && idx < ERTS_T2_PROFILE_ARGS) {
+                return rec->seen_types[idx];
+            }
+            return 0;
+        }
+
     private:
         T2DefaultFactSource dflt;
-        Uint32 nonsmall;
+        const ErtsT2Profile *rec;
     };
 
     /* Lower + emit + install one built HIR function against the loaded
