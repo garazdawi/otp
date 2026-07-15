@@ -791,6 +791,13 @@ namespace erts_t2 {
             case T2LirKind::IsTuple:
             case T2LirKind::IsMap:
             case T2LirKind::IsBinary:
+            case T2LirKind::IsFloat:
+            case T2LirKind::IsNumber:
+            case T2LirKind::IsBoolean:
+            case T2LirKind::IsBitstring:
+            case T2LirKind::IsPid:
+            case T2LirKind::IsPort:
+            case T2LirKind::IsReference:
             case T2LirKind::TestArity:
             case T2LirKind::IsTupleOfArity:
             case T2LirKind::IsTaggedTuple:
@@ -2135,6 +2142,27 @@ namespace erts_t2 {
                 break;
             case T2LirKind::IsBinary:
                 emit_is_binary(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsFloat:
+                emit_is_float(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsNumber:
+                emit_is_number(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsBoolean:
+                emit_is_boolean(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsBitstring:
+                emit_is_bitstring(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsPid:
+                emit_is_pid(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsPort:
+                emit_is_port(failL, ArgSource(src_argval(op.srcs[0])));
+                break;
+            case T2LirKind::IsReference:
+                emit_is_reference(failL, ArgSource(src_argval(op.srcs[0])));
                 break;
             case T2LirKind::TestArity:
                 /* Matching the empty tuple {} is legal, so the arity can

@@ -1671,6 +1671,27 @@ namespace erts_t2 {
             case genop_is_map_2:
                 translate_type_test(T2OpKind::IsMap, dop);
                 break;
+            case genop_is_float_2:
+                translate_type_test(T2OpKind::IsFloat, dop);
+                break;
+            case genop_is_number_2:
+                translate_type_test(T2OpKind::IsNumber, dop);
+                break;
+            case genop_is_boolean_2:
+                translate_type_test(T2OpKind::IsBoolean, dop);
+                break;
+            case genop_is_bitstring_2:
+                translate_type_test(T2OpKind::IsBitstring, dop);
+                break;
+            case genop_is_pid_2:
+                translate_type_test(T2OpKind::IsPid, dop);
+                break;
+            case genop_is_port_2:
+                translate_type_test(T2OpKind::IsPort, dop);
+                break;
+            case genop_is_reference_2:
+                translate_type_test(T2OpKind::IsReference, dop);
+                break;
 
             case genop_test_arity_3: {
                 T2Value *v = emit_result_op(T2OpKind::TestArity,

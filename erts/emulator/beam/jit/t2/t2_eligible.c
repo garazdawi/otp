@@ -111,6 +111,19 @@ int erts_t2_genop_supported(int genop) {
      * the utf8 validators' binary-tail clauses (unicode:do_i_utf8_chk's
      * `Bin when is_binary(Bin)`). Lowers to T1's emit_is_binary. */
     case genop_is_binary_2:
+    /* The remaining simple type tests: pure read-only guards like the
+     * ones above, each lowering to its reused T1 emitter (emit_is_float,
+     * …) via guard_kind in t2_isel.cpp. The HIR op-kinds and the isel
+     * dispatch already existed for speculation; wiring the genops here
+     * (plus the builder cases and the emit_lir_guard arms) admits any
+     * function whose only blocker was one of these very common guards. */
+    case genop_is_float_2:
+    case genop_is_number_2:
+    case genop_is_boolean_2:
+    case genop_is_bitstring_2:
+    case genop_is_pid_2:
+    case genop_is_port_2:
+    case genop_is_reference_2:
     case genop_test_arity_3:
     case genop_is_tagged_tuple_4:
     /* is_function2 with an immediate arity only (argument-checked in
