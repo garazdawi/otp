@@ -255,6 +255,31 @@ namespace erts_t2 {
             return false;
         }
 
+        /* Is `v` provably an immediate (never a boxed pointer)? Used to
+         * gate closure inlining: a captured free var rides into the
+         * devirtualized loop through a reserved X slot that is NOT a GC
+         * root, so a boxed capture would go stale across a GC/yield. Only
+         * small integers, atoms, nil, and typed-small SSA values are
+         * safe; ConstLiteral (boxed tuple/binary/bignum literals) and
+         * anything not provably small is not. */
+        bool value_is_immediate(const T2Value *v) {
+            v = resolve_copies(v);
+            const T2Op *def = v->def;
+
+            if (def != nullptr) {
+                switch (def->kind) {
+                case T2OpKind::ConstInt:
+                    return IS_SSMALL(def->imm_int);
+                case T2OpKind::ConstAtom:
+                case T2OpKind::ConstNil:
+                    return true;
+                default:
+                    break;
+                }
+            }
+            return t2_type_proves_small(v->type);
+        }
+
         void unlink_op(T2BasicBlock *b, T2Op *op) {
             if (op->prev != nullptr) {
                 op->prev->next = op->next;
@@ -4822,6 +4847,11 @@ namespace erts_t2 {
                 uint32_t fun_arity = ccf->num_operands - 1;
                 std::vector<T2Value *> fargs;
                 std::vector<int32_t> farg_homes;
+                /* (value, reserved-slot home) of each non-constant free
+                 * var: a loop-entry SpeculateSmall guard (emitted at
+                 * b_grd below) redispatches the whole site to the generic
+                 * callee if the capture is not a small at runtime. */
+                std::vector<std::pair<T2Value *, int32_t>> fv_guards;
 
                 for (uint32_t j = 0; j < fun_arity; j++) {
                     T2Value *root = const_cast<T2Value *>(
@@ -4840,6 +4870,104 @@ namespace erts_t2 {
                                                      ? ccf->operand_regs[j]
                                                      : T2_REG_NONE);
                     }
+                }
+
+                /* ---- closure free vars: the fun impl's trailing params *
+                 * A closure impl has arity decl+num_free; the call_fun
+                 * only supplied the decl value args above, so append the
+                 * MakeFun's captured env values as the remaining params.
+                 *
+                 * They are loop-invariant caller values, but their home
+                 * slots die AT the MakeFun — the compiler reuses the env
+                 * source slot the instant it captures (verified: make_fun3
+                 * reads AND writes the same x slot). So a captured value
+                 * is NOT resident anywhere at the loop. Capture each
+                 * non-constant free var with a Copy inserted BEFORE the
+                 * MakeFun (where the source slot still holds it) into a
+                 * fresh X slot placed above every slot the function uses:
+                 * the loop never writes it, so it rides invariant across
+                 * every iteration (the ReductionCheck is not an X-file
+                 * clobber, so no frame home is required). A constant free
+                 * var needs no slot. On deopt the generic call_fun
+                 * re-reads the env from the fun value F — kept live by the
+                 * re-dispatch vector — so free vars never enter a sync
+                 * map.
+                 *
+                 * The reserved slot is above the sync-map live prefix, so
+                 * the GC/yield walker never scans it: a BOXED capture
+                 * would go stale across an in-loop GC. A loop-entry
+                 * SpeculateSmall guard (b_grd, below) pins every
+                 * non-constant capture to a small — an immediate, hence
+                 * GC-invariant in any slot — and redispatches the site to
+                 * the generic callee otherwise. Constant captures reached
+                 * commit only if admission proved them immediate. */
+                if (mf->live > 0) {
+                    uint32_t rbase = next_free;
+
+                    for_each_op(fn, [&](const T2Op *o) {
+                        auto bump = [&](int32_t r) {
+                            if (r != T2_REG_NONE && t2_reg_is_x(r) &&
+                                t2_reg_index(r) + 1 > rbase) {
+                                rbase = t2_reg_index(r) + 1;
+                            }
+                        };
+                        bump(o->dst_reg);
+                        if (o->operand_regs != nullptr) {
+                            for (uint16_t i = 0; i < o->num_operands; i++) {
+                                bump(o->operand_regs[i]);
+                            }
+                        }
+                    });
+
+                    T2Op *mfop = const_cast<T2Op *>(mf);
+                    T2BasicBlock *mfb = mfop->block;
+
+                    for (uint32_t k = 0; k < mf->live; k++) {
+                        T2Value *fv = const_cast<T2Value *>(
+                                resolve_copies(mf->operands[k]));
+
+                        if (is_const_def(fv)) {
+                            fargs.push_back(fv);
+                            farg_homes.push_back(T2_REG_NONE);
+                            continue;
+                        }
+
+                        int32_t dst_home = t2_xreg(rbase + k);
+                        int32_t src_home =
+                                mf->operand_regs != nullptr
+                                        ? mf->operand_regs[k]
+                                        : (mf->operands[k]->def != nullptr
+                                                   ? mf->operands[k]->def->dst_reg
+                                                   : T2_REG_NONE);
+                        T2Op *cp = fn.new_op(mfb,
+                                             T2OpKind::Copy,
+                                             mf->operands[k]->type);
+
+                        fn.set_operands(cp, {mf->operands[k]});
+                        cp->dst_reg = dst_home;
+                        cp->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                        cp->operand_regs[0] = src_home;
+                        cp->beam_idx = mfop->beam_idx;
+
+                        /* new_op appended at the block tail; relink it
+                         * immediately before the MakeFun. */
+                        unlink_op(mfb, cp);
+                        cp->block = mfb;
+                        cp->prev = mfop->prev;
+                        cp->next = mfop;
+                        if (mfop->prev != nullptr) {
+                            mfop->prev->next = cp;
+                        } else {
+                            mfb->ops_head = cp;
+                        }
+                        mfop->prev = cp;
+
+                        fargs.push_back(cp->result);
+                        farg_homes.push_back(dst_home);
+                        fv_guards.push_back({cp->result, dst_home});
+                    }
+
+                    next_free = rbase + mf->live;
                 }
 
                 FunBody fb;
@@ -5070,6 +5198,26 @@ namespace erts_t2 {
                     fn.set_operands(g, {cmap->x[perm[acc_idx]]});
                     g->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     g->operand_regs[0] = t2_xreg(perm[acc_idx]);
+                    g->flags =
+                            T2_OP_INLINED | T2_OP_SPEC_REDISPATCH | site_flag;
+                    g->sync = cmap;
+                    g->beam_idx = bi;
+                }
+
+                /* Loop-entry small-guards for the non-constant closure
+                 * captures: each rides the loop in a reserved slot that
+                 * the GC/yield walker never scans, so it must be an
+                 * immediate. SpeculateSmall pins it to a small (redispatch
+                 * to the generic callee otherwise). A single entry check
+                 * suffices — the capture is loop-invariant. */
+                for (const auto &fvg : fv_guards) {
+                    T2Op *g = fn.new_op(b_grd,
+                                        T2OpKind::SpeculateType,
+                                        T2Type::none());
+
+                    fn.set_operands(g, {fvg.first});
+                    g->operand_regs = fn.arena.alloc_array<int32_t>(1);
+                    g->operand_regs[0] = fvg.second;
                     g->flags =
                             T2_OP_INLINED | T2_OP_SPEC_REDISPATCH | site_flag;
                     g->sync = cmap;
@@ -5402,7 +5550,10 @@ namespace erts_t2 {
                 }
 
                 /* A statically-known fun among the arguments: an
-                 * env-free SSA-constant MakeFun of this module. */
+                 * SSA-constant MakeFun of this module. A closure
+                 * (num_free > 0) is admitted too — its captured env
+                 * values ride into the devirtualized loop as the fun
+                 * impl's trailing params (p1_commit's free-var append). */
                 int32_t fun_idx = -1;
                 const T2Op *mf = nullptr;
 
@@ -5411,14 +5562,14 @@ namespace erts_t2 {
                     const T2Op *def = root->def;
 
                     if (def != nullptr && def->kind == T2OpKind::MakeFun &&
-                        def->live == 0 /* num_free */ && def->imm_int >= 0) {
+                        def->imm_int >= 0) {
                         fun_idx = (int32_t)i;
                         mf = def;
                         break;
                     }
                 }
                 if (mf == nullptr) {
-                    p1_reject(call, "no literal env-free MakeFun argument");
+                    p1_reject(call, "no literal SSA-constant MakeFun argument");
                     return true;
                 }
                 if (ret->lambdas == NULL ||
@@ -5427,11 +5578,34 @@ namespace erts_t2 {
                     return true;
                 }
 
+                /* Closure captures ride into the devirtualized loop
+                 * through a reserved X slot that is not a GC root
+                 * (p1_commit's free-var append), so a boxed capture would
+                 * go stale across a GC/yield. A non-constant capture is
+                 * admitted here and pinned to a small by a loop-entry
+                 * SpeculateSmall guard at commit (redispatch otherwise) —
+                 * a runtime immediate is GC-invariant in any slot. A
+                 * CONSTANT capture cannot be guarded (isel forbids a
+                 * constant guard operand), so it must be provably
+                 * immediate at compile time; reject the site otherwise. */
+                for (uint32_t k = 0; k < mf->live; k++) {
+                    const T2Value *fv = resolve_copies(mf->operands[k]);
+
+                    if (is_const_def(fv) && !value_is_immediate(fv)) {
+                        p1_reject(call,
+                                  "closure has a non-immediate constant "
+                                  "capture");
+                        return true;
+                    }
+                }
+
                 uint32_t fun_arity;
+                uint32_t impl_arity;
                 {
                     const ErtsT2Lambda *lam = &ret->lambdas[mf->index];
 
                     fun_arity = (uint32_t)(lam->arity - lam->num_free);
+                    impl_arity = (uint32_t)lam->arity;
                 }
                 {
                     uint32_t idx = (uint32_t)mf->imm_int;
@@ -5639,8 +5813,11 @@ namespace erts_t2 {
                                 &impl_idx,
                                 1,
                                 [&](T2Function &impl) {
+                                    /* impl arity = decl + num_free: a
+                                     * closure's captured env values are
+                                     * trailing params of the built impl. */
                                     admitted =
-                                            admit_fun(impl, fun_arity, false);
+                                            admit_fun(impl, impl_arity, false);
                                 },
                                 &berr)) {
                         return true; /* decode trouble: leave alone */
