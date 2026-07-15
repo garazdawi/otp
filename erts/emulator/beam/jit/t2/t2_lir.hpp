@@ -372,6 +372,12 @@ namespace erts_t2 {
          * dst = the new tuple. Not a terminator. */
         UpdateRecord,
 
+        /* put_map_assoc single pair (emit_update_map_assoc, Size==2 fast
+         * path -> erts_maps_put). srcs = [Map, Key, Value]; dst = the new
+         * map. imm = the decoded Live (unused by the single-pair path).
+         * Not a terminator; allocates via HAlloc, no GC, no sync. */
+        PutMap,
+
         Invalid
     };
 

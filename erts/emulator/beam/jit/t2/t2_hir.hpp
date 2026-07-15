@@ -388,6 +388,16 @@ namespace erts_t2 {
          * Produces the new tuple; allocates like MakeTuple, no sync map. */
         UpdateRecord,
 
+        /* put_map_assoc, single key/value pair (M#{K => V}): T1's
+         * single-assoc fast path calls erts_maps_put, which allocates via
+         * HAlloc (a heap fragment when the heap is full) and never GCs, so
+         * like a read op this needs no sync map and no preceding GcTest.
+         * Operands are [Map, Key, Value]; produces the new map. assoc
+         * never fails (a dominating is_map test guarantees the base is a
+         * map), so there is no fail edge — put_map_exact, which raises
+         * badkey, stays T1 until the exception path exists. */
+        PutMap,
+
         /* Sentinel */
         Invalid
     };

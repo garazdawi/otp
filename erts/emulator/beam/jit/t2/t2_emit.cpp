@@ -843,6 +843,9 @@ namespace erts_t2 {
             case T2LirKind::UpdateRecord:
                 emit_lir_update_record(op);
                 break;
+            case T2LirKind::PutMap:
+                emit_lir_put_map(op);
+                break;
             case T2LirKind::GetMapElement:
                 emit_lir_get_map_element(op);
                 break;
@@ -2296,6 +2299,27 @@ namespace erts_t2 {
                     ArgRegister(loc_argval(op.dst)),
                     ArgWord((UWord)(npairs * 2)),
                     Span<const ArgVal>(updates.data(), updates.size()));
+        }
+
+        /* put_map_assoc, single pair (M#{K => V}): reuse T1's
+         * emit_update_map_assoc, whose Size==2 fast path loads Key/Value/
+         * Map into ARG2/3/4 and calls erts_maps_put (HAlloc, no GC). srcs
+         * = [Map, Key, Value]; the args span T1 wants is [Key, Value].
+         * imm = the decoded Live (unused by the single-pair path). */
+        void emit_lir_put_map(const T2LirOp &op) {
+            if (op.num_srcs != 3 || op.srcs[0].is_const || op.dst.is_none()) {
+                fail("malformed put_map");
+                return;
+            }
+
+            ArgVal args[2] = {src_argval(op.srcs[1]), src_argval(op.srcs[2])};
+
+            comment("T2 put_map_assoc (single pair)");
+            emit_update_map_assoc(ArgSource(src_argval(op.srcs[0])),
+                                  ArgRegister(loc_argval(op.dst)),
+                                  ArgWord((UWord)op.imm),
+                                  ArgWord(2),
+                                  Span<const ArgVal>(args, 2));
         }
 
         /* Value-producing total comparison (P2 commit 8): reuse T1's

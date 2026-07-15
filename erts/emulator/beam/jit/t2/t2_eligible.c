@@ -532,6 +532,62 @@ static int update_record_op_supported(const BeamOp *op) {
     return 1;
 }
 
+/* put_map_assoc Fail Map Dst Live Size K1 V1 ... (the {list,...} Rest
+ * expanded like get_map_elements). Only the SINGLE-pair (Size==2),
+ * register source + register destination shape is decoded: T1's
+ * single-assoc fast path calls erts_maps_put with the key/value/map
+ * loaded straight into argument registers, so no GC-parked base and no
+ * Live-aligned homes are needed. A multi-pair assoc (which GCs through
+ * reg[live]) or put_map_exact (which raises badkey) stays T1. The key
+ * and value may each be a register or an embeddable constant (same rule
+ * as the get_map_elements keys: a dynamic literal, val<0, is filtered).
+ * assoc never branches (a dominating is_map test), so the fail operand
+ * is ignored. Mirrored 1:1 by the builder's decode. */
+static int put_map_assoc_op_supported(const BeamOp *op) {
+    const BeamOpArg *k;
+    const BeamOpArg *v;
+
+    if (op->arity != 7 || (op->a[1].type != TAG_x && op->a[1].type != TAG_y) ||
+        (op->a[2].type != TAG_x && op->a[2].type != TAG_y) ||
+        op->a[3].type != TAG_u || op->a[4].type != TAG_u ||
+        op->a[4].val != 2) {
+        return 0;
+    }
+    k = &op->a[5];
+    v = &op->a[6];
+    switch (k->type) {
+    case TAG_q:
+        if ((SWord)k->val < 0) {
+            return 0;
+        }
+        break;
+    case TAG_a:
+    case TAG_i:
+    case TAG_n:
+    case TAG_x:
+    case TAG_y:
+        break;
+    default:
+        return 0;
+    }
+    switch (v->type) {
+    case TAG_q:
+        if ((SWord)v->val < 0) {
+            return 0;
+        }
+        break;
+    case TAG_a:
+    case TAG_i:
+    case TAG_n:
+    case TAG_x:
+    case TAG_y:
+        break;
+    default:
+        return 0;
+    }
+    return 1;
+}
+
 /* bs_get_utf8 Fail Ctx Live Flags Dst / bs_skip_utf8 Fail Ctx Live
  * Flags (P-C L1): only the plain form — a real fail label, a register
  * context and an EMPTY flags word (the compiler emits {field_flags,[]}
@@ -1043,6 +1099,15 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                 if (!update_record_op_supported(op)) {
                     fn_ok = 0;
                 }
+            } else if (fn_ok && op->op == genop_put_map_assoc_5) {
+                /* Single-pair map assoc (M#{K => V}). Only the one-pair,
+                 * register-source/dest shape is decoded
+                 * (put_map_assoc_op_supported) -- multi-pair (GC-parking
+                 * base) and put_map_exact (raises badkey) stay T1. Gated
+                 * ahead of the plain-oracle reject. */
+                if (!put_map_assoc_op_supported(op)) {
+                    fn_ok = 0;
+                }
             } else if (fn_ok && !erts_t2_genop_supported(op->op)) {
                 fn_ok = 0;
             } else if (fn_ok && op->op == genop_is_function2_3 &&
@@ -1385,6 +1450,8 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
                     supported = get_map_elements_op_supported(op);
                 } else if (op->op == genop_update_record_5) {
                     supported = update_record_op_supported(op);
+                } else if (op->op == genop_put_map_assoc_5) {
+                    supported = put_map_assoc_op_supported(op);
                 } else if (op->op == genop_bs_get_utf8_5 ||
                            op->op == genop_bs_skip_utf8_4) {
                     supported = utf8_op_supported(op);

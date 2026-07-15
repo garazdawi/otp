@@ -2174,6 +2174,49 @@ namespace erts_t2 {
                 break;
             }
 
+            case genop_put_map_assoc_5: {
+                /* Fail Map Dst Live Size K1 V1 ... (the {list,...} Rest
+                 * expanded like get_map_elements) — the eligibility scan
+                 * admitted only the single-pair (Size==2), register
+                 * source/dest shape (put_map_assoc_op_supported); a
+                 * mismatch here is scan/builder drift. assoc is always
+                 * preceded by an is_map test and never fails, so there is
+                 * no fail edge. Lowered to erts_maps_put (HAlloc, no GC),
+                 * so no sync map. Operands [Map, Key, Value]; the decoded
+                 * Live rides in imm_int (unused by the single-pair emit,
+                 * carried for completeness). */
+                UWord size = dop.args[4].val;
+
+                if (dop.args[4].type != TAG_u || size != 2 ||
+                    dop.args.size() != 5 + size ||
+                    (dop.args[1].type != TAG_x && dop.args[1].type != TAG_y) ||
+                    (dop.args[2].type != TAG_x && dop.args[2].type != TAG_y)) {
+                    fail_op(dop,
+                            "put_map_assoc outside the decoded shape "
+                            "(eligibility/builder drift)");
+                    return;
+                }
+
+                SrcVal map = read_arg_r(dop.args[1]);
+                SrcVal key = read_arg_r(dop.args[5]);
+                SrcVal val = read_arg_r(dop.args[6]);
+
+                if (map.v == nullptr || key.v == nullptr || val.v == nullptr) {
+                    return;
+                }
+
+                T2Value *v =
+                        emit_result_op(T2OpKind::PutMap,
+                                       {map, key, val},
+                                       T2Type::of(BEAM_TYPE_MAP));
+                if (v == nullptr) {
+                    return;
+                }
+                v->def->imm_int = (Sint64)dop.args[3].val; /* Live */
+                write_dst_new(dop.args[2], v);
+                break;
+            }
+
                 /* --- the byte-aligned binary scan subset (P2 commit 7) --- */
 
             case genop_bs_start_match3_4: {

@@ -1056,6 +1056,23 @@ namespace erts_t2 {
                     return true;
                 }
 
+                case T2OpKind::PutMap: {
+                    /* Single-pair put_map_assoc: srcs [Map, Key, Value]
+                     * (all inline), imm = the decoded Live. */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "put_map without a home");
+                    }
+                    lop.kind = T2LirKind::PutMap;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.imm = op->imm_int; /* decoded Live */
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
                 case T2OpKind::GcTest:
                     lop.kind = T2LirKind::GcTest;
                     lop.imm = (Sint64)op->index; /* heap words */

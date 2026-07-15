@@ -255,6 +255,8 @@ namespace erts_t2 {
             return "trim";
         case T2OpKind::UpdateRecord:
             return "update_record";
+        case T2OpKind::PutMap:
+            return "put_map";
         case T2OpKind::Opaque:
             return "opaque";
         case T2OpKind::Invalid:
@@ -363,6 +365,7 @@ namespace erts_t2 {
         case T2OpKind::GuardBif:
         case T2OpKind::MakeFun:
         case T2OpKind::UpdateRecord:
+        case T2OpKind::PutMap:
             return true;
         default:
             return false;
