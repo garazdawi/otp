@@ -2423,19 +2423,25 @@ namespace erts_t2 {
                             return;
                         }
 
-                        T2Value *v = emit_result_op(T2OpKind::BsRead,
-                                                    {SrcVal{base, base_home},
-                                                     SrcVal{cu, cursor_home}},
-                                                    T2Type::integer(0, 255));
+                        /* Byte-multiple unsigned/big read of c.size bits
+                         * (8..56). Stays a small: 56 bits < SMALL_BITS. */
+                        Sint64 nbits = (Sint64)c.size;
+                        T2Value *v = emit_result_op(
+                                T2OpKind::BsRead,
+                                {SrcVal{base, base_home},
+                                 SrcVal{cu, cursor_home}},
+                                T2Type::integer(0,
+                                                (Sint64)(((UWord)1 << nbits) -
+                                                         1)));
 
                         if (v == nullptr) {
                             return;
                         }
-                        v->def->imm_int = 8; /* size, bits */
+                        v->def->imm_int = nbits; /* size, bits */
                         v->def->index = (uint32_t)ERTS_T2_BS_READ_INT8;
                         read_val = v;
                         read_dst = c.dst_arg;
-                        advance(8);
+                        advance(c.size);
                         break;
                     }
                     case ERTS_T2_BS_SKIP:
@@ -2449,6 +2455,39 @@ namespace erts_t2 {
                         sync_cursor();
                         if (failed) {
                             return;
+                        }
+
+                        /* A preceding integer read wrote its result to
+                         * the destination register before this get_tail
+                         * runs (T1 stores the field first, then extracts
+                         * the tail). Commit that binding into the Braun
+                         * map now, so the get_tail GC snapshot below
+                         * names the value the register actually holds at
+                         * this point — deferring it to end-of-op leaves
+                         * the sync map naming the stale pre-read value.
+                         * Guard the shape the early commit would
+                         * miscompile: the read destination aliasing the
+                         * still-live context register (get_tail reads
+                         * the context next). The compiler never emits
+                         * that — the context is live across the whole
+                         * bs_match — but a blob must not trust it. */
+                        if (read_val != nullptr && read_dst >= 0) {
+                            const DecodedArg &rd = dop.args[read_dst];
+
+                            if (ctx.reg != T2_REG_NONE &&
+                                t2_reg_is_x(ctx.reg) && rd.type == TAG_x &&
+                                reg_var(rd) == t2_reg_index(ctx.reg)) {
+                                fail_op(dop,
+                                        "bs_match read dst aliases the "
+                                        "context register before get_tail");
+                                return;
+                            }
+                            write_dst_new(rd, read_val);
+                            if (failed) {
+                                return;
+                            }
+                            read_val = nullptr;
+                            read_dst = -1;
                         }
 
                         T2Value *v =

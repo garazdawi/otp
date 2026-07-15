@@ -207,7 +207,8 @@ typedef enum {
     ERTS_T2_BS_ENSURE = 0, /* ensure_at_least Size Unit (Size%8==0) or
                             * ensure_exactly Size (Size%8==0, may be 0;
                             * see `exactly`)                            */
-    ERTS_T2_BS_READ_INT8,  /* integer, Size*Unit==8, no flags          */
+    ERTS_T2_BS_READ_INT8,  /* integer, Size*Unit in 8..56 (byte-mult),
+                            * unsigned/big, no flags                   */
     ERTS_T2_BS_SKIP,       /* skip Size (Size%8==0)                    */
     ERTS_T2_BS_GET_TAIL    /* get_tail                                 */
 } ErtsT2BsCmdKind;

@@ -1942,23 +1942,27 @@ namespace erts_t2 {
          * alignment of the context extracts byte-identically to T1's
          * bs_match READ_INTEGER action. */
         void emit_lir_bs_read(const T2LirOp &op) {
+            /* Byte-multiple, unsigned/big, <= 56 bits (stays a small). */
             if (op.num_srcs != 2 || op.srcs[0].is_const ||
-                op.srcs[1].is_const || op.dst.is_none() || op.imm != 8) {
+                op.srcs[1].is_const || op.dst.is_none() || op.imm <= 0 ||
+                (op.imm % 8) != 0 || op.imm > 56) {
                 fail("malformed bs_read");
                 return;
             }
 
-            comment("T2 bs_read int8");
+            Uint bits = (Uint)op.imm;
+
+            comment("T2 bs_read int %lu", (unsigned long)bits);
             mov_arg(ARG2, src_argval(op.srcs[0])); /* raw base pointer  */
             mov_arg(ARG3, src_argval(op.srcs[1])); /* cursor, <<4 form  */
             a.lsr(ARG3, ARG3, imm(_TAG_IMMED1_SIZE));
-            emit_read_bits(8, ARG2, ARG3, ARG8);
+            emit_read_bits(bits, ARG2, ARG3, ARG8);
             mov_imm(ARG5, _TAG_IMMED1_SMALL);
             emit_extract_integer(ARG8,
                                  ARG5,
                                  0,
-                                 64 - 8,
-                                 8,
+                                 64 - bits,
+                                 bits,
                                  ArgRegister(loc_argval(op.dst)));
         }
 

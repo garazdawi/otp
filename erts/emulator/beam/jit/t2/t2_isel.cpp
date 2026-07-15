@@ -1423,7 +1423,8 @@ namespace erts_t2 {
                     if (op->dst_reg == T2_REG_NONE) {
                         return fail_op(op, "bs_read without a home");
                     }
-                    if (op->imm_int != 8) {
+                    if (op->imm_int <= 0 || (op->imm_int % 8) != 0 ||
+                        op->imm_int > 56) {
                         return fail_op(op, "bs_read outside the byte subset");
                     }
                     lop.kind = T2LirKind::BsRead;

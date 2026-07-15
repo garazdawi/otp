@@ -231,7 +231,8 @@ int erts_t2_bs_match_check(const UWord *types,
                            int *dst_count) {
     int i = first;
     int ncmds = 0;
-    int dsts = 0;
+    int read_dsts = 0;
+    int tail_dsts = 0;
 
     while (i < nargs) {
         ErtsT2BsCmd cmd;
@@ -279,8 +280,13 @@ int erts_t2_bs_match_check(const UWord *types,
             }
             size = vals[i + 3];
             unit = vals[i + 4];
-            if (size * unit != 8) {
-                return -1; /* bit-unaligned / multi-byte: outside v1 */
+            {
+                UWord nbits = size * unit;
+                /* Byte-multiple, 8..56 bits: stays a small (< SMALL_BITS),
+                 * so the read result is immediate and needs no heap. */
+                if (nbits == 0 || (nbits % 8) != 0 || nbits > 56) {
+                    return -1; /* bit-unaligned / too wide: outside subset */
+                }
             }
             /* Flags must be empty (unsigned, big): NIL or a literal
              * resolving to NIL. */
@@ -295,11 +301,11 @@ int erts_t2_bs_match_check(const UWord *types,
                 return -1;
             }
             cmd.kind = ERTS_T2_BS_READ_INT8;
-            cmd.size = 8;
+            cmd.size = size * unit; /* bit-width, 8..56 */
             cmd.unit = 1;
             cmd.live = vals[i + 1];
             cmd.dst_arg = i + 5;
-            dsts++;
+            read_dsts++;
             i += 6;
         } else if (vals[i] == am_skip) {
             /* skip Size */
@@ -321,7 +327,7 @@ int erts_t2_bs_match_check(const UWord *types,
             cmd.kind = ERTS_T2_BS_GET_TAIL;
             cmd.live = vals[i + 1];
             cmd.dst_arg = i + 3;
-            dsts++;
+            tail_dsts++;
             i += 4;
         } else if (vals[i] == am_ensure_exactly) {
             /* ensure_exactly Size — remaining == Size, byte-aligned
@@ -348,13 +354,19 @@ int erts_t2_bs_match_check(const UWord *types,
         ncmds++;
     }
 
-    if (ncmds == 0 || dsts > 1) {
-        /* No commands is malformed; two destinations would need a
-         * second result home (the HIR op has one) — stays T1. */
+    if (ncmds == 0 || read_dsts > 1 || tail_dsts > 1) {
+        /* No commands is malformed. The builder carries exactly one
+         * integer-read result home and one get_tail result home
+         * (read_val/tail_val), so at most one of each is expressible;
+         * a second read or a second tail keeps the function T1. The
+         * read+tail pair itself is admitted: the builder flushes the
+         * read result to its home before the get_tail GC snapshot so
+         * the sync map names the value the register holds at that
+         * point (see the get_tail command in t2_hir_builder). */
         return -1;
     }
     if (dst_count != NULL) {
-        *dst_count = dsts;
+        *dst_count = read_dsts + tail_dsts;
     }
     return ncmds;
 }
