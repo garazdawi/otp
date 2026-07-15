@@ -378,6 +378,16 @@ namespace erts_t2 {
         Deallocate,
         Trim,
 
+        /* update_record (R#rec{f=V}): the inline tuple-record update T1
+         * emits (no runtime call, no GC — the preceding test_heap lowered
+         * to a GcTest already reserved the fresh tuple). Operands are
+         * [Src, cidx0, val0, cidx1, val1, ...] — Src is the source tuple,
+         * each cidxK a ConstInt of the 1-based tuple position to overwrite
+         * (ascending) and valK the SSA value written there. imm_int = the
+         * tuple arity (Size), index = the hint (0 = am_copy, 1 = am_reuse).
+         * Produces the new tuple; allocates like MakeTuple, no sync map. */
+        UpdateRecord,
+
         /* Sentinel */
         Invalid
     };

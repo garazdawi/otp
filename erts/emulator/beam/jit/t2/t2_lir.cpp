@@ -223,6 +223,8 @@ namespace erts_t2 {
             return "bs_load_word";
         case T2LirKind::SwarByteSum:
             return "swar_byte_sum";
+        case T2LirKind::UpdateRecord:
+            return "update_record";
         case T2LirKind::Invalid:
             return "invalid";
         }

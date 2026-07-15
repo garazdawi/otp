@@ -480,6 +480,58 @@ static int get_map_elements_op_supported(const BeamOp *op) {
     return 1;
 }
 
+/* update_record Hint Size Src Dst Count Idx1 Val1 ... (the {list,...}
+ * Updates expanded exactly like get_map_elements). Only the am_copy /
+ * am_reuse hints with a register source and destination are decoded --
+ * am_inplace is a DIFFERENT op (update_record_in_place) and never
+ * reaches here. Each index is a 1-based tuple position (>0), each value
+ * a register or an embeddable constant (immediates or a *static*
+ * literal; a dynamic literal, val<0, is not retained so the blob could
+ * never embed it -- filtered here, same rule as the get_map_elements
+ * keys above). Mirrored 1:1 by the builder's decode -- a mismatch there
+ * is scan/builder drift. */
+static int update_record_op_supported(const BeamOp *op) {
+    UWord count;
+    UWord i;
+
+    if (op->arity < 5 + 2 || op->a[0].type != TAG_a ||
+        (op->a[0].val != am_copy && op->a[0].val != am_reuse) ||
+        op->a[1].type != TAG_u ||
+        (op->a[2].type != TAG_x && op->a[2].type != TAG_y) ||
+        (op->a[3].type != TAG_x && op->a[3].type != TAG_y) ||
+        op->a[4].type != TAG_u) {
+        return 0;
+    }
+    count = op->a[4].val;
+    if (count < 2 || (count % 2) != 0 || (UWord)op->arity != 5 + count) {
+        return 0;
+    }
+    for (i = 0; i < count / 2; i++) {
+        const BeamOpArg *k = &op->a[5 + 2 * i];
+        const BeamOpArg *v = &op->a[5 + 2 * i + 1];
+
+        if (k->type != TAG_u || k->val == 0) {
+            return 0;
+        }
+        switch (v->type) {
+        case TAG_q:
+            if ((SWord)v->val < 0) {
+                return 0;
+            }
+            break;
+        case TAG_a:
+        case TAG_i:
+        case TAG_n:
+        case TAG_x:
+        case TAG_y:
+            break;
+        default:
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* bs_get_utf8 Fail Ctx Live Flags Dst / bs_skip_utf8 Fail Ctx Live
  * Flags (P-C L1): only the plain form — a real fail label, a register
  * context and an EMPTY flags word (the compiler emits {field_flags,[]}
@@ -981,6 +1033,16 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
                 if (!t2_guard_bif_op_supported(beam, op)) {
                     fn_ok = 0;
                 }
+            } else if (fn_ok && op->op == genop_update_record_5) {
+                /* Inline tuple-record update (R#rec{f=V}). Only the
+                 * am_copy/am_reuse register-source/dest shape is
+                 * decoded (update_record_op_supported); am_inplace is a
+                 * DIFFERENT op. Gated by its own branch -- ahead of the
+                 * plain-oracle reject -- so a rejecting shape stays T1
+                 * instead of dropping into the generic "unsupported". */
+                if (!update_record_op_supported(op)) {
+                    fn_ok = 0;
+                }
             } else if (fn_ok && !erts_t2_genop_supported(op->op)) {
                 fn_ok = 0;
             } else if (fn_ok && op->op == genop_is_function2_3 &&
@@ -1161,6 +1223,13 @@ int erts_t2_blocker_class(BeamFile *beam, const BeamOp *op) {
     case genop_bif3_6:
         return ERTS_T2_BLK_GENERAL_BIF;
 
+    /* The supported update_record shapes moved to the supported set; a
+     * *rejecting* update_record (am_inplace is a different op, or a
+     * malformed shape) is classified as "other" -- records are neither
+     * maps nor a distinct blocker family. */
+    case genop_update_record_5:
+        return ERTS_T2_BLK_OTHER;
+
     default:
         return ERTS_T2_BLK_OTHER;
     }
@@ -1314,6 +1383,8 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out) {
                     supported = bs_match_op_supported(beam, op);
                 } else if (op->op == genop_get_map_elements_3) {
                     supported = get_map_elements_op_supported(op);
+                } else if (op->op == genop_update_record_5) {
+                    supported = update_record_op_supported(op);
                 } else if (op->op == genop_bs_get_utf8_5 ||
                            op->op == genop_bs_skip_utf8_4) {
                     supported = utf8_op_supported(op);

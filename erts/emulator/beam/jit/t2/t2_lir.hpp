@@ -364,6 +364,14 @@ namespace erts_t2 {
          * re-executes and raises the byte-identical error. */
         DemoteCallee,
 
+        /* update_record (emit_update_record): the inline tuple-record
+         * update. srcs = [Src, cidx0, val0, ...] (in src_pool when they
+         * overflow the inline array, exactly like MakeTuple); each cidxK
+         * is an is_const small carrying the 1-based position. imm = the
+         * tuple arity (Size), imm2 = the hint (0 = am_copy, 1 = am_reuse).
+         * dst = the new tuple. Not a terminator. */
+        UpdateRecord,
+
         Invalid
     };
 

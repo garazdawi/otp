@@ -253,6 +253,8 @@ namespace erts_t2 {
             return "deallocate";
         case T2OpKind::Trim:
             return "trim";
+        case T2OpKind::UpdateRecord:
+            return "update_record";
         case T2OpKind::Opaque:
             return "opaque";
         case T2OpKind::Invalid:
@@ -360,6 +362,7 @@ namespace erts_t2 {
         case T2OpKind::Bif:
         case T2OpKind::GuardBif:
         case T2OpKind::MakeFun:
+        case T2OpKind::UpdateRecord:
             return true;
         default:
             return false;

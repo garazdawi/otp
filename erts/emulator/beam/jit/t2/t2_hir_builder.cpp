@@ -2109,6 +2109,71 @@ namespace erts_t2 {
                 break;
             }
 
+            case genop_update_record_5: {
+                /* Hint Size Src Dst Count Idx1 Val1 ... (the {list,...}
+                 * Updates expanded, like get_map_elements) -- the
+                 * eligibility scan admitted only the am_copy/am_reuse,
+                 * register-source/dest shape (update_record_op_supported);
+                 * a mismatch here is scan/builder drift. Emitted INLINE by
+                 * T1 (R#rec{f=V}): no runtime call, no GC -- the preceding
+                 * test_heap (a GcTest) reserved the fresh tuple -- and no
+                 * sync map. Built as one allocating UpdateRecord op whose
+                 * operands are [Src, cidx0, val0, ...]: each cidxK a
+                 * ConstInt of the 1-based position, each valK the update
+                 * value's SSA source. imm_int = the tuple arity, index =
+                 * the hint (0 = am_copy, 1 = am_reuse). */
+                const DecodedArg &hint = dop.args[0];
+                UWord size = dop.args[1].val;
+                UWord count = dop.args[4].val;
+                unsigned hint_code;
+
+                if (hint.type != TAG_a ||
+                    (hint.val != am_copy && hint.val != am_reuse) ||
+                    dop.args[1].type != TAG_u ||
+                    (dop.args[2].type != TAG_x && dop.args[2].type != TAG_y) ||
+                    (dop.args[3].type != TAG_x && dop.args[3].type != TAG_y) ||
+                    dop.args[4].type != TAG_u || count < 2 ||
+                    (count % 2) != 0 || dop.args.size() != 5 + count) {
+                    fail_op(dop,
+                            "update_record outside the decoded shape "
+                            "(eligibility/builder drift)");
+                    return;
+                }
+
+                hint_code = hint.val == am_reuse ? 1u : 0u;
+
+                std::vector<SrcVal> ops;
+                ops.reserve(1 + count);
+                ops.push_back(read_arg_r(dop.args[2]));
+
+                for (UWord i = 0; i < count / 2; i++) {
+                    const DecodedArg &idx = dop.args[5 + 2 * i];
+                    const DecodedArg &val = dop.args[5 + 2 * i + 1];
+
+                    if (idx.type != TAG_u || idx.val == 0) {
+                        fail_op(dop,
+                                "update_record index outside the decoded "
+                                "shape (eligibility/builder drift)");
+                        return;
+                    }
+                    ops.push_back(SrcVal{fn->emit_const_int(cur,
+                                                            (Sint64)idx.val),
+                                         T2_REG_NONE});
+                    ops.push_back(read_arg_r(val));
+                }
+
+                T2Value *v = emit_result_op(T2OpKind::UpdateRecord,
+                                            ops,
+                                            T2Type::of(BEAM_TYPE_TUPLE));
+                if (v == nullptr) {
+                    return;
+                }
+                v->def->imm_int = (Sint64)size;
+                v->def->index = hint_code;
+                write_dst_new(dop.args[3], v);
+                break;
+            }
+
                 /* --- the byte-aligned binary scan subset (P2 commit 7) --- */
 
             case genop_bs_start_match3_4: {

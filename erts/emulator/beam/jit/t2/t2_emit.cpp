@@ -840,6 +840,9 @@ namespace erts_t2 {
             case T2LirKind::MakeTuple:
                 emit_lir_make_tuple(op);
                 break;
+            case T2LirKind::UpdateRecord:
+                emit_lir_update_record(op);
+                break;
             case T2LirKind::GetMapElement:
                 emit_lir_get_map_element(op);
                 break;
@@ -2244,6 +2247,55 @@ namespace erts_t2 {
             emit_put_tuple2(ArgRegister(loc_argval(op.dst)),
                             ArgWord(make_arityval(count)),
                             Span<const ArgVal>(elems.data(), elems.size()));
+        }
+
+        /* update_record (R#rec{f=V}): reuse T1's inline emit_update_record.
+         * Operands are [Src, cidx0, val0, ...] (in src_pool when they
+         * overflow the inline array, exactly like make_tuple). Each cidxK
+         * is an is_const small carrying the 1-based tuple position; the
+         * updates span T1 wants is [ArgWord(idx0), ArgSource(val0), ...].
+         * imm = the tuple arity (Size), imm2 = the hint (0 copy, 1 reuse).
+         * Heap was reserved by the preceding GcTest, exactly as in T1. */
+        void emit_lir_update_record(const T2LirOp &op) {
+            size_t total = op.num_srcs_ext > 0 ? op.num_srcs_ext : op.num_srcs;
+
+            /* [Src, cidx0, val0, ...]: source plus at least one pair. */
+            if (total < 3 || ((total - 1) % 2) != 0) {
+                fail("malformed update_record");
+                return;
+            }
+
+            auto src_at = [&](size_t i) -> const T2LirSrc & {
+                return op.num_srcs_ext > 0 ? fn.src_pool[op.pool_first + i]
+                                           : op.srcs[i];
+            };
+
+            const T2LirSrc &src0 = src_at(0);
+            size_t npairs = (total - 1) / 2;
+            std::vector<ArgVal> updates;
+
+            updates.reserve(npairs * 2);
+            for (size_t k = 0; k < npairs; k++) {
+                const T2LirSrc &cidx = src_at(1 + 2 * k);
+                const T2LirSrc &val = src_at(1 + 2 * k + 1);
+
+                if (!cidx.is_const || !is_small(cidx.term)) {
+                    fail("malformed update_record");
+                    return;
+                }
+                updates.push_back(ArgWord((UWord)signed_val(cidx.term)));
+                updates.push_back(src_argval(val));
+            }
+
+            Eterm hint_atom = op.imm2 == 1 ? am_reuse : am_copy;
+
+            emit_update_record(
+                    ArgAtom(hint_atom),
+                    ArgWord((UWord)op.imm),
+                    ArgSource(src_argval(src0)),
+                    ArgRegister(loc_argval(op.dst)),
+                    ArgWord((UWord)(npairs * 2)),
+                    Span<const ArgVal>(updates.data(), updates.size()));
         }
 
         /* Value-producing total comparison (P2 commit 8): reuse T1's

@@ -1021,6 +1021,41 @@ namespace erts_t2 {
                     return true;
                 }
 
+                case T2OpKind::UpdateRecord: {
+                    /* Operands [Src, cidx0, val0, ...] copied verbatim into
+                     * the LIR (src_pool when they overflow the inline
+                     * array, exactly like MakeTuple). Each cidxK lowers to
+                     * an is_const small carrying the 1-based position;
+                     * emit reconstructs the updates span from it. imm =
+                     * the tuple arity (Size), imm2 = the hint code. */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "update_record without a home");
+                    }
+                    lop.kind = T2LirKind::UpdateRecord;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.imm = op->imm_int;         /* tuple arity (Size) */
+                    lop.imm2 = (Sint64)op->index;  /* hint: 0 copy, 1 reuse */
+                    if (op->num_operands <= T2_LIR_MAX_SRCS) {
+                        if (!fill_srcs(op, &lop)) {
+                            return false;
+                        }
+                    } else {
+                        lop.pool_first = (uint32_t)lir.src_pool.size();
+                        lop.num_srcs_ext = op->num_operands;
+                        for (uint16_t i = 0; i < op->num_operands; i++) {
+                            T2LirSrc s;
+
+                            if (!src_of(op, i, &s)) {
+                                return false;
+                            }
+                            lir.src_pool.push_back(s);
+                        }
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+                }
+
                 case T2OpKind::GcTest:
                     lop.kind = T2LirKind::GcTest;
                     lop.imm = (Sint64)op->index; /* heap words */
