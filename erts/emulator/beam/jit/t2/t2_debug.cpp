@@ -706,16 +706,31 @@ extern "C" Eterm erts_t2_debug_profile(Process *p, Eterm mod) {
                 continue;
             }
 
+            Eterm fun_info;
+
             types = NIL;
             for (a = ERTS_T2_PROFILE_ARGS - 1; a >= 0; a--) {
                 Eterm tb = erts_bld_uint(hpp, szp, rec->seen_types[a]);
                 types = erts_bld_cons(hpp, szp, tb, types);
             }
+            /* Monomorphic-target status: none | poly | {mono, Arg, Flags}
+             * (Flags bit0 env-free, bit1 closure -- see ERTS_T2_FUNF_*). */
+            if (rec->seen_fun == NULL) {
+                fun_info = Atoms::intern("none");
+            } else if (rec->seen_fun == ERTS_T2_FUN_POLY) {
+                fun_info = Atoms::intern("poly");
+            } else {
+                Eterm fa = erts_bld_uint(hpp, szp, rec->fun_arg);
+                Eterm ff = erts_bld_uint(hpp, szp, rec->fun_flags);
+                fun_info = erts_bld_tuple(hpp, szp, 3, Atoms::intern("mono"),
+                                          fa, ff);
+            }
             fnix = erts_bld_uint(hpp, szp, rec->fn_index);
             art = erts_bld_uint(hpp, szp, rec->arity);
             cnt = erts_bld_uint(hpp, szp, rec->count);
             ns = erts_bld_uint(hpp, szp, rec->nonsmall);
-            tup = erts_bld_tuple(hpp, szp, 5, fnix, art, cnt, ns, types);
+            tup = erts_bld_tuple(hpp, szp, 6, fnix, art, cnt, ns, types,
+                                 fun_info);
             list = erts_bld_cons(hpp, szp, tup, list);
         }
 

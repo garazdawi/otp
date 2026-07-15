@@ -327,9 +327,18 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
     if (erts_t2_tier_enabled() && !on_load) {
         int any_loop = 0;
         Sint32 i;
+        /* Monomorphic-target measurement (#2a, PLAN/T2FULL/19 S1): arm
+         * buildable loops -- which include the call_fun loops the
+         * devirtualizer targets -- not just the standalone-installable
+         * ones. Opt-in (T2_PROFILE_BUILDABLE); off, production arms only
+         * installable loops as before. A buildable-only loop that trips
+         * degrades gracefully at isel (never installs); the trip still
+         * records the fun-target sample first. */
+        const Uint32 *arm =
+                (getenv("T2_PROFILE_BUILDABLE") != NULL) ? bitmap : installs;
 
         for (i = 0; i < beam->code.function_count; i++) {
-            if ((installs[i / 32] & (((Uint32)1) << (i % 32))) &&
+            if ((arm[i / 32] & (((Uint32)1) << (i % 32))) &&
                 (loops[i / 32] & (((Uint32)1) << (i % 32)))) {
                 any_loop = 1;
                 break;
@@ -351,7 +360,7 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
                 rec->fn_index = (Uint32)i;
                 rec->arity = arities[i];
                 rec->module = beam->module;
-                if ((installs[i / 32] & (((Uint32)1) << (i % 32))) &&
+                if ((arm[i / 32] & (((Uint32)1) << (i % 32))) &&
                     (loops[i / 32] & (((Uint32)1) << (i % 32)))) {
                     rec->threshold =
                             erts_t2_tier_threshold_for(sizes[i]);

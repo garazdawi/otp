@@ -404,11 +404,39 @@ typedef struct ErtsT2Profile {
      * loader, both under code permission). */
     ErtsCodePtr seq_addr;
     Uint32 seq_size;
+
+    /* Monomorphic call-target profiling (02 §7.5, PLAN/T2FULL/19 S1):
+     * the identity of the fun observed in a fun-typed entry argument,
+     * unioned across trips. The identity is ErlFunThing.entry.disp (the
+     * ErtsDispatchable* shared by the fun entry / export) -- two funs
+     * with the same disp call the same code. NULL = no fun arg sampled;
+     * ERTS_T2_FUN_POLY = two distinct funs seen (the site is
+     * polymorphic). fun_arg is the entry-argument index the fun came in
+     * on (valid when seen_fun is a real pointer). fun_flags records
+     * whether the observed fun(s) were env-free (inliner-eligible) or
+     * closures. This is the measurement half of an inline cache: the
+     * devirtualizer (#2c) reads it to guard+inline a monomorphic fun;
+     * POLY / closures leave the call_fun generic. */
+    const void *seen_fun;
+    Uint32 fun_arg;
+    Uint32 fun_flags;
 } ErtsT2Profile;
 
-/* One cache line per record: scheduler-1's stores never share a line
- * with a neighbouring function's record. */
-#define ERTS_T2_PROFILE_STRIDE 64
+/* seen_fun sentinel: a second distinct fun was observed, so the call is
+ * polymorphic. A non-NULL, non-pointer value (real disp pointers are
+ * word-aligned, so 1 can never collide with one). */
+#define ERTS_T2_FUN_POLY ((const void *)(UWord)1)
+
+/* fun_flags bits: which env kinds have been observed for the fun arg. */
+#define ERTS_T2_FUNF_ENVFREE (1u << 0) /* a num_free==0 fun (inlinable) */
+#define ERTS_T2_FUNF_CLOSURE (1u << 1) /* a fun carrying an environment */
+
+/* Two cache lines per record: scheduler-1's stores never share a line
+ * with a neighbouring function's record. Widened from one line to hold
+ * the monomorphic-target slot (02 §7.5); the hot T1 sequence only ever
+ * touches count/threshold in the first line, so its footprint is
+ * unchanged. */
+#define ERTS_T2_PROFILE_STRIDE 128
 
 /* threshold value while a compile is pending/consumed: never trips
  * again (the counter stays below it until a 2^32 wrap). */
@@ -522,11 +550,13 @@ Eterm erts_t2_debug_build_ssa(Process *p, Eterm mod, Eterm func, Eterm arity);
  * {t2_profile, Module}). Dumps the per-function tier-up profile records
  * of module M's active instance -- one tuple per armed (loop-shaped,
  * installable) function:
- *   {FnIndex, Arity, Count, Nonsmall, [SeenTypes0..SeenTypes3]}
+ *   {FnIndex, Arity, Count, Nonsmall, [SeenTypes0..SeenTypes3], FunInfo}
  * SeenTypesN is the ERTS_T2_TY_* union bitmask observed for argument N
- * (0 == unsampled). A diagnostic instrument for the entry-type profiler
- * (PLAN/T2FULL/02 §7.2); returns am_undefined for an unretained module,
- * [] when it has no profile block, am_badarg for a non-atom module. */
+ * (0 == unsampled). FunInfo is the monomorphic call-target status:
+ * none | poly | {mono, ArgIndex, FunFlags} (FunFlags bit0 env-free,
+ * bit1 closure). A diagnostic instrument for the type profiler
+ * (PLAN/T2FULL/02 §7.2/§7.5); returns am_undefined for an unretained
+ * module, [] when it has no profile block, am_badarg for a non-atom. */
 Eterm erts_t2_debug_profile(Process *p, Eterm mod);
 
 #endif /* ERL_T2_RETAIN_H__ */

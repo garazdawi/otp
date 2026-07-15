@@ -82,6 +82,7 @@
 #include "module.h"
 #include "erl_process.h"
 #include "erl_map.h" /* is_flatmap / is_hashmap subtag constants */
+#include "erl_fun.h" /* ErlFunThing / fun identity for #2a target profiling */
 
 #include "t2_retain.h"
 
@@ -216,6 +217,40 @@ static ERTS_INLINE Uint16 t2_sample_type_bit(Eterm t) {
     return ERTS_T2_TY_OTHER;
 }
 
+/* Record the identity of a fun observed in a fun-typed entry argument
+ * (02 §7.5). One monomorphic-target slot per function, locked to the
+ * first argument position a fun was seen in: the first fun wins the
+ * slot, a second distinct fun in that same position marks it POLY,
+ * funs in other positions are ignored (single-slot measurement).
+ * fun_flags accumulates whether env-free (inlinable) funs or closures
+ * have been seen. */
+static ERTS_INLINE void t2_sample_fun(ErtsT2Profile *p, Uint32 arg, Eterm t) {
+    const ErlFunThing *ft = (const ErlFunThing *)fun_val(t);
+    const void *id = (const void *)ft->entry.disp;
+
+    p->fun_flags |= (fun_num_free(ft) == 0) ? ERTS_T2_FUNF_ENVFREE
+                                            : ERTS_T2_FUNF_CLOSURE;
+    if (p->seen_fun == NULL) {
+        p->seen_fun = id;
+        p->fun_arg = arg;
+    } else if (p->seen_fun != ERTS_T2_FUN_POLY && arg == p->fun_arg &&
+               p->seen_fun != id) {
+        p->seen_fun = ERTS_T2_FUN_POLY;
+    }
+}
+
+/* Continuous-sampling measurement mode (#2a), gated by the same
+ * T2_PROFILE_BUILDABLE flag that arms buildable loops: never tier up,
+ * just keep recording the type/target samples. Cached (the flag is
+ * fixed for the VM's life); racy init is idempotent. */
+static ERTS_INLINE int t2_measure_mode(void) {
+    static int m = -1;
+    if (m < 0) {
+        m = (getenv("T2_PROFILE_BUILDABLE") != NULL);
+    }
+    return m;
+}
+
 void erts_t2_profile_trip(ErtsT2Profile *p,
                           Eterm a0,
                           Eterm a1,
@@ -245,12 +280,25 @@ void erts_t2_profile_trip(ErtsT2Profile *p,
     args[2] = a2;
     args[3] = a3;
     for (i = 0; i < ERTS_T2_PROFILE_ARGS && i < p->arity; i++) {
+        Uint16 tb = t2_sample_type_bit(args[i]);
         if (!is_small(args[i])) {
             mask |= (Uint32)1 << i;
         }
-        p->seen_types[i] |= t2_sample_type_bit(args[i]);
+        p->seen_types[i] |= tb;
+        if (tb == ERTS_T2_TY_FUN) {
+            t2_sample_fun(p, i, args[i]);
+        }
     }
     p->nonsmall |= mask;
+
+    /* Measurement mode (#2a): a pure continuous sampler. Keep observing
+     * every trip so the monomorphic-target slot accumulates a robust
+     * mono/poly verdict, and never enqueue a compile (buildable-only
+     * loops would just degrade at isel). Reset the counter and return. */
+    if (t2_measure_mode()) {
+        p->count = 0;
+        return;
+    }
 
     /* Profile stability (05 §15.2, simplified to the observed
      * non-small mask): an argument whose smallness is still changing
