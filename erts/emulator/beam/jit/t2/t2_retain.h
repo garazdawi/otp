@@ -353,6 +353,30 @@ int erts_t2_census_scan(BeamFile *beam, ErtsT2CensusFn **out, int *count_out);
  * ~0, so it never trips.
  * ------------------------------------------------------------------ */
 
+/* Entry-argument type-class bits (P2 commit 9 / PLAN/T2FULL/02 §7.2,
+ * refined per the value analysis to the distinctions codegen can
+ * actually speculate on: small vs bignum integers, empty vs non-empty
+ * lists, flat vs hash maps). One Uint16 per sampled argument holds the
+ * union of classes observed across trips; two or more bits set means
+ * the argument is polymorphic (the OR is the CAS-to-poly of 02 §7.5,
+ * done cheaply by accumulation). Sampled on the cold trip path only. */
+#define ERTS_T2_TY_SMALL    (1u << 0)  /* small (immediate) integer     */
+#define ERTS_T2_TY_BIG      (1u << 1)  /* bignum                        */
+#define ERTS_T2_TY_FLOAT    (1u << 2)  /* boxed float                   */
+#define ERTS_T2_TY_ATOM     (1u << 3)  /* atom                          */
+#define ERTS_T2_TY_NIL      (1u << 4)  /* [] (empty list)               */
+#define ERTS_T2_TY_CONS     (1u << 5)  /* non-empty list (cons cell)    */
+#define ERTS_T2_TY_TUPLE    (1u << 6)  /* tuple (any arity)             */
+#define ERTS_T2_TY_MAP_FLAT (1u << 7)  /* flatmap                       */
+#define ERTS_T2_TY_MAP_HASH (1u << 8)  /* hashmap                       */
+#define ERTS_T2_TY_BINARY   (1u << 9)  /* binary / bitstring            */
+#define ERTS_T2_TY_FUN      (1u << 10) /* fun (local or external)       */
+#define ERTS_T2_TY_OTHER    (1u << 11) /* pid/port/ref/other            */
+
+/* Number of entry arguments the profiler samples (matches the nonsmall
+ * mask width and the four X-regs the trip trampoline flushes). */
+#define ERTS_T2_PROFILE_ARGS 4
+
 typedef struct ErtsT2Profile {
     Uint32 count;     /* call counter (scheduler-1 writes, racy)      */
     Uint32 threshold; /* trip when count >= threshold; 0 = not armed  */
@@ -362,6 +386,12 @@ typedef struct ErtsT2Profile {
     Uint32 retries;   /* stability retries so far                     */
     Uint32 fn_index;  /* function index within the module             */
     Uint32 arity;     /* function arity (masks the sampled bits)      */
+    /* Per-entry-argument observed type-class bitmask (ERTS_T2_TY_*),
+     * unioned across trips alongside nonsmall. The richer companion to
+     * nonsmall: the speculation seam (T2FactSource) reads it to narrow
+     * an entry argument to its monomorphic class. Zero for arguments
+     * never sampled (arity <= index) or functions never tripped. */
+    Uint16 seen_types[ERTS_T2_PROFILE_ARGS];
     Eterm module;     /* module atom (worker re-lookup + identity)    */
 
     /* Counter self-disarm (P2 commit 10): where the T1 profiling
@@ -487,5 +517,16 @@ unsigned erts_t2_tier_compile_batch(Eterm module,
  *   {ok, SsaTerm}             -- success
  * Requires the module to have been loaded with T2_RETAIN=1. */
 Eterm erts_t2_debug_build_ssa(Process *p, Eterm mod, Eterm func, Eterm arity);
+
+/* t2_debug.cpp: debug BIF backing erts_debug:get_internal_state(
+ * {t2_profile, Module}). Dumps the per-function tier-up profile records
+ * of module M's active instance -- one tuple per armed (loop-shaped,
+ * installable) function:
+ *   {FnIndex, Arity, Count, Nonsmall, [SeenTypes0..SeenTypes3]}
+ * SeenTypesN is the ERTS_T2_TY_* union bitmask observed for argument N
+ * (0 == unsampled). A diagnostic instrument for the entry-type profiler
+ * (PLAN/T2FULL/02 §7.2); returns am_undefined for an unretained module,
+ * [] when it has no profile block, am_badarg for a non-atom module. */
+Eterm erts_t2_debug_profile(Process *p, Eterm mod);
 
 #endif /* ERL_T2_RETAIN_H__ */

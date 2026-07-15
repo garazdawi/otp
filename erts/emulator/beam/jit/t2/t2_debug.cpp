@@ -647,6 +647,91 @@ extern "C" Eterm erts_t2_debug_build_ssa(Process *p,
 }
 
 /* ==================================================================== *
+ * The entry-type profile dump (PLAN/T2FULL/02 §7.2). Reached through    *
+ *                                                                       *
+ *     erts_debug:get_internal_state({t2_profile, Module})               *
+ *                                                                       *
+ * Walks module M's active-instance profile block and returns one tuple  *
+ * per armed (loop-shaped, installable) function -- the set the tier-up  *
+ * profiler actually samples:                                            *
+ *                                                                       *
+ *   [ {FnIndex, Arity, Count, Nonsmall, [T0, T1, T2, T3]} ]             *
+ *                                                                       *
+ * Tn is the ERTS_T2_TY_* union bitmask observed for argument n (0 for   *
+ * unsampled args). Everything is an immediate or a fresh cons/tuple on  *
+ * the caller's heap. am_undefined when M is unloaded/unretained, [] if  *
+ * it has no profile block, am_badarg for a non-atom module.             *
+ * ==================================================================== */
+extern "C" Eterm erts_t2_debug_profile(Process *p, Eterm mod) {
+    Module *modp;
+    const ErtsT2RetainedCode *ret;
+    Uint sz;
+    Uint *szp;
+    Eterm *hp;
+    Eterm result;
+
+    if (!is_atom(mod)) {
+        return am_badarg;
+    }
+    modp = erts_get_module(mod, erts_active_code_ix());
+    if (modp == NULL || modp->curr.t2_retained == NULL) {
+        return am_undefined;
+    }
+    ret = modp->curr.t2_retained;
+    if (ret->profiles == NULL) {
+        return NIL;
+    }
+
+    /* Two-pass build: size (szp set, hpp NULL), HAlloc, then materialize
+     * (szp NULL, hpp set), the same erts_bld_* idiom the census uses. */
+    sz = 0;
+    szp = &sz;
+    hp = NULL;
+    result = NIL;
+    for (;;) {
+        Eterm **hpp = szp ? NULL : &hp;
+        Eterm list = NIL;
+        int i;
+
+        for (i = ret->function_count - 1; i >= 0; i--) {
+            const ErtsT2Profile *rec =
+                    (const ErtsT2Profile *)((const byte *)ret->profiles +
+                                            (size_t)i * ERTS_T2_PROFILE_STRIDE);
+            Eterm types, fnix, art, cnt, ns, tup;
+            int a;
+
+            /* Only functions the profiler arms (loop-shaped installable);
+             * threshold != 0 stays true through the PENDING sentinel. */
+            if (rec->threshold == 0) {
+                continue;
+            }
+
+            types = NIL;
+            for (a = ERTS_T2_PROFILE_ARGS - 1; a >= 0; a--) {
+                Eterm tb = erts_bld_uint(hpp, szp, rec->seen_types[a]);
+                types = erts_bld_cons(hpp, szp, tb, types);
+            }
+            fnix = erts_bld_uint(hpp, szp, rec->fn_index);
+            art = erts_bld_uint(hpp, szp, rec->arity);
+            cnt = erts_bld_uint(hpp, szp, rec->count);
+            ns = erts_bld_uint(hpp, szp, rec->nonsmall);
+            tup = erts_bld_tuple(hpp, szp, 5, fnix, art, cnt, ns, types);
+            list = erts_bld_cons(hpp, szp, tup, list);
+        }
+
+        if (szp) {
+            hp = HAlloc(p, (Sint)sz);
+            szp = NULL;
+        } else {
+            result = list;
+            break;
+        }
+    }
+
+    return result;
+}
+
+/* ==================================================================== *
  * The addressable-share census term serializer (PLAN/T2FULL/17 §3 +     *
  * 19 §2 S0). Reached through                                            *
  *                                                                       *

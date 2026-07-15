@@ -81,6 +81,7 @@
 #include "code_ix.h"
 #include "module.h"
 #include "erl_process.h"
+#include "erl_map.h" /* is_flatmap / is_hashmap subtag constants */
 
 #include "t2_retain.h"
 
@@ -90,7 +91,7 @@
 static union {
     ErtsT2Profile p;
     char pad__[ERTS_T2_PROFILE_STRIDE];
-} t2_throwaway = {{0, ERTS_T2_TIER_PENDING, 0, 0, 0, 0, 0, 0}};
+} t2_throwaway = {{.threshold = ERTS_T2_TIER_PENDING}};
 
 UWord erts_t2_profile_throwaway_addr(void) {
     return (UWord)&t2_throwaway.p;
@@ -193,6 +194,28 @@ static void t2_tier_kick(void) {
     }
 }
 
+/* Classify a sampled argument into a single ERTS_T2_TY_* bit. Ordered
+ * by the cheapest / most common tests first (small ints and conses
+ * dominate the loop-shaped hot set). is_list is a non-empty list (cons
+ * cell); is_nil is []; both distinct so the consumer can speculate an
+ * empty-or-nonempty entry. Every term maps to exactly one bit, so the
+ * OR-accumulation in the trip handler yields "how many distinct classes
+ * has this argument been" -- one bit == monomorphic. */
+static ERTS_INLINE Uint16 t2_sample_type_bit(Eterm t) {
+    if (is_small(t))     return ERTS_T2_TY_SMALL;
+    if (is_nil(t))       return ERTS_T2_TY_NIL;
+    if (is_list(t))      return ERTS_T2_TY_CONS;
+    if (is_atom(t))      return ERTS_T2_TY_ATOM;
+    if (is_tuple(t))     return ERTS_T2_TY_TUPLE;
+    if (is_big(t))       return ERTS_T2_TY_BIG;
+    if (is_flatmap(t))   return ERTS_T2_TY_MAP_FLAT;
+    if (is_hashmap(t))   return ERTS_T2_TY_MAP_HASH;
+    if (is_float(t))     return ERTS_T2_TY_FLOAT;
+    if (is_bitstring(t)) return ERTS_T2_TY_BINARY;
+    if (is_any_fun(t))   return ERTS_T2_TY_FUN;
+    return ERTS_T2_TY_OTHER;
+}
+
 void erts_t2_profile_trip(ErtsT2Profile *p,
                           Eterm a0,
                           Eterm a1,
@@ -221,10 +244,11 @@ void erts_t2_profile_trip(ErtsT2Profile *p,
     args[1] = a1;
     args[2] = a2;
     args[3] = a3;
-    for (i = 0; i < 4 && i < p->arity; i++) {
+    for (i = 0; i < ERTS_T2_PROFILE_ARGS && i < p->arity; i++) {
         if (!is_small(args[i])) {
             mask |= (Uint32)1 << i;
         }
+        p->seen_types[i] |= t2_sample_type_bit(args[i]);
     }
     p->nonsmall |= mask;
 

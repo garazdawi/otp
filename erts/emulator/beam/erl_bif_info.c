@@ -80,6 +80,7 @@ Eterm erts_t2_debug_opt_stats(Process *p);
 Eterm erts_t2_tier_stats_term(Process *p);
 Eterm erts_t2_profile_census_term(Process *p);
 Eterm erts_t2_debug_census(Process *p, Eterm beam_binary);
+Eterm erts_t2_debug_profile(Process *p, Eterm mod);
 #endif
 
 #ifdef ERTS_ENABLE_LOCK_COUNT
@@ -4661,6 +4662,17 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 		   no retention needed -- works for any module). */
 #ifdef BEAMASM
 		BIF_RET(erts_t2_debug_census(BIF_P, tp[2]));
+#else
+		BIF_RET(am_undefined);
+#endif
+	    }
+	    else if (ERTS_IS_ATOM_STR("t2_profile", tp[1])) {
+		/* PLAN/T2FULL/02 §7.2: dump module tp[2]'s per-function
+		   tier-up profile records (call count + observed
+		   entry-argument type-class bitmasks). A diagnostic for
+		   the entry-type profiler. */
+#ifdef BEAMASM
+		BIF_RET(erts_t2_debug_profile(BIF_P, tp[2]));
 #else
 		BIF_RET(am_undefined);
 #endif
