@@ -4677,6 +4677,22 @@ BIF_RETTYPE erts_debug_get_internal_state_1(BIF_ALIST_1)
 		BIF_RET(am_undefined);
 #endif
 	    }
+	    else if (ERTS_IS_ATOM_STR("map_keys_ptr", tp[1])) {
+		/* PLAN/T2FULL/census/map_monomorphic_design.md S1b.2: return
+		   the keys-tuple pointer of a flatmap as an integer, so tests
+		   can check pointer-identity (shape sharing) between maps
+		   WITHOUT interning -- the pointer-identity hit-rate thesis.
+		   HAMTs / non-maps return a distinguishing atom. */
+		Eterm m = tp[2];
+		if (is_flatmap(m)) {
+		    flatmap_t *mp = (flatmap_t *) flatmap_val(m);
+		    BIF_RET(erts_make_integer((Uint)(UWord) mp->keys, BIF_P));
+		} else if (is_hashmap(m)) {
+		    BIF_RET(ERTS_MAKE_AM("hashmap"));
+		} else {
+		    BIF_RET(ERTS_MAKE_AM("not_a_map"));
+		}
+	    }
             else if (ERTS_IS_ATOM_STR("connection_id", tp[1])) {
                 DistEntry *dep;
                 Eterm *hp, res;
