@@ -329,7 +329,9 @@ property, not an interning artifact.
 - **S1b.1** — DONE, codegen ceiling PROVEN (flat ~0.67 ns, 2.0–13.6×).
 - **S1b.2** — DONE, pointer-identity thesis VALIDATED; **de-dup dropped**
   (measured-unnecessary, not merely deferred). S1d struck.
-- **S1b.3 (productization) — FUNDED, in progress.** Sub-pieces:
+- **S1b.3 (productization) — BUILT + VALIDATED + MEASURED (2026-07-16),
+  unpushed.** Flat ~1.9 ns/read (1.4×/2.1×/3.2× at size 3/8/16),
+  byte-identical on hit + every deopt class, map suites green. Sub-pieces:
   - **3a — pctab EFFECT entry for `get_map_element` — DONE.** Emit side
     classifies the three `i_get_map_element*` specific ops
     (`beam_asm_module.cpp`); decode side classifies raw
@@ -352,18 +354,68 @@ property, not an interning artifact.
     **sampling is scheduler-1 only** (test with `+S 1`). Limitation: only
     entry-arg maps are captured (locally-built/nested maps are not); a
     per-site hook could widen this later.
-  - **3c — shape-guarded codegen** wired to 3b's facts + gated on 3a's
-    pctab; miss → `T2_OP_SPEC_BOUNDARY`/`ERTS_T2_PC_EFFECT` deopt. Replaces
-    the throwaway `T2_MAP_SPEC_IDX` probe. Approach: attach {shape, index,
-    deopt-PC} to the existing `GetMapElement` op (no new op *kinds* → no
-    enum shift); index derived at compile by scanning the baked (literal)
-    keys tuple; specialize only when the shape is a compiled-module literal
-    (v1, self-jettisoning) — cross-module literals + dep in a later pass.
-  - **3d — validation** (byte-identical hit/miss/non-flatmap/boxed-key;
-    `maps_SUITE`; deopt-storm self-disarm) + measure vs the S1b.1 ceiling.
+  - **3c — shape-guarded codegen — DONE (measured 2026-07-16).** New HIR
+    flag `T2_OP_MAP_SHAPE_SPEC` (bit 1<<17, no new op *kind* → no enum
+    shift) carries the profiled keys-tuple pointer in the op's existing
+    `imm_term`; new `T2LirOp.map_shape_spec` field carries {shape, index,
+    EFFECT-PC} to emit.
+    - **Speculate** (`t2_spec.cpp::specialize_map_shapes`, runs before the
+      arithmetic-candidate early-out): sets the flag on a `GetMapElement`
+      whose map operand resolves to a **loop-invariant entry Param** with a
+      mono shape fact and a live pctab EFFECT entry. KEY: the map is
+      loop-CARRIED (`r16(K,M,A)->…M…`), so its operand is a multi-input
+      header **Phi**, not a `Param`; `resolve_copies` stops at it. Added
+      `resolve_invariant_param` (DFS over Copy/Phi, breaks cycles; every
+      leaf must be the SAME Param) — exact: if the entry Param is the only
+      source, the value equals it on every path, so the entry-sampled shape
+      holds every iteration.
+    - **isel** (`try_specialize_map_shape`): validates the shape is a tuple
+      literal in THIS module's `code_hdr->literal_area` (self-jettison-safe,
+      no cross-module dep), that the key is an immediate, and scans the
+      baked keys tuple for the key's fixed value index; resolves the EFFECT
+      PC directly (GuardBif-style, no BOUNDARY / no sync / no window
+      validation). Drops back to the generic scan on any miss.
+    - **emit** (replaces the throwaway `T2_MAP_SPEC_IDX` probe):
+      `is_boxed` + FLATMAP subtag + `keys == imm_term` guards → const-offset
+      load; ANY miss side-exits to the op's own T1 EFFECT PC via the shared
+      fail-trampoline path. The keys-pointer match implies the size, so no
+      bound check.
+    - **install gate** (`t2_compile.cpp`): new `map_specs` signal (a
+      specialized `GetMapElement` is its own eliminated-work signal, added
+      to the `eliminated` OR-chain); NOT counted as `spec_guards` so it
+      does not trip the "speculation without fusion" disqualifier. Also
+      fixed `erts_t2_debug_install` to thread the tier-up profile record
+      into the compile (it previously passed none, so ALL profile-gated
+      specs — nonsmall withholding included — silently no-op'd on the debug
+      install path).
+  - **3d — validation — DONE (measured 2026-07-16).** `census/mapval.erl`:
+    byte-identical on hit (literal shape), and on every MISS class the guard
+    correctly defers to T1 — a different-shaped flatmap holding the key
+    (→9), a hashmap holding the key (→9), and a map without the key (T1
+    raises the same `{badmatch,_}`). `map_SUITE` (erts) 64/64 and
+    `maps_SUITE` (stdlib) 32/32 green with T2 FORCED (`T2_RETAIN=1
+    T2_TIER_THRESHOLD=1000`). **Perf (`census/mapbench.erl`, `+S 1`):** T2 is
+    **flat ~1.9 ns/read at every map size** vs T1 2.78 / 4.04 / 6.18 ns at
+    size 3 / 8 / 16 → **1.4× / 2.1× / 3.2×**, size-independent as predicted
+    (the whole point: struct field access is O(1) regardless of struct
+    width). The ~1.9 ns includes the full loop body (decrement + bxor + tail
+    call + reduction check), so the read itself is well under the S1b.1
+    ~0.9–1.0 ns real ceiling.
+    - **Deopt-storm self-disarm — NOT built (matches the precedent).** The
+      profiler withholds POLY shapes (mono sentinel only), so an installed
+      site is profiled-monomorphic; a storm needs profiled-mono-but-
+      production-poly, a representativeness gap shared by every T2 spec
+      class. Like the GuardBif template this op mirrors, the miss trampoline
+      is a plain EFFECT side-exit that bumps no counter and there is no
+      re-tier machinery for ANY spec class — so no map-specific self-disarm
+      is added. If deopt-storm visibility is ever wanted, wire a counter
+      like `erts_t2_callsite_deopts` (deferred).
 
   Payoff is concentrated on Elixir-struct workloads (T2 is a landed
-  specialist tier; the OTP corpus is dynamic-map-heavy).
+  specialist tier; the OTP corpus is dynamic-map-heavy). Remaining v1
+  limitations: entry-arg shapes only (locally-built/nested maps not
+  captured — 3b), and single-module literal shapes only (cross-module
+  literal + `dep_hdrs[2]` deferred — 3c isel).
 - **S1c** — unchanged (writes gated on `erts_maps_put` update-vs-build
   split). **S1d (de-dup)** — STRUCK (measured-unnecessary above).
 

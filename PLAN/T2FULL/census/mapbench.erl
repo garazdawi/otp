@@ -13,6 +13,8 @@
 %% compare ns/op and result. Sampling is scheduler-1 only, so use +S 1.
 -module(mapbench).
 -export([go/0]).
+%% internals exported for the S1b.3c diagnostic harness (diag.erl)
+-export([s3/0, s8/0, s16/0, r3/3, r8/3, r16/3]).
 
 -define(REP, 20000000).
 
