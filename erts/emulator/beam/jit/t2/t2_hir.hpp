@@ -398,6 +398,24 @@ namespace erts_t2 {
          * badkey, stays T1 until the exception path exists. */
         PutMap,
 
+        /* try Body (exceptions, Strategy 2): the tier-2 blob runs the
+         * try body itself and reuses T1's already-registered catch tag so
+         * a thrown exception unwinds into T1's handler (beam_common.c
+         * next_catch reads beam_catches[index].cp = T1's try_case). T2
+         * never runs the handler — the handler block is unreachable in
+         * the tier-2 CFG (reached only via T1's stack unwind) and is
+         * dropped as an inert island. CatchSetup mirrors T1's emit_catch:
+         * it increments c_p->catches and stores the catch tag (imm_term,
+         * the make_catch(index) immediate) into the Y catch-tag slot; it
+         * "produces" that tag value homed in Y so every sync map across
+         * the protected region carries it on the stack for next_catch. */
+        CatchSetup,
+
+        /* try_end: mirrors T1's emit_try_end — decrements c_p->catches
+         * and clears the Y catch-tag slot to NIL on the normal (no
+         * exception) completion path. Produces NIL homed in the Y slot. */
+        TryEnd,
+
         /* Sentinel */
         Invalid
     };

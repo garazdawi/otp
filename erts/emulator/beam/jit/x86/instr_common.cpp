@@ -3004,7 +3004,9 @@ void BeamModuleAssembler::emit_catch(const ArgYRegister &CatchTag,
     mov_arg(CatchTag, RET);
 
     /* Offset = 1 for `mov` payload */
-    catches.push_back({{patch_addr, 0x1, 0}, resolve_beam_label(Handler)});
+    catches.push_back({{patch_addr, 0x1, 0},
+                       resolve_beam_label(Handler),
+                       (unsigned)Handler.get()});
 }
 
 /*

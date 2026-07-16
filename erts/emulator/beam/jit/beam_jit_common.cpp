@@ -34,6 +34,7 @@ extern "C"
 #include "erl_bits.h"
 #include "erl_map.h"
 #include "beam_common.h"
+#include "t2_retain.h"
 #ifdef USE_VM_PROBES
 #    include "dtrace-wrapper.h"
 #endif
@@ -525,6 +526,10 @@ unsigned BeamModuleAssembler::patchCatches(char *rw_base) {
         ERTS_ASSERT(catch_term >> 31 == 0);
 
         *where = catch_term;
+
+        if (erts_t2_enabled()) {
+            t2_catch_tags.push_back({c.handler_label, catch_term});
+        }
     }
 
     return catch_no;

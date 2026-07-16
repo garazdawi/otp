@@ -846,6 +846,12 @@ namespace erts_t2 {
             case T2LirKind::PutMap:
                 emit_lir_put_map(op);
                 break;
+            case T2LirKind::CatchSetup:
+                emit_lir_catch_setup(op);
+                break;
+            case T2LirKind::TryEnd:
+                emit_lir_try_end(op);
+                break;
             case T2LirKind::GetMapElement:
                 emit_lir_get_map_element(op);
                 break;
@@ -2320,6 +2326,41 @@ namespace erts_t2 {
                                   ArgWord((UWord)op.imm),
                                   ArgWord(2),
                                   Span<const ArgVal>(args, 2));
+        }
+
+        /* try setup (exceptions, Strategy 2). Mirrors T1's emit_catch
+         * minus the constant-pool patch: bump c_p->catches and store the
+         * catch tag (op.imm_term, T1's make_catch(index) immediate,
+         * captured from patchCatches) into the Y catch-tag slot. The tag
+         * then sits on the stack for T1's next_catch to find when a
+         * raising op in the body side-exits to T1 and raises. */
+        void emit_lir_catch_setup(const T2LirOp &op) {
+            if (op.dst.is_none()) {
+                fail("catch_setup without a Y slot");
+                return;
+            }
+            comment("T2 try (catch setup)");
+            a.ldr(TMP1, a64::Mem(c_p, offsetof(Process, catches)));
+            a.add(TMP1, TMP1, imm(1));
+            a.str(TMP1, a64::Mem(c_p, offsetof(Process, catches)));
+            emit_i_move(ArgSource(ArgVal(ArgVal::Type::Immediate, op.imm_term)),
+                        ArgRegister(loc_argval(op.dst)));
+        }
+
+        /* try_end (exceptions). Mirrors T1's emit_try_end: drop
+         * c_p->catches and clear the Y catch-tag slot to NIL (op.imm_term)
+         * on the normal (no exception) completion path. */
+        void emit_lir_try_end(const T2LirOp &op) {
+            if (op.dst.is_none()) {
+                fail("try_end without a Y slot");
+                return;
+            }
+            comment("T2 try_end");
+            a.ldr(TMP1, a64::Mem(c_p, offsetof(Process, catches)));
+            a.sub(TMP1, TMP1, imm(1));
+            a.str(TMP1, a64::Mem(c_p, offsetof(Process, catches)));
+            emit_i_move(ArgSource(ArgVal(ArgVal::Type::Immediate, op.imm_term)),
+                        ArgRegister(loc_argval(op.dst)));
         }
 
         /* Value-producing total comparison (P2 commit 8): reuse T1's

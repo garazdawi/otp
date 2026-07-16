@@ -147,8 +147,19 @@ struct BeamModuleAssemblerCommon {
     struct patch_catch {
         struct patch patch;
         Label handler;
+        unsigned handler_label; /* BEAM handler-label ordinal, for the T2
+                                 * catch-tag map */
     };
     std::vector<struct patch_catch> catches;
+
+    /* T2-Full: (handler-label ordinal -> catch tag) pairs captured in
+     * patchCatches when T2 retention is on, read at retain-commit to
+     * build the retained catch-tag map (mirrors t2_pc_raw). */
+    struct T2CatchTag {
+        unsigned handler_label;
+        Eterm tag;
+    };
+    std::vector<T2CatchTag> t2_catch_tags;
 
     /* Map of import entry to patch labels and mfa */
     struct patch_import {

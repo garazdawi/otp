@@ -100,6 +100,18 @@ int erts_t2_genop_supported(int genop) {
     case genop_select_val_3:
     case genop_select_tuple_arity_3:
 
+    /* Exceptions, try/catch (Strategy 2). The tier runs the try body and
+     * reuses T1's registered catch tag so a thrown exception unwinds into
+     * T1's handler (the body's raising ops already side-exit to T1).
+     * try_case is admitted for the *scan* only — it lives solely in the
+     * exception-handler block, which is unreachable in the tier-2 CFG and
+     * dropped as an inert island, so the builder never translates it.
+     * (Bare `catch`/catch_end and raise/build_stacktrace stay
+     * unsupported — a later increment.) */
+    case genop_try_2:
+    case genop_try_end_1:
+    case genop_try_case_1:
+
     /* Type tests and comparisons (guards). */
     case genop_is_integer_2:
     case genop_is_atom_2:

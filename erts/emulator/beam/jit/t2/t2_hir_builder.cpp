@@ -686,6 +686,36 @@ namespace erts_t2 {
                 return get_error_block();
             }
 
+            /* Seal an unreachable block (an exception handler reached only
+             * via T1's unwind, never a tier-2 edge; see the FRAME_UNKNOWN
+             * skip in build()) as an inert self-contained island: a
+             * shared-error-exit terminator that carries no operands and no
+             * sync map (like get_error_block) and is never executed. This
+             * keeps isel from choking on a terminator-less block without
+             * fabricating the handler's exception-triple / post-unwind
+             * frame, which the tier cannot model. */
+            void seal_error_island(T2BasicBlock *b) {
+                T2Op *op =
+                        fn->new_op(b, T2OpKind::TailCallExt, T2Type::none());
+                fn->set_operands(op, {});
+                op->mfa_m = am_erlang;
+                op->mfa_f = am_error;
+                op->index = 0;
+                op->flags |= T2_OP_ERR_EXIT_SHARED;
+            }
+
+            /* The catch tag (make_catch(index) immediate) T1 registered
+             * for the try whose exception handler is BEAM label
+             * `handler_label`. Strategy 2 reuses T1's tag verbatim so a
+             * thrown exception unwinds into T1's handler
+             * (next_catch reads beam_catches[index].cp). Returns
+             * THE_NON_VALUE when no tag is recorded (the try is then not
+             * lowerable). Reads the retained (handler-label -> catch tag)
+             * map captured in patchCatches at load (#60.3). */
+            Eterm catch_tag_for(UWord handler_label) {
+                return erts_t2_catch_tag_for(ret, (Uint32)handler_label);
+            }
+
             /* Emits `cond ? fall through : fail`. A fail operand of TAG_p
              * ({f,0}) raises instead of branching; no edge is modelled. */
             void guard_branch(T2Value *cond, const DecodedArg &fail_arg) {
@@ -1357,6 +1387,16 @@ namespace erts_t2 {
                         case genop_call_ext_2:
                         case genop_call_ext_only_2:
                         case genop_call_ext_last_3:
+                            break;
+                        /* try's fail label names the exception handler,
+                         * reached only via T1's stack unwind (next_catch)
+                         * -- never a tier-2 CFG edge. Excluding it here
+                         * leaves the handler block FRAME_UNKNOWN, which
+                         * pass 2 drops as an inert island (the tier runs
+                         * the body and lets T1 own the handler; Strategy
+                         * 2). The body after try keeps the frame via the
+                         * fall-through edge (try is not a terminator). */
+                        case genop_try_2:
                             break;
                         default:
                             for (const DecodedArg &a : dop.args) {
@@ -2217,6 +2257,55 @@ namespace erts_t2 {
                 break;
             }
 
+            case genop_try_2: {
+                /* try CatchTag Handler (exceptions, Strategy 2). The tier
+                 * runs the body; T1's next_catch unwinds a thrown
+                 * exception into T1's handler at `Handler`, which is why
+                 * the handler block is left FRAME_UNKNOWN (see
+                 * compute_label_frames) and dropped as an island in pass
+                 * 2. CatchSetup mirrors T1's emit_catch: c_p->catches++
+                 * and store T1's catch tag into the Y slot. The op
+                 * produces the tag homed in that Y slot so every sync map
+                 * across the protected region flushes it to the stack for
+                 * next_catch. */
+                if (dop.args[0].type != TAG_y || dop.args[1].type != TAG_f) {
+                    fail_op(dop, "try outside the (Y, handler-label) shape");
+                    return;
+                }
+
+                Eterm tag = catch_tag_for(dop.args[1].val);
+                if (tag == THE_NON_VALUE) {
+                    fail_op(dop, "no registered catch tag for the try handler");
+                    return;
+                }
+
+                T2Op *op = fn->new_op(cur, T2OpKind::CatchSetup, T2Type::any());
+                op->imm_term = tag;
+                op->beam_idx = dop.beam_idx;
+                write_dst_new(dop.args[0], op->result);
+                break;
+            }
+
+            case genop_try_end_1: {
+                /* try_end CatchTag: mirrors T1's emit_try_end on the
+                 * normal completion path — c_p->catches-- and clear the Y
+                 * catch-tag slot to NIL. Produces NIL homed in the Y
+                 * slot. (try_case, the exception-path handler at the try's
+                 * Handler label, lives only in the dropped island.) */
+                if (dop.args[0].type != TAG_y) {
+                    fail_op(dop, "try_end outside the (Y) shape");
+                    return;
+                }
+
+                T2Op *op = fn->new_op(cur,
+                                      T2OpKind::TryEnd,
+                                      T2Type::of(BEAM_TYPE_NIL));
+                op->imm_term = NIL;
+                op->beam_idx = dop.beam_idx;
+                write_dst_new(dop.args[0], op->result);
+                break;
+            }
+
                 /* --- the byte-aligned binary scan subset (P2 commit 7) --- */
 
             case genop_bs_start_match3_4: {
@@ -2938,6 +3027,7 @@ namespace erts_t2 {
             }
 
             /* Pass 2: translate. */
+            bool dropping_island = false;
             for (const DecodedOp &dop : fc.ops) {
                 cur_op = &dop;
 
@@ -2952,6 +3042,33 @@ namespace erts_t2 {
                         continue;
                     }
                     skipping = false;
+                }
+
+                /* Drop an unreachable region (an exception handler under
+                 * Strategy 2: try models no tier-2 edge into it, so the
+                 * frame pre-pass left its label FRAME_UNKNOWN). Seal the
+                 * block as an inert island and skip its ops until the next
+                 * reachable (known-frame) label. A FRAME_UNKNOWN label is
+                 * never reached by fall-through — the pre-pass would have
+                 * given it a frame — so cur is null here by construction. */
+                if (dop.op == genop_label_1) {
+                    auto fit = label_frame.find(dop.args[0].val);
+                    int32_t f = fit != label_frame.end() ? fit->second
+                                                         : FRAME_UNKNOWN;
+                    if (f == FRAME_UNKNOWN) {
+                        if (cur != nullptr) {
+                            fail_op(dop,
+                                    "unreachable label reached by fall-through "
+                                    "(frame pre-pass inconsistency)");
+                            break;
+                        }
+                        seal_error_island(label_block.at(dop.args[0].val));
+                        dropping_island = true;
+                        continue;
+                    }
+                    dropping_island = false;
+                } else if (dropping_island) {
+                    continue;
                 }
 
                 if (cur == nullptr && dop.op != genop_label_1) {

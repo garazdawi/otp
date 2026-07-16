@@ -378,6 +378,18 @@ namespace erts_t2 {
          * Not a terminator; allocates via HAlloc, no GC, no sync. */
         PutMap,
 
+        /* try setup (exceptions, Strategy 2): c_p->catches++ and store the
+         * catch tag (imm_term = T1's make_catch(index) immediate) into the
+         * Y catch-tag slot (dst). Mirrors T1's emit_catch minus the
+         * constant-pool patch (the tag is a compile-time immediate here).
+         * dst = the Y slot, dst_value = the produced tag value. */
+        CatchSetup,
+
+        /* try_end (exceptions): c_p->catches-- and clear the Y catch-tag
+         * slot (dst) to NIL on the normal completion path. Mirrors T1's
+         * emit_try_end. dst = the Y slot, dst_value = the produced NIL. */
+        TryEnd,
+
         Invalid
     };
 

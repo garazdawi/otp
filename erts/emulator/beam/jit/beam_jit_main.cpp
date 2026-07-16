@@ -801,6 +801,21 @@ extern "C"
         *fn_index = e.fn_index;
         *kind = e.kind;
     }
+
+    size_t beamasm_t2_catch_count(void *instance) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return ba->t2_catch_tags.size();
+    }
+
+    void beamasm_t2_catch_get(void *instance,
+                              size_t i,
+                              Uint32 *handler_label,
+                              Eterm *tag) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        const BeamModuleAssembler::T2CatchTag &e = ba->t2_catch_tags[i];
+        *handler_label = e.handler_label;
+        *tag = e.tag;
+    }
 #else /* !__aarch64__ — T2 does not emit here; bridges are no-ops. */
     void beamasm_set_t2_collect(void *instance, int on) {
         (void)instance;
@@ -835,6 +850,21 @@ extern "C"
         (void)offset;
         (void)fn_index;
         (void)kind;
+    }
+
+    size_t beamasm_t2_catch_count(void *instance) {
+        (void)instance;
+        return 0;
+    }
+
+    void beamasm_t2_catch_get(void *instance,
+                              size_t i,
+                              Uint32 *handler_label,
+                              Eterm *tag) {
+        (void)instance;
+        (void)i;
+        (void)handler_label;
+        (void)tag;
     }
 #endif
 

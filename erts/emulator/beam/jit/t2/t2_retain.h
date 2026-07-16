@@ -129,6 +129,14 @@ typedef struct ErtsT2RetainedCode {
      * or when the module has no eligible functions. Separately
      * allocated; freed and un-accounted in erts_t2_release. */
     struct ErtsT2PcTable *pc_table;
+
+    /* T2-Full exceptions (Strategy 2): (BEAM handler-label ordinal ->
+     * catch tag) map, sorted ascending by handler_label for binary
+     * search. Captured from patchCatches at load; the tier's `try`
+     * lowering reuses T1's tag so a thrown exception unwinds into T1's
+     * handler. NULL/0 when the module registered no catches. */
+    struct ErtsT2CatchTag *catch_tags;
+    Sint32 catch_tag_count;
 } ErtsT2RetainedCode;
 
 /* One retained lambda-table entry (see ErtsT2RetainedCode.lambdas). */
@@ -140,11 +148,35 @@ typedef struct ErtsT2Lambda {
                             * at finalize; NULL until then             */
 } ErtsT2Lambda;
 
+/* One retained catch-tag entry (see ErtsT2RetainedCode.catch_tags). */
+typedef struct ErtsT2CatchTag {
+    Uint32 handler_label;
+    Eterm tag;
+} ErtsT2CatchTag;
+
 /* Capture lambda i's ErlFunEntry at finalize (asm_load.c fun-patch
  * loop). No-op when \p ret is NULL or i is out of range. */
 void erts_t2_retain_lambda_entry(ErtsT2RetainedCode *ret,
                                  int i,
                                  const void *fun_entry);
+
+/* beam_jit_main.cpp: read back the (handler-label -> catch tag) pairs
+ * captured during patchCatches. Mirrors beamasm_t2_pc_raw_*. */
+size_t beamasm_t2_catch_count(void *ba);
+void beamasm_t2_catch_get(void *ba, size_t i, Uint32 *handler_label,
+                          Eterm *tag);
+
+/* t2_retain.c: read the catch-tag pairs off the assembler \p ba and
+ * attach a sorted catch_tags array to \p ret (folds its size into the
+ * retained-bytes accounting). No-op when ret is NULL or ba recorded
+ * none. Called from asm_load.c right after erts_t2_pctab_build. */
+void erts_t2_retain_catch_tags(ErtsT2RetainedCode *ret, void *ba);
+
+/* t2_retain.c: the catch tag T1 registered for the try whose handler
+ * is BEAM label \p handler_label, or THE_NON_VALUE if none. Binary
+ * search over ret->catch_tags. */
+Eterm erts_t2_catch_tag_for(const ErtsT2RetainedCode *ret,
+                            Uint32 handler_label);
 
 /* True iff tier-2 retention is enabled (T2_RETAIN=1; read once). */
 int erts_t2_enabled(void);

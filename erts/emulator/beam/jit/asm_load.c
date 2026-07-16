@@ -1316,6 +1316,10 @@ void beam_load_finalize_code(LoaderState *stp,
                             stp->ba,
                             (const byte *)beamasm_get_base(stp->ba));
 
+        /* T2-Full exceptions: attach the (handler-label -> catch tag) map
+         * captured during patchCatches, for the tier's `try` lowering. */
+        erts_t2_retain_catch_tags(committed, stp->ba);
+
         /* Counter self-disarm (P2 commit 10): record where each armed
          * profiling sequence landed, so a terminal tier-up outcome can
          * patch it out; T2_TIER_DISARM=1 (the tax-measurement lever)

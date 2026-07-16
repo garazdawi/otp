@@ -1073,6 +1073,24 @@ namespace erts_t2 {
                     return true;
                 }
 
+                case T2OpKind::CatchSetup:
+                case T2OpKind::TryEnd:
+                    /* try / try_end (exceptions, Strategy 2): each produces
+                     * the Y catch-tag slot value (the tag / NIL). No source
+                     * operands — the stored immediate rides in imm_term
+                     * (the make_catch tag, or NIL for try_end). */
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "catch op without a Y home");
+                    }
+                    lop.kind = op->kind == T2OpKind::CatchSetup
+                                       ? T2LirKind::CatchSetup
+                                       : T2LirKind::TryEnd;
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.imm_term = op->imm_term;
+                    b.ops.push_back(lop);
+                    return true;
+
                 case T2OpKind::GcTest:
                     lop.kind = T2LirKind::GcTest;
                     lop.imm = (Sint64)op->index; /* heap words */

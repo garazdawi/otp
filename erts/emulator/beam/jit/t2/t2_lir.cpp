@@ -227,6 +227,10 @@ namespace erts_t2 {
             return "update_record";
         case T2LirKind::PutMap:
             return "put_map";
+        case T2LirKind::CatchSetup:
+            return "catch_setup";
+        case T2LirKind::TryEnd:
+            return "try_end";
         case T2LirKind::Invalid:
             return "invalid";
         }

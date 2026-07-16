@@ -421,6 +421,75 @@ void erts_t2_retain_commit(ErtsT2RetainedCode *ret,
      * consults); see asm_load.c. */
 }
 
+void erts_t2_retain_catch_tags(ErtsT2RetainedCode *ret, void *ba) {
+    size_t n, i;
+    ErtsT2CatchTag *tags;
+
+    if (ret == NULL) {
+        return;
+    }
+
+    n = beamasm_t2_catch_count(ba);
+    if (n == 0) {
+        ret->catch_tags = NULL;
+        ret->catch_tag_count = 0;
+        return;
+    }
+
+    tags = erts_alloc(ERTS_ALC_T_T2_CODE, n * sizeof(ErtsT2CatchTag));
+
+    for (i = 0; i < n; i++) {
+        Uint32 label;
+        Eterm tag;
+
+        beamasm_t2_catch_get(ba, i, &label, &tag);
+        tags[i].handler_label = label;
+        tags[i].tag = tag;
+    }
+
+    /* Insertion sort ascending by handler_label (n is tiny) so
+     * erts_t2_catch_tag_for can binary search. */
+    for (i = 1; i < n; i++) {
+        ErtsT2CatchTag key = tags[i];
+        size_t j = i;
+
+        while (j > 0 && tags[j - 1].handler_label > key.handler_label) {
+            tags[j] = tags[j - 1];
+            j--;
+        }
+        tags[j] = key;
+    }
+
+    ret->catch_tags = tags;
+    ret->catch_tag_count = (Sint32)n;
+    erts_t2_account_bytes((Sint)(n * sizeof(ErtsT2CatchTag)));
+}
+
+Eterm erts_t2_catch_tag_for(const ErtsT2RetainedCode *ret,
+                            Uint32 handler_label) {
+    Sint32 lo, hi;
+
+    if (ret == NULL || ret->catch_tags == NULL) {
+        return THE_NON_VALUE;
+    }
+
+    lo = 0;
+    hi = ret->catch_tag_count - 1;
+    while (lo <= hi) {
+        Sint32 mid = lo + (hi - lo) / 2;
+        Uint32 label = ret->catch_tags[mid].handler_label;
+
+        if (label == handler_label) {
+            return ret->catch_tags[mid].tag;
+        } else if (label < handler_label) {
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return THE_NON_VALUE;
+}
+
 void erts_t2_retained_free(ErtsT2RetainedCode *ret) {
     if (ret != NULL) {
         if (ret->profiles != NULL) {
@@ -439,6 +508,14 @@ void erts_t2_release(struct erl_module_instance *inst_p) {
 
     /* Free + un-account the separately-allocated PC side table first. */
     erts_t2_pctab_free(ret);
+
+    /* Same for the separately-allocated catch-tag map. */
+    if (ret->catch_tags != NULL) {
+        erts_t2_account_bytes(-(Sint)((size_t)ret->catch_tag_count *
+                                      sizeof(ErtsT2CatchTag)));
+        erts_free(ERTS_ALC_T_T2_CODE, ret->catch_tags);
+        ret->catch_tags = NULL;
+    }
 
     erts_atomic_add_nob(&t2_retained_bytes, -(erts_aint_t)ret->bytes);
     if (ret->profiles != NULL) {

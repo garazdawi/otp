@@ -257,6 +257,10 @@ namespace erts_t2 {
             return "update_record";
         case T2OpKind::PutMap:
             return "put_map";
+        case T2OpKind::CatchSetup:
+            return "catch_setup";
+        case T2OpKind::TryEnd:
+            return "try_end";
         case T2OpKind::Opaque:
             return "opaque";
         case T2OpKind::Invalid:
@@ -366,6 +370,10 @@ namespace erts_t2 {
         case T2OpKind::MakeFun:
         case T2OpKind::UpdateRecord:
         case T2OpKind::PutMap:
+        /* CatchSetup produces the catch tag (homed in the Y slot);
+         * TryEnd produces NIL (the cleared Y slot). */
+        case T2OpKind::CatchSetup:
+        case T2OpKind::TryEnd:
             return true;
         default:
             return false;
