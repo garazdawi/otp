@@ -175,7 +175,7 @@ namespace {
         unsigned spills;           /* the placement allocator keeps every
                                     * value in an X/Y home, so it cannot
                                     * spill in the classic sense (verified
-                                    * T2_RA_DUMP=0); kept for the trace    */
+                                    * via +JT2dump ra); kept for the trace */
         unsigned blob_size;        /* emitted bytes (trace only)           */
     };
 
@@ -367,15 +367,13 @@ namespace {
         const ErtsT2Profile *rec;
     };
 
-    /* +JDdump sink: append one function's dump text to a per-module
+    /* +JT2dump FILE sink: append one function's dump text to a per-module
      * "<Module>.t2.asm" file, mirroring T1's per-module .asm dump (T1 opens
      * one file per module at load; T2 tiers functions up individually at
      * runtime, so the file accretes functions as they install). A blob is
      * emitted off the tier worker but the file is process-global, so guard
      * the append with a mutex. Best-effort: a failed open is silently
-     * skipped (a dump flag must never perturb execution). The stderr path
-     * (below) is always taken when dumping and is the one an LLM agent / CI
-     * consumes; the file is the durable T1-parity artifact. */
+     * skipped (a dump flag must never perturb execution). */
     void t2_dump_append_module_file(Eterm module, const std::string &text) {
         static std::mutex mtx;
         char name[MAX_ATOM_SZ_LIMIT + 16];
@@ -388,6 +386,56 @@ namespace {
             fwrite(text.data(), 1, text.size(), f);
             fclose(f);
         }
+    }
+
+    /* The effective +JT2dump bitmask, resolving the two conveniences: a
+     * facet chosen without a sink defaults to stderr (the agent-friendly,
+     * artifact-free form), and a bare sink with no facet selects the default
+     * HIR|LIR|ASM view. Cheap; only consulted on the cold compile/tier path. */
+    int t2_dump_mask(void) {
+        int m = erts_jit_t2_dump;
+
+        if ((m & ERTS_T2_DUMP_SINKS) == 0 && (m & ERTS_T2_DUMP_FACETS) != 0) {
+            m |= ERTS_T2_DUMP_STDERR;
+        }
+        if ((m & ERTS_T2_DUMP_SINKS) != 0 && (m & ERTS_T2_DUMP_FACETS) == 0) {
+            m |= ERTS_T2_DUMP_DEFAULT;
+        }
+        return m;
+    }
+
+    /* Route one dump section to whichever sinks the mask selects. */
+    void t2_dump_route(Eterm module, const std::string &text) {
+        int m = t2_dump_mask();
+
+        if (m & ERTS_T2_DUMP_STDERR) {
+            fwrite(text.data(), 1, text.size(), stderr);
+        }
+        if (m & ERTS_T2_DUMP_FILE) {
+            t2_dump_append_module_file(module, text);
+        }
+    }
+
+    /* One intermediate-HIR stage dump (+JT2dump stages): the HIR right after
+     * a named pass, routed to the selected sink(s). A no-op unless the STAGES
+     * facet is active. */
+    void t2_dump_stage(const char *label, const T2Function &hir) {
+        if ((t2_dump_mask() & ERTS_T2_DUMP_STAGES) == 0) {
+            return;
+        }
+        char hdr[256];
+        std::string text;
+
+        erts_snprintf(hdr,
+                      sizeof(hdr),
+                      "--- %s %T:%T/%u ---\n",
+                      label,
+                      hir.module,
+                      hir.function,
+                      (unsigned)hir.arity);
+        text += hdr;
+        text += t2_dump(hir);
+        t2_dump_route(hir.module, text);
     }
 
     /* Lower + emit + install one built HIR function against the loaded
@@ -454,15 +502,8 @@ namespace {
                 }
                 return T2CompileStatus::IselUnsupported;
             }
-            if (intrinsified && getenv("T2_INTRIN_DUMP") != NULL) {
-                std::string d = t2_dump(hir);
-
-                erts_fprintf(stderr,
-                             "t2_intrinsics dump %T:%T/%u\n",
-                             hir.module,
-                             hir.function,
-                             (unsigned)hir.arity);
-                fwrite(d.data(), 1, d.size(), stderr);
+            if (intrinsified) {
+                t2_dump_stage("hir after intrinsics", hir);
             }
             if (intrinsified && !t2_validate(hir, &err)) {
                 if (diag) {
@@ -505,16 +546,7 @@ namespace {
                         return T2CompileStatus::IselUnsupported;
                     }
                     if (unrolled) {
-                        if (getenv("T2_OPT_DUMP") != NULL) {
-                            std::string d = t2_dump(hir);
-
-                            erts_fprintf(stderr,
-                                         "t2_unroll dump %T:%T/%u\n",
-                                         hir.module,
-                                         hir.function,
-                                         (unsigned)hir.arity);
-                            fwrite(d.data(), 1, d.size(), stderr);
-                        }
+                        t2_dump_stage("hir after unroll", hir);
                         if (!t2_validate(hir, &err)) {
                             if (diag) {
                                 *diag = "post-unroll validate: " + err;
@@ -629,15 +661,8 @@ namespace {
                         }
                         return T2CompileStatus::IselUnsupported;
                     }
-                    if (opt_changed && getenv("T2_OPT_DUMP") != NULL) {
-                        std::string d = t2_dump(hir);
-
-                        erts_fprintf(stderr,
-                                     "t2_opt dump %T:%T/%u\n",
-                                     hir.module,
-                                     hir.function,
-                                     (unsigned)hir.arity);
-                        fwrite(d.data(), 1, d.size(), stderr);
+                    if (opt_changed) {
+                        t2_dump_stage("hir after opt", hir);
                     }
                     rewritten |= opt_changed;
                 }
@@ -682,30 +707,29 @@ namespace {
             return T2CompileStatus::IselUnsupported;
         }
 
-        /* Two independent dump triggers, sharing one captured view:
-         *  - T2_DUMP=1        -> stderr (the T2-native knob).
-         *  - +JDdump (erts_jit_asm_dump) -> the T1 runtime flag, extended to
-         *    T2: a durable per-module <Module>.t2.asm file, AND stderr so an
-         *    LLM agent / CI driving the flag still gets consumable output.
-         * The disasm is produced by the same asmjit logger T1 uses (a
-         * StringLogger here vs T1's FileLogger); we capture it once and fan
-         * it out. */
-        bool dump_file = erts_jit_asm_dump != 0;
-        bool dump = getenv("T2_DUMP") != nullptr || dump_file;
+        /* +JT2dump selects the tier-2 blob dump sink (its own flag, so the
+         * tier is filtered independently of +JDdump's T1 dump; a flag value,
+         * not an env var, so the choice is visible on the command line). The
+         * selected facets (hir/lir/asm here) are assembled into one section
+         * and routed to the chosen sink(s) by t2_dump_route; the disasm comes
+         * from the same asmjit logger T1 uses (a StringLogger here vs T1's
+         * FileLogger). ERTS_T2_DUMP_STAGES / _RA are separate sites. */
+        int dmask = t2_dump_mask();
+        bool want_asm = (dmask & ERTS_T2_DUMP_ASM) != 0;
         std::string disasm;
 
         if (!t2_emit_blob_install(lir,
                                   l_f,
                                   &blob,
                                   &err,
-                                  dump ? &disasm : nullptr)) {
+                                  want_asm ? &disasm : nullptr)) {
             if (diag) {
                 *diag = err;
             }
             return T2CompileStatus::EmitFailed;
         }
 
-        if (dump) {
+        if (dmask & (ERTS_T2_DUMP_HIR | ERTS_T2_DUMP_LIR | ERTS_T2_DUMP_ASM)) {
             char hdr[256];
             std::string text;
 
@@ -717,18 +741,19 @@ namespace {
                           (unsigned)hir.arity,
                           l_f);
             text += hdr;
-            text += "--- hir ---\n";
-            text += t2_dump(hir);
-            text += "--- lir ---\n";
-            text += t2_lir_dump(lir);
-            text += "--- disasm ---\n";
-            text += disasm;
-
-            /* stderr is always taken when dumping (agent/CI consumable). */
-            fwrite(text.data(), 1, text.size(), stderr);
-            if (dump_file) {
-                t2_dump_append_module_file(hir.module, text);
+            if (dmask & ERTS_T2_DUMP_HIR) {
+                text += "--- hir ---\n";
+                text += t2_dump(hir);
             }
+            if (dmask & ERTS_T2_DUMP_LIR) {
+                text += "--- lir ---\n";
+                text += t2_lir_dump(lir);
+            }
+            if (want_asm) {
+                text += "--- disasm ---\n";
+                text += disasm;
+            }
+            t2_dump_route(hir.module, text);
         }
 
         /* Install-quality gate (P2.6 blocker B; PLAN/T2FULL/10). The
@@ -1169,6 +1194,16 @@ namespace {
     }
 
 } /* anonymous namespace */
+
+/* +JT2dump routing exposed to other passes (t2_regalloc.cpp's RA facet);
+ * see t2_install.h. Both defer to the anonymous-namespace helpers above. */
+extern "C" int erts_t2_dump_wants(int facet) {
+    return (t2_dump_mask() & facet) != 0;
+}
+
+extern "C" void erts_t2_dump_text(Eterm module, const char *data, Uint len) {
+    t2_dump_route(module, std::string(data, (size_t)len));
+}
 
 extern "C" Eterm erts_t2_debug_install(Process *p,
                                        Eterm mod,

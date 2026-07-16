@@ -4859,7 +4859,7 @@ namespace {
                                      "at %p, %lu facts verified\n",
                                      blob,
                                      (unsigned long)ma.facts.size());
-                        if (getenv("T2_DUMP") != NULL) {
+                        if (erts_t2_dump_wants(ERTS_T2_DUMP_ASM)) {
                             erts_fprintf(stderr,
                                          "%s\nT2 emit module self-test "
                                          "disassembly:\n%.*s\n",

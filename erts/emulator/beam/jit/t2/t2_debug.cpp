@@ -49,8 +49,8 @@
  *   Counts  := {NBlocks, NValues, NPhis, NBody, NTerm}
  *                % NPhis/NBody/NTerm are totals over all blocks; NTerm is
  *                % the number of blocks that carry a terminator. The
- *                % T2_DUMP text prints, per block, phis then body then the
- *                % terminator, so its op-line count == NPhis+NBody+NTerm.
+ *                % +JT2dump HIR text prints, per block, phis then body then
+ *                % the terminator, so its op-line count == NPhis+NBody+NTerm.
  *   Blocks  := [ Block ]                          % in block-id order 0..N-1
  *
  *   Block   := {Id, Preds, Succs, Phis, Body, Term}
@@ -91,7 +91,7 @@
  *                %          (sync-point register map; see t2_hir.hpp)
  *                % err_exit => op | shared  (error-exit lowering class)
  *                % (the function-entry sync map is not serialized; the
- *                %  T2_DUMP text carries it)
+ *                %  +JT2dump HIR text carries it)
  *
  *   TypeTerm :=
  *         any

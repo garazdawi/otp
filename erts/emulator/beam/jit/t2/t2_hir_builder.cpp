@@ -76,6 +76,7 @@ extern "C"
 #include "beam_opcodes.h"
 
 #include "t2_retain.h"
+#include "t2_install.h"
 }
 
 #include <cstring>
@@ -3389,18 +3390,6 @@ extern "C" int erts_t2_build_enabled(void) {
     return enabled;
 }
 
-static int t2_dump_enabled(void) {
-    static const int enabled = []() {
-        const char *env = getenv("T2_DUMP");
-        return (env != nullptr && env[0] == '1') ? 1 : 0;
-    }();
-    /* This is the early, pre-speculation HIR view (T2_DUMP-only). The
-     * complete per-function dump — final HIR (with the S1b.3c !map_shape
-     * annotation), LIR and disassembly, and the +JDdump file sink — lives
-     * at the install site in t2_compile. */
-    return enabled;
-}
-
 static int t2_debug_output_enabled(void) {
     static const int enabled = []() {
         const char *env = getenv("T2_DEBUG");
@@ -3468,8 +3457,14 @@ extern "C" int erts_t2_build_all(const ErtsT2RetainedCode *ret,
 
         built++;
 
-        if (t2_dump_enabled()) {
-            erts_fprintf(stderr, "%s\n", t2_dump(*fn).c_str());
+        /* Early, pre-speculation HIR view under the +JT2dump STAGES facet.
+         * The complete per-function dump — final HIR (with the S1b.3c
+         * !map_shape annotation), LIR and disassembly — lives at the install
+         * site in t2_compile. */
+        if (erts_t2_dump_wants(ERTS_T2_DUMP_STAGES)) {
+            std::string text = t2_dump(*fn);
+            text += "\n";
+            erts_t2_dump_text(fn->module, text.data(), (Uint)text.size());
         }
 
         /* T2_ISEL=1: identity-backend coverage. An isel rejection is a

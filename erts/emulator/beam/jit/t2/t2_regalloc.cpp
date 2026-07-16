@@ -80,6 +80,8 @@ extern "C"
 
 #include "sys.h"
 #include "global.h"
+
+#include "t2_install.h"
 }
 
 #include <algorithm>
@@ -1378,15 +1380,22 @@ namespace erts_t2 {
             /* ---- debug dump ---------------------------------------------- */
 
             void dump() const {
-                if (getenv("T2_RA_DUMP") == nullptr) {
+                /* +JT2dump ra: the computed live intervals and their home
+                 * assignments, routed to the selected sink(s). */
+                if (!erts_t2_dump_wants(ERTS_T2_DUMP_RA)) {
                     return;
                 }
-                erts_fprintf(stderr,
-                             "t2_regalloc: %T:%T/%u  %u values\n",
-                             lir.module,
-                             lir.function,
-                             lir.arity,
-                             (unsigned)nvals);
+                char hdr[256];
+                std::string text;
+
+                erts_snprintf(hdr,
+                              sizeof(hdr),
+                              "t2_regalloc: %T:%T/%u  %u values\n",
+                              lir.module,
+                              lir.function,
+                              lir.arity,
+                              (unsigned)nvals);
+                text += hdr;
                 for (const T2Interval &iv : intervals) {
                     if (iv.empty()) {
                         continue;
@@ -1408,8 +1417,10 @@ namespace erts_t2 {
                     if (iv.assigned_phys.is_phys()) {
                         line += " -> p" + std::to_string(iv.assigned_phys.num);
                     }
-                    erts_fprintf(stderr, "%s\n", line.c_str());
+                    line += "\n";
+                    text += line;
                 }
+                erts_t2_dump_text(lir.module, text.data(), (Uint)text.size());
             }
 
             bool run() {

@@ -65,9 +65,9 @@
  * t2_validate_windows or the caller degrades the function to T1.
  *
  * Levers: T2_NO_OPT (master, checked by the caller), T2_NO_DCE,
- * T2_NO_CONSTFOLD, T2_NO_COPYPROP, T2_NO_CSE, T2_NO_SINK per sub-pass;
- * T2_OPT_TRACE logs every fire; T2_OPT_DUMP (caller) dumps the HIR
- * after the pass.
+ * T2_NO_CONSTFOLD, T2_NO_COPYPROP, T2_NO_CSE, T2_NO_SINK per sub-pass.
+ * The post-pass HIR is dumped by the caller under the +JT2dump STAGES
+ * facet ("hir after opt").
  */
 
 #ifndef _JIT_T2_OPT_HPP

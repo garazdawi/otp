@@ -1259,7 +1259,38 @@ extern int erts_compat_rel;
 extern Uint erts_coverage_mode;
 
 #ifdef BEAMASM
+/* +JDdump: dump each T1 module's generated assembly to a per-module
+ * <Module>.asm file. */
 extern int erts_jit_asm_dump;
+
+/* +JT2dump: dump tier-2 blobs. A bitmask combining a SINK (STDERR or FILE)
+ * with the FACETS to emit (HIR, LIR, ASM, intermediate STAGES, register
+ * allocation RA). Repeatable on the command line and OR-accumulated
+ * (+JPperf-style); a bare sink with no facet selected means the default
+ * HIR|LIR|ASM view. A separate flag from +JDdump so the tier is filtered
+ * independently, and a value rather than an env var so the choice is visible
+ * on the command line. STDERR is the artifact-free form an LLM agent or a
+ * pipe-and-grep session consumes; FILE writes a per-module <Module>.t2.asm.
+ * Off when the whole word is zero. */
+#define ERTS_T2_DUMP_OFF 0
+/* sinks (mutually exclusive; the parser clears one when setting the other) */
+#define ERTS_T2_DUMP_STDERR (1 << 0)
+#define ERTS_T2_DUMP_FILE (1 << 1)
+/* facets */
+#define ERTS_T2_DUMP_HIR (1 << 2)
+#define ERTS_T2_DUMP_LIR (1 << 3)
+#define ERTS_T2_DUMP_ASM (1 << 4)
+#define ERTS_T2_DUMP_STAGES (1 << 5) /* intermediate HIR: intrinsics/unroll/opt */
+#define ERTS_T2_DUMP_RA (1 << 6)     /* register allocation */
+
+#define ERTS_T2_DUMP_SINKS (ERTS_T2_DUMP_STDERR | ERTS_T2_DUMP_FILE)
+#define ERTS_T2_DUMP_FACETS                                                   \
+    (ERTS_T2_DUMP_HIR | ERTS_T2_DUMP_LIR | ERTS_T2_DUMP_ASM |                  \
+     ERTS_T2_DUMP_STAGES | ERTS_T2_DUMP_RA)
+/* what a bare sink (no explicit facet) selects */
+#define ERTS_T2_DUMP_DEFAULT                                                   \
+    (ERTS_T2_DUMP_HIR | ERTS_T2_DUMP_LIR | ERTS_T2_DUMP_ASM)
+extern int erts_jit_t2_dump;
 #endif
 
 void erl_start(int, char**);

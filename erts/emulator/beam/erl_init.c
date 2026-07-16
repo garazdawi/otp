@@ -146,7 +146,8 @@ int erts_no_line_info = 0;	/* -L: Don't load line information */
 
 #ifdef BEAMASM
 Uint erts_coverage_mode = ERTS_COV_NONE; /* -JPcover: Enable coverage */
-int erts_jit_asm_dump = 0;	/* -JDdump: Dump assembly code */
+int erts_jit_asm_dump = 0;	/* -JDdump: Dump T1 assembly code */
+int erts_jit_t2_dump = ERTS_T2_DUMP_OFF; /* -JT2dump: Dump tier-2 blobs */
 #endif
 
 /*
@@ -598,6 +599,7 @@ __decl_noreturn void __noreturn  erts_usage(void)
 
 #ifdef BEAMASM
     erts_fprintf(stderr, "-JDdump bool   enable or disable dumping of generated assembly code for each module loaded\n");
+    erts_fprintf(stderr, "-JT2dump true|false|stderr|hir|lir|asm|stages|ra|all   dump tier-2 blobs; repeat to combine a sink (true=per-module file, stderr) with facets (default hir+lir+asm)\n");
     erts_fprintf(stderr, "-JPcover true|false|line|line_counters|function|function_counters  enable or disable instrumentation for coverage\n");
     erts_fprintf(stderr, "-JPperf true|false|dump|map|fp|no_fp   enable or disable support for perf on Linux\n");
     erts_fprintf(stderr, "-JPperfdirectory <directory>    set the directory perf files are stored. Default: /tmp\n");
@@ -1808,6 +1810,40 @@ erl_start(int argc, char **argv)
                         erts_jit_t2_force = 0;
                     } else {
                         erts_fprintf(stderr, "bad +JT2enable flag %s\n", arg);
+                        erts_usage();
+                    }
+                } else if (has_prefix("2dump", sub_param)) {
+                    /* +JT2dump builds up the tier-2 dump bitmask; repeat the
+                     * flag to combine a sink with facets (e.g. +JT2dump
+                     * stderr +JT2dump ra). Independent of +JDdump's T1 dump.
+                     * Sinks are exclusive; facets OR together; a bare sink
+                     * means the default HIR|LIR|ASM view (resolved at dump
+                     * time). */
+                    arg = get_arg(sub_param+5, argv[i + 1], &i);
+                    if (sys_strcmp(arg, "false") == 0 ||
+                        sys_strcmp(arg, "off") == 0) {
+                        erts_jit_t2_dump = ERTS_T2_DUMP_OFF;
+                    } else if (sys_strcmp(arg, "stderr") == 0) {
+                        erts_jit_t2_dump &= ~ERTS_T2_DUMP_FILE;
+                        erts_jit_t2_dump |= ERTS_T2_DUMP_STDERR;
+                    } else if (sys_strcmp(arg, "true") == 0 ||
+                               sys_strcmp(arg, "file") == 0) {
+                        erts_jit_t2_dump &= ~ERTS_T2_DUMP_STDERR;
+                        erts_jit_t2_dump |= ERTS_T2_DUMP_FILE;
+                    } else if (sys_strcmp(arg, "hir") == 0) {
+                        erts_jit_t2_dump |= ERTS_T2_DUMP_HIR;
+                    } else if (sys_strcmp(arg, "lir") == 0) {
+                        erts_jit_t2_dump |= ERTS_T2_DUMP_LIR;
+                    } else if (sys_strcmp(arg, "asm") == 0) {
+                        erts_jit_t2_dump |= ERTS_T2_DUMP_ASM;
+                    } else if (sys_strcmp(arg, "stages") == 0) {
+                        erts_jit_t2_dump |= ERTS_T2_DUMP_STAGES;
+                    } else if (sys_strcmp(arg, "ra") == 0) {
+                        erts_jit_t2_dump |= ERTS_T2_DUMP_RA;
+                    } else if (sys_strcmp(arg, "all") == 0) {
+                        erts_jit_t2_dump |= ERTS_T2_DUMP_FACETS;
+                    } else {
+                        erts_fprintf(stderr, "bad +JT2dump flag %s\n", arg);
                         erts_usage();
                     }
                 } else {

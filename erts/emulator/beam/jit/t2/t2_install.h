@@ -236,4 +236,13 @@ void beamasm_t2_register_perf(const char *name,
                               const void *base,
                               size_t size);
 
+/* t2_compile.cpp: +JT2dump routing shared with other passes (e.g. the
+ * register allocator's ERTS_T2_DUMP_RA facet). erts_t2_dump_wants(facet)
+ * reports whether a facet bit is active in the effective +JT2dump mask
+ * (after the bare-sink/bare-facet defaults are folded in);
+ * erts_t2_dump_text routes one already-formatted section to the selected
+ * sink(s) -- stderr and/or the per-module <Module>.t2.asm file. */
+int erts_t2_dump_wants(int facet);
+void erts_t2_dump_text(Eterm module, const char *data, Uint len);
+
 #endif /* ERL_T2_INSTALL_H__ */
