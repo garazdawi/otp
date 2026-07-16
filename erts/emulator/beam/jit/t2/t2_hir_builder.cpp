@@ -3394,6 +3394,10 @@ static int t2_dump_enabled(void) {
         const char *env = getenv("T2_DUMP");
         return (env != nullptr && env[0] == '1') ? 1 : 0;
     }();
+    /* This is the early, pre-speculation HIR view (T2_DUMP-only). The
+     * complete per-function dump — final HIR (with the S1b.3c !map_shape
+     * annotation), LIR and disassembly, and the +JDdump file sink — lives
+     * at the install site in t2_compile. */
     return enabled;
 }
 

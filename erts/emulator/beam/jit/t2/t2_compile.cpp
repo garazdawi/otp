@@ -52,6 +52,8 @@
  * use, e.g. t2_isel.cpp including t2_isel.hpp ahead of its extern "C" block.)
  */
 #include <ctime>
+#include <cstdio>
+#include <mutex>
 #include <string>
 
 #include "t2_hir.hpp"
@@ -365,6 +367,29 @@ namespace {
         const ErtsT2Profile *rec;
     };
 
+    /* +JDdump sink: append one function's dump text to a per-module
+     * "<Module>.t2.asm" file, mirroring T1's per-module .asm dump (T1 opens
+     * one file per module at load; T2 tiers functions up individually at
+     * runtime, so the file accretes functions as they install). A blob is
+     * emitted off the tier worker but the file is process-global, so guard
+     * the append with a mutex. Best-effort: a failed open is silently
+     * skipped (a dump flag must never perturb execution). The stderr path
+     * (below) is always taken when dumping and is the one an LLM agent / CI
+     * consumes; the file is the durable T1-parity artifact. */
+    void t2_dump_append_module_file(Eterm module, const std::string &text) {
+        static std::mutex mtx;
+        char name[MAX_ATOM_SZ_LIMIT + 16];
+
+        erts_snprintf(name, sizeof(name), "%T.t2.asm", module);
+
+        std::lock_guard<std::mutex> guard(mtx);
+        FILE *f = fopen(name, "a");
+        if (f != nullptr) {
+            fwrite(text.data(), 1, text.size(), f);
+            fclose(f);
+        }
+    }
+
     /* Lower + emit + install one built HIR function against the loaded
      * module instance. Called from inside the builder's emit callback
      * (the module decode is still alive). `profile` (may be null) is
@@ -657,7 +682,16 @@ namespace {
             return T2CompileStatus::IselUnsupported;
         }
 
-        bool dump = getenv("T2_DUMP") != nullptr;
+        /* Two independent dump triggers, sharing one captured view:
+         *  - T2_DUMP=1        -> stderr (the T2-native knob).
+         *  - +JDdump (erts_jit_asm_dump) -> the T1 runtime flag, extended to
+         *    T2: a durable per-module <Module>.t2.asm file, AND stderr so an
+         *    LLM agent / CI driving the flag still gets consumable output.
+         * The disasm is produced by the same asmjit logger T1 uses (a
+         * StringLogger here vs T1's FileLogger); we capture it once and fan
+         * it out. */
+        bool dump_file = erts_jit_asm_dump != 0;
+        bool dump = getenv("T2_DUMP") != nullptr || dump_file;
         std::string disasm;
 
         if (!t2_emit_blob_install(lir,
@@ -672,14 +706,29 @@ namespace {
         }
 
         if (dump) {
-            erts_fprintf(stderr,
-                         "t2_compile: %T:%T/%u L_f=%p\n%s\n--- disasm ---\n",
-                         hir.module,
-                         hir.function,
-                         (unsigned)hir.arity,
-                         l_f,
-                         t2_lir_dump(lir).c_str());
-            fwrite(disasm.data(), 1, disasm.size(), stderr);
+            char hdr[256];
+            std::string text;
+
+            erts_snprintf(hdr,
+                          sizeof(hdr),
+                          "t2_compile: %T:%T/%u L_f=%p\n",
+                          hir.module,
+                          hir.function,
+                          (unsigned)hir.arity,
+                          l_f);
+            text += hdr;
+            text += "--- hir ---\n";
+            text += t2_dump(hir);
+            text += "--- lir ---\n";
+            text += t2_lir_dump(lir);
+            text += "--- disasm ---\n";
+            text += disasm;
+
+            /* stderr is always taken when dumping (agent/CI consumable). */
+            fwrite(text.data(), 1, text.size(), stderr);
+            if (dump_file) {
+                t2_dump_append_module_file(hir.module, text);
+            }
         }
 
         /* Install-quality gate (P2.6 blocker B; PLAN/T2FULL/10). The
