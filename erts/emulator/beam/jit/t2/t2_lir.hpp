@@ -581,6 +581,15 @@ namespace erts_t2 {
          * bumps the erts_t2_rollback_deopts monitoring counter. */
         bool rollback;
 
+        /* S1b.3c (T2_OP_MAP_SHAPE_SPEC): a GetMapElement specialized to a
+         * profiled monomorphic flatmap shape. imm_term is the baked keys-
+         * tuple pointer (a compiled-module literal), imm is the key's fixed
+         * flatmap value index, and t1_pc_fail is the op's own T1 EFFECT
+         * site. The emitter guards is_boxed + FLATMAP subtag + keys ==
+         * imm_term and does an O(1) indexed load, side-exiting to T1 on any
+         * miss (read-only, dst written on success only — like GuardBif). */
+        bool map_shape_spec;
+
         /* CFG edges (block ids into T2LirFunction::blocks, or
          * T2_LIR_NO_BLOCK). Tests/compares/arith-with-fail-edge use
          * succ_else as the in-blob fail target and succ_then as the
@@ -623,7 +632,8 @@ namespace erts_t2 {
                   exp(nullptr), target(nullptr), t1_pc_fail(nullptr),
                   t1_pc_cont(nullptr), beam_idx(0), spec_callsite(false),
                   tail_site(false), raw_mask(0), raw_srcs(0), raw_dst(false),
-                  no_ovf(false), rollback(false), succ_then(T2_LIR_NO_BLOCK),
+                  no_ovf(false), rollback(false), map_shape_spec(false),
+                  succ_then(T2_LIR_NO_BLOCK),
                   succ_else(T2_LIR_NO_BLOCK), first_case(0), num_cases(0),
                   default_target(T2_LIR_NO_BLOCK), pool_first(0),
                   num_srcs_ext(0), first_bs_cmd(0), num_bs_cmds(0),

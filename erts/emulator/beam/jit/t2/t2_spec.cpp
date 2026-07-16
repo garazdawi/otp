@@ -133,6 +133,51 @@ namespace erts_t2 {
             return v;
         }
 
+        /* The unique Param that `v` resolves to through Copy nodes and
+         * loop Phis, or nullptr if it is not a single loop-invariant
+         * parameter. A loop-carried value that is threaded UNCHANGED (e.g.
+         * a struct read every iteration, r16(K,M,A)->...M... ) is a
+         * multi-input header Phi whose every operand chains back to the
+         * one entry Param; resolve_copies stops at that Phi (it only
+         * folds single-input phis), so the map-shape spec needs this
+         * stronger walk. DFS over Copy/Phi, breaking Phi cycles; every
+         * non-Copy/Phi leaf must be the SAME Param op. This is exact:
+         * if the entry Param is the only source, the value equals it on
+         * every path, so its entry-sampled shape holds every iteration. */
+        const T2Op *resolve_invariant_param(const T2Value *v) {
+            std::vector<const T2Value *> work;
+            std::unordered_set<const T2Op *> seen_phi;
+            const T2Op *param = nullptr;
+
+            work.push_back(v);
+            while (!work.empty()) {
+                const T2Value *cur = work.back();
+                work.pop_back();
+                const T2Op *d = cur->def;
+                if (d == nullptr) {
+                    return nullptr;
+                }
+                if (d->kind == T2OpKind::Copy) {
+                    work.push_back(d->operands[0]);
+                } else if (d->kind == T2OpKind::Phi) {
+                    if (seen_phi.insert(d).second) {
+                        for (uint16_t i = 0; i < d->num_operands; i++) {
+                            work.push_back(d->operands[i]);
+                        }
+                    }
+                } else if (d->kind == T2OpKind::Param) {
+                    if (param == nullptr) {
+                        param = d;
+                    } else if (param != d) {
+                        return nullptr;
+                    }
+                } else {
+                    return nullptr;
+                }
+            }
+            return param;
+        }
+
         struct Spec {
             T2Function &fn;
             const T2LoopInfo &li;
@@ -224,6 +269,51 @@ namespace erts_t2 {
                                               fn.fn_index,
                                               op->beam_idx,
                                               ERTS_T2_PC_EFFECT) != nullptr;
+            }
+
+            /* ---- map-shape specialization (S1b.3c) ------------------ */
+
+            /* Like boundary_available but WITHOUT the sync requirement: a
+             * shape-guarded GetMapElement deopts like a read-only GuardBif
+             * (X-homed map, the guard fires before any write), so it needs
+             * only an ERTS_T2_PC_EFFECT resume PC, no sync map. */
+            bool map_effect_available(const T2Op *op) {
+                if (op->beam_idx == 0 || ret == nullptr) {
+                    return false;
+                }
+                return erts_t2_pc_lookup_kind(ret, fn.fn_index, op->beam_idx,
+                                              ERTS_T2_PC_EFFECT) != nullptr;
+            }
+
+            /* Attach a profiled monomorphic flatmap shape to every
+             * GetMapElement whose map operand is a function parameter with
+             * a mono shape fact. isel validates the shape is a safe
+             * compiled-module literal, derives the key's fixed flatmap
+             * index, and lowers a shape guard + O(1) load; it drops back to
+             * the key scan if any of that fails, so this is a hint only
+             * (map_monomorphic_design.md S1b.3c). */
+            void specialize_map_shapes() {
+                for (T2BasicBlock *b : fn.blocks) {
+                    for (T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if (op->kind != T2OpKind::GetMapElement ||
+                            op->num_operands != 2 || op->result == nullptr) {
+                            continue;
+                        }
+                        const T2Op *pdef =
+                                resolve_invariant_param(op->operands[0]);
+                        if (pdef == nullptr) {
+                            continue;
+                        }
+                        Eterm shape = facts.map_shape_for_param(pdef->index);
+                        if (shape == THE_NON_VALUE || !map_effect_available(op)) {
+                            continue;
+                        }
+                        op->imm_term = shape;
+                        op->flags |= T2_OP_MAP_SHAPE_SPEC;
+                        changed = true;
+                    }
+                }
             }
 
             bool op_is_candidate_kind(const T2Op *op) {
@@ -695,6 +785,11 @@ namespace erts_t2 {
                     li.loops.empty()) {
                     return true;
                 }
+
+                /* Map-shape specialization is independent of the arithmetic
+                 * candidate machinery, so run it before the cands.empty()
+                 * early-out (a struct-reading loop has no Add/Sub cands). */
+                specialize_map_shapes();
 
                 compute_proven();
                 collect_candidates();

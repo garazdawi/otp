@@ -1672,6 +1672,45 @@ namespace erts_t2 {
 
             const Label &else_l = block_label(op.succ_else);
 
+            /* S1b.3c shape-guarded fast path: the isel proved op.imm_term
+             * is a safe compiled-module-literal keys tuple whose value at
+             * flatmap index op.imm is this op's key. Guard is_boxed +
+             * FLATMAP subtag + keys == that literal pointer; ANY miss
+             * side-exits to the op's own T1 EFFECT site (t1_pc_fail) so T1
+             * re-runs the real lookup — a hashmap or a differently-shaped
+             * flatmap may still hold the key, and only T1 resolves the
+             * found/not-found edges correctly. On a hit the value is a
+             * fixed-offset load (O(1), scan-free); the keys-pointer match
+             * implies the size, so no separate bound check is needed.
+             * Read-only, no GC, no trap; dst is written on success only. */
+            if (op.map_shape_spec) {
+                const Label &fl = rawLabels.at(fail_label_num(op.t1_pc_fail,
+                                                              op.t1_pc_cont,
+                                                              op.spec_callsite,
+                                                              op.raw_mask));
+                fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+                a64::Gp map = load_source(src_argval(op.srcs[0]), TMP1).reg;
+                comment("T2 get_map_element (shape-spec idx=%d)", (int)op.imm);
+                emit_is_boxed(resolve_label(fl, disp1MB), map);
+                emit_untag_ptr(TMP1, map);
+                a.ldr(TMP2, a64::Mem(TMP1, offsetof(flatmap_t, thing_word)));
+                a.and_(TMP2, TMP2, imm(_HEADER_MAP_SUBTAG_MASK));
+                a.cmp(TMP2, imm(HAMT_SUBTAG_HEAD_FLATMAP));
+                a.b_ne(resolve_label(fl, disp1MB));
+                a.ldr(TMP3, a64::Mem(TMP1, offsetof(flatmap_t, keys)));
+                mov_imm(TMP4, (Uint64)op.imm_term);
+                a.cmp(TMP3, TMP4);
+                a.b_ne(resolve_label(fl, disp1MB));
+                mov_arg(loc_argval(op.dst),
+                        a64::Mem(TMP1, sizeof(flatmap_t) +
+                                           sizeof(Eterm) * op.imm));
+                if (!failed()) {
+                    emit_goto(op.succ_then);
+                }
+                return;
+            }
+
             comment("T2 get_map_element");
             mov_arg(ARG1, src_argval(op.srcs[0]));
             mov_arg(ARG2, src_argval(op.srcs[1]));

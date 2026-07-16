@@ -761,7 +761,22 @@ namespace erts_t2 {
          * and ISel refuses a ROLLBACK Add the speculation pass did
          * not convert — a raw word must never reach the generic
          * gc_bif. */
-        T2_OP_ROLLBACK = 1 << 16
+        T2_OP_ROLLBACK = 1 << 16,
+        /* Monomorphic map-shape specialization (S1b.3c,
+         * map_monomorphic_design.md): this GetMapElement's map operand was
+         * profiled to a single flatmap shape (a compiled-module literal
+         * keys tuple, held in imm_term). The speculation pass sets the
+         * flag; isel validates the shape is a safe literal, derives the
+         * key's fixed flatmap index, and — like a read-only GuardBif —
+         * side-exits to the op's own ERTS_T2_PC_EFFECT PC (no BOUNDARY, no
+         * sync map, no window validation: the map is X-homed and the guard
+         * fires before any write). Emit lowers it to is_boxed + flatmap
+         * subtag + keys-pointer==imm_term guards and a constant-offset
+         * value load, deopting to T1 on any miss (which re-executes the
+         * whole get_map_elements). A hint only: isel drops it back to the
+         * generic key scan if the shape is unsafe or the PC is
+         * unavailable. Orthogonal to the deopt-class bits above. */
+        T2_OP_MAP_SHAPE_SPEC = 1 << 17
     };
 
     /* One arm of a `switch` terminator. */

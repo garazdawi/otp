@@ -165,6 +165,11 @@ namespace {
         unsigned switch_max_cases; /* widest Switch (T2 lowers linear;
                                     * T1 binary-searches)                 */
         unsigned spec_guards;      /* SpeculateSmall                       */
+        unsigned map_specs;        /* GetMapElement specialized to a
+                                    * profiled monomorphic flatmap shape
+                                    * (S1b.3c): the O(k) key scan replaced
+                                    * by an O(1) shape-guarded load — its
+                                    * own eliminated-work signal            */
         unsigned spills;           /* the placement allocator keeps every
                                     * value in an X/Y home, so it cannot
                                     * spill in the classic sense (verified
@@ -188,6 +193,7 @@ namespace {
         s->cursor_unroll = cursor_unroll;
         s->switch_max_cases = 0;
         s->spec_guards = 0;
+        s->map_specs = 0;
         s->spills = 0;
         s->blob_size = blob_size;
 
@@ -216,6 +222,11 @@ namespace {
                 case T2LirKind::BsGetTail:
                 case T2LirKind::BsTestTail:
                     s->bs_scan++;
+                    break;
+                case T2LirKind::GetMapElement:
+                    if (op.map_shape_spec) {
+                        s->map_specs++;
+                    }
                     break;
                 case T2LirKind::Switch:
                     if (op.num_cases > s->switch_max_cases) {
@@ -279,7 +290,8 @@ namespace {
         bool bs_unfused =
                 s.bs_scan >= 1 && s.scan_runs == 0 && s.cursor_unroll == 0;
         bool eliminated = s.calls_inlined >= 1 || s.fused_arith >= 2 ||
-                          s.scan_runs >= 1 || s.cursor_unroll >= 1;
+                          s.scan_runs >= 1 || s.cursor_unroll >= 1 ||
+                          s.map_specs >= 1;
         /* An un-fused per-byte bs loop is a *tax*, not merely a missing
          * win: it can trip the eliminated-work arm on the side (its
          * mutually-exclusive per-clause increments over-count fused_arith
@@ -1137,7 +1149,21 @@ extern "C" Eterm erts_t2_debug_install(Process *p,
                 ran = true;
                 std::string diag;
 
-                st = t2_compile_install_one(hir, ret, hdr, mi, &diag);
+                /* Thread the function's tier-up profile record (if any) so
+                 * profile-gated speculation — nonsmall withholding, the
+                 * S1b.3c map-shape spec — applies on the debug path exactly
+                 * as it does on the natural tier-up path (t2_build_selected
+                 * above). Without it the fact source sees no profile and the
+                 * map-shape spec silently no-ops. */
+                const ErtsT2Profile *rec =
+                        ret->profiles != NULL
+                                ? (const ErtsT2Profile
+                                           *)((const char *)ret->profiles +
+                                              (size_t)hir.fn_index *
+                                                      ERTS_T2_PROFILE_STRIDE)
+                                : nullptr;
+
+                st = t2_compile_install_one(hir, ret, hdr, mi, &diag, rec);
                 if (st != T2CompileStatus::Installed &&
                     getenv("T2_DEBUG") != NULL) {
                     erts_fprintf(stderr,

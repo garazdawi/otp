@@ -416,6 +416,61 @@ namespace erts_t2 {
                 return lop->t1_pc_cont != nullptr;
             }
 
+            /* S1b.3c: a GetMapElement flagged T2_OP_MAP_SHAPE_SPEC carries a
+             * profiled monomorphic keys-tuple pointer in op->imm_term. If it
+             * is a safe compiled-module literal whose tuple contains this
+             * op's (immediate) key, bake a shape guard + O(1) indexed load;
+             * otherwise leave the op generic (the scan fragment). Returns
+             * true iff the LIR op was specialized. Safety rests on the shape
+             * being a literal in THIS module's own literal area: the blob is
+             * jettisoned when the module is purged, so the baked pointer can
+             * never dangle (no cross-module dep needed — v1 scope). */
+            bool try_specialize_map_shape(const T2Op *op, T2LirOp *lop) {
+                if ((op->flags & T2_OP_MAP_SHAPE_SPEC) == 0) {
+                    return false;
+                }
+                /* Key must be an immediate constant so the compile-time
+                 * index scan and the runtime "no re-check needed" both
+                 * hold (a boxed key would need a term-deep compare). */
+                if (!lop->srcs[1].is_const || !is_immed(lop->srcs[1].term)) {
+                    return false;
+                }
+                Eterm shape = op->imm_term;
+                if (!is_tuple(shape)) {
+                    return false;
+                }
+                const ErtsLiteralArea *la = code_hdr()->literal_area;
+                if (la == nullptr) {
+                    return false;
+                }
+                const Eterm *tp = tuple_val(shape);
+                if (tp < la->start || tp >= la->end) {
+                    /* Not a literal in this module's area — a dynamically
+                     * built keys tuple (maps:from_list) or a cross-module
+                     * literal: no self-jettison guarantee, so stay generic. */
+                    return false;
+                }
+                Eterm key = lop->srcs[1].term;
+                Uint ar = arityval(*tp);
+                for (Uint i = 0; i < ar; i++) {
+                    if (tp[1 + i] == key) {
+                        const void *effect =
+                                pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
+                        if (effect == nullptr) {
+                            return false;
+                        }
+                        lop->map_shape_spec = true;
+                        lop->imm_term = shape;
+                        lop->imm = (Sint64)i;
+                        lop->t1_pc_fail = effect;
+                        return true;
+                    }
+                }
+                /* Key not in the profiled shape: the guard would always
+                 * mismatch, so specializing buys nothing — stay generic. */
+                return false;
+            }
+
             /* The function's own func_info: on aarch64 the ErtsCodeInfo's
              * first word is a valid `bl <i_func_info_shared>`, so branching
              * to it raises function_clause exactly as T1's guard fails do. */
@@ -1187,6 +1242,11 @@ namespace erts_t2 {
                          * constant map here is drift. */
                         return fail_op(op, "get_map_element of a constant");
                     }
+
+                    /* S1b.3c: bake a shape guard + O(1) load when the map
+                     * operand carries a profiled monomorphic literal shape;
+                     * a no-op (stays generic) when it does not qualify. */
+                    try_specialize_map_shape(op, &lop);
 
                     const T2Op *succ = op->next;
                     if (succ != nullptr && succ->kind == T2OpKind::Succeeded &&
