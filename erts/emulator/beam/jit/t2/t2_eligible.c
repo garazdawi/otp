@@ -30,7 +30,13 @@
  *
  * The supported-op table is the single source of truth shared with the
  * SSA builder (t2_hir_builder.cpp): the builder handles exactly the ops
- * accepted here, so bitmap and builder coverage cannot drift.
+ * accepted here, so bitmap and builder coverage cannot drift. The one
+ * deliberate exception is the handler-only raising ops (raise /
+ * raw_raise / build_stacktrace): the scan admits them but the builder has
+ * no translate case, so a *reachable* occurrence fail-closes the whole
+ * function (default arm) while a handler occurrence is dropped with its
+ * unreachable island before translation reaches it -- see the try/catch
+ * block below.
  *
  * Eligible (buildable) and standalone-installable are distinct: a few
  * supported ops exist only to be erased by the P1 caller
@@ -106,11 +112,28 @@ int erts_t2_genop_supported(int genop) {
      * try_case is admitted for the *scan* only — it lives solely in the
      * exception-handler block, which is unreachable in the tier-2 CFG and
      * dropped as an inert island, so the builder never translates it.
-     * (Bare `catch`/catch_end and raise/build_stacktrace stay
-     * unsupported — a later increment.) */
+     *
+     * raise / raw_raise / build_stacktrace are the handler-only raising
+     * ops (selective-catch re-raise; `catch C:R:Stk` stacktrace capture).
+     * Admitting them to the scan is what promotes a function whose *only*
+     * blocker is such an op in its (to-be-dropped) handler — the bulk of
+     * the remaining exceptions-only functions. The builder is the precise
+     * arbiter: it has NO translate case for these, so its default arm
+     * fail-closes. A reachable (non-handler) occurrence therefore fails
+     * the whole build and the function stays in T1; a handler occurrence
+     * is dropped with its unreachable island before translation reaches
+     * it. Soundness rides on the fail-closed default, never on the drop:
+     * a handler that failed to drop would surface its raise to the same
+     * default. (try_case_end stays unsupported — it is a normal-path op,
+     * a try-of clause mismatch, not a handler op, so admitting it would
+     * only build-then-reject every try-of function for no gain. Bare
+     * `catch`/catch_end likewise remain a later increment.) */
     case genop_try_2:
     case genop_try_end_1:
     case genop_try_case_1:
+    case genop_raise_2:
+    case genop_raw_raise_0:
+    case genop_build_stacktrace_0:
 
     /* Type tests and comparisons (guards). */
     case genop_is_integer_2:
