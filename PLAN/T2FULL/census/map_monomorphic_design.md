@@ -339,11 +339,26 @@ property, not an interning artifact.
     (BEAM_IDX_UNKNOWN → not specialized), same as the pre-existing gc_bif
     mismatches. emit ⊆ decode always, so no wrong-order-matching-count
     hazard.
-  - **3b — per-site shape profiler** (`beam_idx`-keyed, T1 capture hook at
-    `instr_map.cpp:436`) — next.
+  - **3b — map-shape profiler — DONE.** Pivoted from a per-site `beam_idx`
+    hook to sampling the keys-tuple pointer of a flatmap **entry argument**
+    on the existing cold trip path (`t2_sample_map`, single-slot like the
+    fun-target profiler). Rationale: the struct pattern reads a map passed
+    as an argument (`f(Struct) -> Struct.field`), so an entry-arg shape is
+    the shape the sites read; and the singular `i_get_map_element` T1
+    emitter uses a shared global fragment (no per-site `mp->keys` to hook),
+    which the entry-sampler sidesteps. `ErtsT2Profile.{map_shape,
+    map_shape_arg}` + `T2FactSource::map_shape_for_param(pidx)` (none/poly/
+    mono). Verified `{mono,1,KeysPtr}` == `map_keys_ptr(Map)` — but
+    **sampling is scheduler-1 only** (test with `+S 1`). Limitation: only
+    entry-arg maps are captured (locally-built/nested maps are not); a
+    per-site hook could widen this later.
   - **3c — shape-guarded codegen** wired to 3b's facts + gated on 3a's
     pctab; miss → `T2_OP_SPEC_BOUNDARY`/`ERTS_T2_PC_EFFECT` deopt. Replaces
-    the throwaway `T2_MAP_SPEC_IDX` probe.
+    the throwaway `T2_MAP_SPEC_IDX` probe. Approach: attach {shape, index,
+    deopt-PC} to the existing `GetMapElement` op (no new op *kinds* → no
+    enum shift); index derived at compile by scanning the baked (literal)
+    keys tuple; specialize only when the shape is a compiled-module literal
+    (v1, self-jettisoning) — cross-module literals + dep in a later pass.
   - **3d — validation** (byte-identical hit/miss/non-flatmap/boxed-key;
     `maps_SUITE`; deopt-storm self-disarm) + measure vs the S1b.1 ceiling.
 
