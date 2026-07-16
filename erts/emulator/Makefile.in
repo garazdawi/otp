@@ -280,7 +280,14 @@ else
 EMU_CC  = @EMU_CC@
 endif
 WFLAGS  = @WFLAGS@
-CFLAGS  = @STATIC_CFLAGS@ $(TYPE_FLAGS) $(FLAVOR_FLAGS) $(DEFS) $(WFLAGS) $(THR_DEFS) $(ARCHCFLAGS) $(GIT_VSN)
+# GIT_VSN (-DERLANG_GIT_VERSION=...) is deliberately NOT in the common
+# flags: erl_bif_info.c is the only translation unit that uses the macro, so
+# it is added back for that one object below. Keeping the changing git sha
+# off every other command line means a new commit does not invalidate the
+# asmjit precompiled header (which would otherwise fail to rebuild on the
+# GNU make 3.81 shipped with macOS and error with "macro 'ERLANG_GIT_VERSION'
+# differs between the precompiled file and the command line").
+CFLAGS  = @STATIC_CFLAGS@ $(TYPE_FLAGS) $(FLAVOR_FLAGS) $(DEFS) $(WFLAGS) $(THR_DEFS) $(ARCHCFLAGS)
 ifeq ($(FLAVOR),jit)
 CFLAGS  += -DBEAMASM=1
 ENABLE_ALLOC_TYPE_VARS += beamasm
@@ -943,6 +950,23 @@ endif
 $(OBJDIR)/%.o: beam/%.c
 	$(V_CC) $(subst $(space)-O2$(space), $(GEN_OPT_FLGS) , $(CFLAGS)) $(INCLUDES) -c $< -o $@
 
+# erl_bif_info.c is the only source that references ERLANG_GIT_VERSION, so
+# the git sha is added here rather than to the common CFLAGS (see above). A
+# sha change touches erl_bif_info.c (gen_git_version.mk rule) which rebuilds
+# just this object, leaving the precompiled header untouched. NB: an explicit
+# target, not a pattern-specific variable -- those are a GNU make 3.82
+# feature and macOS ships 3.81.
+#
+# The sha is recomputed HERE, at recipe time, rather than taken from the
+# parse-time $(GIT_VSN) that gen_git_version.mk exports: on a new commit that
+# .mk is rewritten during the makefile-remaking phase, but GNU make 3.81
+# (macOS) does not restart to re-read it, so $(GIT_VSN) would still hold the
+# PREVIOUS commit's sha and this object would be built one commit behind.
+# Reading it via $(shell) when the recipe runs always yields the current sha.
+# Keep the extraction in sync with utils/gen_git_version.
+ERLANG_GIT_SHA = $(shell cd $(ERL_TOP) 2>/dev/null && git describe --match "OTP-[0-9]*" HEAD 2>/dev/null | sed -n 's/.*-g\(.*\)/\1/p')
+$(OBJDIR)/erl_bif_info.o: CFLAGS += $(if $(ERLANG_GIT_SHA),-DERLANG_GIT_VERSION='"$(ERLANG_GIT_SHA)"')
+
 $(OBJDIR)/%.o: beam/emu/%.c
 	$(V_CC) $(subst $(space)-O2$(space), $(GEN_OPT_FLGS) , $(CFLAGS)) $(INCLUDES) -c $< -o $@
 
@@ -1013,9 +1037,10 @@ $(OBJDIR)/asmjit/%.o: asmjit/%.cpp $(ASMJIT_PCH_OBJ) $(dir $@)
           $(subst $(space)-O2$(space), $(GEN_OPT_FLGS) , $(ASMJIT_CXXFLAGS))  \
           -x c++-header -include $(ASMJIT_PCH_SRC) -x c++ -c $< -o $@
 
-## The dependency on erl_bif_info.c is in order to trigger a rebuild when
-## the git sha define on the command line argument changes
-$(ASMJIT_PCH_OBJ): $(ASMJIT_PCH_SRC) $(ASMJIT_TTF_H) beam/erl_bif_info.c
+## No dependency on the git sha here: ERLANG_GIT_VERSION is kept out of
+## CXXFLAGS (added only to erl_bif_info.o above), so a new commit does not
+## change this command line and the precompiled header stays valid.
+$(ASMJIT_PCH_OBJ): $(ASMJIT_PCH_SRC) $(ASMJIT_TTF_H)
 	$(V_CXX) $(ASMJIT_FLAGS) $(INCLUDES)                                  \
           $(subst $(space)-O2$(space), $(GEN_OPT_FLGS) , $(CXXFLAGS))         \
           -I$(TTF_DIR) -x c++-header -c $< -o $@
