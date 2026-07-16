@@ -335,6 +335,18 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
         }
     }
 
+    /* (0.5) The blob must not depend on more foreign modules than the
+     * fixed dep_hdrs array can hold. A transitively-inlined wrapper chain
+     * (t2_intrinsics.cpp, P1c) can in principle bake addresses from more
+     * distinct modules than ERTS_T2_MAX_DEP_HDRS; recording only a prefix
+     * would leave the un-recorded dependencies unable to jettison the blob
+     * when they are reloaded/traced/purged, so a baked T1 address could
+     * dangle. Refuse the install (the function stays on T1) rather than
+     * track the deps incompletely. */
+    if (dep_count > ERTS_T2_MAX_DEP_HDRS) {
+        return ERTS_T2_INSTALL_REJECTED_STATE;
+    }
+
     /* (2) No breakpoint/NIF flag; (4) not trace-patterned (a staged
      * GenericBp exists before the flag is set; both writers hold the
      * same permission, but check defensively against missed
@@ -407,8 +419,8 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
     {
         Uint32 d;
 
-        ASSERT(dep_count <= 2);
-        for (d = 0; d < dep_count && d < 2; d++) {
+        ASSERT(dep_count <= ERTS_T2_MAX_DEP_HDRS);
+        for (d = 0; d < dep_count && d < ERTS_T2_MAX_DEP_HDRS; d++) {
             inst->dep_hdrs[d] = dep_hdrs[d];
             inst->dep_count++;
         }

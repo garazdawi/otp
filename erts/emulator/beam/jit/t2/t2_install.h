@@ -72,6 +72,17 @@
 
 struct erl_module_instance;
 
+/* Capacity of ErtsT2Install.dep_hdrs (cross-module dependency headers).
+ * The original single-helper model needed 2 (one demoted lists helper +
+ * the blob's own instance header). The P1c transitive wrapper inliner
+ * (t2_intrinsics.cpp) can bake addresses from a chain of up to
+ * T2_P1_MAX_DEPTH distinct foreign modules plus the own header, so the
+ * array must be large enough for the deepest chain; erts_t2_install
+ * REJECTS any blob whose dep_count exceeds this (degrades to T1) rather
+ * than silently dropping deps — a dropped dep would leave a stale baked
+ * T1 address reachable after that module is reloaded/purged. */
+#define ERTS_T2_MAX_DEP_HDRS 8
+
 /* One installed tier-2 blob. Linked into the owning module instance's
  * t2_installs list; all fields are protected by code modification
  * permission. */
@@ -100,11 +111,11 @@ typedef struct ErtsT2Install {
 
     /* Cross-module dependencies (P2 commit 8): the BeamCodeHeaders of
      * OTHER module instances whose T1 addresses are baked into the
-     * blob (the lists helper an intrinsic demotes to) plus the blob's
-     * own instance header when it inlined a fun body (trace on the fun
-     * implementation must kill the blob). erts_t2_jettison_deps scans
-     * these. */
-    const void *dep_hdrs[2];
+     * blob (the lists helper an intrinsic demotes to, or every module in
+     * a transitively-inlined wrapper chain) plus the blob's own instance
+     * header when it inlined a fun body (trace on the fun implementation
+     * must kill the blob). erts_t2_jettison_deps scans these. */
+    const void *dep_hdrs[ERTS_T2_MAX_DEP_HDRS];
     Uint32 dep_count;
 } ErtsT2Install;
 
