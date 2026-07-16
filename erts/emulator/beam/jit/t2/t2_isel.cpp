@@ -2149,6 +2149,11 @@ namespace erts_t2 {
                                            "no ERROR pctab entry for the "
                                            "error exit");
                         }
+                        /* Carry the frame-materializing sync map (builder
+                         * attaches it when a real frame is live) so the
+                         * allocator pins every Y slot to its home before the
+                         * branch into T1's raise path. */
+                        lop.sync = t->sync;
                         b.ops.push_back(lop);
                         return true;
                     }

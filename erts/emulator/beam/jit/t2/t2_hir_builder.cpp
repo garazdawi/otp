@@ -1204,14 +1204,30 @@ namespace erts_t2 {
 
                 /* A decoded error op (badmatch/case_end/if_end): P1 lowers
                  * it to a side exit to the op's own T1 PC, which re-reads
-                 * the source operand from its decoded register and raises.
-                 * No sync map: error labels are frame-polymorphic (one
-                 * raise label is reached from guard fails at differing
-                 * frame depths — see FRAME_CONFLICT), and the raise
-                 * consumes no mapped state; the boundary state is
-                 * established by the predecessors under full sync, exactly
-                 * as in T1. */
+                 * the source operand from its decoded register and raises. */
                 op->flags |= T2_OP_ERR_EXIT_OP;
+
+                /* Materialize the T1 frame at this side-exit boundary. The
+                 * exit branches into T1's raise path, and that path (plus any
+                 * GC or, under a live `try`, exception handler it reaches)
+                 * reads the WHOLE Y-frame per T1's ABI -- including slots
+                 * init_yregs left as NIL. Those const_nil slot values are
+                 * dead from T2's own view (never read on the raising path),
+                 * so unless a sync map names them the sync-everything
+                 * allocator never pins them to their Y homes and the stack
+                 * word stays garbage -- a SIGBUS when T1 walks the frame
+                 * (e.g. erl_error:is_op/2's y0 on the badmatch path). Naming
+                 * the frame in a sync map here pins every slot to its home.
+                 * The X registers are already in their homes (the preceding
+                 * op boundary pinned them and the raise re-reads its source
+                 * from an X home), so a frame-only sync (x_live = 0)
+                 * suffices. Only meaningful with a real live frame: a
+                 * frameless (cur_frame == T2_NO_FRAME) or frame-polymorphic
+                 * (FRAME_CONFLICT) error exit has no fixed Y frame to lose,
+                 * and snapshot_sync would reject the latter. */
+                if (cur_frame > 0) {
+                    op->sync = snapshot_sync(0);
+                }
 
                 end_block();
             }
