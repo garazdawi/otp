@@ -1,5 +1,13 @@
 # T2 eligibility-widening — cheap high-coverage frontend wins
 
+> **STATUS (2026-07-16): this is the pre-implementation recon. For what
+> actually landed and current coverage, see
+> [`../21_eligibility_exceptions_status.md`](../21_eligibility_exceptions_status.md).**
+> WIN 1 (maps is_map/get_map_elements) + WIN 4 (badrecord) landed; the
+> mandate's bs-position/maps/exceptions legs are done. WIN 2 (call_fun
+> standalone) and WIN 3 (guard-BIF subset) remain; bs_position was NOT
+> deferred after all (byte-aligned scan + cursor-IV landed).
+
 Recon (opus, read-only) against the S0 census + `t2_eligible.c`/`t2_hir_builder.cpp`/
 `t2_isel.cpp`/`t2_emit.cpp`. Goal (the mandate's step 5): the lowest-effort changes
 that make T2 ELIGIBLE on the most additional real Erlang/Elixir functions. Widening
