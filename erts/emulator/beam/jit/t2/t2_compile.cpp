@@ -339,6 +339,15 @@ namespace {
             return 0;
         }
 
+        Eterm map_shape_for_param(uint32_t pidx) const override {
+            if (rec != nullptr && rec->map_shape != (Eterm)0 &&
+                rec->map_shape != ERTS_T2_MAP_SHAPE_POLY &&
+                rec->map_shape_arg == pidx) {
+                return rec->map_shape;
+            }
+            return THE_NON_VALUE;
+        }
+
     private:
         T2DefaultFactSource dflt;
         const ErtsT2Profile *rec;

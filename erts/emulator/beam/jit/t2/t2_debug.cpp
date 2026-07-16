@@ -725,12 +725,26 @@ extern "C" Eterm erts_t2_debug_profile(Process *p, Eterm mod) {
                 fun_info = erts_bld_tuple(hpp, szp, 3, Atoms::intern("mono"),
                                           fa, ff);
             }
+            /* S1b.3b map-shape sampling: none | poly | {mono, Arg, Ptr},
+             * where Ptr is the tagged keys-tuple pointer as an integer
+             * (comparable to {map_keys_ptr, Map}). */
+            Eterm mshape;
+            if (rec->map_shape == (Eterm)0) {
+                mshape = Atoms::intern("none");
+            } else if (rec->map_shape == ERTS_T2_MAP_SHAPE_POLY) {
+                mshape = Atoms::intern("poly");
+            } else {
+                Eterm sa = erts_bld_uint(hpp, szp, rec->map_shape_arg);
+                Eterm sp = erts_bld_uword(hpp, szp, (UWord)rec->map_shape);
+                mshape = erts_bld_tuple(hpp, szp, 3, Atoms::intern("mono"),
+                                        sa, sp);
+            }
             fnix = erts_bld_uint(hpp, szp, rec->fn_index);
             art = erts_bld_uint(hpp, szp, rec->arity);
             cnt = erts_bld_uint(hpp, szp, rec->count);
             ns = erts_bld_uint(hpp, szp, rec->nonsmall);
-            tup = erts_bld_tuple(hpp, szp, 6, fnix, art, cnt, ns, types,
-                                 fun_info);
+            tup = erts_bld_tuple(hpp, szp, 7, fnix, art, cnt, ns, types,
+                                 fun_info, mshape);
             list = erts_bld_cons(hpp, szp, tup, list);
         }
 

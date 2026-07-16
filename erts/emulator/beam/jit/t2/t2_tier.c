@@ -239,6 +239,25 @@ static ERTS_INLINE void t2_sample_fun(ErtsT2Profile *p, Uint32 arg, Eterm t) {
     }
 }
 
+/* Monomorphic map-shape sampling (S1b.3b, map_monomorphic_design.md):
+ * record the tagged keys-tuple pointer of a flatmap entry argument,
+ * single-slot like the fun target above. The first flatmap shape seen
+ * wins the slot; a second distinct shape in that same argument marks it
+ * POLY; flatmaps in other argument positions are ignored. The specializer
+ * bakes a monomorphic shape as an O(1) guard replacing the key scan (a
+ * wrong guess deopts, never a wrong result). */
+static ERTS_INLINE void t2_sample_map(ErtsT2Profile *p, Uint32 arg, Eterm t) {
+    Eterm keys = ((flatmap_t *) flatmap_val(t))->keys;
+
+    if (p->map_shape == (Eterm)0) {
+        p->map_shape = keys;
+        p->map_shape_arg = arg;
+    } else if (p->map_shape != ERTS_T2_MAP_SHAPE_POLY &&
+               arg == p->map_shape_arg && p->map_shape != keys) {
+        p->map_shape = ERTS_T2_MAP_SHAPE_POLY;
+    }
+}
+
 /* Continuous-sampling measurement mode (#2a), gated by the same
  * T2_PROFILE_BUILDABLE flag that arms buildable loops: never tier up,
  * just keep recording the type/target samples. Cached (the flag is
@@ -287,6 +306,8 @@ void erts_t2_profile_trip(ErtsT2Profile *p,
         p->seen_types[i] |= tb;
         if (tb == ERTS_T2_TY_FUN) {
             t2_sample_fun(p, i, args[i]);
+        } else if (tb == ERTS_T2_TY_MAP_FLAT) {
+            t2_sample_map(p, i, args[i]);
         }
     }
     p->nonsmall |= mask;

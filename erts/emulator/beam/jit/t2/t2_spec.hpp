@@ -99,6 +99,18 @@ namespace erts_t2 {
             (void)idx;
             return 0;
         }
+
+        /* The tagged keys-tuple pointer (mp->keys) of the monomorphic
+         * flatmap shape observed in entry argument `pidx`, or THE_NON_VALUE
+         * when there is no monomorphic evidence for that argument (unseen,
+         * polymorphic, a different argument, or the profile-less default).
+         * The map-shape specializer bakes it as an O(1) shape guard
+         * replacing the key scan (map_monomorphic_design.md S1b.3); a wrong
+         * shape deopts, so this is a hint, never a correctness input. */
+        virtual Eterm map_shape_for_param(uint32_t pidx) const {
+            (void)pidx;
+            return THE_NON_VALUE;
+        }
     };
 
     /* Profile-less default: speculate on every entry argument whose

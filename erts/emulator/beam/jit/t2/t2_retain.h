@@ -453,6 +453,21 @@ typedef struct ErtsT2Profile {
     const void *seen_fun;
     Uint32 fun_arg;
     Uint32 fun_flags;
+
+    /* Monomorphic map-shape profiling (PLAN/T2FULL/census/
+     * map_monomorphic_design.md S1b.3b). The tagged keys-tuple pointer
+     * (mp->keys) of a flatmap observed in entry argument map_shape_arg,
+     * sampled on the cold trip path alongside seen_types/seen_fun (no hot
+     * tax). The struct-access pattern reads a map passed as an argument
+     * (f(Struct) -> Struct.field), so an entry-arg shape is the shape the
+     * function's get_map_elements sites read. 0 = none seen; a real
+     * tagged pointer = monomorphic so far; ERTS_T2_MAP_SHAPE_POLY = a
+     * second distinct shape was seen on that arg (do not specialize). The
+     * specializer bakes it as an O(1) shape guard replacing the key scan;
+     * a wrong shape merely deopts, so this is a hint, never correctness.
+     * In the second cache line (no false-sharing with count/threshold). */
+    Eterm map_shape;
+    Uint32 map_shape_arg;
 } ErtsT2Profile;
 
 /* seen_fun sentinel: a second distinct fun was observed, so the call is
@@ -463,6 +478,12 @@ typedef struct ErtsT2Profile {
 /* fun_flags bits: which env kinds have been observed for the fun arg. */
 #define ERTS_T2_FUNF_ENVFREE (1u << 0) /* a num_free==0 fun (inlinable) */
 #define ERTS_T2_FUNF_CLOSURE (1u << 1) /* a fun carrying an environment */
+
+/* map_shape sentinel: a second distinct flatmap shape was seen on the
+ * sampled arg, so the site is shape-polymorphic. Eterm value 1 is a
+ * LIST-tagged pointer to address 0 — never a real boxed keys tuple, so it
+ * can never collide with a genuine shape. (0 stays "none observed".) */
+#define ERTS_T2_MAP_SHAPE_POLY ((Eterm)(UWord)1)
 
 /* Two cache lines per record: scheduler-1's stores never share a line
  * with a neighbouring function's record. Widened from one line to hold
