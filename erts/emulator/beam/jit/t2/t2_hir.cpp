@@ -2861,6 +2861,14 @@ namespace erts_t2 {
             snprintf(buf, sizeof(buf), " !retag=0x%x", op->raw_mask);
             out += buf;
         }
+        if (op->flags & T2_OP_MAP_SHAPE_SPEC) {
+            /* S1b.3c: the profiled monomorphic keys tuple baked into this
+             * GetMapElement (imm_term). Printing the term shows the shape
+             * as {k1,k2,...}, so a specialized read is legible in the HIR
+             * without disassembling. */
+            erts_snprintf(buf, sizeof(buf), " !map_shape=%T", op->imm_term);
+            out += buf;
+        }
 
         out += "\n";
     }

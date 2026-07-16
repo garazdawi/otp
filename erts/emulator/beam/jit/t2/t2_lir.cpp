@@ -364,6 +364,14 @@ namespace erts_t2 {
                 if (op.no_ovf) {
                     os << " [no_ovf]";
                 }
+                if (op.map_shape_spec) {
+                    /* S1b.3c: shape-guarded get_map_element. imm_term is the
+                     * baked keys-tuple pointer, imm the key's fixed flatmap
+                     * value index — the two constants the emitter guards and
+                     * loads, so a specialized read is legible in the LIR. */
+                    os << " [map_shape=0x" << std::hex << (UWord)op.imm_term
+                       << std::dec << " idx=" << op.imm << "]";
+                }
                 os << "\n";
             }
         }
