@@ -904,6 +904,11 @@ namespace erts_t2 {
                 op->operands = nullptr;
                 op->operand_regs = nullptr;
                 op->sync = nullptr;
+                /* Dropping the sync map must also drop the raw re-tag mask
+                 * that named it (check_sync_map rejects "raw_mask without a
+                 * sync map"): a folded constant has no deopt, so there is
+                 * nothing to re-tag. */
+                op->raw_mask = 0;
                 op->flags &= (uint16_t)~(
                         T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
                         T2_OP_SPEC_ENTRY | T2_OP_WINDOW_CALLEE | T2_OP_NO_OVF);
@@ -988,6 +993,8 @@ namespace erts_t2 {
                             op->operands = nullptr;
                             op->operand_regs = nullptr;
                             op->sync = nullptr;
+                            /* See fold_to_const: no sync map -> no raw mask. */
+                            op->raw_mask = 0;
                             op->flags &= (uint16_t)~(
                                     T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
                                     T2_OP_SPEC_ENTRY | T2_OP_WINDOW_CALLEE |
