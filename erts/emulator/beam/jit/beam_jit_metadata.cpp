@@ -597,3 +597,25 @@ void beamasm_unregister_metadata(void *metadata) {
     beamasm_delete_gdb_info(metadata);
 #endif
 }
+
+/* Name a single tier-2 blob for `perf` (and jitdump). Unlike the T1
+ * path there is no gdb metadata and no unregister: the perf .map is
+ * append-only, so a jettisoned blob simply leaves a stale line (perf
+ * uses the last matching entry, so a later blob reusing the span wins).
+ * Self-gates on the perf modes, so callers need not check +JPperf. */
+extern "C" void beamasm_t2_register_perf(const char *name,
+                                         const void *base,
+                                         size_t size) {
+#ifdef HAVE_LINUX_PERF_SUPPORT
+    std::vector<AsmRange> ranges;
+
+    ranges.push_back({.start = (ErtsCodePtr)base,
+                      .stop = (ErtsCodePtr)((const char *)base + size),
+                      .name = std::string(name)});
+    perf.update(ranges);
+#else
+    (void)name;
+    (void)base;
+    (void)size;
+#endif
+}

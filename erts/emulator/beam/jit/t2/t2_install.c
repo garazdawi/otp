@@ -505,6 +505,23 @@ ErtsT2InstallResult erts_t2_install(struct erl_module_instance *mi,
         erts_t2_free_spans_after_barrier(NULL, 0, NULL, 0);
     }
 
+    /* Name the blob for `perf` so tier-2 samples resolve to
+     * "$T2:Module:Function/Arity" instead of a bare address. A T2 blob
+     * lives in its own allocator span, outside the T1 module range that
+     * beamasm registers, so it needs its own entry. No-op unless
+     * +JPperf is active. */
+    {
+        char t2_perf_name[256];
+
+        erts_snprintf(t2_perf_name,
+                      sizeof(t2_perf_name),
+                      "T2:%T:%T/%u",
+                      inst->mfa.module,
+                      inst->mfa.function,
+                      (unsigned)inst->mfa.arity);
+        beamasm_t2_register_perf(t2_perf_name, blob_base, blob_size);
+    }
+
     return ERTS_T2_INSTALL_OK;
 }
 

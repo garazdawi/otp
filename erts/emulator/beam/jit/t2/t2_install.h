@@ -228,4 +228,12 @@ Eterm erts_t2_debug_opt_stats(Process *p);
 int beamasm_t2_jit_alloc(void **rx, void **rw, size_t size);
 void beamasm_t2_jit_release(void *rx);
 
+/* beam_jit_metadata.cpp: name a tier-2 blob's [base, base+size) range
+ * for `perf` (both the perf-<pid>.map symbol map and the jit-<pid>.dump
+ * jitdump, per the active +JPperf modes) so samples inside the blob
+ * resolve to "$T2:Module:Function/Arity". No-op unless +JPperf is on. */
+void beamasm_t2_register_perf(const char *name,
+                              const void *base,
+                              size_t size);
+
 #endif /* ERL_T2_INSTALL_H__ */
