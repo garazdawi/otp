@@ -730,6 +730,21 @@ void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
      * t2_pctab.c. */
     case op_i_bs_get_utf8_Sfd:
     case op_i_bs_skip_utf8_Sf:
+    /* Map-read sites (S1b.3, the shape-speculation side exit): a
+     * monomorphic get_map_element whose baked keys-pointer guard fails
+     * side-exits here and T1 re-executes the whole get_map_elements
+     * (idempotent reads). The generic get_map_elements is retained as
+     * genop_get_map_elements_3 for ANY pair count (the builder consumes
+     * only that genop; single-key reads reach it there too), and lowers
+     * 1:1 to exactly one specific op: i_get_map_elements (>= 2 pairs), or
+     * i_get_map_element / i_get_map_element_hash (1 pair, immediate vs
+     * hashed key). The eligibility scan admits only register-source
+     * reads, so no `move` prefix precedes the recorded op — `before` is
+     * the correct resume PC. Decode-side mirror: genop_get_map_elements_3
+     * in pctab_is_effect (t2_pctab.c). */
+    case op_i_get_map_elements_fsI:
+    case op_i_get_map_element_fSSS:
+    case op_i_get_map_element_hash_fScWS:
         t2_pc_record(before, ERTS_T2_PC_EFFECT);
         break;
 

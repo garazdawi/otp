@@ -174,6 +174,23 @@ static int pctab_is_effect(int op) {
     case genop_gc_bif2_6:
     case genop_gc_bif3_7:
         return 1;
+    /* Map-read sites (S1b.3): decode-side mirror of the three
+     * i_get_map_element* EFFECT records (beam_asm_module.cpp). The
+     * generic get_map_elements is retained pre-transform (single-key
+     * reads reach the builder as genop_get_map_elements_3 too), so a LIVE
+     * read zips 1:1 with the one specific op T1 emits. This decode walk
+     * counts raw genops (pre-DCE), while emit reflects post-DCE code, so
+     * a DEAD get_map_elements (e.g. an unreachable read the loader elides
+     * — seen in unicode_util:compose/1) is counted here but not emitted:
+     * decode >= emit. That surplus only trips the count-inexact fail-safe
+     * (the whole function's effect PCs become BEAM_IDX_UNKNOWN, so it
+     * simply is not specialized), exactly as the pre-existing gc_bif
+     * effect mismatches do. emit is always a subset of decode (every
+     * emitted op survived DCE and is in the raw stream), so an emit-only
+     * surplus — the only way a matching count could hide a wrong-order
+     * zip — cannot occur. */
+    case genop_get_map_elements_3:
+        return 1;
     default:
         return 0;
     }
