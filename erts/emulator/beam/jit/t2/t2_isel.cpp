@@ -436,7 +436,19 @@ namespace erts_t2 {
                     return false;
                 }
                 Eterm shape = op->imm_term;
-                if (!is_tuple(shape)) {
+                /* op->imm_term is a raw keys-tuple pointer the profiler
+                 * sampled from a flatmap argument (t2_tier.c). It is NOT a GC
+                 * root and is never invalidated, so a shape sampled from a
+                 * PROCESS-HEAP map (maps:from_list, a threaded loop map) can be
+                 * stale by the time this asynchronous tier compile runs — the
+                 * owning process may have GC'd the tuple to a new address or
+                 * exited and released the carrier. Validate the pointer lies in
+                 * THIS module's literal area BEFORE dereferencing it: the tag
+                 * test and the range check touch only the pointer bits (no
+                 * load), and a literal-area pointer is stable for the blob's
+                 * lifetime, so the header/arity reads below are then safe. A
+                 * stale or foreign pointer is rejected here, never read. */
+                if (!is_boxed(shape)) {
                     return false;
                 }
                 const ErtsLiteralArea *la = code_hdr()->literal_area;
@@ -446,8 +458,17 @@ namespace erts_t2 {
                 const Eterm *tp = tuple_val(shape);
                 if (tp < la->start || tp >= la->end) {
                     /* Not a literal in this module's area — a dynamically
-                     * built keys tuple (maps:from_list) or a cross-module
-                     * literal: no self-jettison guarantee, so stay generic. */
+                     * built keys tuple (maps:from_list), a cross-module
+                     * literal, or a stale pointer whose map has since moved or
+                     * been freed: no self-jettison guarantee (and possibly
+                     * dangling), so stay generic. */
+                    return false;
+                }
+                /* tp is inside the live literal blob — safe to load now.
+                 * Confirm it really is a tuple (the literal at that address
+                 * could be a float/bignum if the pointer is stale but happens
+                 * to land in range). */
+                if (!is_arity_value(*tp)) {
                     return false;
                 }
                 Eterm key = lop->srcs[1].term;
