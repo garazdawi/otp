@@ -725,6 +725,18 @@ contradict) the static type chunk, and an observed monomorphic flatmap shape is
 what enables the map-shape specialization. Only the counter path exercises
 profile-driven codegen — the compile-at-load path is profile-less.
 
+**Caller-directed tier-up.** A counter only arms loop-shaped functions, so a hot
+loop that *calls* a fold- or inline-eligible helper trips on the (cold, non-loop)
+helper — never on the caller that holds the call site, which is where the
+fold-inline and intrinsic transforms actually fire. To close that gap, when a
+loop-shaped callee trips, the trip handler also resolves its immediate caller
+from the frame CP (`c_p->stop[0]`, the return address on the aarch64 one-word
+frame) and enqueues that caller for compilation, in addition to the callee. It is
+best-effort — an unresolved, non-retained, self-recursive, or already-installed
+caller is skipped — and adds nothing to the hot T1 emit: only the cold trip
+fragment (which now syncs the stack so the CP is readable) and the handler
+change. Default on; `T2_NO_CALLER_TIERUP` disables it.
+
 ## Eligibility: what T2 compiles
 
 A function is eligible **iff every generic BEAM op in its body is in the
@@ -817,11 +829,6 @@ next steps rather than dismissed ideas.
   per-site / nested / cross-module shapes. The only lever with landed codegen and
   a measured 1.4–3.2× win, but concentrated on Elixir-struct-shaped code that the
   current corpus underrepresents.
-* **Caller-directed tier-up** — compiling the dominant *caller* rather than the
-  cold callee, so the landed inlining/fold wins actually fire under natural
-  tier-up. A fun-target sampler exists but has no codegen consumer yet. Several
-  shelved items (the ok-tuple fusion above, cross-function inlining) become
-  reachable only once this exists.
 * **The bs-ASCII/utf8 scan residue** — finishing the fused-scan frontier for the
   cases that currently fall out of the wide-load fast path.
 
