@@ -1312,7 +1312,24 @@ namespace erts_t2 {
                         if (op_reads_entry_vector(op)) {
                             /* Pin the fresh-call vector X0..arity-1 the
                              * window deopt re-executes from — the relaxation
-                             * must not borrow any of those Xk homes. */
+                             * must not borrow any of those Xk homes.
+                             *
+                             * This bans the ENCLOSING function arity, whereas
+                             * the window validator's clean-prefix rule protects
+                             * the CALLEE arity (arity_eff = op->live) for an
+                             * intrinsic-loop window whose latch ReductionCheck
+                             * carries T2_OP_RC_CALLEE (t2_loop.cpp). The two
+                             * differ only when a spliced (T2_OP_INLINED) spec
+                             * op sits in a callee window whose arity exceeds
+                             * the enclosing arity, leaving X[arity..callee-1]
+                             * (capped at T2_PHYS_POOL) unbanned here. That
+                             * delta is safe by construction: those slots hold
+                             * the freshly-materialized callee-call args, which
+                             * are live and used at the window's guard/demote
+                             * barriers, so the interference scan already bans
+                             * them. If that invariant is ever weakened, ban
+                             * min(callee_arity, T2_PHYS_POOL) for callee-window
+                             * ops instead of lir.arity. */
                             for (uint32_t k = 0;
                                  k < lir.arity && k < T2_PHYS_POOL;
                                  k++) {
