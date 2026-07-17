@@ -365,7 +365,8 @@ namespace erts_t2 {
             }
 
             void specialize_entry_types() {
-                if (getenv("T2_NO_ENTRY_TYPE") != nullptr || fn.blocks.empty()) {
+                if (getenv("T2_NO_ENTRY_TYPE") != nullptr ||
+                    fn.blocks.empty()) {
                     return;
                 }
 

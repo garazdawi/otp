@@ -6143,7 +6143,8 @@ namespace erts_t2 {
                                         cv->def->dst_reg = t2_xreg((uint32_t)j);
                                         cv->def->flags = T2_OP_INLINED;
                                         cv->def->beam_idx = call->beam_idx;
-                                        cv->def->deopt_beam_idx = call->beam_idx;
+                                        cv->def->deopt_beam_idx =
+                                                call->beam_idx;
                                         xs[j] = cv;
                                     }
                                 }

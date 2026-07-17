@@ -414,7 +414,8 @@ namespace erts_t2 {
                 if (!need) {
                     return true;
                 }
-                lop->t1_pc_cont = pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CONT);
+                lop->t1_pc_cont =
+                        pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CONT);
                 return lop->t1_pc_cont != nullptr;
             }
 
@@ -477,8 +478,8 @@ namespace erts_t2 {
                 Uint ar = arityval(*tp);
                 for (Uint i = 0; i < ar; i++) {
                     if (tp[1 + i] == key) {
-                        const void *effect =
-                                pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_EFFECT);
+                        const void *effect = pc_lookup(op->deopt_beam_idx,
+                                                       ERTS_T2_PC_EFFECT);
                         if (effect == nullptr) {
                             return false;
                         }
@@ -734,8 +735,8 @@ namespace erts_t2 {
                                        "succeeded not consumed by the block "
                                        "branch");
                     } else {
-                        lop.t1_pc_fail =
-                                pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_EFFECT);
+                        lop.t1_pc_fail = pc_lookup(op->deopt_beam_idx,
+                                                   ERTS_T2_PC_EFFECT);
                         if (lop.t1_pc_fail == nullptr) {
                             return fail_op(op,
                                            "no EFFECT pctab entry for arith "
@@ -1214,7 +1215,8 @@ namespace erts_t2 {
                      * callee returns into T1; the rest of the invocation
                      * runs T1 (demote-on-return). A light-BIF site needs
                      * the same address for its trap/trace CP. */
-                    lop.t1_pc_cont = pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CONT);
+                    lop.t1_pc_cont =
+                            pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CONT);
                     if (lop.t1_pc_cont == nullptr) {
                         return fail_op(op,
                                        "no CONT pctab entry for the call's "
@@ -1362,8 +1364,8 @@ namespace erts_t2 {
                                        "succeeded not consumed by the block "
                                        "branch");
                     } else {
-                        lop.t1_pc_fail =
-                                pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_EFFECT);
+                        lop.t1_pc_fail = pc_lookup(op->deopt_beam_idx,
+                                                   ERTS_T2_PC_EFFECT);
                         if (lop.t1_pc_fail == nullptr) {
                             return fail_op(op,
                                            "no EFFECT pctab entry for the "
@@ -1901,8 +1903,8 @@ namespace erts_t2 {
                         lop.t1_pc_fail =
                                 pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CALL);
                         if (!lop.tail_site) {
-                            lop.t1_pc_cont =
-                                    pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CONT);
+                            lop.t1_pc_cont = pc_lookup(op->deopt_beam_idx,
+                                                       ERTS_T2_PC_CONT);
                         }
                         if (lop.target == nullptr ||
                             lop.t1_pc_fail == nullptr ||

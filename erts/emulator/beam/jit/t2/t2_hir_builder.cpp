@@ -419,7 +419,8 @@ namespace erts_t2 {
                 if (!b->sealed) {
                     T2Op *phi = fn->new_phi(b, T2Type::any());
                     phi->beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
-                    phi->deopt_beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
+                    phi->deopt_beam_idx =
+                            cur_op != nullptr ? cur_op->beam_idx : 0;
                     /* The phi's canonical home is the register it merges. */
                     phi->dst_reg = (int32_t)var;
                     incomplete[b->id].push_back({var, phi});
@@ -432,7 +433,8 @@ namespace erts_t2 {
                 } else {
                     T2Op *phi = fn->new_phi(b, T2Type::any());
                     phi->beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
-                    phi->deopt_beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
+                    phi->deopt_beam_idx =
+                            cur_op != nullptr ? cur_op->beam_idx : 0;
                     phi->dst_reg = (int32_t)var;
                     /* Break lookup cycles through loops before filling. */
                     write_var(b, var, phi->result);
