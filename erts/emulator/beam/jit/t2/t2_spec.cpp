@@ -365,19 +365,19 @@ namespace erts_t2 {
             }
 
             void specialize_entry_types() {
-                /* OFF by default (explicit opt-in via T2_ENTRY_TYPE). The
-                 * emit path for the boxed classes (tuple/map/float/binary)
-                 * reuses the T1 type-test emitters, whose
-                 * emit_is_boxed(resolve_beam_label(Fail, dispUnknown), ...)
-                 * can leave an unresolved asmjit label fixup on some real
-                 * functions -- a load-time abort ("could not resolve all
-                 * labels") seen under the profiled tier-up path on stdlib.
-                 * Until that is root-caused AND the downstream is_C
-                 * guard-elimination (the actual speedup) is built, the pass
-                 * stays disabled so default operation plants no guards and
-                 * cannot crash; the machinery and its correctness proofs
-                 * remain for the follow-up. */
-                if (getenv("T2_ENTRY_TYPE") == nullptr ||
+                /* ON by default (opt-out via T2_NO_ENTRY_TYPE). The former
+                 * default-OFF guarded against a load-time abort ("could not
+                 * resolve all labels") that emit_lir_speculate_type triggered
+                 * on large functions under the profiled tier-up path: it
+                 * reused the T1 type-test emitters, whose box test branches
+                 * via emit_is_boxed(resolve_beam_label(Fail, dispUnknown))
+                 * — a ~32KB veneer deadline that a block-0 entry guard could
+                 * overshoot before the veneer was materialized. The emitter
+                 * now lowers each class' tag test INLINE at disp1MB (the same
+                 * budget the fused small guard and the Switch use), so no
+                 * dispUnknown veneer is created and the abort cannot recur;
+                 * the pass is safe to run by default. */
+                if (getenv("T2_NO_ENTRY_TYPE") != nullptr ||
                     fn.blocks.empty()) {
                     return;
                 }

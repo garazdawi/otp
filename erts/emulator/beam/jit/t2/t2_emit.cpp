@@ -1192,13 +1192,34 @@ namespace erts_t2 {
         }
 
         /* Entry type-class deopt guard (#1c): prove the (single tagged)
-         * operand belongs to the monomorphically-observed class by reusing
-         * the EXACT T1 tag test for that class, wired so a mismatch branches
-         * to the deopt trampoline (Entry shape: the function's own T1 entry
-         * body — T1 re-executes the whole invocation from the fresh-call
-         * vector). Reusing the T1 emitters means the tag test matches
-         * erl_term.h bit-for-bit; a wrong test would be type confusion, so
-         * nothing is hand-rolled here. imm carries the ERTS_T2_TY_* class. */
+         * operand belongs to the monomorphically-observed class, wired so a
+         * mismatch branches to the deopt trampoline (Entry shape: the
+         * function's own T1 entry body — T1 re-executes the whole invocation
+         * from the fresh-call vector). imm carries the ERTS_T2_TY_* class.
+         *
+         * The tag test is emitted INLINE at disp1MB, NOT by reusing the T1
+         * type-test emitters. Those emitters branch the box test through
+         * emit_is_boxed()'s `tbnz` at `resolve_beam_label(Fail, dispUnknown)`,
+         * which registers a pending veneer whose deadline is only ~32KB
+         * (dispUnknown), far shorter than the +-1MB (disp1MB) budget every
+         * other T2 guard uses. On a LARGE function this guard sits at block 0
+         * while its deopt trampoline lands at the very end of the body, the
+         * longest possible forward branch; a single downstream op can advance
+         * the cursor past the tbnz's ~32KB reach before check_pending_stubs()
+         * materializes the veneer, and asmjit's codegen() then aborts
+         * ("could not resolve all labels"). The fused small guard
+         * (emit_lir_speculate_small) and the Switch emitter never hit this
+         * because they stay on the 1MB budget and use no dispUnknown veneers;
+         * this guard now follows the same rule.
+         *
+         * Each class' predicate is bit-identical to its T1 emitter: the same
+         * erl_term.h tag masks, `tst; b.ne` for the primary/box bit test
+         * (identical branch condition to `tbnz #bit` but with +-1MB reach),
+         * and the header/immediate compares straight from the T1 sequence.
+         * The header test is ALWAYS emitted (never the T1 "known boxed class"
+         * skip — here the class is speculated, not proven, so a boxed value
+         * of a different class must still be rejected). A wrong mask would be
+         * type confusion, so every constant is asserted against erl_term.h. */
         void emit_lir_speculate_type(const T2LirOp &op) {
             if (op.num_srcs != 1 || op.srcs[0].is_const ||
                 op.t1_pc_fail == nullptr) {
@@ -1212,39 +1233,100 @@ namespace erts_t2 {
              * fail exit); a mismatch branches here. spec_callsite makes it
              * bump erts_t2_callsite_deopts so entry-type deopts are visible
              * (erts_debug:get_internal_state(t2_yield_stats)). */
-            ArgLabel failL(ArgVal(ArgVal::Type::Label,
-                                  fail_label_num(op.t1_pc_fail,
-                                                 op.t1_pc_cont,
-                                                 op.spec_callsite,
-                                                 op.raw_mask)));
+            const Label &fl = rawLabels.at(fail_label_num(op.t1_pc_fail,
+                                                          op.t1_pc_cont,
+                                                          op.spec_callsite,
+                                                          op.raw_mask));
 
-            ArgVal sv = src_argval(op.srcs[0]);
+            /* Load the operand exactly as the fused small guard does: a live
+             * phys home is read in place, otherwise the term is materialized
+             * into TMP2. `val` must survive the whole tag test, so the boxed
+             * classes scratch only TMP1 (pointer) and TMP3 (header word). */
+            a64::Gp val;
+            if (op.srcs[0].loc.is_phys()) {
+                val = phys_gp(op.srcs[0].loc);
+            } else {
+                val = load_source(src_argval(op.srcs[0]), TMP2).reg;
+            }
 
             comment("T2 speculate type-class %ld (entry)", (long)op.imm);
 
             switch (op.imm) {
-            case ERTS_T2_TY_TUPLE:
-                emit_i_is_tuple(failL, ArgSource(sv));
+            case ERTS_T2_TY_TUPLE: {
+                /* emit_i_is_tuple: boxed && *untag(v) has ARITYVAL (0)
+                 * header bits. */
+                ERTS_CT_ASSERT(_TAG_PRIMARY_MASK - TAG_PRIMARY_BOXED == 1);
+                a.tst(val, imm(1));
+                a.b_ne(resolve_label(fl, disp1MB));
+                emit_untag_ptr(TMP1, val);
+                a.ldr(TMP3, a64::Mem(TMP1));
+                ERTS_CT_ASSERT(_TAG_HEADER_ARITYVAL == 0);
+                a.tst(TMP3, imm(_TAG_HEADER_MASK));
+                a.b_ne(resolve_label(fl, disp1MB));
                 break;
+            }
             case ERTS_T2_TY_CONS:
-                emit_is_nonempty_list(failL, ArgRegister(sv));
+                /* emit_is_nonempty_list -> emit_is_cons: primary-tag bit 1
+                 * clear iff a cons cell. */
+                ERTS_CT_ASSERT(_TAG_PRIMARY_MASK - TAG_PRIMARY_LIST == 2);
+                a.tst(val, imm(2));
+                a.b_ne(resolve_label(fl, disp1MB));
                 break;
             case ERTS_T2_TY_NIL:
-                emit_is_nil(failL, ArgRegister(sv));
+                /* emit_is_nil (general path): exact-equal NIL. */
+                a.cmp(val, imm(NIL));
+                a.b_ne(resolve_label(fl, disp1MB));
                 break;
             case ERTS_T2_TY_ATOM:
-                emit_is_atom(failL, ArgSource(sv));
+                /* emit_is_atom: (v & _TAG_IMMED2_MASK) == _TAG_IMMED2_ATOM. */
+                a.and_(TMP1, val, imm(_TAG_IMMED2_MASK));
+                a.cmp(TMP1, imm(_TAG_IMMED2_ATOM));
+                a.b_ne(resolve_label(fl, disp1MB));
                 break;
-            case ERTS_T2_TY_FLOAT:
-                emit_is_float(failL, ArgSource(sv));
+            case ERTS_T2_TY_FLOAT: {
+                /* emit_is_float: boxed && *boxed_val == HEADER_FLONUM. */
+                ERTS_CT_ASSERT(_TAG_PRIMARY_MASK - TAG_PRIMARY_BOXED == 1);
+                a.tst(val, imm(1));
+                a.b_ne(resolve_label(fl, disp1MB));
+                a64::Gp boxed_ptr = emit_ptr_val(TMP1, val);
+                a.ldur(TMP3, emit_boxed_val(boxed_ptr));
+                a.cmp(TMP3, imm(HEADER_FLONUM));
+                a.b_ne(resolve_label(fl, disp1MB));
                 break;
-            case ERTS_T2_TY_BINARY:
-                emit_is_bitstring(failL, ArgSource(sv));
+            }
+            case ERTS_T2_TY_BINARY: {
+                /* emit_is_bitstring: boxed && header masked to the heap-bits
+                 * tag (same simpler mask the T1 emitter uses, valid because a
+                 * boxed pointer always targets a header word). */
+                ERTS_CT_ASSERT(_TAG_PRIMARY_MASK - TAG_PRIMARY_BOXED == 1);
+                a.tst(val, imm(1));
+                a.b_ne(resolve_label(fl, disp1MB));
+                a64::Gp boxed_ptr = emit_ptr_val(TMP1, val);
+                a.ldur(TMP3, emit_boxed_val(boxed_ptr));
+                const auto mask = _BITSTRING_TAG_MASK & ~_TAG_PRIMARY_MASK;
+                ERTS_CT_ASSERT(TAG_PRIMARY_HEADER == 0);
+                ERTS_CT_ASSERT(_TAG_HEADER_HEAP_BITS ==
+                               (_TAG_HEADER_HEAP_BITS & mask));
+                a.and_(TMP3, TMP3, imm(mask));
+                a.cmp(TMP3, imm(_TAG_HEADER_HEAP_BITS));
+                a.b_ne(resolve_label(fl, disp1MB));
                 break;
+            }
             case ERTS_T2_TY_MAP_FLAT:
-            case ERTS_T2_TY_MAP_HASH:
-                emit_is_map(failL, ArgSource(sv));
+            case ERTS_T2_TY_MAP_HASH: {
+                /* emit_is_map: boxed && (header & _TAG_HEADER_MASK) ==
+                 * _TAG_HEADER_MAP (flat and hash maps share the header
+                 * subtag, so the same test covers both classes). */
+                ERTS_CT_ASSERT(_TAG_PRIMARY_MASK - TAG_PRIMARY_BOXED == 1);
+                a.tst(val, imm(1));
+                a.b_ne(resolve_label(fl, disp1MB));
+                a64::Gp boxed_ptr = emit_ptr_val(TMP1, val);
+                a.ldur(TMP3, emit_boxed_val(boxed_ptr));
+                a.and_(TMP3, TMP3, imm(_TAG_HEADER_MASK));
+                a.cmp(TMP3, imm(_TAG_HEADER_MAP));
+                a.b_ne(resolve_label(fl, disp1MB));
                 break;
+            }
             default:
                 fail("entry type-class guard with an unsupported class");
                 break;
