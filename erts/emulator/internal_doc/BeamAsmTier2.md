@@ -42,8 +42,8 @@ backend is compiled out to linkable stubs and no real T2 blob is ever installed.
 
 Tier 2 landed as a **specialist** tier, not a general one. The measurement
 program that drove its development
-([`PLAN/T2FULL/15_scope_and_disposition.md`](../../../PLAN/T2FULL/15_scope_and_disposition.md),
-[`16_retrospective.md`](../../../PLAN/T2FULL/16_retrospective.md)) concluded that
+(`PLAN/T2FULL/15_scope_and_disposition.md`, `PLAN/T2FULL/16_retrospective.md`
+in the source tree) concluded that
 the original "≥20 % end-to-end on most applications" goal is not reachable by a
 JIT on real services, because their hot code is either intrinsically irreducible
 (analysis/compiler code) or uses opcodes the tier does not compile (map/binary
@@ -399,7 +399,7 @@ one of them is present. It is deliberately conservative so that non-winning blob
 stay on the T1 floor. (The gate's win-signals are histogram-summed and
 path-blind; a documented residual is that a non-`bs` multi-clause integer
 accumulator could over-accept — see
-[`15_scope_and_disposition.md`](../../../PLAN/T2FULL/15_scope_and_disposition.md).)
+`PLAN/T2FULL/15_scope_and_disposition.md` in the source tree.)
 
 ## The deopt and home model
 

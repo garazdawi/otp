@@ -131,6 +131,7 @@
     "dist_util:start_timer/1",
     "dist_util:strict_order_flags/0",
     "erl_types:t_is_equal/2",
-    "erl_types:t_has_var/1"
+    "erl_types:t_has_var/1",
+    "erts_debug:get_internal_state/1"
   ]
 ]
