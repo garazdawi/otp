@@ -513,6 +513,13 @@ namespace {
                 return T2CompileStatus::IselUnsupported;
             }
 
+            /* Body-recursion recognizer (task #86): read-only
+             * classification for now — no transform. Under
+             * T2_BODYREC_TRACE it logs which functions are body-recursive
+             * and of what shape, so detection can be validated on the
+             * corpus before the two-loop transform lands. */
+            (void)t2_bodyrec_classify(hir);
+
             if (recovered || intrinsified) {
                 T2LoopInfo li;
                 bool rewritten = false;

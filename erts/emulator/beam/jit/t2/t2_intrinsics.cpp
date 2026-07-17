@@ -155,6 +155,19 @@ namespace erts_t2 {
             return on;
         }
 
+        /* Body recursion (two-loop transform; task #86). Its own lever +
+         * trace so the recognizer stays A/B-independent of the existing
+         * expanders. */
+        bool bodyrec_disabled() {
+            static const bool off = getenv("T2_NO_BODYREC") != nullptr;
+            return off;
+        }
+
+        bool bodyrec_trace() {
+            static const bool on = getenv("T2_BODYREC_TRACE") != nullptr;
+            return on;
+        }
+
         /* P1a general caller-driven call-site specialization
          * (PLAN/T2FULL/census/p1_design.md): its own lever + trace so
          * the hand-coded expanders stay unaffected by A/B runs. */
@@ -6527,6 +6540,82 @@ namespace erts_t2 {
         };
 
     } /* anonymous namespace */
+
+    /* Body-recursion recognizer (task #86). Read-only classification of a
+     * body-recursive function into the shape the two-loop transform will
+     * lower. Looks for a NON-TAIL self-call (T2OpKind::Call to this
+     * function's own M:F/A) whose result feeds the post-call "ascent" op
+     * in the SAME block (the builder keeps post-call ops in-block for a
+     * non-tail call): a MakeList whose tail operand is the recursive
+     * result (cons — map/filter/comprehension), or a binary
+     * Add/Sub/Mul reading it (associative integer combine — length/sum).
+     * One Copy hop off the recursive result is followed. No transform is
+     * performed; under T2_BODYREC_TRACE the classification is logged.
+     * T2_NO_BODYREC disables. */
+    T2BodyRecKind t2_bodyrec_classify(const T2Function &fn) {
+        if (bodyrec_disabled()) {
+            return T2BodyRecKind::None;
+        }
+
+        T2BodyRecKind kind = T2BodyRecKind::None;
+
+        for (T2BasicBlock *b : fn.blocks) {
+            for (T2Op *call = b->ops_head; call != nullptr; call = call->next) {
+                if (call->kind != T2OpKind::Call || call->mfa_m != fn.module ||
+                    call->mfa_f != fn.function || call->index != fn.arity ||
+                    call->result == nullptr) {
+                    continue;
+                }
+
+                /* Self non-tail call: classify by the ascent op that
+                 * consumes its result. */
+                const T2Value *rec = call->result;
+
+                for (T2Op *u = call->next; u != nullptr; u = u->next) {
+                    if (u->kind == T2OpKind::Copy && u->num_operands == 1 &&
+                        u->operands[0] == rec) {
+                        rec = u->result; /* follow one/more copy hops */
+                        continue;
+                    }
+                    if (u->kind == T2OpKind::MakeList && u->num_operands == 2 &&
+                        u->operands[1] == rec) {
+                        kind = T2BodyRecKind::Cons;
+                        break;
+                    }
+                    if ((u->kind == T2OpKind::Add || u->kind == T2OpKind::Sub ||
+                         u->kind == T2OpKind::Mul) &&
+                        u->num_operands == 2 &&
+                        (u->operands[0] == rec || u->operands[1] == rec)) {
+                        if (kind != T2BodyRecKind::Cons) {
+                            kind = T2BodyRecKind::Integer;
+                        }
+                        break;
+                    }
+                }
+
+                if (kind == T2BodyRecKind::Cons) {
+                    break;
+                }
+            }
+            if (kind == T2BodyRecKind::Cons) {
+                break;
+            }
+        }
+
+        if (kind != T2BodyRecKind::None && bodyrec_trace()) {
+            const char *name = kind == T2BodyRecKind::Cons      ? "cons"
+                               : kind == T2BodyRecKind::Integer ? "integer"
+                                                                : "unsupported";
+            erts_fprintf(stderr,
+                         "t2_bodyrec: %T:%T/%u body-recursive (%s)\n",
+                         fn.module,
+                         fn.function,
+                         (unsigned)fn.arity,
+                         name);
+        }
+
+        return kind;
+    }
 
     bool t2_intrinsics(T2Function &fn,
                        const ErtsT2RetainedCode *ret,

@@ -93,6 +93,28 @@ namespace erts_t2 {
                        bool *changed,
                        std::string *err);
 
+    /* Body-recursion (two-loop transform) classification — task #86.
+     * A body-recursive function is a NON-TAIL self-call whose result
+     * feeds the post-call "ascent" op. This read-only recognizer
+     * classifies the shape the two-loop transform will lower:
+     *
+     *   Cons     - the ascent conses [E | rec] (a MakeList whose tail is
+     *              the recursive result): map / filter / comprehension.
+     *   Integer  - the ascent is an associative integer combine
+     *              (Add/Sub/Mul reading the recursive result): the
+     *              length / sum shape that degenerates to one loop.
+     *
+     * No transform is performed yet; under T2_BODYREC_TRACE it logs the
+     * classification. T2_NO_BODYREC disables the recognizer. */
+    enum class T2BodyRecKind {
+        None,       /* not body-recursive (or disabled) */
+        Cons,       /* map/filter/comprehension shape */
+        Integer,    /* length/sum shape */
+        Unsupported /* body-recursive but not a handled shape */
+    };
+
+    T2BodyRecKind t2_bodyrec_classify(const T2Function &fn);
+
     /* LICM-lite (PLAN/T2FULL/09 §8, PLAN/T2/04 §10.6 note): hoist
      * loop-invariant, pure, never-faulting ops and window-shaped
      * SpeculateType guards whose operands are all defined outside the
