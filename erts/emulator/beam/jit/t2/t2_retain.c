@@ -334,8 +334,10 @@ ErtsT2RetainedCode *erts_t2_prepare(BeamFile *beam) {
          * installable loops as before. A buildable-only loop that trips
          * degrades gracefully at isel (never installs); the trip still
          * records the fun-target sample first. */
-        const Uint32 *arm =
-                (getenv("T2_PROFILE_BUILDABLE") != NULL) ? bitmap : installs;
+        const Uint32 *arm = (getenv("T2_PROFILE_BUILDABLE") != NULL ||
+                             getenv("T2_ARM_BUILDABLE") != NULL)
+                                    ? bitmap
+                                    : installs;
 
         for (i = 0; i < beam->code.function_count; i++) {
             if ((arm[i / 32] & (((Uint32)1) << (i % 32))) &&
