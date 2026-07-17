@@ -1175,6 +1175,33 @@ namespace erts_t2 {
                 }
             }
 
+            /* True for a window-shaped speculative deopt (plain-window or
+             * SPEC_ENTRY: a flag-checked spec op carrying no sync map). Its
+             * side exit re-executes the whole iteration/invocation from the
+             * fresh-call vector in X0..arity-1, but — unlike a
+             * boundary/callsite/redispatch spec op, which keeps a sync map and
+             * is thus a barrier that pins its X slots — it carries no sync
+             * map, so its dependency on X0..arity-1 is invisible to the
+             * relaxation's interference scan. Relaxing a (possibly unused,
+             * hence empty-interval) parameter out of its Xk home into a Phys
+             * register would corrupt that re-execution vector. When such an op
+             * is in a relaxation span the whole fresh-call vector must be
+             * banned from the candidate register. */
+            bool op_reads_entry_vector(const T2LirOp &op) const {
+                if (op.sync != nullptr) {
+                    return false;
+                }
+                switch (op.kind) {
+                case T2LirKind::SpeculateSmall:
+                case T2LirKind::SpeculateRange:
+                case T2LirKind::AddSmall:
+                case T2LirKind::SubSmall:
+                    return op.t1_pc_fail != nullptr;
+                default:
+                    return false;
+                }
+            }
+
             /* Block containing [from,to], or T2_LIR_NO_BLOCK when the
              * span crosses a block boundary. */
             uint32_t span_block(uint32_t from, uint32_t to) const {
@@ -1280,6 +1307,16 @@ namespace erts_t2 {
                             break;
                         }
                         op_low_x_mask(op, &banned);
+                        if (op_reads_entry_vector(op)) {
+                            /* Pin the fresh-call vector X0..arity-1 the
+                             * window deopt re-executes from — the relaxation
+                             * must not borrow any of those Xk homes. */
+                            for (uint32_t k = 0;
+                                 k < lir.arity && k < T2_PHYS_POOL;
+                                 k++) {
+                                banned |= (uint32_t)1 << k;
+                            }
+                        }
                     }
                     if (!ok || !def_is_move ||
                         use_mentions != (uint32_t)iv.uses.size()) {
