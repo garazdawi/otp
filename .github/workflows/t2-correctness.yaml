@@ -298,6 +298,56 @@ jobs:
             TYPE="$BUILD_TYPE"
           exit 0
 
+      - name: Natural tier-up codegen sweep (profile-driven speculation)
+        ## The suite slices above force T2 with +JT2enable, i.e. compile-at-load
+        ## from the profile-LESS default source, so the profile-consuming half of
+        ## the tier -- entry type-class speculation (#1c), monomorphic map-shape
+        ## specialization, entry small-int speculation -- never activates there.
+        ## (A #1c codegen crash slipped past those slices for exactly this
+        ## reason and was only caught by a dialyzer tier-up run.) This step
+        ## drives the NATURAL tier-up path: T2_RETAIN + a low threshold and NO
+        ## +JT2enable, so hot functions are profiled in T1 and then compiled
+        ## FROM the observed profile. dialyzer over a wide beam corpus is a big,
+        ## diverse, deterministic tier-up workload; a codegen bug surfaces as a
+        ## debug assertion / ASan report / nonzero rc. +S 1 keeps execution on
+        ## the sampled scheduler so tier-up actually fires. Gated by the same
+        ## "Check test results" liveness rule (a crash -> nonzero rc + no junit).
+        run: |
+          set -ux
+          export ASAN_LOG_DIR="$ERL_TOP/t2-results/asan_logs"
+          mkdir -p "$ASAN_LOG_DIR"
+          export ASAN_OPTIONS="halt_on_error=0:detect_leaks=0:abort_on_error=0:detect_stack_use_after_return=0:log_path=$ASAN_LOG_DIR/beam.asan-t2tierup-0"
+          export LSAN_OPTIONS="suppressions=$ERL_TOP/erts/emulator/asan/suppress"
+          export T2_RETAIN=1
+          export T2_TIER_THRESHOLD=200
+          ## NB: t2_stats counts only the +JT2enable compile-at-load driver, so
+          ## it reads all-zero under natural tier-up even when the tier-up
+          ## worker is compiling (the profile-driven emit is what actually runs
+          ## and what crashed for #1c). The gate here is therefore purely
+          ## liveness: a codegen abort takes the emulator down -> nonzero rc /
+          ## no output; a clean completion prints T2_TIERUP_DONE. The stats are
+          ## logged for human inspection only, not gated on.
+          DRV='
+            _ = erts_debug:set_internal_state(available_internal_state, true),
+            Top = os:getenv("ERL_TOP"),
+            Fs = lists:append([ filelib:wildcard(filename:join([Top,"lib",A,"ebin","*.beam"]))
+                                || A <- ["stdlib","kernel","compiler"] ]),
+            Plt = filename:join(os:getenv("RUNNER_TEMP"), "t2_tierup.plt"),
+            _ = (catch dialyzer:run([{analysis_type,plt_build},{files,Fs},
+                                     {output_plt,Plt},{get_warnings,false}])),
+            _ = (catch dialyzer:run([{analysis_type,succ_typings},{files,Fs},
+                                     {init_plt,Plt},{get_warnings,true}])),
+            io:format("T2_TIERUP_DONE t2_stats=~p yield=~p~n",
+                      [erts_debug:get_internal_state(t2_stats),
+                       (catch erts_debug:get_internal_state(t2_yield_stats))]),
+            halt(0)'
+          set +e
+          "$RUNNER_TEMP/run_with_watchdog.sh" \
+            "$ERL_TOP/t2-results/tierup_rc" \
+            "$ERL_TOP/t2-results/12_tierup_sweep.log" \
+            "$ERL_TOP/bin/cerl" -"$BUILD_TYPE" -noshell +S 1 -eval "$DRV" -s init stop
+          exit 0
+
       - name: Collect ct logs
         if: always()
         run: |
@@ -345,7 +395,11 @@ jobs:
           ## (full coverage) -- they just don't gate. Format: "suite:case".
           ENV_FRAGILE="bif_SUITE:erlang_halt bif_SUITE:erl_crash_dump_bytes bif_SUITE:halt_flush_timeout"
           RC=0
-          for app in emulator stdlib; do
+          ## `tierup` is the natural-tier-up codegen sweep: it has no junit, so
+          ## only the liveness rule below applies -- a nonzero rc (the emulator
+          ## aborted, e.g. a profile-driven codegen crash) fails the run; a
+          ## clean rc 0 passes with a "no junit" note.
+          for app in emulator stdlib tierup; do
             r="$ERL_TOP/t2-results/${app}_rc"
             x="$ERL_TOP/t2-results/${app}_junit.xml"
             ## Liveness first: a missing rc, or a nonzero rc with no junit at
