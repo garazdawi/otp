@@ -179,6 +179,32 @@ namespace erts_t2 {
             return param;
         }
 
+        /* Census helper: is `k` a type-test op that the entry-type class
+         * `seen` (a single ERTS_T2_TY_* bit) proves always-true? Those are
+         * the guards an is_C elimination consumer could drop. */
+        [[maybe_unused]] bool entry_type_test_matches(T2OpKind k,
+                                                      uint16_t seen) {
+            switch (seen) {
+            case ERTS_T2_TY_TUPLE:
+                return k == T2OpKind::IsTuple || k == T2OpKind::IsTaggedTuple;
+            case ERTS_T2_TY_CONS:
+                return k == T2OpKind::IsNonemptyList;
+            case ERTS_T2_TY_NIL:
+                return k == T2OpKind::IsNil;
+            case ERTS_T2_TY_ATOM:
+                return k == T2OpKind::IsAtom || k == T2OpKind::IsBoolean;
+            case ERTS_T2_TY_FLOAT:
+                return k == T2OpKind::IsFloat;
+            case ERTS_T2_TY_BINARY:
+                return k == T2OpKind::IsBinary || k == T2OpKind::IsBitstring;
+            case ERTS_T2_TY_MAP_FLAT:
+            case ERTS_T2_TY_MAP_HASH:
+                return k == T2OpKind::IsMap;
+            default:
+                return false;
+            }
+        }
+
         struct Spec {
             T2Function &fn;
             const T2LoopInfo &li;
@@ -463,6 +489,35 @@ namespace erts_t2 {
                     param->type = nt;
 
                     changed = true;
+
+                    /* Census (T2_ENTRY_TYPE_CENSUS, read-only): how many
+                     * downstream type-test ops on this now-proven-class param
+                     * would an is_C guard-elimination consumer actually be able
+                     * to drop? Measures the win BEFORE building the (CFG-
+                     * surgery) pass — the narrowing is otherwise inert. */
+                    if (getenv("T2_ENTRY_TYPE_CENSUS") != nullptr) {
+                        unsigned elim = 0;
+                        for (T2BasicBlock *cb : fn.blocks) {
+                            for (T2Op *o = cb->ops_head; o != nullptr;
+                                 o = o->next) {
+                                if (o->num_operands == 1 &&
+                                    resolve_copies(o->operands[0]) ==
+                                            param->result &&
+                                    entry_type_test_matches(o->kind, seen)) {
+                                    elim++;
+                                }
+                            }
+                        }
+                        erts_fprintf(stderr,
+                                     "T2_ENTRY_CENSUS %T:%T/%u p%u class=0x%x "
+                                     "elim=%u\n",
+                                     fn.module,
+                                     fn.function,
+                                     fn.arity,
+                                     idx,
+                                     (unsigned)seen,
+                                     elim);
+                    }
                 }
             }
 
