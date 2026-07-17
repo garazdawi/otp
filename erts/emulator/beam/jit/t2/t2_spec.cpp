@@ -365,7 +365,19 @@ namespace erts_t2 {
             }
 
             void specialize_entry_types() {
-                if (getenv("T2_NO_ENTRY_TYPE") != nullptr ||
+                /* OFF by default (explicit opt-in via T2_ENTRY_TYPE). The
+                 * emit path for the boxed classes (tuple/map/float/binary)
+                 * reuses the T1 type-test emitters, whose
+                 * emit_is_boxed(resolve_beam_label(Fail, dispUnknown), ...)
+                 * can leave an unresolved asmjit label fixup on some real
+                 * functions -- a load-time abort ("could not resolve all
+                 * labels") seen under the profiled tier-up path on stdlib.
+                 * Until that is root-caused AND the downstream is_C
+                 * guard-elimination (the actual speedup) is built, the pass
+                 * stays disabled so default operation plants no guards and
+                 * cannot crash; the machinery and its correctness proofs
+                 * remain for the follow-up. */
+                if (getenv("T2_ENTRY_TYPE") == nullptr ||
                     fn.blocks.empty()) {
                     return;
                 }
