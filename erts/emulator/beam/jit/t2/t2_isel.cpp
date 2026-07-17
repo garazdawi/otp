@@ -331,20 +331,19 @@ namespace erts_t2 {
              * X0..arity-1 (charging happened at the T2 back edge /
              * entry stub, so reductions stay identical to T1). */
             const void *spec_deopt_pc(const T2Op *op) {
-                if (op->flags & T2_OP_SPEC_BOUNDARY) {
+                switch (op->deopt_shape) {
+                case T2DeoptShape::Boundary:
                     return pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
-                }
 
-                if (op->flags & T2_OP_SPEC_CALLSITE) {
+                case T2DeoptShape::Callsite:
                     /* Callsite class (maps:fold Stage 1): re-execute
                      * the ERASED CALL — the side exit branches to the
                      * call site's own T1 PC (no CP push; the sync map
                      * is the call-boundary state, physically intact by
                      * the callsite rule in t2_validate_windows). */
                     return pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
-                }
 
-                if (op->flags & T2_OP_SPEC_REDISPATCH) {
+                case T2DeoptShape::Redispatch:
                     /* Re-dispatch class (P1a): re-invoke the generic
                      * callee with the LOOP-CARRIED state. Inner mode
                      * (imm_int = the terminal inlined loop function's
@@ -368,9 +367,8 @@ namespace erts_t2 {
                                            erts_t2_test_yield_return_offset());
                     }
                     return pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
-                }
 
-                if (op->flags & T2_OP_WINDOW_CALLEE) {
+                case T2DeoptShape::WindowCallee:
                     /* Intrinsic-loop window deopt (P2 commit 8): the
                      * iteration re-executes as a fresh CALLEE call —
                      * the callee body past its entry check (imm_int =
@@ -381,31 +379,35 @@ namespace erts_t2 {
                     }
                     return (const void *)((const char *)(UWord)op->imm_int +
                                           erts_t2_test_yield_return_offset());
-                }
 
-                /* Window shape, and the entry class (T2_OP_SPEC_ENTRY,
-                 * the make_fun sink): both branch to the function's
-                 * own T1 entry body and re-execute the invocation from
-                 * the fresh-call vector in X0..arity-1. */
-                const void *lf = local_target(hir.function, hir.arity);
+                case T2DeoptShape::Window:
+                case T2DeoptShape::Entry: {
+                    /* Window shape, and the entry class (the make_fun
+                     * sink): both branch to the function's own T1 entry
+                     * body and re-execute the invocation from the
+                     * fresh-call vector in X0..arity-1. */
+                    const void *lf = local_target(hir.function, hir.arity);
 
-                if (lf == nullptr) {
-                    return nullptr;
+                    if (lf == nullptr) {
+                        return nullptr;
+                    }
+                    return (const void *)((const char *)lf +
+                                          erts_t2_test_yield_return_offset());
                 }
-                return (const void *)((const char *)lf +
-                                      erts_t2_test_yield_return_offset());
+                }
+                return nullptr; /* unreachable: all shapes handled above */
             }
 
             /* For a spec op whose deopt trampoline must push a CP —
              * a window-callee op, or a BODY-site inner re-dispatch op
-             * (T2_OP_SPEC_REDISPATCH with a callee L_f but no
+             * (Redispatch-shape with a callee L_f but no
              * T2_OP_TAIL_SITE; the skipped callee prologue would have
              * pushed it) — resolve the intrinsic call site's T1
              * continuation; no-op otherwise. Returns false when the
              * lookup fails. */
             bool fill_spec_cont(const T2Op *op, T2LirOp *lop) {
-                bool need = (op->flags & T2_OP_WINDOW_CALLEE) != 0 ||
-                            ((op->flags & T2_OP_SPEC_REDISPATCH) != 0 &&
+                bool need = op->deopt_shape == T2DeoptShape::WindowCallee ||
+                            (op->deopt_shape == T2DeoptShape::Redispatch &&
                              op->imm_int != 0 &&
                              (op->flags & T2_OP_TAIL_SITE) == 0);
 
@@ -1696,13 +1698,13 @@ namespace erts_t2 {
                      * failure. */
                     lop.kind = T2LirKind::SpeculateSmall;
                     /* Entry-class exits (the sunk-fun re-invocation,
-                     * T2_OP_SPEC_ENTRY) and re-dispatch exits (P1a)
+                     * Entry-shape) and re-dispatch exits (P1a)
                      * count in the same monitoring counter as callsite
                      * exits: all are "the specialization bailed". */
                     lop.spec_callsite =
-                            (op->flags &
-                             (T2_OP_SPEC_CALLSITE | T2_OP_SPEC_ENTRY |
-                              T2_OP_SPEC_REDISPATCH)) != 0;
+                            op->deopt_shape == T2DeoptShape::Callsite ||
+                            op->deopt_shape == T2DeoptShape::Entry ||
+                            op->deopt_shape == T2DeoptShape::Redispatch;
                     if (!fill_srcs(op, &lop)) {
                         return false;
                     }
@@ -1744,7 +1746,7 @@ namespace erts_t2 {
                     if (op->imm_int <= 0) {
                         return fail_op(op, "range guard without a bound");
                     }
-                    if ((op->flags & T2_OP_SPEC_BOUNDARY) == 0) {
+                    if (op->deopt_shape != T2DeoptShape::Boundary) {
                         return fail_op(op,
                                        "range guard outside the boundary "
                                        "deopt class");
@@ -1785,7 +1787,7 @@ namespace erts_t2 {
                                        "ascii guard without exactly one "
                                        "operand");
                     }
-                    if ((op->flags & T2_OP_SPEC_BOUNDARY) == 0) {
+                    if (op->deopt_shape != T2DeoptShape::Boundary) {
                         return fail_op(op,
                                        "ascii guard outside the boundary "
                                        "deopt class");
@@ -1824,9 +1826,9 @@ namespace erts_t2 {
                                        "sync map");
                     }
                     lop.spec_callsite =
-                            (op->flags &
-                             (T2_OP_SPEC_CALLSITE | T2_OP_SPEC_ENTRY |
-                              T2_OP_SPEC_REDISPATCH)) != 0;
+                            op->deopt_shape == T2DeoptShape::Callsite ||
+                            op->deopt_shape == T2DeoptShape::Entry ||
+                            op->deopt_shape == T2DeoptShape::Redispatch;
                     /* P3: validated no-overflow claim — the emitter
                      * omits the b.vs and its trampoline. The deopt-PC
                      * plumbing below is kept (the LIR verifier's

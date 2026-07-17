@@ -538,7 +538,7 @@ namespace erts_t2 {
         /* Shared decode ordinal with the HIR/pctab (PLAN/T2FULL/07 §4). */
         uint32_t beam_idx;
 
-        /* Callsite-class deopt (T2_OP_SPEC_CALLSITE): t1_pc_fail is the
+        /* Callsite-class deopt (Callsite deopt shape): t1_pc_fail is the
          * erased call's own T1 PC and the fail trampoline bumps the
          * erts_t2_callsite_deopts monitoring counter (deopt storms must
          * be visible — no re-tier machinery exists). */

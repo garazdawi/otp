@@ -45,7 +45,7 @@
  *              l   = phi(L0, t')    @x2
  *              h = get_hd l; t = get_tl l        (fresh X homes)
  *              <fun body, spliced; guards/flag-checked arith deopt
- *               to B_dm_iter's contract via T2_OP_WINDOW_CALLEE
+ *               to B_dm_iter's contract via WindowCallee-shape
  *               (helper body + CP push); error edges -> B_dm_iter>
  *              ... -> B_ret
  *   B_ret:     rv = phi(returns)                 (fresh X home)
@@ -1030,14 +1030,15 @@ namespace erts_t2 {
              * abandoned (caller discards the expansion attempt). */
             /* spec_flags/spec_imm/spec_sync select the deopt CLASS of
              * the converted ops: the lists intrinsics pass
-             * T2_OP_WINDOW_CALLEE with the helper L_f (re-execute the
+             * WindowCallee-shape with the helper L_f (re-execute the
              * iteration as a fresh helper call, no sync map); the
-             * maps:fold expansion passes T2_OP_SPEC_CALLSITE with the
+             * maps:fold expansion passes Callsite-shape with the
              * call-boundary sync map (re-execute the erased call). */
             bool convert_arith(FunBody &fb,
                                T2Value *acc_phi, /* null for arity-1 funs */
                                bool *need_acc_entry_guard,
                                uint32_t spec_flags,
+                               T2DeoptShape spec_shape,
                                Sint64 spec_imm,
                                T2SyncMap *spec_sync,
                                uint32_t call_beam_idx) {
@@ -1138,6 +1139,7 @@ namespace erts_t2 {
                             proven.insert(guards[j]);
                         }
                         g->flags = T2_OP_INLINED | spec_flags;
+                        g->deopt_shape = spec_shape;
                         g->imm_int = spec_imm;
                         g->sync = spec_sync;
                         g->beam_idx = call_beam_idx;
@@ -1151,6 +1153,7 @@ namespace erts_t2 {
                                                          : T2OpKind::SubSmall;
                     op->sync = spec_sync;
                     op->flags |= T2_OP_INLINED | spec_flags;
+                    op->deopt_shape = spec_shape;
                     op->imm_int = spec_imm;
                     op->beam_idx = call_beam_idx;
                     proven.insert(op->result);
@@ -1820,7 +1823,8 @@ namespace erts_t2 {
                                    acc_phi_op != nullptr ? acc_phi_op->result
                                                          : nullptr,
                                    &need_acc_guard,
-                                   T2_OP_WINDOW_CALLEE,
+                                   0,
+                                   T2DeoptShape::WindowCallee,
                                    (Sint64)(UWord)ce.helper_lf,
                                    nullptr,
                                    bi)) {
@@ -1887,7 +1891,8 @@ namespace erts_t2 {
                     fn.set_operands(g, {a0});
                     g->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     g->operand_regs[0] = t2_xreg(1);
-                    g->flags = T2_OP_WINDOW_CALLEE;
+                    g->flags = 0;
+                    g->deopt_shape = T2DeoptShape::WindowCallee;
                     g->imm_int = (Sint64)(UWord)ce.wrapper_lf;
                     g->beam_idx = bi;
                 }
@@ -2177,7 +2182,8 @@ namespace erts_t2 {
                             for (T2Op *op = fn.blocks[bx]->ops_head;
                                  op != nullptr;
                                  op = op->next) {
-                                if ((op->flags & T2_OP_WINDOW_CALLEE) == 0) {
+                                if (op->deopt_shape !=
+                                    T2DeoptShape::WindowCallee) {
                                     continue;
                                 }
                                 switch (op->kind) {
@@ -2267,7 +2273,7 @@ namespace erts_t2 {
              * ORIGINAL call moved to b_slow — non-flatmap is the
              * general case, not an error — and every fast-path deopt
              * re-executes that call via its own T1 PC
-             * (ERTS_T2_PC_CALL, class T2_OP_SPEC_CALLSITE) from the
+             * (ERTS_T2_PC_CALL, class Callsite-shape) from the
              * call-boundary sync map, which the fast path provably
              * leaves intact (effect-free, alloc-free, no write below
              * cmap->x_live nor to any Y slot). The fun's error edges
@@ -2506,7 +2512,8 @@ namespace erts_t2 {
                     fn.set_operands(budget, {size_op->result});
                     budget->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     budget->sync = cmap;
-                    budget->flags = T2_OP_SPEC_CALLSITE;
+                    budget->flags = 0;
+                    budget->deopt_shape = T2DeoptShape::Callsite;
                     budget->imm_int =
                             T2_MAPS_FOLD_R_CHAIN_CONST - (is_tail ? 1 : 0);
                     budget->index = (uint32_t)T2_MAPS_FOLD_R_PER_ELEM;
@@ -2628,7 +2635,8 @@ namespace erts_t2 {
                 if (!convert_arith(fb,
                                    acc_phi->result,
                                    &need_acc_guard,
-                                   T2_OP_SPEC_CALLSITE,
+                                   0,
+                                   T2DeoptShape::Callsite,
                                    0,
                                    cmap,
                                    bi)) {
@@ -2661,7 +2669,8 @@ namespace erts_t2 {
                     fn.set_operands(g, {a0});
                     g->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     g->operand_regs[0] = t2_xreg(1);
-                    g->flags = T2_OP_SPEC_CALLSITE;
+                    g->flags = 0;
+                    g->deopt_shape = T2DeoptShape::Callsite;
                     g->sync = cmap;
                     g->beam_idx = bi;
                 }
@@ -2726,7 +2735,8 @@ namespace erts_t2 {
                     inc->operand_regs[0] = t2_xreg(4);
                     inc->operand_regs[1] = T2_REG_NONE;
                     inc->dst_reg = t2_xreg(4);
-                    inc->flags = T2_OP_SPEC_CALLSITE;
+                    inc->flags = 0;
+                    inc->deopt_shape = T2DeoptShape::Callsite;
                     inc->sync = cmap;
                     inc->beam_idx = bi;
                     i_next = inc->result;
@@ -2888,7 +2898,7 @@ namespace erts_t2 {
              * bound to the call's boundary vector, the per-element      *
              * CallFun devirtualized by splicing the fun body, and the   *
              * callee's frame dropped. Deopt is the RE-DISPATCH shape    *
-             * (T2_OP_SPEC_REDISPATCH; T2_OP_TAIL_SITE at a tail site):  *
+             * (Redispatch-shape; T2_OP_TAIL_SITE at a tail site):  *
              * every side exit re-invokes the generic callee with the    *
              * LOOP-CARRIED vector. Under the identity permutation the   *
              * mid-list exits land INSIDE the TERMINAL loop function —   *
@@ -5151,7 +5161,8 @@ namespace erts_t2 {
                                    acc_idx >= 0 ? cl_phis[acc_idx]->result
                                                 : nullptr,
                                    &need_acc_guard,
-                                   T2_OP_SPEC_REDISPATCH | site_flag,
+                                   site_flag,
+                                   T2DeoptShape::Redispatch,
                                    inner ? (Sint64)(UWord)inner_lf : 0,
                                    vec_map,
                                    bi)) {
@@ -5198,8 +5209,8 @@ namespace erts_t2 {
                     fn.set_operands(g, {cmap->x[perm[acc_idx]]});
                     g->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     g->operand_regs[0] = t2_xreg(perm[acc_idx]);
-                    g->flags =
-                            T2_OP_INLINED | T2_OP_SPEC_REDISPATCH | site_flag;
+                    g->flags = T2_OP_INLINED | site_flag;
+                    g->deopt_shape = T2DeoptShape::Redispatch;
                     g->sync = cmap;
                     g->beam_idx = bi;
                 }
@@ -5218,8 +5229,8 @@ namespace erts_t2 {
                     fn.set_operands(g, {fvg.first});
                     g->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     g->operand_regs[0] = fvg.second;
-                    g->flags =
-                            T2_OP_INLINED | T2_OP_SPEC_REDISPATCH | site_flag;
+                    g->flags = T2_OP_INLINED | site_flag;
+                    g->deopt_shape = T2DeoptShape::Redispatch;
                     g->sync = cmap;
                     g->beam_idx = bi;
                 }
@@ -6505,9 +6516,9 @@ namespace erts_t2 {
                 T2Op *next = op->next;
 
                 if (op->kind == T2OpKind::SpeculateType &&
-                    (op->flags & T2_OP_SPEC_BOUNDARY) == 0 &&
-                    (op->flags & T2_OP_WINDOW_CALLEE) == 0 &&
-                    (op->flags & T2_OP_SPEC_CALLSITE) == 0) {
+                    op->deopt_shape != T2DeoptShape::Boundary &&
+                    op->deopt_shape != T2DeoptShape::WindowCallee &&
+                    op->deopt_shape != T2DeoptShape::Callsite) {
                     bool invariant = true;
 
                     for (uint16_t i = 0; i < op->num_operands; i++) {
@@ -6905,7 +6916,7 @@ namespace erts_t2 {
 
             if (spec == nullptr || spec->kind != T2OpKind::SpeculateRange ||
                 spec->num_operands != 1 || spec->operands[0] != read->result ||
-                (spec->flags & T2_OP_SPEC_BOUNDARY) == 0 ||
+                spec->deopt_shape != T2DeoptShape::Boundary ||
                 spec->sync == nullptr ||
                 spec->sync->frame_size != T2_NO_FRAME) {
                 return a1_bail(fn, "utf8: ascii speculate_range guard");
@@ -8157,7 +8168,8 @@ namespace erts_t2 {
                 guard->operand_regs = fn.arena.alloc_array<int32_t>(1);
                 guard->operand_regs[0] = s.limit->dst_reg;
                 guard->beam_idx = s.sm->beam_idx;
-                guard->flags = T2_OP_SPEC_BOUNDARY | T2_OP_ROLLBACK;
+                guard->flags = T2_OP_ROLLBACK;
+                guard->deopt_shape = T2DeoptShape::Boundary;
                 guard->sync = hdr_map;
 
                 /* count: acc' = acc_phi + N*C, CHECKED (overflow also

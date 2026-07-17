@@ -2982,7 +2982,7 @@ namespace erts_t2 {
                                          T2Type::none());
 
                     g->beam_idx = cur_op->beam_idx;
-                    g->flags |= T2_OP_SPEC_BOUNDARY;
+                    g->deopt_shape = T2DeoptShape::Boundary;
                     g->sync = snapshot_sync((uint32_t)live);
                     g->imm_int = 0x80;
                     fn->set_operands(g, {byte});

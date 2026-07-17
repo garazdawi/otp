@@ -339,16 +339,16 @@ namespace erts_t2 {
 
         /* Window-shaped deopt guards: speculative ops whose side exit
          * re-executes the iteration from the window's re-call boundary.
-         * Boundary-shaped ops (T2_OP_SPEC_BOUNDARY) deopt to their own
+         * Boundary-shaped ops (Boundary-shape) deopt to their own
          * T1 EFFECT PC — they re-execute nothing before themselves and
          * are exempt from the window rule. Callsite-shaped ops
-         * (T2_OP_SPEC_CALLSITE) deopt by re-executing the erased call
+         * (Callsite-shape) deopt by re-executing the erased call
          * from the call-boundary sync map they carry; entry-shaped ops
-         * (T2_OP_SPEC_ENTRY) re-execute the whole invocation from the
+         * (Entry-shape) re-execute the whole invocation from the
          * T1 entry body; each has its own rule (the callsite and
          * entry-recall passes in t2_validate_windows). */
         bool op_is_window_guard(const T2Op *op) {
-            /* Re-dispatch-class ops (T2_OP_SPEC_REDISPATCH, P1a) are
+            /* Re-dispatch-class ops (Redispatch-shape, P1a) are
              * deliberately NOT exempted: their deopt re-invokes the
              * generic callee with the loop-carried vector, so the
              * per-iteration clean-prefix rule applies to them exactly
@@ -365,8 +365,10 @@ namespace erts_t2 {
              * it sits after StartMatch/BsRead dirt in every bs_match
              * decode. */
             return op_is_speculative_kind(op) &&
-                   (op->flags & (T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
-                                 T2_OP_SPEC_ENTRY | T2_OP_NO_OVF)) == 0;
+                   op->deopt_shape != T2DeoptShape::Boundary &&
+                   op->deopt_shape != T2DeoptShape::Callsite &&
+                   op->deopt_shape != T2DeoptShape::Entry &&
+                   (op->flags & T2_OP_NO_OVF) == 0;
         }
 
         bool is_self_tail_call(const T2Function &fn, const T2Op *term) {
@@ -790,7 +792,7 @@ namespace erts_t2 {
 
         /* ---- Callsite-class rule (maps:fold Stage 1) ------------------ *
          * An op whose deopt RE-EXECUTES THE ERASED CALL
-         * (T2_OP_SPEC_CALLSITE) must carry the call-boundary sync map,
+         * (Callsite-shape) must carry the call-boundary sync map,
          * and the specialized region must have left that boundary
          * intact when the op fires: no effect, frame op, reduction
          * charge, GC/heap op, or write below the boundary's live X
@@ -803,12 +805,12 @@ namespace erts_t2 {
          * paid — reduction accounting only, never term results). */
         {
             auto is_callsite_op = [](const T2Op *op) {
-                return (op->flags & T2_OP_SPEC_CALLSITE) != 0 &&
+                return op->deopt_shape == T2DeoptShape::Callsite &&
                        (op_is_speculative_kind(op) ||
                         op->kind == T2OpKind::FoldBudget);
             };
             auto callsite_dirt = [](const T2Op *op, uint32_t x_live) {
-                if ((op->flags & T2_OP_SPEC_CALLSITE) != 0) {
+                if (op->deopt_shape == T2DeoptShape::Callsite) {
                     return false; /* same class */
                 }
                 if (op_is_effect(op)) {
@@ -905,7 +907,7 @@ namespace erts_t2 {
             }
         }
 
-        /* ---- Re-dispatch-class rule (T2_OP_SPEC_REDISPATCH; P1a) ------ *
+        /* ---- Re-dispatch-class rule (Redispatch-shape; P1a) ------ *
          * An op whose deopt RE-INVOKES THE GENERIC CALLEE WITH THE
          * LOOP-CARRIED STATE (a side exit to the erased call's own T1
          * PC over the current X vector) must carry the loop-carried
@@ -919,7 +921,7 @@ namespace erts_t2 {
          * entry guard). */
         for (const T2BasicBlock *b : fn.blocks) {
             for (const T2Op *op = b->ops_head; op != nullptr; op = op->next) {
-                if ((op->flags & T2_OP_SPEC_REDISPATCH) == 0 ||
+                if (op->deopt_shape != T2DeoptShape::Redispatch ||
                     !op_is_speculative_kind(op)) {
                     continue;
                 }
@@ -942,7 +944,7 @@ namespace erts_t2 {
             }
         }
 
-        /* ---- Entry-recall rule (T2_OP_SPEC_ENTRY; Stage 3 sink) ------- *
+        /* ---- Entry-recall rule (Entry-shape; Stage 3 sink) ------- *
          * An op whose deopt RE-EXECUTES THE WHOLE INVOCATION from the
          * function's T1 entry body needs every path from function entry
          * to it clean: no effect, frame op, reduction charge, GC below
@@ -963,7 +965,7 @@ namespace erts_t2 {
             for (const T2BasicBlock *b : fn.blocks) {
                 for (const T2Op *op = b->ops_head; op != nullptr && !any_entry;
                      op = op->next) {
-                    any_entry = (op->flags & T2_OP_SPEC_ENTRY) != 0;
+                    any_entry = op->deopt_shape == T2DeoptShape::Entry;
                 }
                 if (any_entry) {
                     break;
@@ -972,7 +974,7 @@ namespace erts_t2 {
 
             if (any_entry) {
                 auto entry_dirt = [&](const T2Op *op) {
-                    if ((op->flags & T2_OP_SPEC_ENTRY) != 0) {
+                    if (op->deopt_shape == T2DeoptShape::Entry) {
                         return false;
                     }
                     if (op->kind == T2OpKind::Param) {
@@ -1025,7 +1027,7 @@ namespace erts_t2 {
                     }
                     for (const T2Op *op = b->ops_head; op != nullptr;
                          op = op->next) {
-                        if ((op->flags & T2_OP_SPEC_ENTRY) != 0) {
+                        if (op->deopt_shape == T2DeoptShape::Entry) {
                             if (op->kind != T2OpKind::FoldBudget &&
                                 !op_is_speculative_kind(op)) {
                                 return fail(b->id,

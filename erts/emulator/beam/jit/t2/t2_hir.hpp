@@ -202,7 +202,7 @@ namespace erts_t2 {
          * available it side-exits UNCHARGED to the erased call's own
          * T1 PC (ERTS_T2_PC_CALL) with the call-boundary sync map, so
          * T1 re-executes the fold and does its own charging/yielding.
-         * Effect-only, sync required (T2_OP_SPEC_CALLSITE class). */
+         * Effect-only, sync required (Callsite deopt shape). */
         IsFlatmapBounded,
         FlatmapSize,
         FlatmapKeyAt,
@@ -290,7 +290,7 @@ namespace erts_t2 {
          * 0x80" iff `word & 0x8080808080808080 == 0`. A pure guard
          * (one raw operand, no result) whose FAILURE ROLLS BACK to the
          * loop header exactly like the B1/B2 checked add's overflow —
-         * carries T2_OP_SPEC_BOUNDARY | T2_OP_ROLLBACK, the header
+         * carries the Boundary deopt shape + T2_OP_ROLLBACK, the header
          * start_match's beam_idx (its EFFECT PC is the clause entry)
          * and the header-entry sync snapshot; on any byte >= 0x80 it
          * side-exits with the cursor un-advanced (placed before the
@@ -591,19 +591,9 @@ namespace erts_t2 {
          * emit_i_select_tuple_arity); a value-compare lowering silently
          * sends every input to the default edge. */
         T2_OP_SWITCH_ARITY = 1 << 4,
-        /* Speculative op (SpeculateType / AddSmall / SubSmall) whose
-         * deopt is *boundary*-shaped (P2 commit 4): the side exit
-         * branches to the op's own T1 EFFECT PC and T1 re-executes just
-         * that op from its sync-map state — nothing before it is
-         * re-executed, so it is legal after effects. The op must keep
-         * its sync map (the boundary contract). Without this flag a
-         * speculative op is *window*-shaped: the side exit branches to
-         * the function's T1 entry body (L_f + TEST_YIELD_RETURN_OFFSET)
-         * and T1 re-executes the whole iteration/invocation from the
-         * fresh-call vector in X0..arity-1 — legal only on a clean
-         * prefix (no effect, no frame op, no write to X0..arity-1
-         * before it; enforced by t2_validate_windows). */
-        T2_OP_SPEC_BOUNDARY = 1 << 5,
+        /* Bit 5 freed (was the boundary deopt shape) — the deopt shape is
+         * now T2Op::deopt_shape (see T2DeoptShape). Left as a gap; do not
+         * reuse without renumbering intent. */
         /* Op spliced from an inlined callee (P2 commit 6). Such an op
          * has no T1 PC of its own in the caller, so a fallible inlined
          * op must be converted to a window-shaped speculative op — the
@@ -625,71 +615,11 @@ namespace erts_t2 {
          * embeds the callee MFA, so a suspended process introspects
          * exactly as if it had yielded inside the T1 helper. */
         T2_OP_RC_CALLEE = 1 << 8,
-        /* A window-shaped speculative op inside an intrinsic loop: its
-         * deopt trampoline pushes the intrinsic call site's T1
-         * continuation as CP and enters the CALLEE body (imm_int =
-         * callee L_f) — T1 re-executes the iteration as a fresh helper
-         * call from X0..callee_arity-1. */
-        T2_OP_WINDOW_CALLEE = 1 << 9,
-        /* The third deopt class (maps:fold Stage 1): a speculative op
-         * (SpeculateType/AddSmall/SubSmall) or FoldBudget whose side
-         * exit RE-EXECUTES THE ERASED CALL — it branches to the call
-         * site's own T1 PC (ERTS_T2_PC_CALL), no CP push, and T1
-         * re-executes the whole call_ext from the call-boundary state.
-         * The op must carry the call-boundary sync map (cmap); sound
-         * because the specialized fast path is effect-free/alloc-free
-         * and writes nothing below cmap->x_live nor any Y slot before
-         * the exit, so the boundary state is physically intact.
-         * Validated by the callsite rule in t2_validate_windows. */
-        T2_OP_SPEC_CALLSITE = 1 << 10,
-        /* The fourth deopt class (Stage 3 make_fun sinking,
-         * PLAN/T2FULL/census/stage3_opts_design.md §3d): a former
-         * callsite-class op whose erased-call boundary was dissolved
-         * by the sink — the fun that boundary needs in X0 is no longer
-         * materialized on the fast path. Its side exit RE-EXECUTES THE
-         * WHOLE INVOCATION instead: it branches to the function's own
-         * T1 entry body (L_f + TEST_YIELD_RETURN_OFFSET, the plain
-         * window target), no CP push, and T1 re-runs everything —
-         * including the sunk make_fun and the erased call — from the
-         * fresh-call vector in X0..arity-1. Sound only when every path
-         * from function entry to the op is clean: no effect, frame op,
-         * reduction charge (FoldBudget's own batch charge is the same
-         * accepted deviation the callsite class documents), GC below
-         * the arity prefix, or write to X0..arity-1 — enforced by the
-         * entry-recall rule in t2_validate_windows. FoldBudget keeps a
-         * sync map (the entry vector; it is a sync-required op);
-         * converted SpeculateType/AddSmall/SubSmall carry none, like
-         * any window-shaped guard. The deopt monitoring counter still
-         * counts these exits (t2_isel keeps spec_callsite set). */
-        T2_OP_SPEC_ENTRY = 1 << 11,
-        /* The fifth deopt class (P1a general call-site specialization,
-         * PLAN/T2FULL/census/p1_design.md): a speculative op inside an
-         * inlined UNBOUNDED callee loop whose side exit RE-DISPATCHES
-         * THE GENERIC CALLEE WITH THE LOOP-CARRIED STATE. Inner mode
-         * (imm_int = the TERMINAL inlined loop function's T1 entry
-         * L_f; identity permutation only): the side exit enters that
-         * function's body past its entry check — the back edge
-         * pre-charged this iteration's entry — so T1 re-executes the
-         * iteration inside the real loop function with T1-exact
-         * reductions and error frames (at a BODY site — no
-         * T2_OP_TAIL_SITE — the deopt trampoline first pushes the
-         * call site's T1 CONT as the CP the skipped callee prologue
-         * would have pushed; t2_isel's fill_spec_cont). Otherwise
-         * (imm_int = 0) it branches to the erased call site's own T1
-         * PC (ERTS_T2_PC_CALL, no CP push; the T1 call instruction
-         * itself re-establishes the CP for a body site and
-         * tail-transfers for a tail site), and T1 re-executes the
-         * call over the CURRENT X0..x_live-1, which by the op's sync
-         * map holds exactly {loop-carried vector} — so T1 continues
-         * the fold from element k with no redo (contrast
-         * T2_OP_SPEC_CALLSITE, whose contract is the *original*
-         * boundary being intact: a restart, only legal for bounded
-         * loops). The op must carry the loop-carried sync map; the
-         * register-state walk proves the vector is physically in
-         * X0..x_live-1, and the window validator applies the
-         * per-iteration clean-prefix rule (the flag is deliberately
-         * NOT exempted in op_is_window_guard). */
-        T2_OP_SPEC_REDISPATCH = 1 << 12,
+        /* Bits 9-12 freed — the four deopt shapes they encoded
+         * (bit 9 window-callee, bit 10 callsite, bit 11 entry, bit 12
+         * redispatch) are now T2Op::deopt_shape values (see T2DeoptShape,
+         * which carries the full semantic explanations). Left as gaps; do
+         * not reuse without renumbering intent. */
         /* The specialized site was a TAIL call (call_ext_only): there
          * is no T1 continuation (no CONT pctab entry, nothing to push
          * as CP). On a ReductionCheck with T2_OP_RC_CALLEE this makes
@@ -785,6 +715,81 @@ namespace erts_t2 {
         T2BasicBlock *target;
     };
 
+    /* Deopt shape of a speculative op — the single, mutually-exclusive
+     * answer to "where does this op's side exit hand control back to T1,
+     * and what does T1 re-execute?". Formerly encoded as five never-
+     * co-occurring T2Op::flags bits (BOUNDARY 1<<5, WINDOW_CALLEE 1<<9,
+     * SPEC_CALLSITE 1<<10, SPEC_ENTRY 1<<11, SPEC_REDISPATCH 1<<12, with
+     * "none set" meaning plain Window); those bit positions are now
+     * permanently freed (the flags enum leaves the gaps). The canonical
+     * read priority lives in t2_isel.cpp's spec_deopt_pc. Orthogonal
+     * MODIFIERS (RAW_MODE, NO_OVF, ROLLBACK, TAIL_SITE, INLINED, ...)
+     * remain T2Op::flags bits and combine freely with any shape. */
+    enum class T2DeoptShape : uint8_t {
+        /* No shape flag: the side exit branches to the function's own T1
+         * entry body (L_f + TEST_YIELD_RETURN_OFFSET) and T1 re-executes
+         * the whole iteration/invocation from the fresh-call vector in
+         * X0..arity-1 — legal only on a clean prefix (no effect, frame
+         * op, or write to X0..arity-1 before the op; enforced by
+         * t2_validate_windows). */
+        Window = 0,
+        /* Boundary (was flag bit 5, P2 commit 4): the side exit branches
+         * to the op's own T1 EFFECT PC and T1 re-executes just that op
+         * from its sync-map state — nothing before it is re-executed, so
+         * it is legal after effects. The op must keep its sync map (the
+         * boundary contract). */
+        Boundary,
+        /* Callsite (was flag bit 10; maps:fold Stage 1): the side exit
+         * RE-EXECUTES THE ERASED CALL — it branches to the call site's
+         * own T1 PC (ERTS_T2_PC_CALL, no CP push) and T1 re-executes the
+         * whole call_ext from the call-boundary state. The op must carry
+         * the call-boundary sync map (cmap); sound because the fast path
+         * is effect-/alloc-free and writes nothing below cmap->x_live nor
+         * any Y slot before the exit. Validated by the callsite rule in
+         * t2_validate_windows. */
+        Callsite,
+        /* Entry (was flag bit 11; Stage 3 make_fun sinking): a former
+         * callsite-class op whose erased-call boundary was dissolved by
+         * the sink — the fun that boundary needs in X0 is no longer
+         * materialized on the fast path. Its side exit RE-EXECUTES THE
+         * WHOLE INVOCATION instead: it branches to the function's own T1
+         * entry body (the plain Window target), no CP push, and T1 re-runs
+         * everything — including the sunk make_fun and the erased call —
+         * from the fresh-call vector in X0..arity-1. Sound only when every
+         * path from function entry to the op is clean; enforced by the
+         * entry-recall rule in t2_validate_windows. FoldBudget keeps a
+         * sync map (the entry vector); converted SpeculateType/AddSmall/
+         * SubSmall carry none. The deopt monitoring counter still counts
+         * these exits (t2_isel groups them with callsite exits). */
+        Entry,
+        /* Redispatch (was flag bit 12; P1a general call-site
+         * specialization): a speculative op inside an inlined UNBOUNDED
+         * callee loop whose
+         * side exit RE-DISPATCHES THE GENERIC CALLEE WITH THE LOOP-CARRIED
+         * STATE. Inner mode (imm_int = the terminal inlined loop function's
+         * T1 entry L_f; identity permutation only): the side exit enters
+         * that function's body past its entry check — the back edge
+         * pre-charged this iteration's entry — so T1 re-executes the
+         * iteration inside the real loop function with T1-exact reductions
+         * and error frames (at a BODY site — no T2_OP_TAIL_SITE — the
+         * trampoline first pushes the call site's T1 CONT; fill_spec_cont).
+         * Otherwise (imm_int = 0) it branches to the erased call site's own
+         * T1 PC over the CURRENT X0..x_live-1, which by the op's sync map
+         * holds exactly the loop-carried vector, so T1 continues the fold
+         * from element k with no redo (contrast Callsite, whose contract is
+         * the *original* boundary being intact: a restart, legal only for
+         * bounded loops). The op must carry the loop-carried sync map; the
+         * per-iteration clean-prefix rule applies (NOT exempted in
+         * op_is_window_guard). */
+        Redispatch,
+        /* WindowCallee (was flag bit 9): a window-shaped deopt inside an
+         * intrinsic loop whose trampoline enters the CALLEE body (imm_int =
+         * callee L_f) — T1 re-executes the iteration as a fresh helper call
+         * from X0..callee_arity-1 — and additionally pushes the intrinsic
+         * call site's T1 continuation as CP (fill_spec_cont). */
+        WindowCallee
+    };
+
     struct T2Op {
         T2OpKind kind;
         T2Type type; /* result type (== result->type when present) */
@@ -823,7 +828,12 @@ namespace erts_t2 {
         int32_t dst_reg = T2_REG_NONE; /* NSDMI: arena zero-init would be x0 */
         int32_t *operand_regs;         /* arena array [num_operands] or null */
 
-        uint32_t flags; /* T2_OP_* bits */
+        uint32_t flags; /* T2_OP_* bits (orthogonal modifiers only) */
+
+        /* Deopt shape (was five mutually-exclusive T2_OP_SPEC_* flag
+         * bits). NSDMI default Window == the former "no shape flag set".
+         * See T2DeoptShape. */
+        T2DeoptShape deopt_shape = T2DeoptShape::Window;
 
         /* P2 loop unboxing: bit i set = the value this op's sync map
          * names at X i is RAW-IN-HOME (see T2_OP_RAW_MODE) and the

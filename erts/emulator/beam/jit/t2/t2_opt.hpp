@@ -50,7 +50,7 @@
  *                             The fast path's callsite-class deopts
  *                             lose their physical call boundary (the
  *                             fun in X0) and are re-classed to the
- *                             entry-window class (T2_OP_SPEC_ENTRY):
+ *                             entry-window class (Entry deopt shape):
  *                             re-execute the whole invocation from the
  *                             function's own T1 entry body — legal
  *                             only when every path from entry to the

@@ -675,7 +675,7 @@ namespace erts_t2 {
                         set_guard_operands(g, guard_vals, guard_regs);
                         g->beam_idx = op->beam_idx;
                         if (!c.window) {
-                            g->flags |= T2_OP_SPEC_BOUNDARY;
+                            g->deopt_shape = T2DeoptShape::Boundary;
                             g->sync = op->sync;
                         }
                     }
@@ -689,7 +689,7 @@ namespace erts_t2 {
                          * op as an allocator barrier for no reason). */
                         op->sync = nullptr;
                     } else {
-                        op->flags |= T2_OP_SPEC_BOUNDARY;
+                        op->deopt_shape = T2DeoptShape::Boundary;
                     }
                     changed = true;
                 }

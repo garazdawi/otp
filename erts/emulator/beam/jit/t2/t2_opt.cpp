@@ -909,9 +909,8 @@ namespace erts_t2 {
                  * sync map"): a folded constant has no deopt, so there is
                  * nothing to re-tag. */
                 op->raw_mask = 0;
-                op->flags &= (uint16_t)~(
-                        T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
-                        T2_OP_SPEC_ENTRY | T2_OP_WINDOW_CALLEE | T2_OP_NO_OVF);
+                op->flags &= (uint16_t)~T2_OP_NO_OVF;
+                op->deopt_shape = T2DeoptShape::Window;
             }
 
             void run_constfold() {
@@ -995,10 +994,8 @@ namespace erts_t2 {
                             op->sync = nullptr;
                             /* See fold_to_const: no sync map -> no raw mask. */
                             op->raw_mask = 0;
-                            op->flags &= (uint16_t)~(
-                                    T2_OP_SPEC_BOUNDARY | T2_OP_SPEC_CALLSITE |
-                                    T2_OP_SPEC_ENTRY | T2_OP_WINDOW_CALLEE |
-                                    T2_OP_NO_OVF);
+                            op->flags &= (uint16_t)~T2_OP_NO_OVF;
+                            op->deopt_shape = T2DeoptShape::Window;
                             n_fold++;
                             changed = true;
                         }
@@ -1660,7 +1657,7 @@ namespace erts_t2 {
                     if (su->block == S) {
                         continue;
                     }
-                    if ((su->flags & T2_OP_SPEC_CALLSITE) == 0) {
+                    if (su->deopt_shape != T2DeoptShape::Callsite) {
                         return false;
                     }
                     switch (su->kind) {
@@ -2017,8 +2014,7 @@ namespace erts_t2 {
                 em->y = nullptr;
 
                 for (T2Op *c : converts) {
-                    c->flags &= (uint16_t)~T2_OP_SPEC_CALLSITE;
-                    c->flags |= T2_OP_SPEC_ENTRY;
+                    c->deopt_shape = T2DeoptShape::Entry;
                     c->sync = c->kind == T2OpKind::FoldBudget ? em : nullptr;
                 }
 

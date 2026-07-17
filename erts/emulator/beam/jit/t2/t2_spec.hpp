@@ -36,7 +36,7 @@
  * SSA value — the untagged-interval corruption class stays empty by
  * construction (the armed allocator/validator rules keep guarding it).
  *
- * Two deopt shapes, chosen per op (see T2_OP_SPEC_BOUNDARY in
+ * Two deopt shapes, chosen per op (see T2DeoptShape in
  * t2_hir.hpp):
  *
  *   - window: side exit to the function's T1 entry body; T1 re-executes

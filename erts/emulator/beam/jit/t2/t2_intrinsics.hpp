@@ -52,7 +52,7 @@
  *     (case_clause@wrapper for a bad list head, function_clause@helper
  *     past it — exactly T1's shapes);
  *   - window deopts of the spliced fun body (flag-checked arithmetic)
- *     take the same helper-body route (T2_OP_WINDOW_CALLEE).
+ *     take the same helper-body route (WindowCallee deopt shape).
  *
  * Reduction identity: the expansion charges exactly what T1's
  * wrapper/helper/fun call chain charges (1 at the wrapper entry, 2 per

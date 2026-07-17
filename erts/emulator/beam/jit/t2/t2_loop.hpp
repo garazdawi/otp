@@ -107,14 +107,14 @@ namespace erts_t2 {
 
     /* Re-execution-window legality (PLAN/T2/08 §4.2, guards-before-
      * effects; PLAN/T2FULL/09 §4). The loop deopt shape for a
-     * *window*-shaped speculative op (no T2_OP_SPEC_BOUNDARY flag) is
+     * *window*-shaped speculative op (Window deopt shape) is
      * "re-execute the iteration from the header-phi values as a fresh
      * call", so such an op must sit in the iteration's clean prefix:
      * on every path from the header to the op there is no effect, no
      * frame op, and no write to X0..arity-1 (t2_op_dirties_window) —
      * re-execution then never repeats an effect and the re-call vector
      * is still intact in X0..arity-1. *Boundary*-shaped speculative ops
-     * (T2_OP_SPEC_BOUNDARY) deopt to their own T1 EFFECT PC and
+     * (Boundary deopt shape) deopt to their own T1 EFFECT PC and
      * re-execute nothing before themselves, so they are exempt (their
      * contract — an attached sync map — is checked by the HIR
      * validator). Window-shaped ops in the entry block (loop-preheader
