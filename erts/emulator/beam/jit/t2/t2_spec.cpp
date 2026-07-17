@@ -262,12 +262,12 @@ namespace erts_t2 {
 
             bool boundary_available(const T2Op *op) {
                 if (op->sync == nullptr || (op->flags & T2_OP_INLINED) != 0 ||
-                    op->beam_idx == 0 || ret == nullptr) {
+                    op->deopt_beam_idx == 0 || ret == nullptr) {
                     return false;
                 }
                 return erts_t2_pc_lookup_kind(ret,
                                               fn.fn_index,
-                                              op->beam_idx,
+                                              op->deopt_beam_idx,
                                               ERTS_T2_PC_EFFECT) != nullptr;
             }
 
@@ -278,12 +278,12 @@ namespace erts_t2 {
              * (X-homed map, the guard fires before any write), so it needs
              * only an ERTS_T2_PC_EFFECT resume PC, no sync map. */
             bool map_effect_available(const T2Op *op) {
-                if (op->beam_idx == 0 || ret == nullptr) {
+                if (op->deopt_beam_idx == 0 || ret == nullptr) {
                     return false;
                 }
                 return erts_t2_pc_lookup_kind(ret,
                                               fn.fn_index,
-                                              op->beam_idx,
+                                              op->deopt_beam_idx,
                                               ERTS_T2_PC_EFFECT) != nullptr;
             }
 
@@ -675,7 +675,12 @@ namespace erts_t2 {
 
                         insert_before(op->block, op, g);
                         set_guard_operands(g, guard_vals, guard_regs);
+                        /* The type guard shares the speculative op's own
+                         * source position, and deopts wherever the op deopts
+                         * (== its deopt ordinal, which for a split ROLLBACK /
+                         * callsite op is NOT its beam_idx). */
                         g->beam_idx = op->beam_idx;
+                        g->deopt_beam_idx = op->deopt_beam_idx;
                         if (!c.window) {
                             g->deopt_shape = T2DeoptShape::Boundary;
                             g->sync = op->sync;
@@ -775,6 +780,7 @@ namespace erts_t2 {
                          * preheader jump. */
                         set_guard_operands(g, gv, gr);
                         g->beam_idx = 0;
+                        g->deopt_beam_idx = 0;
                         changed = true;
                     }
                 }

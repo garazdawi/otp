@@ -333,7 +333,7 @@ namespace erts_t2 {
             const void *spec_deopt_pc(const T2Op *op) {
                 switch (op->deopt_shape) {
                 case T2DeoptShape::Boundary:
-                    return pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
+                    return pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_EFFECT);
 
                 case T2DeoptShape::Callsite:
                     /* Callsite class (maps:fold Stage 1): re-execute
@@ -341,7 +341,7 @@ namespace erts_t2 {
                      * call site's own T1 PC (no CP push; the sync map
                      * is the call-boundary state, physically intact by
                      * the callsite rule in t2_validate_windows). */
-                    return pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
+                    return pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CALL);
 
                 case T2DeoptShape::Redispatch:
                     /* Re-dispatch class (P1a): re-invoke the generic
@@ -366,7 +366,7 @@ namespace erts_t2 {
                                         *)((const char *)(UWord)op->imm_int +
                                            erts_t2_test_yield_return_offset());
                     }
-                    return pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
+                    return pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CALL);
 
                 case T2DeoptShape::WindowCallee:
                     /* Intrinsic-loop window deopt (P2 commit 8): the
@@ -414,7 +414,7 @@ namespace erts_t2 {
                 if (!need) {
                     return true;
                 }
-                lop->t1_pc_cont = pc_lookup(op->beam_idx, ERTS_T2_PC_CONT);
+                lop->t1_pc_cont = pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CONT);
                 return lop->t1_pc_cont != nullptr;
             }
 
@@ -478,7 +478,7 @@ namespace erts_t2 {
                 for (Uint i = 0; i < ar; i++) {
                     if (tp[1 + i] == key) {
                         const void *effect =
-                                pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
+                                pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_EFFECT);
                         if (effect == nullptr) {
                             return false;
                         }
@@ -633,7 +633,7 @@ namespace erts_t2 {
 
                 lop->kind = T2LirKind::CallBif;
                 lop->target = (const void *)bif_table[ep->bif_number].f;
-                lop->t1_pc_fail = pc_lookup(op->beam_idx, ERTS_T2_PC_BIF);
+                lop->t1_pc_fail = pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_BIF);
                 if (lop->t1_pc_fail == nullptr) {
                     return fail_op(op,
                                    "no BIF pctab entry for the bif call "
@@ -665,7 +665,7 @@ namespace erts_t2 {
                          bool *consumed_terminator) {
                 T2LirOp lop;
 
-                lop.beam_idx = op->beam_idx;
+                lop.beam_idx = op->deopt_beam_idx;
                 /* The originating op's sync map rides along (null on
                  * non-sync ops): it is the P2 allocator's pin set. */
                 lop.sync = op->sync;
@@ -735,7 +735,7 @@ namespace erts_t2 {
                                        "branch");
                     } else {
                         lop.t1_pc_fail =
-                                pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
+                                pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_EFFECT);
                         if (lop.t1_pc_fail == nullptr) {
                             return fail_op(op,
                                            "no EFFECT pctab entry for arith "
@@ -1214,7 +1214,7 @@ namespace erts_t2 {
                      * callee returns into T1; the rest of the invocation
                      * runs T1 (demote-on-return). A light-BIF site needs
                      * the same address for its trap/trace CP. */
-                    lop.t1_pc_cont = pc_lookup(op->beam_idx, ERTS_T2_PC_CONT);
+                    lop.t1_pc_cont = pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CONT);
                     if (lop.t1_pc_cont == nullptr) {
                         return fail_op(op,
                                        "no CONT pctab entry for the call's "
@@ -1363,7 +1363,7 @@ namespace erts_t2 {
                                        "branch");
                     } else {
                         lop.t1_pc_fail =
-                                pc_lookup(op->beam_idx, ERTS_T2_PC_EFFECT);
+                                pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_EFFECT);
                         if (lop.t1_pc_fail == nullptr) {
                             return fail_op(op,
                                            "no EFFECT pctab entry for the "
@@ -1888,10 +1888,10 @@ namespace erts_t2 {
                         lop.tail_site = (op->flags & T2_OP_TAIL_SITE) != 0;
                         lop.target = (const void *)(UWord)op->imm_int;
                         lop.t1_pc_fail =
-                                pc_lookup(op->beam_idx, ERTS_T2_PC_CALL);
+                                pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CALL);
                         if (!lop.tail_site) {
                             lop.t1_pc_cont =
-                                    pc_lookup(op->beam_idx, ERTS_T2_PC_CONT);
+                                    pc_lookup(op->deopt_beam_idx, ERTS_T2_PC_CONT);
                         }
                         if (lop.target == nullptr ||
                             lop.t1_pc_fail == nullptr ||
@@ -2053,7 +2053,7 @@ namespace erts_t2 {
                 if (!lower_bif_call(t, &lop)) {
                     return false;
                 }
-                lop.t1_pc_cont = pc_lookup(t->beam_idx, ERTS_T2_PC_CONT);
+                lop.t1_pc_cont = pc_lookup(t->deopt_beam_idx, ERTS_T2_PC_CONT);
                 if (lop.t1_pc_cont == nullptr) {
                     return fail_op(t,
                                    "no CONT pctab entry for the tail bif "
@@ -2078,7 +2078,7 @@ namespace erts_t2 {
                     alloc.imm = 0;
                     alloc.imm2 = 0;
                     alloc.live = t->index;
-                    alloc.beam_idx = t->beam_idx;
+                    alloc.beam_idx = t->deopt_beam_idx;
                     b.ops.push_back(alloc);
                 }
 
@@ -2088,13 +2088,13 @@ namespace erts_t2 {
 
                 de.kind = T2LirKind::Deallocate;
                 de.imm = dealloc;
-                de.beam_idx = t->beam_idx;
+                de.beam_idx = t->deopt_beam_idx;
                 b.ops.push_back(de);
 
                 T2LirOp ret;
 
                 ret.kind = T2LirKind::Return;
-                ret.beam_idx = t->beam_idx;
+                ret.beam_idx = t->deopt_beam_idx;
                 ret.num_srcs = 1;
                 ret.srcs[0] = T2LirSrc::slot(PhysLoc::xreg(0));
                 b.ops.push_back(ret);
@@ -2108,7 +2108,7 @@ namespace erts_t2 {
                 if (t == nullptr) {
                     return fail("block without terminator");
                 }
-                lop.beam_idx = t->beam_idx;
+                lop.beam_idx = t->deopt_beam_idx;
                 /* Return/tail-transfer boundary map (null on error exits
                  * by design; see T2_OP_ERR_EXIT_*). For the reordered
                  * tail-BIF shape this map rides on the CallBif op. */
@@ -2164,7 +2164,7 @@ namespace erts_t2 {
                                            erts_t2_test_yield_return_offset());
                     if (!lop.tail_site) {
                         lop.t1_pc_cont =
-                                pc_lookup(t->beam_idx, ERTS_T2_PC_CONT);
+                                pc_lookup(t->deopt_beam_idx, ERTS_T2_PC_CONT);
                     }
                     if (t->imm_int == 0 ||
                         (lop.t1_pc_cont == nullptr && !lop.tail_site)) {
@@ -2231,7 +2231,7 @@ namespace erts_t2 {
                         }
                         lop.kind = T2LirKind::SideExit;
                         lop.t1_pc_fail =
-                                pc_lookup(t->beam_idx, ERTS_T2_PC_ERROR);
+                                pc_lookup(t->deopt_beam_idx, ERTS_T2_PC_ERROR);
                         if (lop.t1_pc_fail == nullptr) {
                             return fail_op(t,
                                            "no ERROR pctab entry for the "

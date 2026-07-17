@@ -1982,6 +1982,7 @@ namespace erts_t2 {
                     unlink_body(S, g2); /* re-inserted at the head below */
                     g2->index = fun_words;
                     g2->beam_idx = g->beam_idx;
+                    g2->deopt_beam_idx = g->deopt_beam_idx;
                 }
                 g2->live = live;
                 g2->sync = gm;

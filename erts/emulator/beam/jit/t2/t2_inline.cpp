@@ -437,6 +437,7 @@ namespace erts_t2 {
                     cl->flags = T2_OP_INLINED;
                     cl->sync = nullptr;
                     cl->beam_idx = call->beam_idx;
+                    cl->deopt_beam_idx = call->beam_idx;
 
                     if (op->result != nullptr) {
                         vmap[op->result] = cl->result;
@@ -483,6 +484,7 @@ namespace erts_t2 {
                 }
                 cp->flags = T2_OP_INLINED;
                 cp->beam_idx = call->beam_idx;
+                cp->deopt_beam_idx = call->beam_idx;
 
                 replace_value(fn, call->result, cp->result);
                 unlink_op(call->block, call);

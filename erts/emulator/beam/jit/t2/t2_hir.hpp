@@ -867,9 +867,24 @@ namespace erts_t2 {
         /* Reserved for rung-2 deopt (P3). Always null in P0. */
         T2FrameState *fs;
 
-        /* Ordinal of the source BEAM op within the function, for the T1 PC
-         * side table (populated by the builder; 0 for synthesized ops). */
+        /* The op's own source BEAM-op ordinal within the function, for the
+         * T1 PC side table (populated by the builder; 0 for a synthesized op
+         * with no source). This names ONLY the op itself — deopt/resume
+         * targets live in deopt_beam_idx below, so this field is never
+         * overwritten to name another op. */
         uint32_t beam_idx;
+
+        /* The ordinal whose T1 PC this op's deopt/resume branches to. Equal
+         * to beam_idx for a boundary-shape op that re-executes itself; a
+         * DIFFERENT site for the retargeted ops — the loop-header start_match
+         * for ROLLBACK, or the erased call site for the callsite / redispatch
+         * / window-callee / demote (DemoteCallee) ops. All deopt/resume-PC
+         * readers (spec_deopt_pc, fill_spec_cont, the isel pc_lookup exits,
+         * boundary_available) key on THIS field. NSDMI 0 so a fully
+         * synthesized op deopts via whatever is explicitly assigned here;
+         * new_op seeds it from beam_idx and every beam_idx mutation site that
+         * is NOT a deopt retarget keeps the two in lockstep. */
+        uint32_t deopt_beam_idx = 0;
     };
 
     struct T2BasicBlock {

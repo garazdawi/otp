@@ -775,6 +775,7 @@ namespace erts_t2 {
 
                         np->dst_reg = fresh_home(fb);
                         np->beam_idx = 0;
+                        np->deopt_beam_idx = 0;
                         np->flags = T2_OP_INLINED;
                         vmap[phi->result] = np->result;
                         fb.home[np->result] = np->dst_reg;
@@ -826,6 +827,7 @@ namespace erts_t2 {
                                     (op->flags & T2_OP_TUPLE_ARITY_FUSED);
                         cl->sync = nullptr;
                         cl->beam_idx = 0;
+                        cl->deopt_beam_idx = 0;
 
                         if (op->result != nullptr) {
                             vmap[op->result] = cl->result;
@@ -915,6 +917,7 @@ namespace erts_t2 {
                         }
                         sw->default_target = target_of(t->default_target);
                         sw->beam_idx = 0;
+                        sw->deopt_beam_idx = 0;
                         break;
                     }
                     default:
@@ -1142,7 +1145,10 @@ namespace erts_t2 {
                         g->deopt_shape = spec_shape;
                         g->imm_int = spec_imm;
                         g->sync = spec_sync;
-                        g->beam_idx = call_beam_idx;
+                        /* Synthesized guard whose deopt re-executes the
+                         * ERASED CALL (call-site shape): deopt ordinal only;
+                         * beam_idx stays the synthesized default (0). */
+                        g->deopt_beam_idx = call_beam_idx;
 
                         /* new_op appended g at the block tail; move it
                          * to sit directly before the arith op. */
@@ -1155,7 +1161,11 @@ namespace erts_t2 {
                     op->flags |= T2_OP_INLINED | spec_flags;
                     op->deopt_shape = spec_shape;
                     op->imm_int = spec_imm;
-                    op->beam_idx = call_beam_idx;
+                    /* Inlined callee arith retargeted to deopt at the erased
+                     * call site: no caller-relative source ordinal, so
+                     * beam_idx = 0 and the deopt ordinal names the call. */
+                    op->beam_idx = 0;
+                    op->deopt_beam_idx = call_beam_idx;
                     proven.insert(op->result);
                 }
 
@@ -1415,6 +1425,7 @@ namespace erts_t2 {
                 u->dst_reg = acc_phi->dst_reg;
                 u->flags = T2_OP_RAW_MODE;
                 u->beam_idx = bi;
+                u->deopt_beam_idx = bi;
 
                 for (uint16_t i = 0; i < acc_phi->num_operands; i++) {
                     if (acc_phi->operands[i] == entry_val) {
@@ -1494,6 +1505,7 @@ namespace erts_t2 {
                 rc->index = charge - 1; /* isel: imm = 1 + index */
                 rc->sync = map;
                 rc->beam_idx = beam_idx;
+                rc->deopt_beam_idx = beam_idx;
                 return rc;
             }
 
@@ -1512,7 +1524,11 @@ namespace erts_t2 {
                 dm->live = arity;
                 dm->imm_int = (Sint64)(UWord)lf;
                 dm->sync = map;
-                dm->beam_idx = beam_idx;
+                /* DemoteCallee is a fully synthesized terminator (no BEAM
+                 * source op); its deopt CONT/CALL targets the ERASED CALL
+                 * SITE. Split: set only the deopt ordinal; beam_idx stays
+                 * the synthesized default (0). */
+                dm->deopt_beam_idx = beam_idx;
             }
 
             T2Value *new_copy(T2BasicBlock *b,
@@ -1527,6 +1543,7 @@ namespace erts_t2 {
                 cp->operand_regs = fn.arena.alloc_array<int32_t>(1);
                 cp->operand_regs[0] = src_home;
                 cp->beam_idx = beam_idx;
+                cp->deopt_beam_idx = beam_idx;
                 return cp->result;
             }
 
@@ -1544,8 +1561,10 @@ namespace erts_t2 {
                 t->operand_regs = fn.arena.alloc_array<int32_t>(1);
                 t->operand_regs[0] = v_home;
                 t->beam_idx = beam_idx;
+                t->deopt_beam_idx = beam_idx;
                 fn.emit_branch(b, t->result, then_b, else_b);
                 b->terminator->beam_idx = beam_idx;
+                b->terminator->deopt_beam_idx = beam_idx;
             }
 
             /* ---- one site --------------------------------------------- */
@@ -1698,6 +1717,7 @@ namespace erts_t2 {
                        bi);
                 fn.emit_jump(b_pre, b_preb != nullptr ? b_preb : b_chk);
                 b_pre->terminator->beam_idx = bi;
+                b_pre->terminator->deopt_beam_idx = bi;
 
                 if (b_preb != nullptr) {
                     /* foreach: the wrapper's tail-dispatch to the
@@ -1712,6 +1732,7 @@ namespace erts_t2 {
                            bi);
                     fn.emit_jump(b_preb, b_chk);
                     b_preb->terminator->beam_idx = bi;
+                    b_preb->terminator->deopt_beam_idx = bi;
                 }
 
                 /* ---- loop phis (created early: values needed below) -- */
@@ -1755,6 +1776,7 @@ namespace erts_t2 {
                     gh->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     gh->operand_regs[0] = lx;
                     gh->beam_idx = bi;
+                    gh->deopt_beam_idx = bi;
                     hv = gh->result;
 
                     std::vector<T2Value *> args;
@@ -1838,6 +1860,7 @@ namespace erts_t2 {
                 /* b_body falls through into the fun entry clone. */
                 fn.emit_jump(b_body, fb.entry);
                 b_body->terminator->beam_idx = bi;
+                b_body->terminator->deopt_beam_idx = bi;
 
                 /* ---- preheader checks -------------------------------- */
 
@@ -1894,10 +1917,13 @@ namespace erts_t2 {
                     g->flags = 0;
                     g->deopt_shape = T2DeoptShape::WindowCallee;
                     g->imm_int = (Sint64)(UWord)ce.wrapper_lf;
-                    g->beam_idx = bi;
+                    /* Window-callee guard deopts into the callee body / the
+                     * erased call site: deopt ordinal only; beam_idx = 0. */
+                    g->deopt_beam_idx = bi;
                 }
                 fn.emit_jump(b_grd, b_body);
                 b_grd->terminator->beam_idx = bi;
+                b_grd->terminator->deopt_beam_idx = bi;
 
                 /* ---- iteration demote (fun error edges / window) ----- */
 
@@ -1954,6 +1980,7 @@ namespace erts_t2 {
                     }
                     sw->default_target = b_dm_iter;
                     sw->beam_idx = bi;
+                    sw->deopt_beam_idx = bi;
 
                     /* Early exit: the fun call's entry + return and
                      * the wrapper/helper chain's own return — what T1
@@ -1966,6 +1993,7 @@ namespace erts_t2 {
                         fn.set_operands(cr, {});
                         cr->imm_int = 3;
                         cr->beam_idx = bi;
+                        cr->deopt_beam_idx = bi;
                     }
                 } else {
                     b_cont = fb.ret_join;
@@ -2014,6 +2042,7 @@ namespace erts_t2 {
                     gt->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     gt->operand_regs[0] = lx;
                     gt->beam_idx = bi;
+                    gt->deopt_beam_idx = bi;
                     tv = gt->result;
                     t_next = tv;
                 }
@@ -2044,6 +2073,7 @@ namespace erts_t2 {
                        bi);
                 fn.emit_jump(b_cont, b_lat);
                 b_cont->terminator->beam_idx = bi;
+                b_cont->terminator->deopt_beam_idx = bi;
 
                 new_test_branch(b_lat,
                                 T2OpKind::IsNil,
@@ -2093,6 +2123,7 @@ namespace erts_t2 {
                     fn.set_operands(cr, {});
                     cr->imm_int = 1;
                     cr->beam_idx = bi;
+                    cr->deopt_beam_idx = bi;
                 };
 
                 exit_charge(b_exit0);
@@ -2106,6 +2137,7 @@ namespace erts_t2 {
                     fn.set_operands(c, {});
                     c->imm_term = atom;
                     c->beam_idx = bi;
+                    c->deopt_beam_idx = bi;
                     return new_copy(b, c->result, T2_REG_NONE, res_home, bi);
                 };
 
@@ -2148,6 +2180,7 @@ namespace erts_t2 {
                 for (T2BasicBlock *eb : join_preds) {
                     fn.emit_jump(eb, b_join);
                     eb->terminator->beam_idx = bi;
+                    eb->terminator->deopt_beam_idx = bi;
                 }
 
                 {
@@ -2155,6 +2188,7 @@ namespace erts_t2 {
 
                     res->dst_reg = res_home;
                     res->beam_idx = bi;
+                    res->deopt_beam_idx = bi;
                     fn.set_phi_inputs(res, join_vals, join_preds);
                     replace_value(fn, call->result, res->result);
                 }
@@ -2475,6 +2509,7 @@ namespace erts_t2 {
                     append_op(b_slow, call);
                     fn.emit_jump(b_slow, b_join);
                     b_slow->terminator->beam_idx = bi;
+                    b_slow->terminator->deopt_beam_idx = bi;
                 }
 
                 /* b_pre: the shape guard dispatching fast | slow. */
@@ -2487,8 +2522,10 @@ namespace erts_t2 {
                     g->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     g->operand_regs[0] = t2_xreg(2);
                     g->beam_idx = bi;
+                    g->deopt_beam_idx = bi;
                     fn.emit_branch(b_pre, g->result, b_fast, b_slow);
                     b_pre->terminator->beam_idx = bi;
+                    b_pre->terminator->deopt_beam_idx = bi;
                 }
 
                 /* b_fast: the invariant size + the whole-fold budget.
@@ -2505,6 +2542,7 @@ namespace erts_t2 {
                     size_op->operand_regs = fn.arena.alloc_array<int32_t>(1);
                     size_op->operand_regs[0] = t2_xreg(2);
                     size_op->beam_idx = bi;
+                    size_op->deopt_beam_idx = bi;
 
                     budget = fn.new_op(b_fast,
                                        T2OpKind::FoldBudget,
@@ -2517,7 +2555,9 @@ namespace erts_t2 {
                     budget->imm_int =
                             T2_MAPS_FOLD_R_CHAIN_CONST - (is_tail ? 1 : 0);
                     budget->index = (uint32_t)T2_MAPS_FOLD_R_PER_ELEM;
-                    budget->beam_idx = bi;
+                    /* Callsite-shape budget deopts by re-executing the erased
+                     * call: deopt ordinal only; beam_idx = 0. */
+                    budget->deopt_beam_idx = bi;
                 }
 
                 /* ---- loop phis (values needed by the fun splice) ------ */
@@ -2527,8 +2567,10 @@ namespace erts_t2 {
 
                 acc_phi->dst_reg = t2_xreg(3);
                 acc_phi->beam_idx = bi;
+                acc_phi->deopt_beam_idx = bi;
                 i_phi->dst_reg = t2_xreg(4);
                 i_phi->beam_idx = bi;
+                i_phi->deopt_beam_idx = bi;
 
                 /* b_head: bound check (i and n are always smalls; the
                  * generic emit_is_lt takes its small-small fast path). */
@@ -2542,8 +2584,10 @@ namespace erts_t2 {
                     cmp->operand_regs = fn.arena.alloc_array<int32_t>(2);
                     cmp->operand_regs[0] = t2_xreg(4);
                     cmp->beam_idx = bi;
+                    cmp->deopt_beam_idx = bi;
                     fn.emit_branch(b_head, cmp->result, b_body, b_exit);
                     b_head->terminator->beam_idx = bi;
+                    b_head->terminator->deopt_beam_idx = bi;
                 }
 
                 /* b_body: element loads + the spliced fun body. */
@@ -2561,6 +2605,7 @@ namespace erts_t2 {
                     k_op->operand_regs[1] = t2_xreg(4);
                     k_op->dst_reg = t2_xreg(5);
                     k_op->beam_idx = bi;
+                    k_op->deopt_beam_idx = bi;
                     kv = k_op->result;
 
                     T2Op *v_op = fn.new_op(b_body,
@@ -2573,6 +2618,7 @@ namespace erts_t2 {
                     v_op->operand_regs[1] = t2_xreg(4);
                     v_op->dst_reg = t2_xreg(6);
                     v_op->beam_idx = bi;
+                    v_op->deopt_beam_idx = bi;
                     vv = v_op->result;
                 }
 
@@ -2649,6 +2695,7 @@ namespace erts_t2 {
 
                 fn.emit_jump(b_body, fb.entry);
                 b_body->terminator->beam_idx = bi;
+                b_body->terminator->deopt_beam_idx = bi;
 
                 /* The invariant size's home: the first X slot past the
                  * spliced body's frontier — written once in b_fast,
@@ -2672,7 +2719,9 @@ namespace erts_t2 {
                     g->flags = 0;
                     g->deopt_shape = T2DeoptShape::Callsite;
                     g->sync = cmap;
-                    g->beam_idx = bi;
+                    /* Callsite-shape guard deopts by re-executing the erased
+                     * call: deopt ordinal only; beam_idx = 0. */
+                    g->deopt_beam_idx = bi;
                 }
 
                 T2Value *acc_in =
@@ -2681,13 +2730,16 @@ namespace erts_t2 {
 
                 i0->def->dst_reg = t2_xreg(4);
                 i0->def->beam_idx = bi;
+                i0->def->deopt_beam_idx = bi;
 
                 T2Value *one = fn.emit_const_int(b_fast, 1);
 
                 one->def->beam_idx = bi;
+                one->def->deopt_beam_idx = bi;
 
                 fn.emit_jump(b_fast, b_head);
                 b_fast->terminator->beam_idx = bi;
+                b_fast->terminator->deopt_beam_idx = bi;
 
                 /* b_ret (= fb.ret_join): commit acc', bump i', loop.
                  * The accumulator commits straight into its loop home
@@ -2738,11 +2790,14 @@ namespace erts_t2 {
                     inc->flags = 0;
                     inc->deopt_shape = T2DeoptShape::Callsite;
                     inc->sync = cmap;
-                    inc->beam_idx = bi;
+                    /* Callsite-shape loop-index increment deopts by
+                     * re-executing the erased call: deopt ordinal only. */
+                    inc->deopt_beam_idx = bi;
                     i_next = inc->result;
                 }
                 fn.emit_jump(fb.ret_join, b_head);
                 fb.ret_join->terminator->beam_idx = bi;
+                fb.ret_join->terminator->deopt_beam_idx = bi;
 
                 fn.set_phi_inputs(acc_phi,
                                   {acc_in, acc_next},
@@ -2768,14 +2823,17 @@ namespace erts_t2 {
                     ret_op->operand_regs[0] = res_home;
                     ret_op->sync = make_map({res_f}, cmap);
                     ret_op->beam_idx = bi;
+                    ret_op->deopt_beam_idx = bi;
                 } else {
                     fn.emit_jump(b_exit, b_join);
                     b_exit->terminator->beam_idx = bi;
+                    b_exit->terminator->deopt_beam_idx = bi;
 
                     T2Op *res = fn.new_phi(b_join, T2Type::any());
 
                     res->dst_reg = res_home;
                     res->beam_idx = bi;
+                    res->deopt_beam_idx = bi;
                     fn.set_phi_inputs(res,
                                       {call->result, res_f},
                                       {b_slow, b_exit});
@@ -4538,6 +4596,7 @@ namespace erts_t2 {
                     np->dst_reg = t2_xreg(perm[i]);
                     np->flags = T2_OP_INLINED;
                     np->beam_idx = bi;
+                    np->deopt_beam_idx = bi;
                     vmap[phis[i]->result] = np->result;
                     cl_phis[i] = np;
                 }
@@ -4638,6 +4697,7 @@ namespace erts_t2 {
                                     (op->flags & T2_OP_TUPLE_ARITY_FUSED);
                         cl->sync = nullptr;
                         cl->beam_idx = bi;
+                        cl->deopt_beam_idx = bi;
 
                         if (op->result != nullptr) {
                             vmap[op->result] = cl->result;
@@ -4699,6 +4759,7 @@ namespace erts_t2 {
                             ret_op->operand_regs[0] = t2_xreg(0);
                             ret_op->sync = make_map({rv}, cmap);
                             ret_op->beam_idx = bi;
+                            ret_op->deopt_beam_idx = bi;
                         } else {
                             /* BODY site: the fold result feeds the
                              * join's result phi instead of returning
@@ -4717,6 +4778,7 @@ namespace erts_t2 {
                             fn.set_operands(cr, {});
                             cr->imm_int = 1;
                             cr->beam_idx = bi;
+                            cr->deopt_beam_idx = bi;
                             fn.emit_jump(nb, b_join);
                         }
                         ret_vals.push_back(rv);
@@ -4728,6 +4790,7 @@ namespace erts_t2 {
                                     "admitted set");
                     }
                     nb->terminator->beam_idx = bi;
+                    nb->terminator->deopt_beam_idx = bi;
                 }
                 if (ccf == nullptr || crc == nullptr || ret_vals.empty()) {
                     return fail("p1: cloned CallFun/RC/Return vanished");
@@ -4959,6 +5022,7 @@ namespace erts_t2 {
                         cp->operand_regs = fn.arena.alloc_array<int32_t>(1);
                         cp->operand_regs[0] = src_home;
                         cp->beam_idx = mfop->beam_idx;
+                        cp->deopt_beam_idx = mfop->beam_idx;
 
                         /* new_op appended at the block tail; relink it
                          * immediately before the MakeFun. */
@@ -5021,8 +5085,10 @@ namespace erts_t2 {
 
                 fn.emit_jump(cb, fb.entry);
                 cb->terminator->beam_idx = bi;
+                cb->terminator->deopt_beam_idx = bi;
                 fn.emit_jump(fb.ret_join, b_lat2);
                 fb.ret_join->terminator->beam_idx = bi;
+                fb.ret_join->terminator->deopt_beam_idx = bi;
 
                 /* The fun's return value replaces the CallFun's result
                  * everywhere (the latch accumulator copy included);
@@ -5213,7 +5279,10 @@ namespace erts_t2 {
                     g->flags = T2_OP_INLINED | site_flag;
                     g->deopt_shape = T2DeoptShape::Redispatch;
                     g->sync = cmap;
-                    g->beam_idx = bi;
+                    /* Redispatch-shape guard deopts by re-dispatching the
+                     * generic callee at the erased call: deopt ordinal only;
+                     * beam_idx = 0. */
+                    g->deopt_beam_idx = bi;
                 }
 
                 /* Loop-entry small-guards for the non-constant closure
@@ -5233,7 +5302,10 @@ namespace erts_t2 {
                     g->flags = T2_OP_INLINED | site_flag;
                     g->deopt_shape = T2DeoptShape::Redispatch;
                     g->sync = cmap;
-                    g->beam_idx = bi;
+                    /* Redispatch-shape guard deopts by re-dispatching the
+                     * generic callee at the erased call: deopt ordinal only;
+                     * beam_idx = 0. */
+                    g->deopt_beam_idx = bi;
                 }
                 {
                     T2Op *rc1 = fn.new_op(b_grd,
@@ -5254,6 +5326,7 @@ namespace erts_t2 {
                     rc1->index = rc1_extra;
                     rc1->sync = cmap;
                     rc1->beam_idx = bi;
+                    rc1->deopt_beam_idx = bi;
                 }
                 if (inner) {
                     /* Entry pre-screen (inner mode): a first-element
@@ -5277,6 +5350,7 @@ namespace erts_t2 {
 
                     fn.emit_jump(b_grd, b_scr);
                     b_grd->terminator->beam_idx = bi;
+                    b_grd->terminator->deopt_beam_idx = bi;
                     new_test_branch(b_scr,
                                     T2OpKind::IsNonemptyList,
                                     lv,
@@ -5293,9 +5367,11 @@ namespace erts_t2 {
                                     bi);
                     fn.emit_jump(b_ok, bmap.at(ch));
                     b_ok->terminator->beam_idx = bi;
+                    b_ok->terminator->deopt_beam_idx = bi;
                 } else {
                     fn.emit_jump(b_grd, bmap.at(ch));
                     b_grd->terminator->beam_idx = bi;
+                    b_grd->terminator->deopt_beam_idx = bi;
                 }
 
                 /* ---- the re-dispatch exit: the generic callee,
@@ -5337,12 +5413,14 @@ namespace erts_t2 {
                     rd->index = ar;
                     rd->sync = inner ? cmap : vec_map;
                     rd->beam_idx = bi;
+                    rd->deopt_beam_idx = bi;
 
                     if (!is_tail) {
                         rd->live = ar;
                         rd->dst_reg = t2_xreg(0);
                         fn.emit_jump(b_err, b_join);
                         b_err->terminator->beam_idx = bi;
+                        b_err->terminator->deopt_beam_idx = bi;
 
                         /* The join's result phi replaces the erased
                          * call's value: the loop's nil exits feed it
@@ -5352,6 +5430,7 @@ namespace erts_t2 {
 
                         res->dst_reg = t2_xreg(0);
                         res->beam_idx = bi;
+                        res->deopt_beam_idx = bi;
                         ret_vals.push_back(rd->result);
                         ret_blocks.push_back(b_err);
                         fn.set_phi_inputs(res, ret_vals, ret_blocks);
@@ -5381,7 +5460,10 @@ namespace erts_t2 {
                     dm->imm_int = (Sint64)(UWord)inner_lf;
                     dm->flags = site_flag;
                     dm->sync = vec_map;
-                    dm->beam_idx = bi;
+                    /* DemoteCallee (inner-mode error edge): synthesized
+                     * terminator whose deopt CONT targets the erased call
+                     * site. Split: deopt ordinal only; beam_idx stays 0. */
+                    dm->deopt_beam_idx = bi;
                 }
 
                 /* ---- caller wiring (a body site's b_pre lost its
@@ -5394,6 +5476,7 @@ namespace erts_t2 {
                 }
                 fn.emit_jump(b_pre, b_grd);
                 b_pre->terminator->beam_idx = bi;
+                b_pre->terminator->deopt_beam_idx = bi;
 
                 /* ---- P2 loop unboxing: the accumulator ---------------- *
                  * The generic plan covers everything here: the
@@ -5422,6 +5505,7 @@ namespace erts_t2 {
                         edge->terminator->succ_then = b_seed;
                         fn.emit_jump(b_seed, hdr);
                         b_seed->terminator->beam_idx = bi;
+                        b_seed->terminator->deopt_beam_idx = bi;
                         for (T2Op *phi = hdr->phis_head; phi != nullptr;
                              phi = phi->next) {
                             for (uint16_t i = 0; i < phi->num_operands; i++) {
@@ -6038,6 +6122,7 @@ namespace erts_t2 {
                                         cp->dst_reg = t2_xreg((uint32_t)j);
                                         cp->flags = T2_OP_INLINED;
                                         cp->beam_idx = call->beam_idx;
+                                        cp->deopt_beam_idx = call->beam_idx;
                                         xs[j] = cp->result;
                                     } else {
                                         T2Value *cv;
@@ -6058,6 +6143,7 @@ namespace erts_t2 {
                                         cv->def->dst_reg = t2_xreg((uint32_t)j);
                                         cv->def->flags = T2_OP_INLINED;
                                         cv->def->beam_idx = call->beam_idx;
+                                        cv->def->deopt_beam_idx = call->beam_idx;
                                         xs[j] = cv;
                                     }
                                 }
@@ -7958,6 +8044,7 @@ namespace erts_t2 {
             lim2->dst_reg = s.limit->dst_reg;
             lim2->flags = s.limit->flags;
             lim2->beam_idx = s.limit->beam_idx;
+            lim2->deopt_beam_idx = s.limit->beam_idx;
 
             T2Op *cur2 = fn.new_op(fc, T2OpKind::BsCursor, s.cursor->type);
 
@@ -7966,6 +8053,7 @@ namespace erts_t2 {
             cur2->dst_reg = s.cursor->dst_reg;
             cur2->flags = s.cursor->flags;
             cur2->beam_idx = s.cursor->beam_idx;
+            cur2->deopt_beam_idx = s.cursor->beam_idx;
 
             T2Op *en2 = fn.new_op(fc, T2OpKind::BsEnsure, s.ensure->type);
 
@@ -7974,6 +8062,7 @@ namespace erts_t2 {
             en2->imm_int = (Sint64)n * s.stride;
             en2->index = s.ensure->index;
             en2->beam_idx = s.ensure->beam_idx;
+            en2->deopt_beam_idx = s.ensure->beam_idx;
             if (swar || ascii) {
                 /* B2/L2 alignment guard (index bit 2): the wide load's
                  * 64-bit ldr needs a byte-aligned cursor. Alignment is
@@ -7998,6 +8087,7 @@ namespace erts_t2 {
 
             fn.emit_branch(fc, en2->result, fl, s.m);
             fc->terminator->beam_idx = s.m->terminator->beam_idx;
+            fc->terminator->deopt_beam_idx = s.m->terminator->beam_idx;
 
             /* Re-point the header's success edge at the fast check; M
              * (and everything behind it) becomes the remainder path. */
@@ -8030,6 +8120,7 @@ namespace erts_t2 {
                         fn.emit_const_int(fl, s.acc_const->imm_int * (Sint64)n);
 
                 inc->def->beam_idx = s.acc_const->beam_idx;
+                inc->def->deopt_beam_idx = s.acc_const->beam_idx;
 
                 T2Op *facc = fn.new_op(fl, T2OpKind::Add, s.acc->type);
 
@@ -8040,7 +8131,11 @@ namespace erts_t2 {
                 facc->mfa_m = s.acc->mfa_m;
                 facc->mfa_f = s.acc->mfa_f;
                 facc->bif_num = s.acc->bif_num;
-                facc->beam_idx = s.sm->beam_idx;
+                /* ROLLBACK: the overflow deopt targets the loop-header
+                 * start_match (its EFFECT PC is the clause entry), NOT this
+                 * synthesized fused accumulator. Split: set only the deopt
+                 * ordinal; beam_idx stays the synthesized default (0). */
+                facc->deopt_beam_idx = s.sm->beam_idx;
                 facc->sync = hdr_map;
                 facc->flags = T2_OP_ROLLBACK;
                 acc_k = facc->result;
@@ -8060,6 +8155,7 @@ namespace erts_t2 {
                 base2->dst_reg = s.base->dst_reg;
                 base2->flags = s.base->flags;
                 base2->beam_idx = s.base->beam_idx;
+                base2->deopt_beam_idx = s.base->beam_idx;
 
                 /* ONE 64-bit wide load. Its raw temp reuses the limit
                  * home — dead once FC's bs_ensure consumed it, and
@@ -8076,6 +8172,7 @@ namespace erts_t2 {
                 word->flags = T2_OP_RAW_MODE;
                 word->imm_int = (Sint64)n * s.stride; /* 64 */
                 word->beam_idx = s.read->beam_idx;
+                word->deopt_beam_idx = s.read->beam_idx;
 
                 /* ONE horizontal fold: sum8 = (b0+..+b7) << 4, the raw
                  * <<4 form the checked add consumes directly. Reuses
@@ -8089,6 +8186,7 @@ namespace erts_t2 {
                 sum8->dst_reg = s.base->dst_reg;
                 sum8->flags = T2_OP_RAW_MODE;
                 sum8->beam_idx = s.read->beam_idx;
+                sum8->deopt_beam_idx = s.read->beam_idx;
 
                 /* The fused accumulator: acc' = acc_phi + sum8,
                  * CHECKED, placed BEFORE the advance/sync so .start is
@@ -8113,7 +8211,11 @@ namespace erts_t2 {
                 facc->mfa_m = s.acc->mfa_m;
                 facc->mfa_f = s.acc->mfa_f;
                 facc->bif_num = s.acc->bif_num;
-                facc->beam_idx = s.sm->beam_idx;
+                /* ROLLBACK: the overflow deopt targets the loop-header
+                 * start_match (its EFFECT PC is the clause entry), NOT this
+                 * synthesized fused accumulator. Split: set only the deopt
+                 * ordinal; beam_idx stays the synthesized default (0). */
+                facc->deopt_beam_idx = s.sm->beam_idx;
                 facc->sync = hdr_map;
                 facc->flags = T2_OP_ROLLBACK;
                 acc_k = facc->result;
@@ -8135,6 +8237,7 @@ namespace erts_t2 {
                 base2->dst_reg = s.base->dst_reg;
                 base2->flags = s.base->flags;
                 base2->beam_idx = s.base->beam_idx;
+                base2->deopt_beam_idx = s.base->beam_idx;
 
                 /* ONE 64-bit wide load (the 8 ASCII bytes). Its raw temp
                  * reuses the limit home — dead once FC's bs_ensure
@@ -8150,6 +8253,7 @@ namespace erts_t2 {
                 word->flags = T2_OP_RAW_MODE;
                 word->imm_int = (Sint64)n * s.stride; /* 64 */
                 word->beam_idx = s.read->beam_idx;
+                word->deopt_beam_idx = s.read->beam_idx;
 
                 /* The fused ASCII guard: all 8 bytes < 0x80 (word &
                  * 0x8080808080808080 == 0). On ANY non-ASCII byte it
@@ -8168,7 +8272,10 @@ namespace erts_t2 {
                 fn.set_operands(guard, {word->result});
                 guard->operand_regs = fn.arena.alloc_array<int32_t>(1);
                 guard->operand_regs[0] = s.limit->dst_reg;
-                guard->beam_idx = s.sm->beam_idx;
+                /* ROLLBACK: the ascii-guard failure rolls back to the
+                 * loop-header start_match, NOT this synthesized guard.
+                 * Split: set only the deopt ordinal; beam_idx stays 0. */
+                guard->deopt_beam_idx = s.sm->beam_idx;
                 guard->flags = T2_OP_ROLLBACK;
                 guard->deopt_shape = T2DeoptShape::Boundary;
                 guard->sync = hdr_map;
@@ -8184,6 +8291,7 @@ namespace erts_t2 {
                                               s.acc_const->imm_int * (Sint64)n);
 
                     inc->def->beam_idx = s.acc_const->beam_idx;
+                    inc->def->deopt_beam_idx = s.acc_const->beam_idx;
 
                     T2Op *facc = fn.new_op(fl, T2OpKind::Add, s.acc->type);
 
@@ -8194,7 +8302,10 @@ namespace erts_t2 {
                     facc->mfa_m = s.acc->mfa_m;
                     facc->mfa_f = s.acc->mfa_f;
                     facc->bif_num = s.acc->bif_num;
-                    facc->beam_idx = s.sm->beam_idx;
+                    /* ROLLBACK: overflow deopt targets the loop-header
+                     * start_match, not this synthesized fused accumulator.
+                     * Split: deopt ordinal only; beam_idx stays 0. */
+                    facc->deopt_beam_idx = s.sm->beam_idx;
                     facc->sync = hdr_map;
                     facc->flags = T2_OP_ROLLBACK;
                     acc_k = facc->result;
@@ -8213,6 +8324,7 @@ namespace erts_t2 {
                 base2->dst_reg = s.base->dst_reg;
                 base2->flags = s.base->flags;
                 base2->beam_idx = s.base->beam_idx;
+                base2->deopt_beam_idx = s.base->beam_idx;
             }
 
             if (fuse || swar || ascii) {
@@ -8221,6 +8333,7 @@ namespace erts_t2 {
                 T2Value *cs = fn.emit_const_int(fl, (Sint64)n * s.stride);
 
                 cs->def->beam_idx = s.adv_const->beam_idx;
+                cs->def->deopt_beam_idx = s.adv_const->beam_idx;
 
                 T2Op *adv1 = fn.new_op(fl, T2OpKind::AddSmall, s.adv->type);
 
@@ -8229,6 +8342,7 @@ namespace erts_t2 {
                 adv1->dst_reg = s.adv->dst_reg;
                 adv1->flags = s.adv->flags;
                 adv1->beam_idx = s.adv->beam_idx;
+                adv1->deopt_beam_idx = s.adv->beam_idx;
                 cur_k = adv1->result;
 
                 T2Op *sync1 = fn.new_op(fl, T2OpKind::BsSync, s.bsync->type);
@@ -8236,6 +8350,7 @@ namespace erts_t2 {
                 fn.set_operands(sync1, {s.sm->result, cur_k});
                 clone_regs(sync1, s.bsync);
                 sync1->beam_idx = s.bsync->beam_idx;
+                sync1->deopt_beam_idx = s.bsync->beam_idx;
             }
 
             for (int k = 0; !fuse && !swar && !ascii && k < n; k++) {
@@ -8250,6 +8365,7 @@ namespace erts_t2 {
                     read_k->imm_int = s.read->imm_int;
                     read_k->index = s.read->index;
                     read_k->beam_idx = s.read->beam_idx;
+                    read_k->deopt_beam_idx = s.read->beam_idx;
                     /* BEFORE this copy's clone_map: the k-th add's map
                      * must name byte_k in the read home (the 1-wide
                      * deopt contract — the redispatched gc_bif '+'
@@ -8260,6 +8376,7 @@ namespace erts_t2 {
                 T2Value *cs = fn.emit_const_int(fl, s.stride);
 
                 cs->def->beam_idx = s.adv_const->beam_idx;
+                cs->def->deopt_beam_idx = s.adv_const->beam_idx;
 
                 T2Op *adv_k = fn.new_op(fl, T2OpKind::AddSmall, s.adv->type);
 
@@ -8268,6 +8385,7 @@ namespace erts_t2 {
                 adv_k->dst_reg = s.adv->dst_reg;
                 adv_k->flags = s.adv->flags;
                 adv_k->beam_idx = s.adv->beam_idx;
+                adv_k->deopt_beam_idx = s.adv->beam_idx;
                 cur_k = adv_k->result;
 
                 T2Op *sync_k = fn.new_op(fl, T2OpKind::BsSync, s.bsync->type);
@@ -8275,6 +8393,7 @@ namespace erts_t2 {
                 fn.set_operands(sync_k, {s.sm->result, cur_k});
                 clone_regs(sync_k, s.bsync);
                 sync_k->beam_idx = s.bsync->beam_idx;
+                sync_k->deopt_beam_idx = s.bsync->beam_idx;
 
                 T2Value *rhs;
 
@@ -8283,6 +8402,7 @@ namespace erts_t2 {
                 } else {
                     rhs = fn.emit_const_int(fl, s.acc_const->imm_int);
                     rhs->def->beam_idx = s.acc_const->beam_idx;
+                    rhs->def->deopt_beam_idx = s.acc_const->beam_idx;
                 }
 
                 T2Op *acc_next = fn.new_op(fl, T2OpKind::Add, s.acc->type);
@@ -8295,6 +8415,7 @@ namespace erts_t2 {
                 acc_next->mfa_f = s.acc->mfa_f;
                 acc_next->bif_num = s.acc->bif_num;
                 acc_next->beam_idx = s.acc->beam_idx;
+                acc_next->deopt_beam_idx = s.acc->beam_idx;
                 acc_next->sync = clone_map(s.acc->sync);
                 acc_k = acc_next->result;
                 content[s.acc->dst_reg] = acc_k;
@@ -8306,6 +8427,7 @@ namespace erts_t2 {
             clone_regs(cpy2, s.ctx_copy);
             cpy2->dst_reg = s.ctx_copy->dst_reg;
             cpy2->beam_idx = s.ctx_copy->beam_idx;
+            cpy2->deopt_beam_idx = s.ctx_copy->beam_idx;
             content[s.ctx_copy->dst_reg] = cpy2->result;
 
             T2Op *rc2 = fn.new_op(fl, T2OpKind::ReductionCheck, s.rc->type);
@@ -8323,10 +8445,12 @@ namespace erts_t2 {
                                          1)
                             : s.rc->index;
             rc2->beam_idx = s.rc->beam_idx;
+            rc2->deopt_beam_idx = s.rc->beam_idx;
             rc2->sync = clone_map(s.rc->sync);
 
             fn.emit_jump(fl, s.h);
             fl->terminator->beam_idx = s.latch->terminator->beam_idx;
+            fl->terminator->deopt_beam_idx = s.latch->terminator->beam_idx;
 
             /* --- third phi inputs: the FL back edge ------------------ */
             for (T2Op *phi : {s.ctx_phi, s.acc_phi}) {

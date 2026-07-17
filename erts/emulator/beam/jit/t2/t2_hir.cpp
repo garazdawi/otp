@@ -479,6 +479,10 @@ namespace erts_t2 {
 
         op->kind = kind;
         op->type = ty;
+        /* Keep the deopt ordinal in lockstep with the source ordinal at
+         * creation; the dual-write at each beam_idx mutation site keeps them
+         * equal until a retargeting site deliberately splits them. */
+        op->deopt_beam_idx = op->beam_idx;
 
         if (t2_op_produces_value(kind)) {
             T2Value *v = arena.create<T2Value>();
@@ -2854,7 +2858,7 @@ namespace erts_t2 {
         if (op->flags & T2_OP_ROLLBACK) {
             /* P-C B1: the fused checked add; hdr = the loop header's
              * start_match ordinal its overflow deopt resumes at. */
-            snprintf(buf, sizeof(buf), " !rollback(hdr=%u)", op->beam_idx);
+            snprintf(buf, sizeof(buf), " !rollback(hdr=%u)", op->deopt_beam_idx);
             out += buf;
         }
         if (op->raw_mask != 0) {

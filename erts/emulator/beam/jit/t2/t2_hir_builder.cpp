@@ -419,6 +419,7 @@ namespace erts_t2 {
                 if (!b->sealed) {
                     T2Op *phi = fn->new_phi(b, T2Type::any());
                     phi->beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
+                    phi->deopt_beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
                     /* The phi's canonical home is the register it merges. */
                     phi->dst_reg = (int32_t)var;
                     incomplete[b->id].push_back({var, phi});
@@ -431,6 +432,7 @@ namespace erts_t2 {
                 } else {
                     T2Op *phi = fn->new_phi(b, T2Type::any());
                     phi->beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
+                    phi->deopt_beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
                     phi->dst_reg = (int32_t)var;
                     /* Break lookup cycles through loops before filling. */
                     write_var(b, var, phi->result);
@@ -779,6 +781,7 @@ namespace erts_t2 {
 
                 fn->set_operands(op, {});
                 op->beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
+                op->deopt_beam_idx = cur_op != nullptr ? cur_op->beam_idx : 0;
 
                 failed = false;
                 error.clear();
@@ -805,6 +808,7 @@ namespace erts_t2 {
 
                 T2Op *op = fn->new_op(cur, kind, ty);
                 op->beam_idx = cur_op->beam_idx;
+                op->deopt_beam_idx = cur_op->beam_idx;
                 fn->set_operands(op, vals);
                 set_operand_regs(op, srcs);
                 return op->result;
@@ -1082,6 +1086,7 @@ namespace erts_t2 {
                                                   T2OpKind::Deallocate,
                                                   T2Type::none());
                         dop_op->beam_idx = dop.beam_idx;
+                        dop_op->deopt_beam_idx = dop.beam_idx;
                         fn->set_operands(dop_op, {});
                         dop_op->index = (uint32_t)dealloc;
                         cur_frame = T2_NO_FRAME;
@@ -1099,6 +1104,7 @@ namespace erts_t2 {
 
                 T2Op *op = fn->new_op(cur, kind, T2Type::any());
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 fn->set_operands(op, args);
                 op->mfa_m = m;
                 op->mfa_f = f;
@@ -1190,6 +1196,7 @@ namespace erts_t2 {
                 T2Op *op = fn->new_op(cur, T2OpKind::CallFun, T2Type::any());
 
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 fn->set_operands(op, args);
                 op->index = arity;
                 op->live = x_live;
@@ -1219,6 +1226,7 @@ namespace erts_t2 {
                 T2Op *op =
                         fn->new_op(cur, T2OpKind::TailCallExt, T2Type::none());
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 {
                     std::vector<T2Value *> vals;
 
@@ -1278,6 +1286,7 @@ namespace erts_t2 {
 
                 T2Op *sw = fn->new_op(cur, T2OpKind::Switch, T2Type::none());
                 sw->beam_idx = dop.beam_idx;
+                sw->deopt_beam_idx = dop.beam_idx;
                 fn->set_operands(sw, {src.v});
                 set_operand_regs(sw, {src});
 
@@ -1493,6 +1502,7 @@ namespace erts_t2 {
                     /* Fall through into the labelled block. */
                     T2Op *op = fn->new_op(cur, T2OpKind::Jump, T2Type::none());
                     op->beam_idx = dop.beam_idx;
+                    op->deopt_beam_idx = dop.beam_idx;
                     op->succ_then = b;
                     add_edge(cur, b);
                 }
@@ -1563,6 +1573,7 @@ namespace erts_t2 {
                     T2Value *v = fn->emit_const_nil(cur);
 
                     v->def->beam_idx = dop.beam_idx;
+                    v->def->deopt_beam_idx = dop.beam_idx;
                     write_dst_new(dop.args[1 + i], v);
                 }
                 break;
@@ -1587,6 +1598,7 @@ namespace erts_t2 {
 
                 T2Op *op = fn->new_op(cur, T2OpKind::Allocate, T2Type::none());
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 fn->set_operands(op, {});
                 op->index = (uint32_t)slots;
                 op->imm_int = (Sint64)heap;
@@ -1608,6 +1620,7 @@ namespace erts_t2 {
                 T2Op *op =
                         fn->new_op(cur, T2OpKind::Deallocate, T2Type::none());
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 fn->set_operands(op, {});
                 op->index = (uint32_t)slots;
 
@@ -1619,6 +1632,7 @@ namespace erts_t2 {
                 T2Op *op = fn->new_op(cur, T2OpKind::GcTest, T2Type::none());
 
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 fn->set_operands(op, {});
                 op->index = (uint32_t)dop.args[0].val;
                 op->live = (uint32_t)dop.args[1].val;
@@ -1640,6 +1654,7 @@ namespace erts_t2 {
                  * surviving slots without moving data. */
                 T2Op *op = fn->new_op(cur, T2OpKind::Trim, T2Type::none());
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 fn->set_operands(op, {});
                 op->index = (uint32_t)n;
                 op->imm_int = (Sint64)remaining;
@@ -1698,6 +1713,7 @@ namespace erts_t2 {
 
                 T2Op *op = fn->new_op(cur, T2OpKind::Return, T2Type::none());
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 fn->set_operands(op, {v});
                 op->operand_regs = fn->arena.alloc_array<int32_t>(1);
                 op->operand_regs[0] = t2_xreg(0);
@@ -1720,6 +1736,7 @@ namespace erts_t2 {
                 T2Op *op = fn->new_op(cur, T2OpKind::Jump, T2Type::none());
 
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 op->succ_then = b;
                 add_edge(cur, b);
                 end_block();
@@ -2327,6 +2344,7 @@ namespace erts_t2 {
                 T2Op *op = fn->new_op(cur, T2OpKind::CatchSetup, T2Type::any());
                 op->imm_term = tag;
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 write_dst_new(dop.args[0], op->result);
                 break;
             }
@@ -2347,6 +2365,7 @@ namespace erts_t2 {
                                       T2Type::of(BEAM_TYPE_NIL));
                 op->imm_term = NIL;
                 op->beam_idx = dop.beam_idx;
+                op->deopt_beam_idx = dop.beam_idx;
                 write_dst_new(dop.args[0], op->result);
                 break;
             }
@@ -2616,6 +2635,7 @@ namespace erts_t2 {
                             fn->new_op(cur, T2OpKind::BsSync, T2Type::none());
 
                     op->beam_idx = cur_op->beam_idx;
+                    op->deopt_beam_idx = cur_op->beam_idx;
                     fn->set_operands(op, {ctx.v, cursor});
                     set_operand_regs(op, {ctx, SrcVal{cursor, cursor_home}});
                 };
@@ -2814,6 +2834,7 @@ namespace erts_t2 {
                                       T2Type::none());
 
                 op->beam_idx = cur_op->beam_idx;
+                op->deopt_beam_idx = cur_op->beam_idx;
                 fn->set_operands(op, {ctx.v, pos.v});
                 set_operand_regs(op, {ctx, pos});
                 break;
@@ -2980,6 +3001,7 @@ namespace erts_t2 {
                                          T2Type::none());
 
                     g->beam_idx = cur_op->beam_idx;
+                    g->deopt_beam_idx = cur_op->beam_idx;
                     g->deopt_shape = T2DeoptShape::Boundary;
                     g->sync = snapshot_sync((uint32_t)live);
                     g->imm_int = 0x80;
@@ -3016,6 +3038,7 @@ namespace erts_t2 {
                             fn->new_op(cur, T2OpKind::BsSync, T2Type::none());
 
                     op->beam_idx = cur_op->beam_idx;
+                    op->deopt_beam_idx = cur_op->beam_idx;
                     fn->set_operands(op, {ctx.v, ncur});
                     set_operand_regs(op, {ctx, SrcVal{ncur, cursor_home}});
                 }

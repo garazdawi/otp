@@ -503,6 +503,7 @@ namespace erts_t2 {
 
             phi->dst_reg = t2_xreg(i);
             phi->beam_idx = 0;
+            phi->deopt_beam_idx = 0;
             phis[i] = phi;
         }
 
@@ -597,6 +598,7 @@ namespace erts_t2 {
 
             fn.set_operands(rc, {});
             rc->beam_idx = t->beam_idx;
+            rc->deopt_beam_idx = t->deopt_beam_idx;
             rc->sync = t->sync;
 
             l->terminator = nullptr;
@@ -606,6 +608,7 @@ namespace erts_t2 {
             fn.set_operands(j, {});
             j->succ_then = h;
             j->beam_idx = t->beam_idx;
+            j->deopt_beam_idx = t->deopt_beam_idx;
         }
 
         /* ---- 5. phi inputs: entry values + per-latch update values -- */
