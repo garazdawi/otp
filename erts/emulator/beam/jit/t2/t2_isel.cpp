@@ -1367,6 +1367,11 @@ namespace erts_t2 {
                                            "no EFFECT pctab entry for the "
                                            "guard-bif side exit");
                         }
+                        /* Carry the frame-only sync map the builder attached
+                         * for a live-frame {f,0} exit: it pins the init_yregs'd
+                         * Y slots to their homes so T1's raise-time frame walk
+                         * never sees garbage (mirrors the error-exit exits). */
+                        lop.sync = op->sync;
                     }
                     b.ops.push_back(lop);
                     return true;

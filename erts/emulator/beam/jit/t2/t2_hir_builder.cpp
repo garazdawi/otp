@@ -960,6 +960,23 @@ namespace erts_t2 {
                 op->mfa_f = mfa.function;
                 op->index = (uint32_t)num_sources;
 
+                if (fail.type == TAG_p && cur_frame > 0) {
+                    /* A {f,0} guard-BIF side-exits to its own T1 EFFECT PC,
+                     * where T1 re-reads the sources and raises. T1's raise
+                     * (and, under a live `try`, next_catch, plus any GC on the
+                     * error path) can walk the whole allocated frame, so the
+                     * init_yregs'd Y slots must be materialized to their NIL
+                     * homes before the exit — exactly the hazard the decoded
+                     * error exits (badmatch/case_end/if_end) close. A
+                     * frame-only sync (x_live = 0) pins every Y slot to its
+                     * home; the X sources are already in their canonical homes
+                     * as operands of this op. Only meaningful with a real live
+                     * frame (a frameless / frame-polymorphic site has no fixed
+                     * Y frame to lose, and snapshot_sync would reject the
+                     * latter). */
+                    op->sync = snapshot_sync(0);
+                }
+
                 if (fail.type == TAG_f) {
                     T2Value *ok = emit_result_op(T2OpKind::Succeeded,
                                                  {SrcVal{v, T2_REG_NONE}},
