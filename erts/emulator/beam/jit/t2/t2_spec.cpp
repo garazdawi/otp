@@ -391,19 +391,18 @@ namespace erts_t2 {
             }
 
             void specialize_entry_types() {
-                /* ON by default (opt-out via T2_NO_ENTRY_TYPE). The former
-                 * default-OFF guarded against a load-time abort ("could not
-                 * resolve all labels") that emit_lir_speculate_type triggered
-                 * on large functions under the profiled tier-up path: it
-                 * reused the T1 type-test emitters, whose box test branches
-                 * via emit_is_boxed(resolve_beam_label(Fail, dispUnknown))
-                 * — a ~32KB veneer deadline that a block-0 entry guard could
-                 * overshoot before the veneer was materialized. The emitter
-                 * now lowers each class' tag test INLINE at disp1MB (the same
-                 * budget the fused small guard and the Switch use), so no
-                 * dispUnknown veneer is created and the abort cannot recur;
-                 * the pass is safe to run by default. */
-                if (getenv("T2_NO_ENTRY_TYPE") != nullptr ||
+                /* OFF by default (opt-in via T2_ENTRY_TYPE). The emit path is
+                 * correct and crash-free (each class' tag test is lowered
+                 * INLINE at disp1MB — no dispUnknown veneer, so the former
+                 * "could not resolve all labels" abort cannot recur), but the
+                 * speculation is currently a NET COST: the T2_ENTRY_TYPE_CENSUS
+                 * measured 827 guards planted over a dialyzer tier-up of stdlib
+                 * with ZERO eliminable downstream type-tests, and no other pass
+                 * consumes a non-small type narrowing, so the planted guard buys
+                 * nothing today. Kept behind the opt-in (and exercised by the
+                 * t2-correctness natural-tier-up leg with T2_ENTRY_TYPE=1) until
+                 * a beneficial consumer of the narrowing exists. */
+                if (getenv("T2_ENTRY_TYPE") == nullptr ||
                     fn.blocks.empty()) {
                     return;
                 }

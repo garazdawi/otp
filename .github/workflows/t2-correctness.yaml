@@ -320,6 +320,11 @@ jobs:
           export LSAN_OPTIONS="suppressions=$ERL_TOP/erts/emulator/asan/suppress"
           export T2_RETAIN=1
           export T2_TIER_THRESHOLD=200
+          ## Entry type-class speculation (#1c) is opt-in (off by default,
+          ## currently cost-only), so force it ON here -- exercising its emit is
+          ## the whole point of a natural-tier-up leg (a #1c codegen crash was
+          ## what motivated it).
+          export T2_ENTRY_TYPE=1
           ## NB: t2_stats counts only the +JT2enable compile-at-load driver, so
           ## it reads all-zero under natural tier-up even when the tier-up
           ## worker is compiling (the profile-driven emit is what actually runs
