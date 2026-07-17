@@ -1693,10 +1693,15 @@ namespace erts_t2 {
                 }
 
                 case T2OpKind::SpeculateType:
-                    /* The fused tag-bit deopt guard (P2 commit 4): AND
-                     * the values, require every small-tag bit, deopt on
-                     * failure. */
-                    lop.kind = T2LirKind::SpeculateSmall;
+                    /* The class == 0 form is the fused small tag-bit deopt
+                     * guard (P2 commit 4): AND the values, require every
+                     * small-tag bit, deopt on failure. A non-zero class is
+                     * the #1c entry type-class guard: ONE tagged operand,
+                     * a per-class tag test lowered to T2LirKind::SpeculateType
+                     * (imm = the class bit). */
+                    lop.kind = op->spec_type_class == 0
+                                       ? T2LirKind::SpeculateSmall
+                                       : T2LirKind::SpeculateType;
                     /* Entry-class exits (the sunk-fun re-invocation,
                      * Entry-shape) and re-dispatch exits (P1a)
                      * count in the same monitoring counter as callsite
@@ -1708,6 +1713,11 @@ namespace erts_t2 {
                     if (!fill_srcs(op, &lop)) {
                         return false;
                     }
+                    if (op->spec_type_class != 0 && lop.num_srcs != 1) {
+                        return fail_op(op,
+                                       "entry type-class guard must carry "
+                                       "exactly one operand");
+                    }
                     for (uint8_t i = 0; i < lop.num_srcs; i++) {
                         if (lop.srcs[i].is_const) {
                             return fail_op(op,
@@ -1716,6 +1726,7 @@ namespace erts_t2 {
                                            "proven, never guarded)");
                         }
                     }
+                    lop.imm = (Sint64)op->spec_type_class;
                     lop.t1_pc_fail = spec_deopt_pc(op);
                     if (lop.t1_pc_fail == nullptr) {
                         return fail_op(op,

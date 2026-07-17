@@ -37,6 +37,7 @@ extern "C"
 #include "big.h"
 
 #include "t2_pctab.h"
+#include "t2_retain.h"
 }
 
 #include "t2_lir.hpp"
@@ -315,6 +316,140 @@ namespace erts_t2 {
                         op->flags |= T2_OP_MAP_SHAPE_SPEC;
                         changed = true;
                     }
+                }
+            }
+
+            /* ---- entry type-class speculation (#1c) ---------------- *
+             *
+             * When the tier-up profile observed a function-entry argument
+             * MONOMORPHICALLY as a single cheap-tag non-small class
+             * (tuple/cons/nil/atom/float/binary/map), plant ONE entry
+             * SpeculateType(class) guard on that Param and narrow its SSA
+             * type to the class. The guard is a runtime tag test that
+             * deopts to T1 on any mismatch (Entry deopt shape: T1
+             * re-executes the whole invocation from the fresh-call vector
+             * in X0..arity-1), so the monomorphic profile hint is a
+             * speculation, never trusted blind: a wrong guess merely
+             * deopts, never a wrong result. The narrowing feeds a future
+             * downstream is_C guard-elim; it is sound because the guard
+             * dominates every use (planted at the entry block, before its
+             * terminator), and inert-and-safe today (the only backend
+             * type-lattice reader is t2_type_proves_small, which a
+             * non-small class only ever turns OFF).
+             * ------------------------------------------------------- */
+
+            /* The BEAM_TYPE_* union bit a monomorphic ERTS_T2_TY_* class
+             * narrows to (and the guard proves at runtime), or 0 for a
+             * class with no cheap single tag test (small/big/fun/other —
+             * out of scope; small has its own pass). */
+            static uint16_t entry_class_beam_bits(uint16_t ty_class) {
+                switch (ty_class) {
+                case ERTS_T2_TY_TUPLE:
+                    return BEAM_TYPE_TUPLE;
+                case ERTS_T2_TY_CONS:
+                    return BEAM_TYPE_CONS;
+                case ERTS_T2_TY_NIL:
+                    return BEAM_TYPE_NIL;
+                case ERTS_T2_TY_ATOM:
+                    return BEAM_TYPE_ATOM;
+                case ERTS_T2_TY_FLOAT:
+                    return BEAM_TYPE_FLOAT;
+                case ERTS_T2_TY_BINARY:
+                    return BEAM_TYPE_BITSTRING;
+                case ERTS_T2_TY_MAP_FLAT:
+                case ERTS_T2_TY_MAP_HASH:
+                    return BEAM_TYPE_MAP;
+                default:
+                    return 0;
+                }
+            }
+
+            void specialize_entry_types() {
+                if (getenv("T2_NO_ENTRY_TYPE") != nullptr || fn.blocks.empty()) {
+                    return;
+                }
+
+                T2BasicBlock *b0 = fn.blocks[0];
+
+                /* The entry deopt state (X0..arity-1, no frame) must be the
+                 * untouched fresh-call vector. If any real op already
+                 * dirties the entry block's prefix, degrade to a NO-OP
+                 * (leave the generic path) rather than plant a guard the
+                 * entry-recall validator would correctly reject — a bail is
+                 * always safe, a bad guard is not. Params and other
+                 * speculation guards are the only clean-prefix ops. */
+                for (const T2Op *op = b0->ops_head; op != nullptr;
+                     op = op->next) {
+                    if (op->kind != T2OpKind::Param &&
+                        op->kind != T2OpKind::SpeculateType) {
+                        return;
+                    }
+                }
+
+                /* Snapshot the entry Params before planting (new_op appends
+                 * to the same body list we would otherwise be iterating). */
+                std::vector<T2Op *> params;
+                for (T2Op *op = b0->ops_head; op != nullptr; op = op->next) {
+                    if (op->kind == T2OpKind::Param && op->result != nullptr &&
+                        op->index < fn.arity) {
+                        params.push_back(op);
+                    }
+                }
+
+                for (T2Op *param : params) {
+                    uint32_t idx = param->index;
+                    uint16_t seen = facts.param_seen_types(idx);
+
+                    /* Require a real profile record AND monomorphism:
+                     * exactly one observed class bit. 0 == no evidence
+                     * (forced compile-at-load, an unsampled arg, or the
+                     * profile-less default) -> no-op, so the +JT2enable
+                     * differential stays byte-identical. Two or more bits
+                     * == polymorphic -> no-op. */
+                    if (seen == 0 || (seen & (uint16_t)(seen - 1)) != 0) {
+                        continue;
+                    }
+
+                    uint16_t beam_bits = entry_class_beam_bits(seen);
+                    if (beam_bits == 0) {
+                        continue;
+                    }
+
+                    /* Profile narrows, never contradicts (02 §1): only
+                     * speculate a class the seeded AOT type still admits.
+                     * If the type chunk already excludes it the observation
+                     * is inconsistent -> leave it generic. */
+                    if (!param->result->type.has(beam_bits)) {
+                        continue;
+                    }
+
+                    /* Plant one entry SpeculateType(class) guard on the
+                     * Param (Entry deopt shape). new_op appends to b0's
+                     * body list — after the params, before the (separately
+                     * held) terminator — exactly where the small entry
+                     * guards land. */
+                    T2Op *g = fn.new_op(b0,
+                                        T2OpKind::SpeculateType,
+                                        T2Type::none());
+                    std::vector<T2Value *> gv{param->result};
+                    std::vector<int32_t> gr{t2_xreg(idx)};
+
+                    set_guard_operands(g, gv, gr);
+                    g->spec_type_class = seen;
+                    g->deopt_shape = T2DeoptShape::Entry;
+                    g->beam_idx = 0;
+                    g->deopt_beam_idx = 0;
+
+                    /* Narrow the Param's SSA type to the proven class (meet
+                     * with the class bit; keep any range/unit refinement,
+                     * which the tag test does not disturb). op->type mirrors
+                     * result->type by the builder's invariant. */
+                    T2Type nt = param->result->type;
+                    nt.type_union = (uint16_t)(nt.type_union & beam_bits);
+                    param->result->type = nt;
+                    param->type = nt;
+
+                    changed = true;
                 }
             }
 
@@ -798,6 +933,12 @@ namespace erts_t2 {
                  * candidate machinery, so run it before the cands.empty()
                  * early-out (a struct-reading loop has no Add/Sub cands). */
                 specialize_map_shapes();
+
+                /* Entry type-class speculation (#1c) is likewise independent
+                 * of the arithmetic candidates and must run before them: it
+                 * may narrow a boxed param's type, which correctly withholds
+                 * the doomed small speculation on that same argument. */
+                specialize_entry_types();
 
                 compute_proven();
                 collect_candidates();

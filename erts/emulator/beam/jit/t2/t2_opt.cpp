@@ -1324,8 +1324,14 @@ namespace erts_t2 {
                     }
                     break;
                 case T2OpKind::SpeculateType:
-                    for (uint16_t i = 0; i < op->num_operands; i++) {
-                        p3_set(f.small, op->operands[i]->id);
+                    /* Only the small tag-bit guard (class 0) proves its
+                     * operands small; an entry type-class guard (#1c)
+                     * proves a non-small class and establishes no small
+                     * fact (keep lockstep with spec_transfer_op). */
+                    if (op->spec_type_class == 0) {
+                        for (uint16_t i = 0; i < op->num_operands; i++) {
+                            p3_set(f.small, op->operands[i]->id);
+                        }
                     }
                     break;
                 case T2OpKind::AddSmall:
@@ -1493,7 +1499,12 @@ namespace erts_t2 {
                         T2Op *next = op->next;
 
                         if (op->kind == T2OpKind::SpeculateType &&
-                            !is_pair_member(op)) {
+                            op->spec_type_class == 0 && !is_pair_member(op)) {
+                            /* Only the small tag-bit guard can be redundant
+                             * against a dominating small proof; an entry
+                             * type-class guard (#1c) proves a non-small
+                             * class and is never a small no-op, so it is
+                             * never removed here. */
                             bool proven = true;
 
                             for (uint16_t i = 0; proven && i < op->num_operands;

@@ -390,6 +390,18 @@ namespace erts_t2 {
          * emit_try_end. dst = the Y slot, dst_value = the produced NIL. */
         TryEnd,
 
+        /* Entry type-class speculation (#1c). ONE tagged source (the
+         * function-entry parameter), no dst; imm = the ERTS_T2_TY_* class
+         * bit the guard proves. Emits the class's exact T1 tag test
+         * (emit_i_is_tuple / emit_is_nonempty_list / emit_is_atom /
+         * emit_is_nil / emit_is_float / emit_is_bitstring / emit_is_map)
+         * wired to deopt to t1_pc_fail (Entry shape: the function's own T1
+         * entry body — T1 re-executes the whole invocation from the
+         * fresh-call vector) on any mismatch. Distinct from SpeculateSmall
+         * so the proven-small path is byte-identical; spec_callsite bumps
+         * the deopt counter (Entry-class exits are monitored). */
+        SpeculateType,
+
         Invalid
     };
 

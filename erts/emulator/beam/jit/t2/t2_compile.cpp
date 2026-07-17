@@ -215,6 +215,7 @@ namespace {
                     s->fused_arith++;
                     break;
                 case T2LirKind::SpeculateSmall:
+                case T2LirKind::SpeculateType:
                 case T2LirKind::SpeculateRange:
                 case T2LirKind::SwarAsciiTest:
                     s->spec_guards++;

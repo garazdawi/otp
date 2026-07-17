@@ -173,6 +173,8 @@ namespace erts_t2 {
             return "is_tuple_of_arity";
         case T2LirKind::SpeculateSmall:
             return "speculate_small";
+        case T2LirKind::SpeculateType:
+            return "speculate_type";
         case T2LirKind::SpeculateRange:
             return "speculate_range";
         case T2LirKind::SwarAsciiTest:

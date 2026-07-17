@@ -911,6 +911,9 @@ namespace erts_t2 {
             case T2LirKind::SpeculateSmall:
                 emit_lir_speculate_small(op);
                 break;
+            case T2LirKind::SpeculateType:
+                emit_lir_speculate_type(op);
+                break;
             case T2LirKind::SpeculateRange:
                 emit_lir_speculate_range(op);
                 break;
@@ -1186,6 +1189,66 @@ namespace erts_t2 {
             }
             a.cmp(TMP1, imm(_TAG_IMMED1_SMALL));
             a.b_ne(resolve_label(fl, disp1MB));
+        }
+
+        /* Entry type-class deopt guard (#1c): prove the (single tagged)
+         * operand belongs to the monomorphically-observed class by reusing
+         * the EXACT T1 tag test for that class, wired so a mismatch branches
+         * to the deopt trampoline (Entry shape: the function's own T1 entry
+         * body — T1 re-executes the whole invocation from the fresh-call
+         * vector). Reusing the T1 emitters means the tag test matches
+         * erl_term.h bit-for-bit; a wrong test would be type confusion, so
+         * nothing is hand-rolled here. imm carries the ERTS_T2_TY_* class. */
+        void emit_lir_speculate_type(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const ||
+                op.t1_pc_fail == nullptr) {
+                fail("malformed entry type-class speculation guard");
+                return;
+            }
+
+            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+            /* The deopt trampoline (created lazily, keyed like every other
+             * fail exit); a mismatch branches here. spec_callsite makes it
+             * bump erts_t2_callsite_deopts so entry-type deopts are visible
+             * (erts_debug:get_internal_state(t2_yield_stats)). */
+            ArgLabel failL(ArgVal(ArgVal::Type::Label,
+                                  fail_label_num(op.t1_pc_fail,
+                                                 op.t1_pc_cont,
+                                                 op.spec_callsite,
+                                                 op.raw_mask)));
+
+            ArgVal sv = src_argval(op.srcs[0]);
+
+            comment("T2 speculate type-class %ld (entry)", (long)op.imm);
+
+            switch (op.imm) {
+            case ERTS_T2_TY_TUPLE:
+                emit_i_is_tuple(failL, ArgSource(sv));
+                break;
+            case ERTS_T2_TY_CONS:
+                emit_is_nonempty_list(failL, ArgRegister(sv));
+                break;
+            case ERTS_T2_TY_NIL:
+                emit_is_nil(failL, ArgRegister(sv));
+                break;
+            case ERTS_T2_TY_ATOM:
+                emit_is_atom(failL, ArgSource(sv));
+                break;
+            case ERTS_T2_TY_FLOAT:
+                emit_is_float(failL, ArgSource(sv));
+                break;
+            case ERTS_T2_TY_BINARY:
+                emit_is_bitstring(failL, ArgSource(sv));
+                break;
+            case ERTS_T2_TY_MAP_FLAT:
+            case ERTS_T2_TY_MAP_HASH:
+                emit_is_map(failL, ArgSource(sv));
+                break;
+            default:
+                fail("entry type-class guard with an unsupported class");
+                break;
+            }
         }
 
         /* The ASCII range deopt guard (P-C L1): `cmp val, #(bound <<

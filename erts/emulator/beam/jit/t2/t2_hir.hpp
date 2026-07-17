@@ -835,6 +835,20 @@ namespace erts_t2 {
          * See T2DeoptShape. */
         T2DeoptShape deopt_shape = T2DeoptShape::Window;
 
+        /* Entry type-class speculation (#1c; PLAN/T2FULL entry-type):
+         * meaningful ONLY on a SpeculateType op. 0 == the legacy SMALL
+         * tag-bit guard (lowers to SpeculateSmall — the P2 commit 4
+         * behaviour, byte-identical and untouched). A single ERTS_T2_TY_*
+         * bit (t2_retain.h; one of the cheap-tag non-small boxed/immediate
+         * classes TUPLE/CONS/NIL/ATOM/FLOAT/BINARY/MAP) selects a per-class
+         * tag test lowered to T2LirKind::SpeculateType. The class is
+         * carried as the raw ERTS_T2_TY_* value (a Uint16 there); 0 can
+         * never collide with a real class because ERTS_T2_TY_SMALL == 1.
+         * The proven class is RE-PROVEN at every stage (the guard is a
+         * runtime tag test that deopts to T1 on any miss — a monomorphic
+         * profile hint is never trusted blind). */
+        uint16_t spec_type_class = 0;
+
         /* P2 loop unboxing: bit i set = the value this op's sync map
          * names at X i is RAW-IN-HOME (see T2_OP_RAW_MODE) and the
          * op's deopt/yield emission must re-tag X i in the cold path

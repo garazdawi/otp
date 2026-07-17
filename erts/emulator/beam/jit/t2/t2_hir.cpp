@@ -1920,14 +1920,23 @@ namespace erts_t2 {
                     }
                     break;
                 case T2OpKind::SpeculateType:
-                    /* The tag-bit test: after it, every operand is a
-                     * proven small (side exit otherwise). A fused guard
-                     * (P2 commit 4, the AND-combining rule) carries
-                     * several operands; the combined mask requires every
-                     * input to satisfy every tag bit, so all of them are
-                     * proven on fall-through. */
-                    for (uint16_t i = 0; i < op->num_operands; i++) {
-                        sf_set(f.small, op->operands[i]->id);
+                    /* The class == 0 form is the small tag-bit test: after
+                     * it, every operand is a proven small (side exit
+                     * otherwise). A fused guard (P2 commit 4, the
+                     * AND-combining rule) carries several operands; the
+                     * combined mask requires every input to satisfy every
+                     * tag bit, so all of them are proven on fall-through.
+                     * An entry type-class guard (#1c, spec_type_class != 0)
+                     * proves a NON-small class (tuple/cons/atom/...), so it
+                     * establishes NEITHER small NOR raw — its narrowing
+                     * lives in the type lattice, re-proven by the runtime
+                     * tag test, and must never be mistaken for a small
+                     * proof (that would let a boxed value reach the
+                     * untagged arithmetic path — a corruption). */
+                    if (op->spec_type_class == 0) {
+                        for (uint16_t i = 0; i < op->num_operands; i++) {
+                            sf_set(f.small, op->operands[i]->id);
+                        }
                     }
                     break;
                 case T2OpKind::AddSmall:
@@ -2762,6 +2771,19 @@ namespace erts_t2 {
                      op->index,
                      op->live);
             out += buf;
+            break;
+        case T2OpKind::SpeculateType:
+            /* class 0 == the legacy small tag-bit guard; a non-zero
+             * ERTS_T2_TY_* bit (t2_retain.h) is a #1c entry type-class
+             * guard (64 tuple / 32 cons / 16 nil / 8 atom / 4 float /
+             * 2 binary / 128,256 map). */
+            if (op->spec_type_class != 0) {
+                snprintf(buf,
+                         sizeof(buf),
+                         " class=0x%x entry",
+                         (unsigned)op->spec_type_class);
+                out += buf;
+            }
             break;
         case T2OpKind::ConstAtom:
             erts_snprintf(buf, sizeof(buf), " %T", op->imm_term);
