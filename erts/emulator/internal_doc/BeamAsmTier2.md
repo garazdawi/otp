@@ -737,6 +737,16 @@ caller is skipped — and adds nothing to the hot T1 emit: only the cold trip
 fragment (which now syncs the stack so the CP is readable) and the handler
 change. Default on; `T2_NO_CALLER_TIERUP` disables it.
 
+One gap limits its reach: the build-only higher-order helpers whose callers hold
+the inline-able sites (`lists:foldl_1` and friends contain a `call_fun`, so they
+never install standalone) are *not armed by default*, so their trips never drive
+compilation of the fold-holder that calls them. `T2_ARM_BUILDABLE` arms buildable
+loops for tier-up (opt-in) to close that gap — a body-call `lists:foldl/3` holder
+then installs with the fold inlined (measured ~1.4× on a literal-fun fold). It is
+opt-in because arming all buildable loops adds tier-up traffic, and the OTP corpus
+is too sparse in that shape to show a whole-workload win; the payoff is on
+fold-heavy code.
+
 ## Eligibility: what T2 compiles
 
 A function is eligible **iff every generic BEAM op in its body is in the
