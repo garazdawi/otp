@@ -665,6 +665,19 @@ int erts_t2_jettison_function(struct erl_module_instance *mi,
     return 0;
 }
 
+int erts_t2_function_prologue_claimed(const ErtsCodeInfo *ci_exec) {
+    /* L_f + 4: the patchable `b next` word in the T1 prologue (the word
+     * erts_t2_install rewrites to reach the blob, and precondition (1)
+     * validates against T2_PROLOGUE_B_NEXT). A racy single-word read; a
+     * concurrent install/jettison stores one aligned word, so we observe
+     * the old or the new value, both meaningful. */
+    const Uint32 *patch =
+            (const Uint32 *)((const char *)erts_codeinfo_to_code(ci_exec) +
+                             sizeof(Uint32));
+
+    return *patch != T2_PROLOGUE_B_NEXT;
+}
+
 void erts_t2_jettison_instance(struct erl_module_instance *mi,
                                int revert_prologue) {
     ErtsT2Install *chain = NULL;
@@ -959,6 +972,11 @@ Eterm erts_t2_debug_yield_stats(Process *p) {
 int erts_t2_jettison_function(struct erl_module_instance *mi,
                               const ErtsCodeInfo *ci_exec) {
     (void)mi;
+    (void)ci_exec;
+    return 0;
+}
+
+int erts_t2_function_prologue_claimed(const ErtsCodeInfo *ci_exec) {
     (void)ci_exec;
     return 0;
 }

@@ -518,15 +518,20 @@ void erts_t2_tier_init(void);
 /* t2_tier.c: trip handler, called from the T1 profiling sequence's
  * cold path (scheduler 1 only). Applies the stability rule
  * (05 §15.2, simplified to the nonsmall mask), CASes the record to
- * pending and enqueues a compile job for the single worker. */
-void erts_t2_profile_trip(ErtsT2Profile *p,
+ * pending and enqueues a compile job for the single worker. \p c_p is
+ * the tripping process: its synced frame CP (c_p->stop[0]) resolves the
+ * tripping loop's caller for caller-directed tier-up (task #91). */
+void erts_t2_profile_trip(Process *c_p,
+                          ErtsT2Profile *p,
                           Eterm a0,
                           Eterm a1,
                           Eterm a2,
                           Eterm a3);
 
 /* t2_tier.c: {trips, stability_resets, enqueued, dropped, compiled,
- * installed, failed} for the t2_tier_stats debug BIF. */
+ * installed, failed, rejected, caller_enqueued} for the t2_tier_stats
+ * debug BIF (append-only; caller_enqueued is caller-directed tier-up,
+ * task #91). */
 Eterm erts_t2_tier_stats_term(Process *p);
 
 /* t2_tier.c: diagnostic census (debug-only, backs

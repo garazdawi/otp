@@ -176,6 +176,21 @@ int erts_t2_jettison_function(struct erl_module_instance *mi,
 void erts_t2_jettison_instance(struct erl_module_instance *mi,
                                int revert_prologue);
 
+/* True iff the T1 prologue of function \p ci_exec (executable-view
+ * ErtsCodeInfo) is already claimed — i.e. the patchable `b next` word at
+ * L_f+4 is no longer the pristine 0x14000002, because a tier-2 blob is
+ * installed over it (or, exceptionally, trace/NIF patched it). Used by
+ * caller-directed tier-up (task #91) to dedup a caller enqueue: the
+ * caller has no PENDING profile record to gate on, so this predicate
+ * stands in — it is exactly the set of functions for which a fresh
+ * erts_t2_install would be REJECTED (DUP / trace-owned prologue). A racy
+ * single-word read of the caller's own live T1 code, which cannot be
+ * freed while it sits on the running process's stack; the worker's
+ * install rechecks under permission, so a stale read only ever costs a
+ * futile enqueue, never correctness. Always 0 on non-aarch64 (inert
+ * tier). */
+int erts_t2_function_prologue_claimed(const ErtsCodeInfo *ci_exec);
+
 /* Defer the release of up to two JitAllocator spans until after a code
  * barrier (thread progress + instruction barriers on all schedulers).
  * Also used by the exec-harness debug BIF to free its throwaway blobs.

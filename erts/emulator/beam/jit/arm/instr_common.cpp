@@ -3304,15 +3304,24 @@ void BeamGlobalAssembler::emit_t2_profile_trip_shared() {
     a.mov(ARG5, XREG3);
     a.stp(ARG2, ARG3, TMP_MEM2q);
     a.stp(ARG4, ARG5, TMP_MEM4q);
-    emit_enter_runtime<Update::eXRegs>();
-    a.ldr(ARG1, TMP_MEM1q);
-    a.ldp(ARG2, ARG3, TMP_MEM2q);
-    a.ldp(ARG4, ARG5, TMP_MEM4q);
+    /* eStack (in addition to eXRegs) syncs c_p->stop to E before the C
+     * call, so the handler can read the frame CP (c_p->stop[0]) to
+     * resolve and tier up the tripping loop's caller (task #91:
+     * caller-directed tier-up). */
+    emit_enter_runtime<Update::eStack | Update::eXRegs>();
+    /* c_p (x21, the persistent process register) rides through
+     * enter_runtime untouched, so pass it as ARG1 and shift the record
+     * + the four observed args down one argument register. */
+    a.ldr(ARG2, TMP_MEM1q);
+    a.ldp(ARG3, ARG4, TMP_MEM2q);
+    a.ldp(ARG5, ARG6, TMP_MEM4q);
+    a.mov(ARG1, c_p);
 
-    runtime_call<void (*)(ErtsT2Profile *, Eterm, Eterm, Eterm, Eterm),
-                 erts_t2_profile_trip>();
+    runtime_call<
+            void (*)(Process *, ErtsT2Profile *, Eterm, Eterm, Eterm, Eterm),
+            erts_t2_profile_trip>();
 
-    emit_leave_runtime<Update::eXRegs>();
+    emit_leave_runtime<Update::eStack | Update::eXRegs>();
     emit_leave_runtime_frame();
     a.ret(a64::x30);
 }

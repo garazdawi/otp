@@ -85,6 +85,7 @@
 #include "erl_fun.h" /* ErlFunThing / fun identity for #2a target profiling */
 
 #include "t2_retain.h"
+#include "t2_install.h" /* erts_t2_function_prologue_claimed (caller dedup) */
 
 /* The shared throwaway record (see t2_retain.h): the store target for
  * every scheduler but scheduler 1. Threshold ~0 never trips. One full
@@ -129,6 +130,7 @@ static struct {
     Uint64 installed;
     Uint64 failed;
     Uint64 rejected; /* install-quality gate refusals (P2.6 blocker B) */
+    Uint64 caller_enqueued; /* caller-directed tier-up enqueues (task #91) */
 } t2_tier_stats;
 
 void erts_t2_tier_init(void) {
@@ -270,7 +272,144 @@ static ERTS_INLINE int t2_measure_mode(void) {
     return m;
 }
 
-void erts_t2_profile_trip(ErtsT2Profile *p,
+/* Caller-directed tier-up (task #91) is ON by default; T2_NO_CALLER_TIERUP
+ * disables it (the lever, cached like t2_measure_mode; racy init is
+ * idempotent). */
+static ERTS_INLINE int t2_caller_tierup_enabled(void) {
+    static int m = -1;
+    if (m < 0) {
+        m = (getenv("T2_NO_CALLER_TIERUP") == NULL);
+    }
+    return m;
+}
+
+/* T2_CALLER_TRACE: one-time de-risking trace of the caller resolution
+ * (confirms c_p->stop[0] is the tripping loop's frame CP). Cached. */
+static ERTS_INLINE int t2_caller_trace(void) {
+    static int m = -1;
+    if (m < 0) {
+        m = (getenv("T2_CALLER_TRACE") != NULL);
+    }
+    return m;
+}
+
+/* Caller-directed tier-up (task #91): when a hot, loop-shaped callee \p p
+ * trips, ALSO enqueue its immediate caller so caller-side transforms
+ * (P1 fold-inline, the foldl intrinsic) fire on the function holding the
+ * call site. Under natural tier-up the counter trips on the cold callee
+ * (e.g. lists:foldl or a driver loop), never on the caller, so those
+ * sites otherwise stay unrealized.
+ *
+ * The trip fragment's added Update::eStack synced c_p->stop to E, so
+ * c_p->stop[0] is the caller's return address: aarch64 uses the one-word
+ * ERTS_FRAME_LAYOUT_RA frame (make_cp is identity), and the T1
+ * breakpoint trampoline pushes the CP via enter_erlang_frame just before
+ * this profiling sequence runs. Resolve it to an MFA + code-header
+ * function index and enqueue {module, fn_index} on the same ring the
+ * callee uses (rec = NULL: the worker keys only on module + fn_index).
+ *
+ * Best-effort and IN ADDITION to the callee: a caller that is
+ * unresolved, in a non-retained module, self-recursive, or already
+ * prologue-claimed (installed) is simply skipped. One level only; a
+ * tail-called site already yields two-levels-up naturally. */
+static void t2_tier_enqueue_caller(Process *c_p, ErtsT2Profile *p) {
+    ErtsCodePtr caller_cp;
+    const ErtsCodeMFA *cmfa;
+    Eterm caller_module;
+    Module *cmodp;
+    const BeamCodeHeader *code_hdr;
+    Uint32 fn_index;
+    UWord nf, i;
+    unsigned next;
+
+    if (!t2_caller_tierup_enabled()) {
+        return;
+    }
+
+    caller_cp = (ErtsCodePtr)c_p->stop[0];
+    cmfa = erts_find_function_from_pc(caller_cp);
+
+    if (t2_caller_trace()) {
+        if (cmfa == NULL) {
+            erts_fprintf(stderr,
+                         "t2_caller: callee=%T fn=%u cp=%p caller=<none>\n",
+                         p->module,
+                         (unsigned)p->fn_index,
+                         (void *)caller_cp);
+        } else {
+            erts_fprintf(stderr,
+                         "t2_caller: callee=%T fn=%u cp=%p caller=%T:%T/%u\n",
+                         p->module,
+                         (unsigned)p->fn_index,
+                         (void *)caller_cp,
+                         cmfa->module,
+                         cmfa->function,
+                         (unsigned)cmfa->arity);
+        }
+    }
+
+    if (cmfa == NULL) {
+        return; /* CP resolves to nothing (BIF/NIF/stub caller) */
+    }
+
+    caller_module = cmfa->module;
+    cmodp = erts_get_module(caller_module, erts_active_code_ix());
+    if (cmodp == NULL || cmodp->curr.t2_retained == NULL ||
+        cmodp->curr.code_hdr == NULL) {
+        return; /* non-retained caller: nothing to compile from */
+    }
+    code_hdr = cmodp->curr.code_hdr;
+
+    /* The caller's index in the code-header function table: the entry
+     * whose &functions[i]->mfa is the resolved cmfa (exactly the pointer
+     * erts_find_function_from_pc returned). This enumeration is the one
+     * the profile block and erts_t2_tier_compile_batch use
+     * (t2_compile.cpp indexes code_hdr->functions[fn_index]). */
+    fn_index = (Uint32)-1;
+    nf = code_hdr->num_functions;
+    for (i = 0; i < nf; i++) {
+        if (&code_hdr->functions[i]->mfa == cmfa) {
+            fn_index = (Uint32)i;
+            break;
+        }
+    }
+    if (fn_index == (Uint32)-1) {
+        return; /* caller_cp in a stale/other instance than curr; skip */
+    }
+
+    /* Don't self-enqueue on self-recursion (the callee's own record
+     * already tiers it up). */
+    if (caller_module == p->module && fn_index == p->fn_index) {
+        return;
+    }
+
+    /* Dedup: the caller has no PENDING record, so gate the re-enqueue on
+     * whether its prologue is already claimed (installed). Without it,
+     * every callee trip would re-enqueue an already-compiled caller (the
+     * worker would rebuild it and reject the install as DUP). */
+    if (erts_t2_function_prologue_claimed(code_hdr->functions[fn_index])) {
+        return;
+    }
+
+    erts_mtx_lock(&t2_tier_q.lock);
+    next = (t2_tier_q.tail + 1) % T2_TIER_QUEUE_SIZE;
+    if (next == t2_tier_q.head) {
+        /* Full: drop (high-water rule, 05 §15.3); a later callee trip
+         * retries. */
+        t2_tier_stats.dropped++;
+        erts_mtx_unlock(&t2_tier_q.lock);
+        return;
+    }
+    t2_tier_q.jobs[t2_tier_q.tail].module = caller_module;
+    t2_tier_q.jobs[t2_tier_q.tail].fn_index = fn_index;
+    t2_tier_q.jobs[t2_tier_q.tail].rec = NULL;
+    t2_tier_q.tail = next;
+    t2_tier_stats.caller_enqueued++;
+    erts_mtx_unlock(&t2_tier_q.lock);
+}
+
+void erts_t2_profile_trip(Process *c_p,
+                          ErtsT2Profile *p,
                           Eterm a0,
                           Eterm a1,
                           Eterm a2,
@@ -353,6 +492,12 @@ void erts_t2_profile_trip(ErtsT2Profile *p,
     }
     erts_mtx_unlock(&t2_tier_q.lock);
 
+    /* Caller-directed tier-up (task #91): the callee is now committed to
+     * compile; also tier up its immediate caller so the caller-side
+     * transforms fire on the function that actually holds the call site.
+     * In addition to the callee; best-effort. */
+    t2_tier_enqueue_caller(c_p, p);
+
     /* Pending sentinel: suppress duplicate enqueues (09 §1(b)). The
      * writer is scheduler 1 (us); the worker only ever writes the
      * threshold of records it dequeued, serialized by the permission. */
@@ -421,17 +566,22 @@ static void t2_tier_worker(void *arg) {
 }
 
 Eterm erts_t2_tier_stats_term(Process *p) {
-    Eterm *hp = HAlloc(p, 9);
+    /* Nine fields -> past the TUPLE8 macro; build the tuple by hand.
+     * Append-only ordering: caller_enqueued (task #91) is the new tail
+     * field. */
+    Eterm *hp = HAlloc(p, 1 + 9);
 
-    return TUPLE8(hp,
-                  make_small((Uint)t2_tier_stats.trips),
-                  make_small((Uint)t2_tier_stats.stability_resets),
-                  make_small((Uint)t2_tier_stats.enqueued),
-                  make_small((Uint)t2_tier_stats.dropped),
-                  make_small((Uint)t2_tier_stats.compiled),
-                  make_small((Uint)t2_tier_stats.installed),
-                  make_small((Uint)t2_tier_stats.failed),
-                  make_small((Uint)t2_tier_stats.rejected));
+    hp[0] = make_arityval(9);
+    hp[1] = make_small((Uint)t2_tier_stats.trips);
+    hp[2] = make_small((Uint)t2_tier_stats.stability_resets);
+    hp[3] = make_small((Uint)t2_tier_stats.enqueued);
+    hp[4] = make_small((Uint)t2_tier_stats.dropped);
+    hp[5] = make_small((Uint)t2_tier_stats.compiled);
+    hp[6] = make_small((Uint)t2_tier_stats.installed);
+    hp[7] = make_small((Uint)t2_tier_stats.failed);
+    hp[8] = make_small((Uint)t2_tier_stats.rejected);
+    hp[9] = make_small((Uint)t2_tier_stats.caller_enqueued);
+    return make_tuple(hp);
 }
 
 /* Diagnostic census (debug-only) of the armed profiling records — the
