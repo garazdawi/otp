@@ -633,12 +633,11 @@ namespace erts_t2 {
                   t1_pc_cont(nullptr), beam_idx(0), spec_callsite(false),
                   tail_site(false), raw_mask(0), raw_srcs(0), raw_dst(false),
                   no_ovf(false), rollback(false), map_shape_spec(false),
-                  succ_then(T2_LIR_NO_BLOCK),
-                  succ_else(T2_LIR_NO_BLOCK), first_case(0), num_cases(0),
-                  default_target(T2_LIR_NO_BLOCK), pool_first(0),
-                  num_srcs_ext(0), first_bs_cmd(0), num_bs_cmds(0),
-                  dst_value(T2_NO_VALUE), dst2_value(T2_NO_VALUE),
-                  sync(nullptr) {
+                  succ_then(T2_LIR_NO_BLOCK), succ_else(T2_LIR_NO_BLOCK),
+                  first_case(0), num_cases(0), default_target(T2_LIR_NO_BLOCK),
+                  pool_first(0), num_srcs_ext(0), first_bs_cmd(0),
+                  num_bs_cmds(0), dst_value(T2_NO_VALUE),
+                  dst2_value(T2_NO_VALUE), sync(nullptr) {
         }
     };
 

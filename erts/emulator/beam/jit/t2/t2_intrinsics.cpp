@@ -4947,7 +4947,8 @@ namespace erts_t2 {
                                 mf->operand_regs != nullptr
                                         ? mf->operand_regs[k]
                                         : (mf->operands[k]->def != nullptr
-                                                   ? mf->operands[k]->def->dst_reg
+                                                   ? mf->operands[k]
+                                                             ->def->dst_reg
                                                    : T2_REG_NONE);
                         T2Op *cp = fn.new_op(mfb,
                                              T2OpKind::Copy,

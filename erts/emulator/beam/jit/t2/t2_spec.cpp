@@ -281,7 +281,9 @@ namespace erts_t2 {
                 if (op->beam_idx == 0 || ret == nullptr) {
                     return false;
                 }
-                return erts_t2_pc_lookup_kind(ret, fn.fn_index, op->beam_idx,
+                return erts_t2_pc_lookup_kind(ret,
+                                              fn.fn_index,
+                                              op->beam_idx,
                                               ERTS_T2_PC_EFFECT) != nullptr;
             }
 
@@ -294,8 +296,7 @@ namespace erts_t2 {
              * (map_monomorphic_design.md S1b.3c). */
             void specialize_map_shapes() {
                 for (T2BasicBlock *b : fn.blocks) {
-                    for (T2Op *op = b->ops_head; op != nullptr;
-                         op = op->next) {
+                    for (T2Op *op = b->ops_head; op != nullptr; op = op->next) {
                         if (op->kind != T2OpKind::GetMapElement ||
                             op->num_operands != 2 || op->result == nullptr) {
                             continue;
@@ -306,7 +307,8 @@ namespace erts_t2 {
                             continue;
                         }
                         Eterm shape = facts.map_shape_for_param(pdef->index);
-                        if (shape == THE_NON_VALUE || !map_effect_available(op)) {
+                        if (shape == THE_NON_VALUE ||
+                            !map_effect_available(op)) {
                             continue;
                         }
                         op->imm_term = shape;

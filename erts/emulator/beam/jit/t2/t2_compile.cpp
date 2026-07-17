@@ -932,8 +932,12 @@ extern "C" void erts_t2_compile_module(const struct ErtsT2RetainedCode *ret,
 
                 std::string diag;
                 bool want_diag = getenv("T2_DEBUG") != NULL;
-                T2CompileStatus st = t2_compile_install_one(
-                        hir, ret, code_hdr, mi, want_diag ? &diag : nullptr);
+                T2CompileStatus st =
+                        t2_compile_install_one(hir,
+                                               ret,
+                                               code_hdr,
+                                               mi,
+                                               want_diag ? &diag : nullptr);
 
                 if (want_diag && st != T2CompileStatus::Installed &&
                     st != T2CompileStatus::RejectedGate) {

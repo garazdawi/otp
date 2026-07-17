@@ -709,8 +709,7 @@ namespace erts_t2 {
              * fabricating the handler's exception-triple / post-unwind
              * frame, which the tier cannot model. */
             void seal_error_island(T2BasicBlock *b) {
-                T2Op *op =
-                        fn->new_op(b, T2OpKind::TailCallExt, T2Type::none());
+                T2Op *op = fn->new_op(b, T2OpKind::TailCallExt, T2Type::none());
                 fn->set_operands(op, {});
                 op->mfa_m = am_erlang;
                 op->mfa_f = am_error;
@@ -2243,9 +2242,9 @@ namespace erts_t2 {
                                 "shape (eligibility/builder drift)");
                         return;
                     }
-                    ops.push_back(SrcVal{fn->emit_const_int(cur,
-                                                            (Sint64)idx.val),
-                                         T2_REG_NONE});
+                    ops.push_back(
+                            SrcVal{fn->emit_const_int(cur, (Sint64)idx.val),
+                                   T2_REG_NONE});
                     ops.push_back(read_arg_r(val));
                 }
 
@@ -2292,10 +2291,9 @@ namespace erts_t2 {
                     return;
                 }
 
-                T2Value *v =
-                        emit_result_op(T2OpKind::PutMap,
-                                       {map, key, val},
-                                       T2Type::of(BEAM_TYPE_MAP));
+                T2Value *v = emit_result_op(T2OpKind::PutMap,
+                                            {map, key, val},
+                                            T2Type::of(BEAM_TYPE_MAP));
                 if (v == nullptr) {
                     return;
                 }
@@ -2674,9 +2672,9 @@ namespace erts_t2 {
                                 T2OpKind::BsRead,
                                 {SrcVal{base, base_home},
                                  SrcVal{cu, cursor_home}},
-                                T2Type::integer(0,
-                                                (Sint64)(((UWord)1 << nbits) -
-                                                         1)));
+                                T2Type::integer(
+                                        0,
+                                        (Sint64)(((UWord)1 << nbits) - 1)));
 
                         if (v == nullptr) {
                             return;

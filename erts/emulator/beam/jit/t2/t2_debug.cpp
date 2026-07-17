@@ -722,8 +722,12 @@ extern "C" Eterm erts_t2_debug_profile(Process *p, Eterm mod) {
             } else {
                 Eterm fa = erts_bld_uint(hpp, szp, rec->fun_arg);
                 Eterm ff = erts_bld_uint(hpp, szp, rec->fun_flags);
-                fun_info = erts_bld_tuple(hpp, szp, 3, Atoms::intern("mono"),
-                                          fa, ff);
+                fun_info = erts_bld_tuple(hpp,
+                                          szp,
+                                          3,
+                                          Atoms::intern("mono"),
+                                          fa,
+                                          ff);
             }
             /* S1b.3b map-shape sampling: none | poly | {mono, Arg, Ptr},
              * where Ptr is the tagged keys-tuple pointer as an integer
@@ -736,15 +740,27 @@ extern "C" Eterm erts_t2_debug_profile(Process *p, Eterm mod) {
             } else {
                 Eterm sa = erts_bld_uint(hpp, szp, rec->map_shape_arg);
                 Eterm sp = erts_bld_uword(hpp, szp, (UWord)rec->map_shape);
-                mshape = erts_bld_tuple(hpp, szp, 3, Atoms::intern("mono"),
-                                        sa, sp);
+                mshape = erts_bld_tuple(hpp,
+                                        szp,
+                                        3,
+                                        Atoms::intern("mono"),
+                                        sa,
+                                        sp);
             }
             fnix = erts_bld_uint(hpp, szp, rec->fn_index);
             art = erts_bld_uint(hpp, szp, rec->arity);
             cnt = erts_bld_uint(hpp, szp, rec->count);
             ns = erts_bld_uint(hpp, szp, rec->nonsmall);
-            tup = erts_bld_tuple(hpp, szp, 7, fnix, art, cnt, ns, types,
-                                 fun_info, mshape);
+            tup = erts_bld_tuple(hpp,
+                                 szp,
+                                 7,
+                                 fnix,
+                                 art,
+                                 cnt,
+                                 ns,
+                                 types,
+                                 fun_info,
+                                 mshape);
             list = erts_bld_cons(hpp, szp, tup, list);
         }
 
@@ -790,9 +806,15 @@ extern "C" Eterm erts_t2_debug_census(Process *p, Eterm bin) {
     int i, c;
     Eterm class_atoms[ERTS_T2_BLK__COUNT];
     static const char *const class_names[ERTS_T2_BLK__COUNT] = {
-            "call_fun",   "maps",      "bs_construction",
-            "bs_position", "exceptions", "recv",
-            "float_reg",  "general_bif", "other"};
+            "call_fun",
+            "maps",
+            "bs_construction",
+            "bs_position",
+            "exceptions",
+            "recv",
+            "float_reg",
+            "general_bif",
+            "other"};
     Uint sz;
     Uint *szp;
     Eterm *hp;
@@ -845,9 +867,15 @@ extern "C" Eterm erts_t2_debug_census(Process *p, Eterm bin) {
 
             ar = erts_bld_uint(hpp, szp, f->arity);
             szt = erts_bld_uint(hpp, szp, f->size);
-            fnt = erts_bld_tuple(hpp, szp, 6, f->name, ar, szt,
+            fnt = erts_bld_tuple(hpp,
+                                 szp,
+                                 6,
+                                 f->name,
+                                 ar,
+                                 szt,
                                  f->eligible ? am_true : am_false,
-                                 f->loop_shaped ? am_true : am_false, classes);
+                                 f->loop_shaped ? am_true : am_false,
+                                 classes);
             list = erts_bld_cons(hpp, szp, fnt, list);
         }
 

@@ -1703,8 +1703,8 @@ namespace erts_t2 {
                 a.cmp(TMP3, TMP4);
                 a.b_ne(resolve_label(fl, disp1MB));
                 mov_arg(loc_argval(op.dst),
-                        a64::Mem(TMP1, sizeof(flatmap_t) +
-                                           sizeof(Eterm) * op.imm));
+                        a64::Mem(TMP1,
+                                 sizeof(flatmap_t) + sizeof(Eterm) * op.imm));
                 if (!failed()) {
                     emit_goto(op.succ_then);
                 }

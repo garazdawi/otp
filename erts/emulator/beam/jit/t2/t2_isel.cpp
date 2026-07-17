@@ -1112,8 +1112,8 @@ namespace erts_t2 {
                     lop.kind = T2LirKind::UpdateRecord;
                     lop.dst = reg_loc(op->dst_reg);
                     lop.dst_value = op->result->id;
-                    lop.imm = op->imm_int;         /* tuple arity (Size) */
-                    lop.imm2 = (Sint64)op->index;  /* hint: 0 copy, 1 reuse */
+                    lop.imm = op->imm_int;        /* tuple arity (Size) */
+                    lop.imm2 = (Sint64)op->index; /* hint: 0 copy, 1 reuse */
                     if (op->num_operands <= T2_LIR_MAX_SRCS) {
                         if (!fill_srcs(op, &lop)) {
                             return false;
