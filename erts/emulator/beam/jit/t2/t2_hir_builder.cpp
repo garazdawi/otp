@@ -501,7 +501,20 @@ namespace erts_t2 {
                 case TAG_x:
                 case TAG_y: {
                     T2Value *v = read_var(cur, reg_var(a));
-                    seed_type(v, a.val);
+                    /* Deliberately do NOT seed the type from a USE-site hint.
+                     * BEAM's per-instruction type annotations are path-refined
+                     * facts about a register at that program point, but a
+                     * T2Value is shared across every use of the BEAM register
+                     * (read_var returns one value). meet()-ing a narrow use
+                     * hint into that shared value narrows it GLOBALLY, below
+                     * its true type on paths that lack the refinement — which
+                     * the speculation pass would then trust to elide a tag
+                     * guard (a miscompile: e.g. `element(X,{a,b,c})` on one
+                     * clause narrowing X to 1..3, dropping the guard on `X` in
+                     * another clause's `Acc + X`). The value's sound type is
+                     * its DEFINITION-site type, seeded once at write_dst from
+                     * the destination hint; use-site refinements must stay
+                     * local and are not representable on the shared value. */
                     return v;
                 }
                 case TAG_i:
