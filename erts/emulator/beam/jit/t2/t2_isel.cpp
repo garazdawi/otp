@@ -1835,6 +1835,53 @@ namespace erts_t2 {
                     b.ops.push_back(lop);
                     return true;
 
+                case T2OpKind::SwarByteClass:
+                    /* T2_PRESCAN #92: the fused byte-class guard over the
+                     * wide word — same roll-back contract as
+                     * SwarAsciiTest (Boundary + header sync); the packed
+                     * class descriptor rides imm. Reject any descriptor
+                     * the SWAR emit cannot lower byte-exactly (degrade to
+                     * T1 rather than emit an inexact classifier). */
+                    lop.kind = T2LirKind::SwarByteClass;
+                    if (op->num_operands != 1) {
+                        return fail_op(op,
+                                       "byte-class guard without exactly "
+                                       "one operand");
+                    }
+                    if (op->deopt_shape != T2DeoptShape::Boundary) {
+                        return fail_op(op,
+                                       "byte-class guard outside the "
+                                       "boundary deopt class");
+                    }
+                    if (op->sync == nullptr) {
+                        return fail_op(op,
+                                       "byte-class guard without a sync map "
+                                       "(the roll-back pin set)");
+                    }
+                    {
+                        T2ByteClass bc;
+                        t2_byteclass_decode(op->imm_int, bc);
+                        if (!t2_byteclass_supported(bc)) {
+                            return fail_op(op,
+                                           "byte-class descriptor outside "
+                                           "the byte-exact SWAR window");
+                        }
+                    }
+                    lop.imm = op->imm_int;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    if (lop.srcs[0].is_const) {
+                        return fail_op(op, "byte-class guard of a constant");
+                    }
+                    lop.t1_pc_fail = spec_deopt_pc(op);
+                    if (lop.t1_pc_fail == nullptr) {
+                        return fail_op(op,
+                                       "no deopt PC for the byte-class guard");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
                 case T2OpKind::AddSmall:
                 case T2OpKind::SubSmall:
                     /* Flag-checked one-untag arithmetic; deopt (b.vs)

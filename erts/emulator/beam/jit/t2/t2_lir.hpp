@@ -313,6 +313,15 @@ namespace erts_t2 {
          * (bumps erts_t2_rollback_deopts). */
         SwarAsciiTest,
 
+        /* Generalized SWAR byte-class guard (T2_PRESCAN #92): one raw
+         * source (the wide word), no dst. Emits the branchless SWAR class
+         * test (hasless/hasmore/hasvalue over lo/hi/excluded, packed in
+         * imm) then `tst combined, #0x8080808080808080; b.ne <rollback>`
+         * — same RollbackTramp shape as SwarAsciiTest (t1_pc_fail = the
+         * loop header's clause-entry EFFECT PC, no un-commit; bumps
+         * erts_t2_rollback_deopts). */
+        SwarByteClass,
+
         /* Value-producing total comparison (P2 commit 8; the bif2
          * {f,0} erlang:CMP/2 subset): imm = the originating T2OpKind;
          * lowers via T1's bif_is_ge/bif_is_lt/bif_is_eq_exact/

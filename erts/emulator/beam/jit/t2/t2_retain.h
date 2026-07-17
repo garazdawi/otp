@@ -275,6 +275,15 @@ int erts_t2_bs_match_check(const UWord *types,
                            ErtsT2BsCmd *out,
                            int *dst_count);
 
+/* T2_PRESCAN task #92: the master opt-in lever for the pre-unrolled
+ * byte-class scan front-end (the eligibility relaxation admitting the
+ * hand-unrolled x8 ASCII byte-class scanners, its fuse-in-place
+ * recognizer, and the SwarByteClass op). Returns non-zero iff the
+ * environment variable T2_PRESCAN is set. OFF by default: with it unset
+ * the whole feature is inert and there is zero behavior change. Cached on
+ * first call. */
+int erts_t2_prescan_enabled(void);
+
 /* t2_emit.cpp: P1 commit-3 structural selftest (T2_EMIT_SELFTEST=1).
  * Called from beam_load_finalize_code right after the pctab is built;
  * for the t2_mvp corpus module it runs total/2 through the full

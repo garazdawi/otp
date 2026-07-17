@@ -252,6 +252,16 @@ int erts_t2_genop_build_only(int genop) {
     }
 }
 
+/* T2_PRESCAN task #92 opt-in lever (see t2_retain.h). Cached once. */
+int erts_t2_prescan_enabled(void) {
+    static int cached = -1;
+
+    if (cached < 0) {
+        cached = (getenv("T2_PRESCAN") != NULL) ? 1 : 0;
+    }
+    return cached;
+}
+
 /* ------------------------------------------------------------------ *
  * The byte-aligned bs_match command subset (see t2_retain.h)          *
  * ------------------------------------------------------------------ */

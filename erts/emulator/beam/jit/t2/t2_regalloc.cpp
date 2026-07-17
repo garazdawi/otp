@@ -241,6 +241,7 @@ namespace erts_t2 {
                         case T2LirKind::SpeculateType:
                         case T2LirKind::SpeculateRange:
                         case T2LirKind::SwarAsciiTest:
+                        case T2LirKind::SwarByteClass:
                         case T2LirKind::AddSmall:
                         case T2LirKind::SubSmall:
                         case T2LirKind::MulSmall:

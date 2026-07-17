@@ -327,6 +327,10 @@ namespace erts_t2 {
              * back to the header), hence exempt from the window rule
              * below just like SpeculateRange. */
             case T2OpKind::SwarAsciiTest:
+            /* T2_PRESCAN #92 byte-class guard: same boundary-class
+             * roll-back deopt as SwarAsciiTest, hence exempt from the
+             * window rule below just like it. */
+            case T2OpKind::SwarByteClass:
             case T2OpKind::UntagInt:
             case T2OpKind::AddSmall:
             case T2OpKind::SubSmall:

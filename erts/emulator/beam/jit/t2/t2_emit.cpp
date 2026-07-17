@@ -974,6 +974,9 @@ namespace erts_t2 {
             case T2LirKind::SwarAsciiTest:
                 emit_lir_swar_ascii_test(op);
                 break;
+            case T2LirKind::SwarByteClass:
+                emit_lir_swar_byte_class(op);
+                break;
             case T2LirKind::AddSmall:
             case T2LirKind::SubSmall:
                 emit_lir_addsub_small(op);
@@ -1485,6 +1488,116 @@ namespace erts_t2 {
             rollback_tramps.push_back(rt);
 
             a.tst(word, imm(0x8080808080808080ull));
+            a.b_ne(resolve_label(rollback_tramps.back().label, disp1MB));
+        }
+
+        /* T2_PRESCAN #92: the generalized SWAR byte-class guard. Computes
+         * a branchless "any of the 8 bytes out of class" predicate over
+         * the raw wide word and rolls back (identically to
+         * emit_lir_swar_ascii_test) if any lane is out of class.
+         *
+         * The class is an inclusive [lo,hi] range minus a small excluded
+         * set, packed in op.imm. Per lane the OUT-of-class predicate is
+         *   hasless(W,lo) | hasmore(W,hi) | OR_i hasvalue(W,excl_i)
+         * each term masked to the lane's high bit; "all in class" iff the
+         * OR-combined high bits are all zero. Using the tag-cleared byte-
+         * twiddling identities (~0/255 == ONES = 0x01..01,
+         * HIGHS = 0x80..80):
+         *   hasless(W,n)  = (W - ONES*n) & ~W & HIGHS          [1<=n<=128]
+         *   hasmore(W,n)  = ((W + ONES*(127-n)) | W) & HIGHS   [0<=n<=127]
+         *   hasvalue(W,n) = ((V - ONES) & ~V) & HIGHS, V=W^ONES*n
+         * The final `& HIGHS` distributes over the OR, so we accumulate
+         * the pre-mask parts and mask once with the closing `tst`.
+         *
+         * Byte-exactness (verified exhaustively per-lane + boundary set +
+         * 4M random words): a genuinely in-class word triggers no
+         * subtract borrow, so the accumulator is 0 and the guard passes;
+         * an out-of-class lane always sets its OWN high bit (the borrow it
+         * generates can only propagate up to higher lanes, never clear the
+         * offending lane), so the guard never passes a dirty word. */
+        void emit_lir_swar_byte_class(const T2LirOp &op) {
+            if (op.num_srcs != 1 || op.srcs[0].is_const ||
+                op.t1_pc_fail == nullptr) {
+                fail("malformed swar_byte_class guard");
+                return;
+            }
+
+            T2ByteClass bc;
+            t2_byteclass_decode(op.imm, bc);
+            if (!t2_byteclass_supported(bc)) {
+                fail("swar_byte_class descriptor outside the byte-exact "
+                     "SWAR window");
+                return;
+            }
+
+            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+            a64::Gp word;
+
+            if (op.srcs[0].loc.is_phys()) {
+                word = phys_gp(op.srcs[0].loc);
+            } else {
+                word = load_source(src_argval(op.srcs[0]), TMP2).reg;
+            }
+
+            comment("T2 swar byte-class test (all 8 bytes in [0x%02x,0x%02x] "
+                    "minus %u excluded)",
+                    bc.lo,
+                    bc.hi,
+                    bc.n_excl);
+
+            const Uint64 ONES = 0x0101010101010101ull;
+            const Uint64 HIGHS = 0x8080808080808080ull;
+
+            /* Scratch: TMP1 accumulates the pre-mask predicate; TMP3/TMP4
+             * are per-term temps; TMP5 holds ONES (reused by every
+             * hasvalue); TMP6 holds the per-term constant. `word` is read
+             * only and may itself be TMP2 (load_source target) — never
+             * clobbered. */
+            a64::Gp acc = TMP1;
+
+            mov_imm(TMP5, ONES);
+
+            /* hasless(word, lo): (word - ONES*lo) & ~word. lo>=1 always
+             * here (t2_byteclass_supported), so this term is present. */
+            mov_imm(TMP6, ONES * (Uint64)bc.lo);
+            a.sub(acc, word, TMP6);
+            a.bic(acc, acc, word);
+
+            /* hasmore(word, hi): ((word + ONES*(127-hi)) | word). For
+             * hi==127 the addend is 0, so the pre-mask part is just word. */
+            if (bc.hi == 127) {
+                a.orr(acc, acc, word);
+            } else {
+                mov_imm(TMP6, ONES * (Uint64)(127 - bc.hi));
+                a.add(TMP3, word, TMP6);
+                a.orr(TMP3, TMP3, word);
+                a.orr(acc, acc, TMP3);
+            }
+
+            /* hasvalue(word, excl_i): V=word^ONES*e; (V - ONES) & ~V. */
+            for (unsigned i = 0; i < bc.n_excl; i++) {
+                mov_imm(TMP6, ONES * (Uint64)bc.excl[i]);
+                a.eor(TMP3, word, TMP6); /* V */
+                a.sub(TMP4, TMP3, TMP5); /* V - ONES */
+                a.bic(TMP4, TMP4, TMP3); /* & ~V     */
+                a.orr(acc, acc, TMP4);
+            }
+
+            RollbackTramp rt;
+
+            rt.label = a.new_label();
+            rt.t1_pc = op.t1_pc_fail;
+            rt.uncommit_slot = PhysLoc::none();
+            rt.uncommit_imm = 0;
+            rt.uncommit_add = false;
+            rt.raw_mask = op.raw_mask;
+            rt.beam_idx = op.beam_idx;
+            rollback_tramps.push_back(rt);
+
+            /* Verdict: any lane high bit set among the accumulated
+             * predicate == some byte out of class -> roll back. */
+            a.tst(acc, imm(HIGHS));
             a.b_ne(resolve_label(rollback_tramps.back().label, disp1MB));
         }
 

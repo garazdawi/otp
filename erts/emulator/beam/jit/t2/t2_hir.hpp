@@ -87,6 +87,58 @@ struct ErtsT2BsCmd;
 namespace erts_t2 {
 
     /* ------------------------------------------------------------------ *
+     * SWAR byte-class descriptor (T2_PRESCAN task #92)                    *
+     * ------------------------------------------------------------------ *
+     * The immediate operand of a SwarByteClass op: a byte SET described
+     * as an inclusive range [lo, hi] MINUS a small set of excluded byte
+     * values. For is_ascii_plain (json/string ASCII fast paths):
+     * lo = 0x20, hi = 0x7F, excluded = {0x22 ('"'), 0x5C ('\\')}.
+     *
+     * The descriptor is packed into a single Sint64 (T2Op::imm_int /
+     * T2LirOp::imm) so it rides the existing immediate plumbing untouched.
+     * The SWAR emit lowers the range bounds with hasless(lo)/hasmore(hi)
+     * and each exclusion with hasvalue(); those primitives are byte-EXACT
+     * (for the aggregate "all-in-class" verdict) only for 1 <= lo <= 128
+     * and 0 <= hi <= 127, so isel rejects any descriptor outside that
+     * range (degrade to T1 rather than emit an inexact classifier). */
+#define T2_BYTECLASS_MAX_EXCL 4
+
+    struct T2ByteClass {
+        uint8_t lo;     /* inclusive low bound  */
+        uint8_t hi;     /* inclusive high bound */
+        uint8_t n_excl; /* number of excluded byte values (<= MAX_EXCL) */
+        uint8_t excl[T2_BYTECLASS_MAX_EXCL];
+    };
+
+    /* Pack lo/hi/n_excl/excl[] into the low 7 bytes of a Sint64 (byte 7
+     * is reserved, kept zero). Round-trips through t2_byteclass_decode. */
+    static inline Sint64 t2_byteclass_encode(const T2ByteClass &c) {
+        uint64_t w = (uint64_t)c.lo | ((uint64_t)c.hi << 8) |
+                     ((uint64_t)c.n_excl << 16);
+        for (int i = 0; i < T2_BYTECLASS_MAX_EXCL; i++) {
+            w |= (uint64_t)c.excl[i] << (24 + 8 * i);
+        }
+        return (Sint64)w;
+    }
+
+    static inline void t2_byteclass_decode(Sint64 imm, T2ByteClass &c) {
+        uint64_t w = (uint64_t)imm;
+        c.lo = (uint8_t)(w & 0xFF);
+        c.hi = (uint8_t)((w >> 8) & 0xFF);
+        c.n_excl = (uint8_t)((w >> 16) & 0xFF);
+        for (int i = 0; i < T2_BYTECLASS_MAX_EXCL; i++) {
+            c.excl[i] = (uint8_t)((w >> (24 + 8 * i)) & 0xFF);
+        }
+    }
+
+    /* The descriptor's lowering to hasless/hasmore is byte-exact only in
+     * this window (see the struct comment). is_ascii_plain fits. */
+    static inline bool t2_byteclass_supported(const T2ByteClass &c) {
+        return c.lo >= 1 && c.lo <= 128 && c.hi <= 127 && c.lo <= c.hi &&
+               c.n_excl <= T2_BYTECLASS_MAX_EXCL;
+    }
+
+    /* ------------------------------------------------------------------ *
      * Op kinds                                                           *
      * ------------------------------------------------------------------ */
 
@@ -307,6 +359,33 @@ namespace erts_t2 {
          * advance/BsSync) so T1 re-processes all N bytes one at a time.
          * Byte-identical to the 1-wide L1 path by construction. */
         SwarAsciiTest,
+
+        /* T2_PRESCAN task #92: the generalized SWAR byte-SET classifier
+         * guard. A strict superset of SwarAsciiTest: where that op tests
+         * only "all 8 bytes < 0x80" (one `tst` against 0x80..80),
+         * SwarByteClass tests "all 8 bytes are members of an arbitrary
+         * byte class" — an inclusive [lo,hi] range MINUS up to
+         * T2_BYTECLASS_MAX_EXCL excluded byte values — computed
+         * BRANCHLESSLY over one raw 64-bit BsLoadWord result. The class
+         * descriptor (lo/hi/excluded set) is packed into imm_int (see
+         * t2_byteclass_encode). The SWAR kernel OR-combines, per lane,
+         * hasless(word,lo) | hasmore(word,hi) | hasvalue(word,excl_i);
+         * "all 8 in class" iff the combined predicate has no lane high bit
+         * set (`(combined & 0x80..80) == 0`). The combined verdict is
+         * byte-EXACT: cross-lane subtract-borrow only ever mis-marks a
+         * HIGHER lane when a lower lane is already genuinely out of class,
+         * so it never yields a false "all clean" (the miscompile
+         * direction), and a genuinely-clean word produces no borrow at all
+         * (proven exhaustively per-lane + over the boundary set + 4M
+         * random words). Endianness-free: the test is per-lane and
+         * order-agnostic, so no byte swap. On ANY out-of-class lane it
+         * ROLLS BACK to the loop header exactly like SwarAsciiTest —
+         * identical Boundary deopt shape + T2_OP_ROLLBACK + header
+         * start_match beam_idx + header-entry sync — with the cursor
+         * un-advanced, so T1 re-processes all N bytes one at a time
+         * (byte-identical). Wholly inert unless T2_PRESCAN is set (no
+         * producer emits it otherwise). See t2_intrinsics.cpp. */
+        SwarByteClass,
 
         /* Funs and calls */
         Call,

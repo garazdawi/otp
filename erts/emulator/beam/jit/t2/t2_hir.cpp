@@ -211,6 +211,8 @@ namespace erts_t2 {
             return "swar_byte_sum";
         case T2OpKind::SwarAsciiTest:
             return "swar_ascii_test";
+        case T2OpKind::SwarByteClass:
+            return "swar_byte_class";
         case T2OpKind::Call:
             return "call";
         case T2OpKind::CallExt:
@@ -2333,6 +2335,26 @@ namespace erts_t2 {
                         return fail("block %u: swar_ascii_test needs the raw "
                                     "word",
                                     op->block->id);
+                    }
+                    return true;
+                case T2OpKind::SwarByteClass:
+                    /* T2_PRESCAN #92: like swar_ascii_test — consumes the
+                     * raw word; no result (a branchless SWAR class test
+                     * rolls back on any out-of-class lane). The class
+                     * descriptor rides imm_int and must lower exactly. */
+                    if (op->num_operands != 1 || !is_raw(op->operands[0])) {
+                        return fail("block %u: swar_byte_class needs the raw "
+                                    "word",
+                                    op->block->id);
+                    }
+                    {
+                        T2ByteClass bc;
+                        t2_byteclass_decode(op->imm_int, bc);
+                        if (!t2_byteclass_supported(bc)) {
+                            return fail("block %u: swar_byte_class descriptor "
+                                        "outside the byte-exact SWAR window",
+                                        op->block->id);
+                        }
                     }
                     return true;
                 case T2OpKind::BsSync:
