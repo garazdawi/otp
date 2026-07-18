@@ -185,6 +185,7 @@ namespace {
     };
 
     void t2_collect_install_signals(const T2LirFunction &lir,
+                                    const T2Function &hir,
                                     bool leaf_inlined,
                                     unsigned scan_runs,
                                     unsigned cursor_unroll,
@@ -205,7 +206,49 @@ namespace {
         s->spills = 0;
         s->blob_size = blob_size;
 
+        /* The gate judges the code that can RUN. The body-recursion
+         * transforms (#87/#88/#97) keep the original clause blocks as
+         * structurally-valid dead code, and isel emits them; counting
+         * their retained calls (the erased self/leaf calls!) as a tax
+         * mis-rejected every body-recursion blob. HIR and LIR block
+         * ids agree 1:1 (identity isel), so mask signal collection to
+         * the HIR-reachable blocks. */
+        std::vector<uint8_t> reachable(hir.blocks.size(), 0);
+        {
+            std::vector<uint32_t> work;
+
+            if (!hir.blocks.empty()) {
+                reachable[0] = 1;
+                work.push_back(0);
+            }
+            while (!work.empty()) {
+                const T2BasicBlock *b = hir.blocks[work.back()];
+
+                work.pop_back();
+                if (b->terminator == nullptr) {
+                    continue;
+                }
+
+                auto visit = [&](const T2BasicBlock *succ) {
+                    if (succ != nullptr && !reachable[succ->id]) {
+                        reachable[succ->id] = 1;
+                        work.push_back(succ->id);
+                    }
+                };
+
+                visit(b->terminator->succ_then);
+                visit(b->terminator->succ_else);
+                for (uint32_t i = 0; i < b->terminator->num_cases; i++) {
+                    visit(b->terminator->cases[i].target);
+                }
+                visit(b->terminator->default_target);
+            }
+        }
+
         for (const T2LirBlock &b : lir.blocks) {
+            if (b.id < reachable.size() && !reachable[b.id]) {
+                continue;
+            }
             for (const T2LirOp &op : b.ops) {
                 switch (op.kind) {
                 case T2LirKind::Call:
@@ -218,6 +261,10 @@ namespace {
                     break;
                 case T2LirKind::AddSmall:
                 case T2LirKind::SubSmall:
+                case T2LirKind::MulSmall:
+                    /* MulSmall postdates the gate (body recursion #88);
+                     * it is the same flag-checked fused-arithmetic
+                     * class as AddSmall/SubSmall (#97). */
                     s->fused_arith++;
                     break;
                 case T2LirKind::SwarByteClass:
@@ -539,7 +586,7 @@ namespace {
              * window validation as recovered/intrinsic loops. */
             bool bodyrec = false;
 
-            if (!t2_bodyrec(hir, (const void *)code_hdr, &bodyrec, &err)) {
+            if (!t2_bodyrec(hir, ret, (const void *)code_hdr, &bodyrec, &err)) {
                 if (diag) {
                     *diag = "bodyrec: " + err;
                 }
@@ -856,6 +903,7 @@ namespace {
             const char *reason = "";
 
             t2_collect_install_signals(lir,
+                                       hir,
                                        leaf_inlined,
                                        blob.scan_runs,
                                        cursor_unroll,

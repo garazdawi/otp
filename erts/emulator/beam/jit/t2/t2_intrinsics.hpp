@@ -123,11 +123,22 @@ namespace erts_t2 {
      * framed ReductionCheck (T2_OP_RC_FRAMED) — a reduction yield
      * preserves the Y-homed cursor/accumulator on the Erlang stack.
      * `code_hdr` anchors the recall paths (the function's own T1
-     * entry). Opt-in: without T2_BODYREC in the environment this is a
-     * no-op. Sets *changed when the function was rewritten; the caller
+     * entry). `ret` (may be null: leaf admission then rejects) backs
+     * the leaf-combine extension (task #97): a combine that is one
+     * LOCAL unary PURE leaf call over the cell head —
+     * `[leaf(H)|f(T)]` / `leaf(H) + f(T)` / `leaf(H) * f(T)` — is
+     * inlined into the loop's combine position under a closed
+     * whitelist (consts/copies/proven selectors/small arith, no
+     * effects, no allocation, single block), its fallible arith
+     * flag-checked with the loop's own FrameRestart recall; the
+     * enclosing instance's code header is then recorded as a blob
+     * dependency (breakpoints in the leaf must kill the blob). Opt-in:
+     * without T2_BODYREC in the environment this is a no-op. Sets
+     * *changed when the function was rewritten; the caller
      * re-validates in full. Returns false with *err only on an
      * internal inconsistency (a non-match is a silent no-op). */
     bool t2_bodyrec(T2Function &fn,
+                    const ErtsT2RetainedCode *ret,
                     const void *code_hdr,
                     bool *changed,
                     std::string *err);

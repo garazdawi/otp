@@ -6677,6 +6677,9 @@ namespace erts_t2 {
             bool head_combine;        /* combine = H (else a constant) */
             Sint64 combine_const;     /* when !head_combine            */
             Sint64 base_const;        /* the [] clause's constant      */
+            Eterm leaf_f;             /* combine = leaf(H): the local  *
+                                       * callee (task #97); NIL when   *
+                                       * the combine is primitive      */
         };
 
         /* Strict structural match of the two-clause source shape the
@@ -6685,14 +6688,23 @@ namespace erts_t2 {
          *
          *   block0: param#0; is_nonempty_list; branch rec/notnel
          *   notnel: [phi of param] is_nil; branch base/improper
-         *   rec:    allocate k; [get_hd] get_tl; call self;
-         *           Add/Mul(rec_result, C|H); deallocate k; return
+         *   rec:    allocate k; [get_hd] get_tl; [call leaf(H);] call
+         *           self; Add/Mul(rec_result, C|H|leaf(H));
+         *           deallocate k; return
          *   base:   const_int Base; return
          *   improper: the shared !err_exit_shared exit
          *
-         * Anything else — extra ops, Sub/IDiv/Rem/float ascents, a
-         * combine operand that is neither a small constant nor the
-         * cell head, multiple self-calls — rejects (returns false). */
+         * The optional leaf call (task #97) is a LOCAL non-self call
+         * whose single argument is the cell head, evaluated BEFORE the
+         * self call (T1's descent order); its result must be the
+         * combine operand — a leaf whose result is dropped would have
+         * its call erased, so it rejects. Whether the leaf body itself
+         * is admissible (pure/frame-free/whitelisted ops) is decided
+         * later against its built SSA; here only the call shape is
+         * matched. Anything else — extra ops, Sub/IDiv/Rem/float
+         * ascents, a combine operand that is neither a small constant
+         * nor the cell head nor the leaf result, multiple self or leaf
+         * calls — rejects (returns false). */
         bool bodyrec_match(const T2Function &fn, BodyRecMatch *m) {
             if (fn.arity != 1 || fn.blocks.size() < 5 || !fn.sync_complete) {
                 return false;
@@ -6793,12 +6805,14 @@ namespace erts_t2 {
                 return false;
             }
 
-            /* rec: allocate, [get_hd], get_tl, self call, ascent,
-             * deallocate, return — Copy hops tolerated, nothing else. */
+            /* rec: allocate, [get_hd], get_tl, [leaf call], self call,
+             * ascent, deallocate, return — Copy hops tolerated,
+             * nothing else. */
             {
                 const T2Op *head_op = nullptr;
                 const T2Op *tl_op = nullptr;
                 const T2Op *call = nullptr;
+                const T2Op *leaf_call = nullptr;
                 const T2Op *comb = nullptr;
                 bool saw_alloc = false, saw_dealloc = false;
 
@@ -6843,14 +6857,32 @@ namespace erts_t2 {
                         tl_op = op;
                         break;
                     case T2OpKind::Call:
-                        if (call != nullptr || op->mfa_m != fn.module ||
-                            op->mfa_f != fn.function || op->index != fn.arity ||
-                            op->num_operands != 1 || tl_op == nullptr ||
-                            br_uncopy(op->operands[0]) !=
-                                    br_uncopy(tl_op->result)) {
-                            return false;
+                        if (op->mfa_m == fn.module &&
+                            op->mfa_f == fn.function && op->index == fn.arity) {
+                            /* The self call: exactly one, over the
+                             * decoded tail. */
+                            if (call != nullptr || op->num_operands != 1 ||
+                                tl_op == nullptr ||
+                                br_uncopy(op->operands[0]) !=
+                                        br_uncopy(tl_op->result)) {
+                                return false;
+                            }
+                            call = op;
+                        } else {
+                            /* The leaf combine call (task #97): one
+                             * LOCAL unary call over the cell head,
+                             * strictly before the self call (T1's
+                             * descent evaluation order). */
+                            if (leaf_call != nullptr || call != nullptr ||
+                                op->mfa_m != fn.module ||
+                                op->num_operands != 1 || op->index != 1 ||
+                                op->result == nullptr || head_op == nullptr ||
+                                br_uncopy(op->operands[0]) !=
+                                        br_uncopy(head_op->result)) {
+                                return false;
+                            }
+                            leaf_call = op;
                         }
-                        call = op;
                         break;
                     case T2OpKind::Add:
                     case T2OpKind::Mul:
@@ -6889,9 +6921,22 @@ namespace erts_t2 {
                 }
 
                 m->is_mul = comb->kind == T2OpKind::Mul;
-                if (other->def != nullptr &&
-                    other->def->kind == T2OpKind::ConstInt &&
-                    IS_SSMALL(other->def->imm_int)) {
+                m->leaf_f = NIL;
+                if (leaf_call != nullptr) {
+                    /* Leaf combine (task #97): the ascent's other
+                     * operand must be exactly the leaf's result — a
+                     * leaf whose result is unused would have its call
+                     * erased by the transform (wrong reductions even
+                     * for a pure leaf), so anything else rejects. */
+                    if (other != br_uncopy(leaf_call->result)) {
+                        return false;
+                    }
+                    m->head_combine = false;
+                    m->combine_const = 0;
+                    m->leaf_f = leaf_call->mfa_f;
+                } else if (other->def != nullptr &&
+                           other->def->kind == T2OpKind::ConstInt &&
+                           IS_SSMALL(other->def->imm_int)) {
                     m->head_combine = false;
                     m->combine_const = other->def->imm_int;
                 } else if (head_op != nullptr &&
@@ -6923,6 +6968,9 @@ namespace erts_t2 {
             T2OpKind combine_op;      /* Add/Sub/Mul when !identity      */
             bool head_first;          /* H op k (true) vs k op H (false) */
             Sint64 combine_const;     /* the constant k when !identity   */
+            Eterm leaf_f;             /* combine = leaf(H): the local    *
+                                       * callee (task #97); NIL when the *
+                                       * combine is identity/primitive   */
         };
 
         /* Strict structural match of the list-building shape (verified
@@ -6930,18 +6978,24 @@ namespace erts_t2 {
          *
          *   block0: param#0; is_nonempty_list; branch rec/notnel
          *   notnel: [phi of param] is_nil; branch base/improper
-         *   rec:    [allocate] get_hd; get_tl; [combine=arith(H,k)];
-         *           call self(tl); [gc_test]; make_list(combine|H, rec);
-         *           [deallocate]; return
+         *   rec:    [allocate] get_hd; get_tl; [combine=arith(H,k)] |
+         *           [call leaf(H)]; call self(tl); [gc_test];
+         *           make_list(combine|H|leaf(H), rec); [deallocate];
+         *           return
          *   base:   return the is_nil'd value (nil) — cp([])->[]
          *   improper: the shared function_clause exit
          *
-         * combine is IDENTITY (make_list head == the cell head) or a
+         * combine is IDENTITY (make_list head == the cell head), a
          * PURE per-element small arith on the head with a constant
-         * (H+k / k+H / H*k / k*H / H-k / k-H); it must NOT read the
+         * (H+k / k+H / H*k / k*H / H-k / k-H), or (task #97) one LOCAL
+         * unary leaf call over the head, evaluated before the self
+         * call, whose result is the consed value (the leaf body's own
+         * admissibility — pure/frame-free/whitelisted — is decided
+         * later against its built SSA); the combine must NOT read the
          * recursive result. Anything else — an impure/rec-reading
-         * combine, IDiv/Rem/float, a non-nil base, multiple self-calls,
-         * extra ops — rejects (returns false, a silent no-op). */
+         * combine, IDiv/Rem/float, a non-nil base, multiple self or
+         * leaf calls, a leaf mixed with arith, extra ops — rejects
+         * (returns false, a silent no-op). */
         bool bodyrec_match_cons(const T2Function &fn, BodyRecConsMatch *m) {
             if (fn.arity != 1 || fn.blocks.size() < 5 || !fn.sync_complete) {
                 return false;
@@ -7045,12 +7099,14 @@ namespace erts_t2 {
                 return false;
             }
 
-            /* rec: get_hd, get_tl, self call, [combine], make_list,
-             * frame/heap ops — Copy/ConstInt/GcTest tolerated. */
+            /* rec: get_hd, get_tl, [leaf call], self call, [combine],
+             * make_list, frame/heap ops — Copy/ConstInt/GcTest
+             * tolerated. */
             {
                 const T2Op *head_op = nullptr;
                 const T2Op *tl_op = nullptr;
                 const T2Op *call = nullptr;
+                const T2Op *leaf_call = nullptr;
                 const T2Op *comb = nullptr;
                 const T2Op *ml = nullptr;
                 bool saw_alloc = false, saw_dealloc = false;
@@ -7096,14 +7152,33 @@ namespace erts_t2 {
                         tl_op = op;
                         break;
                     case T2OpKind::Call:
-                        if (call != nullptr || op->mfa_m != fn.module ||
-                            op->mfa_f != fn.function || op->index != fn.arity ||
-                            op->num_operands != 1 || tl_op == nullptr ||
-                            br_uncopy(op->operands[0]) !=
-                                    br_uncopy(tl_op->result)) {
-                            return false;
+                        if (op->mfa_m == fn.module &&
+                            op->mfa_f == fn.function && op->index == fn.arity) {
+                            /* The self call: exactly one, over the
+                             * decoded tail. */
+                            if (call != nullptr || op->num_operands != 1 ||
+                                tl_op == nullptr ||
+                                br_uncopy(op->operands[0]) !=
+                                        br_uncopy(tl_op->result)) {
+                                return false;
+                            }
+                            call = op;
+                        } else {
+                            /* The leaf combine call (task #97): one
+                             * LOCAL unary call over the cell head,
+                             * strictly before the self call (T1's
+                             * descent evaluation order), not mixed
+                             * with a primitive arith combine. */
+                            if (leaf_call != nullptr || call != nullptr ||
+                                comb != nullptr || op->mfa_m != fn.module ||
+                                op->num_operands != 1 || op->index != 1 ||
+                                op->result == nullptr || head_op == nullptr ||
+                                br_uncopy(op->operands[0]) !=
+                                        br_uncopy(head_op->result)) {
+                                return false;
+                            }
+                            leaf_call = op;
                         }
-                        call = op;
                         break;
                     case T2OpKind::Add:
                     case T2OpKind::Sub:
@@ -7112,8 +7187,8 @@ namespace erts_t2 {
                          * fine here (unlike the integer fold): each cell
                          * is transformed independently, so recomputation
                          * on recall is identical — no accumulation. */
-                        if (comb != nullptr || op->num_operands != 2 ||
-                            op->flags != 0) {
+                        if (comb != nullptr || leaf_call != nullptr ||
+                            op->num_operands != 2 || op->flags != 0) {
                             return false;
                         }
                         comb = op;
@@ -7147,7 +7222,22 @@ namespace erts_t2 {
 
                 const T2Value *ml_head = br_uncopy(ml->operands[0]);
 
-                if (ml_head == head) {
+                m->leaf_f = NIL;
+                if (leaf_call != nullptr) {
+                    /* Leaf combine (task #97): the consed value must
+                     * be exactly the leaf's result — a leaf whose
+                     * result is unused would have its call erased by
+                     * the transform (wrong reductions even for a pure
+                     * leaf), so anything else rejects. */
+                    if (ml_head != br_uncopy(leaf_call->result)) {
+                        return false;
+                    }
+                    m->identity = false;
+                    m->combine_op = T2OpKind::Copy;
+                    m->head_first = true;
+                    m->combine_const = 0;
+                    m->leaf_f = leaf_call->mfa_f;
+                } else if (ml_head == head) {
                     if (comb != nullptr) {
                         return false; /* stray arith */
                     }
@@ -7279,15 +7369,339 @@ namespace erts_t2 {
             b->phis_tail = nullptr;
         }
 
+        /* ---- Leaf-combine inlining (task #97) ------------------------ *
+         *
+         * Admits `[leaf(H) | f(T)]` and `leaf(H) + f(T)` / `leaf(H) *
+         * f(T)` where `leaf` is a small PURE local function, by
+         * splicing leaf's body into the synthesized loop's combine
+         * position. Correctness rests on the FrameRestart recall model
+         * the loop already uses: every deopt DISCARDS the partial work
+         * and re-runs the whole descent (leaf included) in T1 over the
+         * untouched original argument, so the leaf must be EFFECT-FREE
+         * (a recalled effect would double) — enforced structurally by
+         * a closed whitelist: consts, copies, the never-faulting
+         * selectors the loader only emits type-proven
+         * (get_tuple_element / get_hd / get_tl), and Add/Sub/Mul,
+         * which the splice converts to flag-checked AddSmall/SubSmall/
+         * MulSmall with the loop's own FrameRestart deopt +
+         * SpeculateType small guards on unproven operands (the
+         * born-checked discipline). A leaf that faults at element k
+         * recalls and re-faults at the same element with T1's own
+         * frames/trace; per-element small->bignum overflow recalls and
+         * re-computes byte-identically (+ and * are exact over Z).
+         * Anything outside the whitelist — calls, BIFs, sends, ETS,
+         * allocation (MakeList/PutTuple), bs ops, multi-block bodies,
+         * frames — rejects, and the function stays T1 (the enclosing
+         * match already required the combine to be the leaf call).
+         *
+         * The leaf body is extracted into a self-contained RECIPE
+         * (small imms + operand indices only, no T2Value/Eterm refs)
+         * inside the t2_build_for_debug callback, so nothing can
+         * dangle once the callee's module decode is released. */
+
+        constexpr size_t T2_BODYREC_LEAF_MAX_NODES = 24;
+
+        struct BodyRecLeafNode {
+            T2OpKind kind; /* ConstInt / Add / Sub / Mul /
+                            * GetTupleElement / GetHd / GetTl;
+                            * node 0 is the head-param pseudo-node */
+            int a = -1;    /* operand node ids (-1 = none) */
+            int b = -1;
+            Sint64 imm = 0;     /* ConstInt value (IS_SSMALL-checked) */
+            uint32_t index = 0; /* GetTupleElement index */
+        };
+
+        struct BodyRecLeafRecipe {
+            std::vector<BodyRecLeafNode> nodes; /* [0] = the head */
+            int ret = -1;                       /* returned node */
+            bool uses_head = false;             /* any node reads [0] */
+        };
+
+        /* Extract the leaf callee's single block into a recipe under
+         * the strict admission above; false = not admissible (the
+         * caller then leaves the function on T1). */
+        bool bodyrec_extract_leaf(const T2Function &callee,
+                                  BodyRecLeafRecipe *r) {
+            if (callee.arity != 1 || callee.blocks.size() != 1) {
+                return false;
+            }
+
+            const T2BasicBlock *b = callee.blocks[0];
+
+            if (b->phis_head != nullptr || b->terminator == nullptr ||
+                b->terminator->kind != T2OpKind::Return ||
+                b->terminator->num_operands != 1) {
+                return false;
+            }
+
+            std::unordered_map<const T2Value *, int> nmap;
+            bool saw_param = false;
+
+            r->nodes.clear();
+            r->nodes.push_back(BodyRecLeafNode{});
+            r->nodes[0].kind = T2OpKind::Param;
+
+            for (const T2Op *op = b->ops_head; op != nullptr; op = op->next) {
+                switch (op->kind) {
+                case T2OpKind::Param:
+                    if (op->index != 0 || saw_param || op->result == nullptr) {
+                        return false;
+                    }
+                    saw_param = true;
+                    nmap[op->result] = 0;
+                    continue;
+                case T2OpKind::Copy: {
+                    /* SSA identity: collapse (a home shuffle in the
+                     * callee means nothing after the splice). */
+                    if (op->num_operands != 1 || op->result == nullptr) {
+                        return false;
+                    }
+                    auto it = nmap.find(op->operands[0]);
+
+                    if (it == nmap.end()) {
+                        return false;
+                    }
+                    nmap[op->result] = it->second;
+                    continue;
+                }
+                case T2OpKind::ConstInt: {
+                    /* Non-small integer constants would break the
+                     * flag-checked arith's operand contract. */
+                    if (op->result == nullptr || !IS_SSMALL(op->imm_int)) {
+                        return false;
+                    }
+                    BodyRecLeafNode n;
+
+                    n.kind = op->kind;
+                    n.imm = op->imm_int;
+                    nmap[op->result] = (int)r->nodes.size();
+                    r->nodes.push_back(n);
+                    continue;
+                }
+                case T2OpKind::Add:
+                case T2OpKind::Sub:
+                case T2OpKind::Mul: {
+                    if (op->num_operands != 2 || op->result == nullptr ||
+                        op->flags != 0) {
+                        return false;
+                    }
+                    auto ia = nmap.find(op->operands[0]);
+                    auto ib = nmap.find(op->operands[1]);
+
+                    if (ia == nmap.end() || ib == nmap.end()) {
+                        return false;
+                    }
+                    BodyRecLeafNode n;
+
+                    n.kind = op->kind;
+                    n.a = ia->second;
+                    n.b = ib->second;
+                    nmap[op->result] = (int)r->nodes.size();
+                    r->nodes.push_back(n);
+                    continue;
+                }
+                case T2OpKind::GetTupleElement:
+                case T2OpKind::GetHd:
+                case T2OpKind::GetTl: {
+                    /* Never-faulting selectors: the loader emits them
+                     * bare only when the compiler PROVED the operand
+                     * type, and the spliced copy reads the identical
+                     * value T1's own leaf body would. */
+                    if (op->num_operands != 1 || op->result == nullptr) {
+                        return false;
+                    }
+                    auto it = nmap.find(op->operands[0]);
+
+                    if (it == nmap.end()) {
+                        return false;
+                    }
+                    BodyRecLeafNode n;
+
+                    n.kind = op->kind;
+                    n.a = it->second;
+                    n.index = op->index;
+                    nmap[op->result] = (int)r->nodes.size();
+                    r->nodes.push_back(n);
+                    continue;
+                }
+                default:
+                    /* Calls, BIFs, sends, allocation, frames, bs ops,
+                     * literals, floats — outside the pure whitelist. */
+                    return false;
+                }
+            }
+
+            if (r->nodes.size() > T2_BODYREC_LEAF_MAX_NODES) {
+                return false;
+            }
+
+            auto rit = nmap.find(b->terminator->operands[0]);
+
+            if (rit == nmap.end()) {
+                return false;
+            }
+            r->ret = rit->second;
+
+            r->uses_head = r->ret == 0;
+            for (const BodyRecLeafNode &n : r->nodes) {
+                r->uses_head |= n.a == 0 || n.b == 0;
+            }
+            return true;
+        }
+
+        /* Build the leaf's SSA from the retained module and extract it.
+         * False = no admissible leaf (build failed, not eligible — the
+         * effectful-leaf case rejects here too — or the body fell
+         * outside the whitelist). */
+        bool bodyrec_build_leaf(const ErtsT2RetainedCode *ret,
+                                Eterm leaf_f,
+                                BodyRecLeafRecipe *r) {
+            bool ok = false;
+            std::string berr;
+
+            if (ret == nullptr) {
+                return false;
+            }
+
+            T2BuildStatus st = t2_build_for_debug(
+                    ret,
+                    leaf_f,
+                    1,
+                    [&](T2Function &lf) {
+                        ok = bodyrec_extract_leaf(lf, r);
+                    },
+                    &berr);
+
+            return st == T2BuildStatus::Ok && ok;
+        }
+
+        /* Splice the recipe into loop block `b` at the combine
+         * position. vals/regs/proven are per-node (node 0 pre-filled
+         * by the caller with the head's value/home when the recipe
+         * uses it); constants were materialized into the preheader by
+         * bodyrec_leaf_emit_consts. Fallible arith becomes
+         * flag-checked FrameRestart ops after SpeculateType small
+         * guards on any yet-unproven register operand — the sync map
+         * {x:[v0], y:ys} is the loop's own recall-from-top state.
+         * Results land in fresh scratch X homes from *next_x (above
+         * the loop's pinned x0/x1); nothing here writes x0, y0 or y1,
+         * so the recall vector and the Y-homed loop state stay intact
+         * and no leaf value is live across the back edge's yield or
+         * any GcTest (the caller orders the splice before them). When
+         * `small_ret` the returned node is additionally guaranteed
+         * proven small on exit (the integer ascent's operand
+         * contract). */
+        void bodyrec_leaf_emit_consts(T2Function &fn,
+                                      T2BasicBlock *b0,
+                                      const BodyRecLeafRecipe &r,
+                                      std::vector<T2Value *> &vals,
+                                      std::vector<bool> &proven) {
+            for (size_t i = 1; i < r.nodes.size(); i++) {
+                if (r.nodes[i].kind == T2OpKind::ConstInt) {
+                    vals[i] = fn.emit_const_int(b0, r.nodes[i].imm);
+                    proven[i] = true;
+                }
+            }
+        }
+
+        void bodyrec_leaf_emit_body(T2Function &fn,
+                                    T2BasicBlock *b,
+                                    const BodyRecLeafRecipe &r,
+                                    std::vector<T2Value *> &vals,
+                                    std::vector<int32_t> &regs,
+                                    std::vector<bool> &proven,
+                                    T2Value *v0,
+                                    uint32_t slots,
+                                    const std::vector<T2Value *> &ys,
+                                    bool small_ret,
+                                    uint32_t *next_x) {
+            auto guard_small = [&](int n) {
+                if (n < 0 || proven[(size_t)n] ||
+                    regs[(size_t)n] == T2_REG_NONE) {
+                    /* Constants were IS_SSMALL-checked at extraction;
+                     * isel rejects guards of constants by design. */
+                    return;
+                }
+                T2Op *spec =
+                        fn.new_op(b, T2OpKind::SpeculateType, T2Type::none());
+
+                fn.set_operands(spec, {vals[(size_t)n]});
+                spec->operand_regs = bodyrec_regs(fn, {regs[(size_t)n]});
+                spec->spec_type_class = 0;
+                spec->deopt_shape = T2DeoptShape::FrameRestart;
+                spec->live = slots;
+                spec->sync = bodyrec_map(fn, {v0}, (int32_t)slots, ys);
+                spec->flags = T2_OP_INLINED;
+                proven[(size_t)n] = true;
+            };
+
+            for (size_t i = 1; i < r.nodes.size(); i++) {
+                const BodyRecLeafNode &n = r.nodes[i];
+
+                switch (n.kind) {
+                case T2OpKind::ConstInt:
+                    break; /* preheader-materialized */
+                case T2OpKind::Add:
+                case T2OpKind::Sub:
+                case T2OpKind::Mul: {
+                    guard_small(n.a);
+                    guard_small(n.b);
+
+                    T2OpKind lk = n.kind == T2OpKind::Mul ? T2OpKind::MulSmall
+                                  : n.kind == T2OpKind::Sub
+                                          ? T2OpKind::SubSmall
+                                          : T2OpKind::AddSmall;
+                    T2Op *op = fn.new_op(b, lk, T2Type::any());
+
+                    fn.set_operands(op, {vals[(size_t)n.a], vals[(size_t)n.b]});
+                    op->operand_regs = bodyrec_regs(
+                            fn,
+                            {regs[(size_t)n.a], regs[(size_t)n.b]});
+                    op->dst_reg = t2_xreg((*next_x)++);
+                    op->deopt_shape = T2DeoptShape::FrameRestart;
+                    op->live = slots;
+                    op->sync = bodyrec_map(fn, {v0}, (int32_t)slots, ys);
+                    op->flags = T2_OP_INLINED;
+                    vals[i] = op->result;
+                    regs[i] = op->dst_reg;
+                    proven[i] = true;
+                    break;
+                }
+                case T2OpKind::GetTupleElement:
+                case T2OpKind::GetHd:
+                case T2OpKind::GetTl: {
+                    T2Op *op = fn.new_op(b, n.kind, T2Type::any());
+
+                    fn.set_operands(op, {vals[(size_t)n.a]});
+                    op->operand_regs = bodyrec_regs(fn, {regs[(size_t)n.a]});
+                    op->dst_reg = t2_xreg((*next_x)++);
+                    op->index = n.index;
+                    op->flags = T2_OP_INLINED;
+                    vals[i] = op->result;
+                    regs[i] = op->dst_reg;
+                    break;
+                }
+                default:
+                    break; /* unreachable: extraction admits no more */
+                }
+            }
+
+            if (small_ret) {
+                guard_small(r.ret);
+            }
+        }
+
     } /* anonymous namespace */
 
     /* The list-building transform (task #87); defined below t2_bodyrec. */
     static bool t2_bodyrec_cons(T2Function &fn,
+                                const ErtsT2RetainedCode *ret,
                                 const void *code_hdr,
                                 bool *changed,
                                 std::string *err);
 
     bool t2_bodyrec(T2Function &fn,
+                    const ErtsT2RetainedCode *ret,
                     const void *code_hdr,
                     bool *changed,
                     std::string *err) {
@@ -7300,7 +7714,7 @@ namespace erts_t2 {
         T2BodyRecKind kind = t2_bodyrec_classify(fn);
 
         if (kind == T2BodyRecKind::Cons) {
-            return t2_bodyrec_cons(fn, code_hdr, changed, err);
+            return t2_bodyrec_cons(fn, ret, code_hdr, changed, err);
         }
         if (kind != T2BodyRecKind::Integer) {
             return true;
@@ -7316,6 +7730,24 @@ namespace erts_t2 {
                              fn.module,
                              fn.function,
                              (unsigned)fn.arity);
+            }
+            return true;
+        }
+
+        /* Leaf combine (task #97): the leaf must build to an
+         * admissible pure body, else the function stays T1. */
+        BodyRecLeafRecipe leaf;
+        const bool have_leaf = m.leaf_f != NIL;
+
+        if (have_leaf && !bodyrec_build_leaf(ret, m.leaf_f, &leaf)) {
+            if (bodyrec_trace()) {
+                erts_fprintf(stderr,
+                             "t2_bodyrec: %T:%T/%u integer leaf combine "
+                             "%T/1 is not an admissible pure leaf\n",
+                             fn.module,
+                             fn.function,
+                             (unsigned)fn.arity,
+                             m.leaf_f);
             }
             return true;
         }
@@ -7371,8 +7803,18 @@ namespace erts_t2 {
 
         T2Value *base_v = fn.emit_const_int(b0, m.base_const);
         T2Value *comb_const_v =
-                m.head_combine ? nullptr
-                               : fn.emit_const_int(b0, m.combine_const);
+                m.head_combine || have_leaf
+                        ? nullptr
+                        : fn.emit_const_int(b0, m.combine_const);
+
+        /* Leaf constants materialize once, in the preheader (#97). */
+        std::vector<T2Value *> lvals(leaf.nodes.size(), nullptr);
+        std::vector<int32_t> lregs(leaf.nodes.size(), T2_REG_NONE);
+        std::vector<bool> lproven(leaf.nodes.size(), false);
+
+        if (have_leaf) {
+            bodyrec_leaf_emit_consts(fn, b0, leaf, lvals, lproven);
+        }
 
         T2Op *alloc = fn.new_op(b0, T2OpKind::Allocate, T2Type::none());
 
@@ -7420,7 +7862,7 @@ namespace erts_t2 {
         /* body: advance the cursor, fold one cell, charge one red. */
         T2Op *head_op = nullptr;
 
-        if (m.head_combine) {
+        if (m.head_combine || (have_leaf && leaf.uses_head)) {
             head_op = fn.new_op(body, T2OpKind::GetHd, T2Type::any());
             fn.set_operands(head_op, {cursor_phi->result});
             head_op->dst_reg = t2_xreg(1);
@@ -7433,7 +7875,37 @@ namespace erts_t2 {
         tl_op->dst_reg = t2_yreg(0);
         tl_op->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
 
-        if (m.head_combine) {
+        /* The ascent's non-accumulator operand: the guarded head, the
+         * combine constant, or the spliced leaf's result (task #97). */
+        T2Value *comb_rhs = comb_const_v;
+        int32_t comb_rhs_reg = T2_REG_NONE;
+
+        if (have_leaf) {
+            /* Splice leaf(H): guards + flag-checked arith deopt via
+             * the same frame-popping recall as the ascent below —
+             * pure recomputation, so a fault/overflow at element k
+             * re-raises/re-computes byte-identically in T1. The
+             * result is guaranteed proven small (small_ret) before it
+             * may reach the accumulator arithmetic. */
+            uint32_t next_x = 2;
+            std::vector<T2Value *> ys = {tl_op->result, acc_phi->result};
+
+            lvals[0] = head_op != nullptr ? head_op->result : nullptr;
+            lregs[0] = t2_xreg(1);
+            bodyrec_leaf_emit_body(fn,
+                                   body,
+                                   leaf,
+                                   lvals,
+                                   lregs,
+                                   lproven,
+                                   v0,
+                                   SLOTS,
+                                   ys,
+                                   true,
+                                   &next_x);
+            comb_rhs = lvals[(size_t)leaf.ret];
+            comb_rhs_reg = lregs[(size_t)leaf.ret];
+        } else if (m.head_combine) {
             /* The head must be a small before it may reach the
              * flag-checked arithmetic; a non-small deopts through the
              * frame-popping recall — T1 then re-raises (badarith) at
@@ -7450,6 +7922,8 @@ namespace erts_t2 {
                                      {v0},
                                      (int32_t)SLOTS,
                                      {tl_op->result, acc_phi->result});
+            comb_rhs = head_op->result;
+            comb_rhs_reg = t2_xreg(1);
         }
 
         T2Op *comb =
@@ -7457,13 +7931,9 @@ namespace erts_t2 {
                           m.is_mul ? T2OpKind::MulSmall : T2OpKind::AddSmall,
                           T2Type::any());
 
-        fn.set_operands(comb,
-                        {acc_phi->result,
-                         m.head_combine ? head_op->result : comb_const_v});
+        fn.set_operands(comb, {acc_phi->result, comb_rhs});
         comb->dst_reg = t2_yreg(1);
-        comb->operand_regs = bodyrec_regs(
-                fn,
-                {t2_yreg(1), m.head_combine ? t2_xreg(1) : T2_REG_NONE});
+        comb->operand_regs = bodyrec_regs(fn, {t2_yreg(1), comb_rhs_reg});
         comb->deopt_shape = T2DeoptShape::FrameRestart;
         comb->live = SLOTS; /* the trampoline's deallocate count */
         comb->sync = bodyrec_map(fn,
@@ -7475,7 +7945,16 @@ namespace erts_t2 {
 
         fn.set_operands(rc, {});
         rc->flags = T2_OP_RC_FRAMED;
-        rc->index = 0; /* charge 1 per iteration (isel: 1 + index) */
+        /* Charge per iteration (isel: 1 + index). T1's body recursion
+         * charges 2 per element (entry i_test_yield + return dispatch),
+         * so the single loop must charge 2 — index 1 (#97 measured
+         * fix: index 0 under-charged by 1/element; the cons transform's
+         * two loops were already at parity with 1 each). The inlined
+         * leaf's erased call charged 2 more per element in T1 (leaf
+         * entry + return dispatch); fold them in so
+         * process_info(reductions) and the yield schedule stay
+         * T1-identical (#97, measured). */
+        rc->index = have_leaf ? 3 : 1;
         rc->live = fn.arity;
         rc->sync = bodyrec_map(fn,
                                {v0},
@@ -7546,6 +8025,20 @@ namespace erts_t2 {
 
         fn.finalize();
 
+        if (have_leaf) {
+            /* The leaf's code now lives in this blob: a breakpoint /
+             * trace anywhere in the own instance must kill it (the
+             * same dependency the general leaf inliner registers). */
+            bool have = false;
+
+            for (const void *d : fn.dep_hdrs) {
+                have |= d == code_hdr;
+            }
+            if (!have) {
+                fn.dep_hdrs.push_back(code_hdr);
+            }
+        }
+
         if (bodyrec_trace()) {
             erts_fprintf(stderr,
                          "t2_bodyrec: %T:%T/%u lowered to a frame-carrying "
@@ -7554,7 +8047,9 @@ namespace erts_t2 {
                          fn.function,
                          (unsigned)fn.arity,
                          m.is_mul ? "product" : "sum",
-                         m.head_combine ? "head" : "const",
+                         have_leaf        ? "inlined-leaf"
+                         : m.head_combine ? "head"
+                                          : "const",
                          (long)m.base_const);
         }
 
@@ -7606,6 +8101,7 @@ namespace erts_t2 {
      * Opt-in via T2_BODYREC.                                             *
      * ------------------------------------------------------------------ */
     static bool t2_bodyrec_cons(T2Function &fn,
+                                const ErtsT2RetainedCode *ret,
                                 const void *code_hdr,
                                 bool *changed,
                                 std::string *err) {
@@ -7622,6 +8118,24 @@ namespace erts_t2 {
                              fn.module,
                              fn.function,
                              (unsigned)fn.arity);
+            }
+            return true;
+        }
+
+        /* Leaf combine (task #97): the leaf must build to an
+         * admissible pure body, else the function stays T1. */
+        BodyRecLeafRecipe leaf;
+        const bool have_leaf = m.leaf_f != NIL;
+
+        if (have_leaf && !bodyrec_build_leaf(ret, m.leaf_f, &leaf)) {
+            if (bodyrec_trace()) {
+                erts_fprintf(stderr,
+                             "t2_bodyrec: %T:%T/%u cons leaf combine %T/1 "
+                             "is not an admissible pure leaf\n",
+                             fn.module,
+                             fn.function,
+                             (unsigned)fn.arity,
+                             m.leaf_f);
             }
             return true;
         }
@@ -7679,8 +8193,18 @@ namespace erts_t2 {
 
         /* A single arith constant (when the combine is not identity),
          * materialized in the preheader like #88. */
-        T2Value *k_v =
-                m.identity ? nullptr : fn.emit_const_int(b0, m.combine_const);
+        T2Value *k_v = m.identity || have_leaf
+                               ? nullptr
+                               : fn.emit_const_int(b0, m.combine_const);
+
+        /* Leaf constants materialize once, in the preheader (#97). */
+        std::vector<T2Value *> lvals(leaf.nodes.size(), nullptr);
+        std::vector<int32_t> lregs(leaf.nodes.size(), T2_REG_NONE);
+        std::vector<bool> lproven(leaf.nodes.size(), false);
+
+        if (have_leaf) {
+            bodyrec_leaf_emit_consts(fn, b0, leaf, lvals, lproven);
+        }
 
         T2Op *alloc = fn.new_op(b0, T2OpKind::Allocate, T2Type::none());
 
@@ -7732,15 +8256,52 @@ namespace erts_t2 {
 
         /* down body: head = get_hd(cursor); [combine]; gc_test;
          * RevAcc' = [combine|RevAcc]; cursor' = get_tl(cursor); rc. */
-        T2Op *dhd = fn.new_op(db, T2OpKind::GetHd, T2Type::any());
+        T2Op *dhd = nullptr;
 
-        fn.set_operands(dhd, {cur_phi->result});
-        dhd->dst_reg = t2_xreg(1);
-        dhd->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+        if (!have_leaf || leaf.uses_head) {
+            dhd = fn.new_op(db, T2OpKind::GetHd, T2Type::any());
+            fn.set_operands(dhd, {cur_phi->result});
+            dhd->dst_reg = t2_xreg(1);
+            dhd->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+        }
 
-        T2Value *cell_val = dhd->result; /* what gets consed */
+        /* what gets consed */
+        T2Value *cell_val = dhd != nullptr ? dhd->result : nullptr;
 
-        if (!m.identity) {
+        if (have_leaf) {
+            /* Splice leaf(H): guards + flag-checked arith deopt via
+             * the frame-popping recall — the partial RevAcc becomes
+             * garbage and T1 re-runs the whole descent, faulting /
+             * overflowing byte-identically at the same element. The
+             * result is then materialized in X1, the home the gc_test
+             * map below roots (live=2) and the cons reads. */
+            uint32_t next_x = 2;
+            std::vector<T2Value *> ys = {cur_phi->result, rev_phi->result};
+
+            lvals[0] = cell_val;
+            lregs[0] = t2_xreg(1);
+            bodyrec_leaf_emit_body(fn,
+                                   db,
+                                   leaf,
+                                   lvals,
+                                   lregs,
+                                   lproven,
+                                   v0,
+                                   SLOTS,
+                                   ys,
+                                   false,
+                                   &next_x);
+            cell_val = lvals[(size_t)leaf.ret];
+            if (lregs[(size_t)leaf.ret] != t2_xreg(1)) {
+                T2Op *cp = fn.new_op(db, T2OpKind::Copy, cell_val->type);
+
+                fn.set_operands(cp, {cell_val});
+                cp->dst_reg = t2_xreg(1);
+                cp->operand_regs = bodyrec_regs(fn, {lregs[(size_t)leaf.ret]});
+                cp->flags = T2_OP_INLINED;
+                cell_val = cp->result;
+            }
+        } else if (!m.identity) {
             /* The head must be a small before the flag-checked arith; a
              * non-small / overflow deopts through the frame-popping
              * recall, and T1 rebuilds + faults / bignums identically. */
@@ -7809,7 +8370,11 @@ namespace erts_t2 {
 
         fn.set_operands(drc, {});
         drc->flags = T2_OP_RC_FRAMED;
-        drc->index = 0;
+        /* The inlined leaf's erased call charged 2 more per element in
+         * T1 (leaf entry + return dispatch); fold them into the down
+         * loop's charge so process_info(reductions) and the yield
+         * schedule stay T1-identical (#97, measured). */
+        drc->index = have_leaf ? 2 : 0;
         drc->live = fn.arity;
         drc->sync =
                 bodyrec_map(fn, {v0}, FR, {cur_next->result, rev_next->result});
@@ -7942,6 +8507,20 @@ namespace erts_t2 {
 
         fn.finalize();
 
+        if (have_leaf) {
+            /* The leaf's code now lives in this blob: a breakpoint /
+             * trace anywhere in the own instance must kill it (the
+             * same dependency the general leaf inliner registers). */
+            bool have = false;
+
+            for (const void *d : fn.dep_hdrs) {
+                have |= d == code_hdr;
+            }
+            if (!have) {
+                fn.dep_hdrs.push_back(code_hdr);
+            }
+        }
+
         if (bodyrec_trace()) {
             erts_fprintf(stderr,
                          "t2_bodyrec: %T:%T/%u lowered to a two-loop cons "
@@ -7949,7 +8528,8 @@ namespace erts_t2 {
                          fn.module,
                          fn.function,
                          (unsigned)fn.arity,
-                         m.identity                      ? "identity"
+                         have_leaf                       ? "inlined-leaf"
+                         : m.identity                    ? "identity"
                          : m.combine_op == T2OpKind::Mul ? "mul"
                          : m.combine_op == T2OpKind::Sub ? "sub"
                                                          : "add");
