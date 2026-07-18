@@ -1715,6 +1715,15 @@ namespace erts_t2 {
                             op->deopt_shape == T2DeoptShape::Callsite ||
                             op->deopt_shape == T2DeoptShape::Entry ||
                             op->deopt_shape == T2DeoptShape::Redispatch;
+                    /* Body recursion (task #88): a FrameRestart-shaped
+                     * guard (the head-smallness check of the sum /
+                     * product loop) deopts by deallocating the
+                     * synthesized frame (op->live Y slots) before the
+                     * recall-from-top, exactly like the accumulator's
+                     * overflow deopt. */
+                    lop.frame_restart =
+                            op->deopt_shape == T2DeoptShape::FrameRestart;
+                    lop.frame_restart_slots = op->live;
                     if (!fill_srcs(op, &lop)) {
                         return false;
                     }
@@ -1884,6 +1893,39 @@ namespace erts_t2 {
                     b.ops.push_back(lop);
                     return true;
 
+                case T2OpKind::MulSmall:
+                    /* Flag-checked small multiply (body recursion, task
+                     * #88): the AddSmall shape minus the rollback /
+                     * no-ovf / raw classes, which have no multiply
+                     * form. Only the FrameRestart-shaped body-recursion
+                     * accumulator produces it today; the deopt routes
+                     * through the frame-deallocating trampoline. */
+                    lop.kind = T2LirKind::MulSmall;
+                    lop.spec_callsite =
+                            op->deopt_shape == T2DeoptShape::Callsite ||
+                            op->deopt_shape == T2DeoptShape::Entry ||
+                            op->deopt_shape == T2DeoptShape::Redispatch;
+                    lop.frame_restart =
+                            op->deopt_shape == T2DeoptShape::FrameRestart;
+                    lop.frame_restart_slots = op->live;
+                    if (op->dst_reg == T2_REG_NONE) {
+                        return fail_op(op, "arith result without a home");
+                    }
+                    lop.dst = reg_loc(op->dst_reg);
+                    lop.dst_value = op->result->id;
+                    lop.live = op->live;
+                    if (!fill_srcs(op, &lop)) {
+                        return false;
+                    }
+                    lop.t1_pc_fail = spec_deopt_pc(op);
+                    if (lop.t1_pc_fail == nullptr) {
+                        return fail_op(op,
+                                       "no deopt PC for flag-checked "
+                                       "arithmetic");
+                    }
+                    b.ops.push_back(lop);
+                    return true;
+
                 case T2OpKind::ReductionCheck:
                     /* Recovered-loop back edge (t2_loop.cpp): the
                      * demote target is the function's own T1 entry
@@ -1936,6 +1978,16 @@ namespace erts_t2 {
                         return fail_op(op,
                                        "no T1 entry for the back-edge "
                                        "demote");
+                    }
+                    /* Framed body-recursion back edge (task #88): the
+                     * demote paths must pop the synthesized frame before
+                     * entering the T1 body — carry the slot count for
+                     * the tombstone demote stub and the rtab entry (the
+                     * parked c_p->i translation, t2_install.c phase 1). */
+                    if (op->flags & T2_OP_RC_FRAMED) {
+                        lop.frame_restart = true;
+                        lop.frame_restart_slots =
+                                (uint32_t)op->sync->frame_size;
                     }
                     b.ops.push_back(lop);
                     return true;

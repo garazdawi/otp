@@ -115,6 +115,23 @@ namespace erts_t2 {
 
     T2BodyRecKind t2_bodyrec_classify(const T2Function &fn);
 
+    /* Body-recursion INTEGER transform (task #88): lower the strict
+     * length/sum/product shape (classify == Integer AND the exact
+     * two-clause structure) to a frame-carrying accumulator loop whose
+     * overflow / non-small-head deopts are FrameRestart-shaped (the
+     * frame-deallocating recall-from-top) and whose back edge is a
+     * framed ReductionCheck (T2_OP_RC_FRAMED) — a reduction yield
+     * preserves the Y-homed cursor/accumulator on the Erlang stack.
+     * `code_hdr` anchors the recall paths (the function's own T1
+     * entry). Opt-in: without T2_BODYREC in the environment this is a
+     * no-op. Sets *changed when the function was rewritten; the caller
+     * re-validates in full. Returns false with *err only on an
+     * internal inconsistency (a non-match is a silent no-op). */
+    bool t2_bodyrec(T2Function &fn,
+                    const void *code_hdr,
+                    bool *changed,
+                    std::string *err);
+
     /* LICM-lite (PLAN/T2FULL/09 §8, PLAN/T2/04 §10.6 note): hoist
      * loop-invariant, pure, never-faulting ops and window-shaped
      * SpeculateType guards whose operands are all defined outside the

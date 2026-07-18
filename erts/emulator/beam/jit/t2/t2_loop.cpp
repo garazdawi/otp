@@ -330,6 +330,7 @@ namespace erts_t2 {
             case T2OpKind::UntagInt:
             case T2OpKind::AddSmall:
             case T2OpKind::SubSmall:
+            case T2OpKind::MulSmall:
             case T2OpKind::MulRaw:
                 return true;
             default:
@@ -1054,6 +1055,152 @@ namespace erts_t2 {
                             }
                         }
                         if (entry_dirt(op)) {
+                            flag = 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        /* ---- Frame-restart rule (FrameRestart shape; body recursion,
+         * task #88). An op whose deopt DEALLOCATES THE SYNTHESIZED
+         * FRAME and re-executes the whole invocation from the T1 entry
+         * body (the frame_restart_tramps family) needs, like the
+         * entry-recall rule, every path from function entry to it free
+         * of effects and of writes to X0..arity-1 — the recall vector
+         * is the ORIGINAL arguments, physically untouched in
+         * X0..arity-1. Deviations the trampoline/contract absorbs are
+         * exempt: frame ops (the trampoline pops op->live slots — which
+         * must equal the walked frame, checked via the sync map) and
+         * the back-edge ReductionCheck charge (a recalled invocation
+         * re-charges; the accepted reduction-accounting deviation of
+         * the deopt paths, term results never affected). The op must
+         * carry the framed sync map whose x prefix names the Param
+         * values (the recall vector) — the register-state walk then
+         * proves the vector is physically in X0..arity-1 and the loop
+         * state in its Y homes at the op. */
+        {
+            bool any_fr = false;
+
+            for (const T2BasicBlock *b : fn.blocks) {
+                for (const T2Op *op = b->ops_head; op != nullptr && !any_fr;
+                     op = op->next) {
+                    any_fr = op->deopt_shape == T2DeoptShape::FrameRestart;
+                }
+                if (any_fr) {
+                    break;
+                }
+            }
+
+            if (any_fr) {
+                auto fr_dirt = [&](const T2Op *op) {
+                    if (op->deopt_shape == T2DeoptShape::FrameRestart) {
+                        return false; /* same class */
+                    }
+                    switch (op->kind) {
+                    case T2OpKind::Param:
+                        return false; /* the vector itself */
+                    case T2OpKind::Allocate:
+                    case T2OpKind::Deallocate:
+                    case T2OpKind::Trim:
+                        return false; /* the trampoline pops the frame */
+                    case T2OpKind::ReductionCheck:
+                        return false; /* accepted re-charge deviation */
+                    case T2OpKind::GcTest:
+                        return op->live < fn.arity;
+                    default:
+                        break;
+                    }
+                    return t2_op_dirties_window(op, fn.arity);
+                };
+
+                std::vector<uint8_t> dirty_in(fn.blocks.size(), 0);
+                bool changed = true;
+
+                while (changed) {
+                    changed = false;
+                    for (const T2BasicBlock *b : fn.blocks) {
+                        uint8_t flag = dirty_in[b->id];
+
+                        for (const T2Op *phi = b->phis_head; phi != nullptr;
+                             phi = phi->next) {
+                            if (fr_dirt(phi)) {
+                                flag = 1;
+                            }
+                        }
+                        for (const T2Op *op = b->ops_head; op != nullptr;
+                             op = op->next) {
+                            if (fr_dirt(op)) {
+                                flag = 1;
+                            }
+                        }
+
+                        for_each_succ(b->terminator, [&](T2BasicBlock *s) {
+                            if (s != nullptr && flag && !dirty_in[s->id]) {
+                                dirty_in[s->id] = 1;
+                                changed = true;
+                            }
+                        });
+                    }
+                }
+
+                for (const T2BasicBlock *b : fn.blocks) {
+                    uint8_t flag = dirty_in[b->id];
+
+                    for (const T2Op *op = b->ops_head; op != nullptr;
+                         op = op->next) {
+                        if (op->deopt_shape == T2DeoptShape::FrameRestart) {
+                            if (!op_is_speculative_kind(op)) {
+                                return fail(b->id,
+                                            op,
+                                            "frame-restart shape on a "
+                                            "non-deopt op kind");
+                            }
+                            if (op->sync == nullptr) {
+                                return fail(b->id,
+                                            op,
+                                            "frame-restart op without the "
+                                            "framed sync map");
+                            }
+                            if (op->sync->frame_size == T2_NO_FRAME ||
+                                (int32_t)op->live != op->sync->frame_size) {
+                                return fail(b->id,
+                                            op,
+                                            "frame-restart op whose live "
+                                            "slot count does not match "
+                                            "its sync map's frame (the "
+                                            "trampoline would mis-pop)");
+                            }
+                            if (op->sync->x_live != fn.arity) {
+                                return fail(b->id,
+                                            op,
+                                            "frame-restart sync map does "
+                                            "not cover exactly the "
+                                            "argument vector");
+                            }
+                            for (uint32_t i = 0; i < op->sync->x_live; i++) {
+                                const T2Op *d = op->sync->x[i]->def;
+
+                                if (d == nullptr ||
+                                    d->kind != T2OpKind::Param ||
+                                    d->index != i) {
+                                    return fail(b->id,
+                                                op,
+                                                "frame-restart sync map "
+                                                "x entry is not the "
+                                                "original parameter (the "
+                                                "recall-from-top vector)");
+                                }
+                            }
+                            if (flag) {
+                                return fail(b->id,
+                                            op,
+                                            "frame-restart op on a dirty "
+                                            "path from the function entry "
+                                            "(recall-from-top rule)");
+                            }
+                        }
+                        if (fr_dirt(op)) {
                             flag = 1;
                         }
                     }

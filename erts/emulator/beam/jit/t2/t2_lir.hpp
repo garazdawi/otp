@@ -215,6 +215,13 @@ namespace erts_t2 {
         SpeculateRange,
         AddSmall,
         SubSmall,
+        /* Flag-checked small multiply (body recursion, task #88):
+         * untag both operands, mul + smulh with T1's high-65-bits
+         * overflow test (arm emit_i_times fast path), deopt to
+         * t1_pc_fail strictly before the commit — through the
+         * frame_restart trampoline when frame_restart is set (the only
+         * producer, the body-recursion transform, always is). */
+        MulSmall,
 
         /* P2 loop unboxing (tag elimination). UntagInt clears a proven
          * small's tag bits in place-of-representation (AND ~_TAG_

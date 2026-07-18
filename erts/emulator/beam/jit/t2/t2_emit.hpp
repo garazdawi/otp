@@ -105,6 +105,13 @@ namespace erts_t2 {
         struct ResumePoint {
             uint32_t offset;
             const void *t1_demote;
+            /* Framed body-recursion back edge (task #88): the Y slot
+             * count of the synthesized frame still on the parked
+             * process's stack. The c_p->i translation must pop it
+             * (p->stop += frame_slots) before retargeting to the
+             * frameless t1_demote; 0 for the ordinary frameless
+             * back edges. */
+            uint32_t frame_slots = 0;
         };
         std::vector<ResumePoint> resume_points;
     };

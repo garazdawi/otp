@@ -513,14 +513,36 @@ namespace {
                 return T2CompileStatus::IselUnsupported;
             }
 
-            /* Body-recursion recognizer (task #86): read-only
-             * classification for now — no transform. Under
-             * T2_BODYREC_TRACE it logs which functions are body-recursive
-             * and of what shape, so detection can be validated on the
-             * corpus before the two-loop transform lands. */
-            (void)t2_bodyrec_classify(hir);
+            /* Body-recursion INTEGER transform (task #88; opt-in via
+             * T2_BODYREC, off = the task-#86 read-only recognizer
+             * behavior, byte-identical). Lowers the strict length/sum/
+             * product shape to a frame-carrying accumulator loop with
+             * FrameRestart deopts and a framed back edge; re-validated
+             * in full, then run through the same loop analysis +
+             * window validation as recovered/intrinsic loops. */
+            bool bodyrec = false;
 
-            if (recovered || intrinsified) {
+            if (!t2_bodyrec(hir, (const void *)code_hdr, &bodyrec, &err)) {
+                if (diag) {
+                    *diag = "bodyrec: " + err;
+                }
+                return T2CompileStatus::IselUnsupported;
+            }
+            if (!bodyrec) {
+                /* Recognizer trace ride-along (task #86) when the
+                 * transform is off or did not fire. */
+                (void)t2_bodyrec_classify(hir);
+            } else {
+                t2_dump_stage("hir after bodyrec", hir);
+                if (!t2_validate(hir, &err)) {
+                    if (diag) {
+                        *diag = "post-bodyrec validate: " + err;
+                    }
+                    return T2CompileStatus::IselUnsupported;
+                }
+            }
+
+            if (recovered || intrinsified || bodyrec) {
                 T2LoopInfo li;
                 bool rewritten = false;
 
@@ -820,6 +842,7 @@ namespace {
 
             e.offset = pt.offset;
             e.t1_demote = (ErtsCodePtr)pt.t1_demote;
+            e.frame_slots = pt.frame_slots;
             rpoints.push_back(e);
         }
 

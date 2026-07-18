@@ -231,10 +231,12 @@ static void t2_retire_phase(void *vrb) {
                  * commit 8: targets differ by demote class). */
                 Uint32 k;
                 ErtsCodePtr target = NULL;
+                Uint32 frame_slots = 0;
 
                 for (k = 0; k < rb->rtab->count; k++) {
                     if ((Uint32)(ip - lo) == rb->rtab->entries[k].offset) {
                         target = rb->rtab->entries[k].t1_demote;
+                        frame_slots = rb->rtab->entries[k].frame_slots;
                         break;
                     }
                 }
@@ -245,7 +247,60 @@ static void t2_retire_phase(void *vrb) {
                               ip,
                               lo);
                 }
-                p->i = target;
+                if (frame_slots == 0) {
+                    /* Frameless back edge: the aligned word store is
+                     * benign even against a since-resumed, running
+                     * process (its stale in-span c_p->i is dead; the
+                     * owner overwrites it at schedule-out). */
+                    p->i = target;
+                } else {
+                    /* Framed body-recursion back edge (task #88): the
+                     * parked stack still carries the synthesized loop
+                     * frame, which the frameless t1_demote (the T1
+                     * entry body) knows nothing about — it must be
+                     * POPPED alongside the translation. A stack write
+                     * is NOT benign against a running process, so take
+                     * the MAIN lock (the stack ownership lock): a
+                     * process that resumed since the scan holds MAIN
+                     * while executing and releases it only at
+                     * schedule-out, which also overwrites c_p->i (post
+                     * thread-progress never to an in-span PC — and it
+                     * cannot re-park here: the prologue was unpatched
+                     * and the stub tombstoned). So under the lock,
+                     * c_p->i still equal to the parked resume PC
+                     * proves the process has not run since it parked:
+                     * its stack top is exactly the yield-time E with
+                     * the frame below the entry CP, and the saved
+                     * X0..arity-1 are the ORIGINAL arguments (the
+                     * FrameRestart recall vector). Pop and retarget;
+                     * T1 then re-executes f(original args) in full,
+                     * exactly like the in-blob tombstone demote stub. */
+                    while (1) {
+                        if ((const char *)p->i != ip) {
+                            /* The process ran since the scan: it
+                             * demoted through the (still-mapped,
+                             * tombstoned) stub — which pops the frame
+                             * in blob code — and its next park is a
+                             * T1 address. Nothing to translate. */
+                            break;
+                        }
+                        if (erts_proc_trylock(p, ERTS_PROC_LOCK_MAIN) ==
+                            EBUSY) {
+                            /* MAIN busy: the owner just resumed (its
+                             * schedule-out will move c_p->i off the
+                             * span — the re-check above then exits)
+                             * or a third party holds it briefly. */
+                            erts_thr_yield();
+                            continue;
+                        }
+                        if ((const char *)p->i == ip) {
+                            p->stop += frame_slots;
+                            p->i = target;
+                        }
+                        erts_proc_unlock(p, ERTS_PROC_LOCK_MAIN);
+                        break;
+                    }
+                }
             }
         }
 

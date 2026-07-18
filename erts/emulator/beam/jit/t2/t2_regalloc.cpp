@@ -243,6 +243,7 @@ namespace erts_t2 {
                         case T2LirKind::SwarAsciiTest:
                         case T2LirKind::AddSmall:
                         case T2LirKind::SubSmall:
+                        case T2LirKind::MulSmall:
                             /* Every speculative op deopts somewhere. */
                             if (op.t1_pc_fail == nullptr) {
                                 return fail("speculative op without a "
@@ -1198,6 +1199,7 @@ namespace erts_t2 {
                 case T2LirKind::SpeculateRange:
                 case T2LirKind::AddSmall:
                 case T2LirKind::SubSmall:
+                case T2LirKind::MulSmall:
                     return op.t1_pc_fail != nullptr;
                 default:
                     return false;

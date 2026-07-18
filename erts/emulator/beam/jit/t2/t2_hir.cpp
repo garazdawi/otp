@@ -151,6 +151,8 @@ namespace erts_t2 {
             return "add_small";
         case T2OpKind::SubSmall:
             return "sub_small";
+        case T2OpKind::MulSmall:
+            return "mul_small";
         case T2OpKind::MulRaw:
             return "mul_raw";
         case T2OpKind::SpeculateType:
@@ -339,6 +341,7 @@ namespace erts_t2 {
         case T2OpKind::TagInt:
         case T2OpKind::AddSmall:
         case T2OpKind::SubSmall:
+        case T2OpKind::MulSmall:
         case T2OpKind::MulRaw:
         case T2OpKind::MakeTuple:
         case T2OpKind::GetTupleElement:
@@ -1342,6 +1345,12 @@ namespace erts_t2 {
                     }
                     break;
                 case T2OpKind::ReductionCheck:
+                    if ((op->flags & T2_OP_RC_CALLEE) != 0 &&
+                        (op->flags & T2_OP_RC_FRAMED) != 0) {
+                        return fail("block %u: back-edge is both callee- "
+                                    "and frame-classed",
+                                    op->block->id);
+                    }
                     if (op->flags & T2_OP_RC_CALLEE) {
                         /* Intrinsic back edge (P2 commit 8): the map
                          * is the CALLEE's fresh-call vector — x_live
@@ -1361,6 +1370,43 @@ namespace erts_t2 {
                             return fail("block %u: callee back-edge "
                                         "without a resolved callee",
                                         op->block->id);
+                        }
+                        break;
+                    }
+                    if (op->flags & T2_OP_RC_FRAMED) {
+                        /* Framed body-recursion back edge (task #88):
+                         * the loop state lives in the synthesized
+                         * frame's Y slots (a yield preserves the
+                         * Erlang stack), and X0..arity-1 must still
+                         * hold the ORIGINAL argument vector — the
+                         * demote/translation contract is recall-from-
+                         * top after the frame pop, so every x entry
+                         * must name the untouched Param values. */
+                        if (m->x_live != fn.arity) {
+                            return fail("block %u: framed back-edge sync "
+                                        "map x_live %u != arity %u",
+                                        op->block->id,
+                                        m->x_live,
+                                        fn.arity);
+                        }
+                        if (m->frame_size == T2_NO_FRAME) {
+                            return fail("block %u: framed back-edge sync "
+                                        "map without a frame",
+                                        op->block->id);
+                        }
+                        for (uint32_t i = 0; i < m->x_live; i++) {
+                            const T2Op *d = m->x[i]->def;
+
+                            if (d == nullptr || d->kind != T2OpKind::Param ||
+                                d->index != i) {
+                                return fail("block %u: framed back-edge "
+                                            "sync map x%u (v%u) is not "
+                                            "the original parameter (the "
+                                            "recall-from-top vector)",
+                                            op->block->id,
+                                            i,
+                                            m->x[i]->id);
+                            }
                         }
                         break;
                     }
@@ -1873,6 +1919,7 @@ namespace erts_t2 {
                 case T2OpKind::TagInt:
                 case T2OpKind::AddSmall:
                 case T2OpKind::SubSmall:
+                case T2OpKind::MulSmall:
                 case T2OpKind::MulRaw:
                 case T2OpKind::SpeculateType:
                 case T2OpKind::SpeculateRange:
@@ -1952,6 +1999,11 @@ namespace erts_t2 {
                         sf_set(f.small, op->result->id);
                     }
                     break;
+                case T2OpKind::MulSmall:
+                    /* Flag-checked commit, tagged only (no raw form):
+                     * the product is small on the fall-through path. */
+                    sf_set(f.small, op->result->id);
+                    break;
                 case T2OpKind::TagInt:
                     sf_set(f.small, op->result->id);
                     break;
@@ -2018,6 +2070,13 @@ namespace erts_t2 {
                 case T2OpKind::SubSmall:
                     return need(0, true, true, "a proven small/raw") &&
                            need(1, true, true, "a proven small/raw");
+                case T2OpKind::MulSmall:
+                    /* The emitter untags both operands unconditionally;
+                     * a non-small term reaching either slot would be
+                     * multiplied as garbage — corruption, so both must
+                     * be proven/guarded small (never raw: no raw form). */
+                    return need(0, true, false, "a proven small") &&
+                           need(1, true, false, "a proven small");
                 case T2OpKind::SpeculateRange:
                     /* P-C L1: the tagged `cmp val, #(bound << TAG_SIZE)`
                      * is exact only on non-negative proven smalls (the

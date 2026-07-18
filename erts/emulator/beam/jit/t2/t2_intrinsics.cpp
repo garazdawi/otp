@@ -168,6 +168,14 @@ namespace erts_t2 {
             return on;
         }
 
+        /* The body-recursion TRANSFORM (task #88) is opt-in: unset means
+         * zero behavior change (the read-only recognizer above stays
+         * governed by T2_NO_BODYREC as before). */
+        bool bodyrec_transform_enabled() {
+            static const bool on = getenv("T2_BODYREC") != nullptr;
+            return on;
+        }
+
         /* P1a general caller-driven call-site specialization
          * (PLAN/T2FULL/census/p1_design.md): its own lever + trace so
          * the hand-coded expanders stay unaffected by A/B runs. */
@@ -6615,6 +6623,651 @@ namespace erts_t2 {
         }
 
         return kind;
+    }
+
+    /* ------------------------------------------------------------------ *
+     * Body-recursion INTEGER transform (task #88)                        *
+     *                                                                    *
+     * Lowers the strict length/sum/product shape                         *
+     *                                                                    *
+     *   f([])    -> Base;                    %% small constant           *
+     *   f([H|T]) -> C  op f(T)  |  H op f(T) %% op in {+, *}, C small    *
+     *                                                                    *
+     * to a FRAME-carrying accumulator loop: Allocate 2, Y0 = cursor      *
+     * (initially the list), Y1 = Acc (initially Base), and per cell      *
+     * Acc op= combine with a flag-checked AddSmall/MulSmall whose        *
+     * overflow deopt is T2DeoptShape::FrameRestart — the trampoline      *
+     * deallocates the synthesized frame and recalls f(original args)     *
+     * from the T1 entry body, producing the byte-identical bignum. The   *
+     * ORIGINAL argument stays untouched in X0 (validator-pinned), so     *
+     * every recall path — overflow, non-small head (the SpeculateType    *
+     * guard), the yield tombstone demote and the parked-c_p->i           *
+     * translation (both pop the frame first) — re-executes the whole     *
+     * call; + and * are exact over Z, so recomputation from the          *
+     * original list gives the identical value, and an improper list      *
+     * re-raises T1's own function_clause with the T1-exact stacktrace    *
+     * (the improper edge is a frame-popping DemoteCallee to self).       *
+     * The associativity guard admits ONLY Add and Mul with a small-      *
+     * constant or head combine operand; Sub (alternating sign), IDiv,   *
+     * Rem and floats are rejected. Legal ONLY because the loop state     *
+     * is Y-homed: a reduction yield preserves the Erlang stack, which    *
+     * the frameless design could not (only c_p->arity X registers        *
+     * survive a yield). Opt-in via T2_BODYREC (off = never runs).        *
+     * ------------------------------------------------------------------ */
+
+    namespace {
+
+        /* SSA identity through decoded Copy hops. */
+        const T2Value *br_uncopy(const T2Value *v) {
+            while (v != nullptr && v->def != nullptr &&
+                   v->def->kind == T2OpKind::Copy &&
+                   v->def->num_operands == 1) {
+                v = v->def->operands[0];
+            }
+            return v;
+        }
+
+        struct BodyRecMatch {
+            T2Value *list;            /* the Param #0 value            */
+            T2BasicBlock *b_notnel;   /* is_nil block (dead after)     */
+            T2BasicBlock *b_rec;      /* descent block (dead after)    */
+            T2BasicBlock *b_base;     /* base-case block (dead after)  */
+            T2BasicBlock *b_improper; /* shared error block (dead)     */
+            bool is_mul;              /* Mul ascent (else Add)         */
+            bool head_combine;        /* combine = H (else a constant) */
+            Sint64 combine_const;     /* when !head_combine            */
+            Sint64 base_const;        /* the [] clause's constant      */
+        };
+
+        /* Strict structural match of the two-clause source shape the
+         * builder produces (verified against the decoded HIR of
+         * cnt/1, suml/1 and the H*f(T) product):
+         *
+         *   block0: param#0; is_nonempty_list; branch rec/notnel
+         *   notnel: [phi of param] is_nil; branch base/improper
+         *   rec:    allocate k; [get_hd] get_tl; call self;
+         *           Add/Mul(rec_result, C|H); deallocate k; return
+         *   base:   const_int Base; return
+         *   improper: the shared !err_exit_shared exit
+         *
+         * Anything else — extra ops, Sub/IDiv/Rem/float ascents, a
+         * combine operand that is neither a small constant nor the
+         * cell head, multiple self-calls — rejects (returns false). */
+        bool bodyrec_match(const T2Function &fn, BodyRecMatch *m) {
+            if (fn.arity != 1 || fn.blocks.size() < 5 || !fn.sync_complete) {
+                return false;
+            }
+
+            const T2BasicBlock *b0 = fn.blocks[0];
+            T2Value *v0 = nullptr;
+            const T2Op *nel = nullptr;
+
+            if (b0->phis_head != nullptr || b0->terminator == nullptr ||
+                b0->terminator->kind != T2OpKind::Branch) {
+                return false;
+            }
+            for (const T2Op *op = b0->ops_head; op != nullptr; op = op->next) {
+                if (op->kind == T2OpKind::Param && op->index == 0 &&
+                    v0 == nullptr) {
+                    v0 = op->result;
+                } else if (op->kind == T2OpKind::IsNonemptyList &&
+                           nel == nullptr && op->num_operands == 1 &&
+                           br_uncopy(op->operands[0]) ==
+                                   (v0 != nullptr ? br_uncopy(v0) : nullptr)) {
+                    nel = op;
+                } else {
+                    return false;
+                }
+            }
+            if (v0 == nullptr || nel == nullptr ||
+                b0->terminator->num_operands != 1 ||
+                b0->terminator->operands[0] != nel->result) {
+                return false;
+            }
+
+            T2BasicBlock *b_rec = b0->terminator->succ_then;
+            T2BasicBlock *b_notnel = b0->terminator->succ_else;
+
+            /* notnel: an optional phi-of-param, is_nil, branch. */
+            {
+                const T2Value *list_here = v0;
+
+                for (const T2Op *phi = b_notnel->phis_head; phi != nullptr;
+                     phi = phi->next) {
+                    if (phi->num_operands != 1 ||
+                        br_uncopy(phi->operands[0]) != br_uncopy(v0) ||
+                        list_here != v0 /* at most one */) {
+                        return false;
+                    }
+                    list_here = phi->result;
+                }
+
+                const T2Op *nil = b_notnel->ops_head;
+
+                if (nil == nullptr || nil->next != nullptr ||
+                    nil->kind != T2OpKind::IsNil || nil->num_operands != 1 ||
+                    br_uncopy(nil->operands[0]) != br_uncopy(list_here) ||
+                    b_notnel->terminator == nullptr ||
+                    b_notnel->terminator->kind != T2OpKind::Branch ||
+                    b_notnel->terminator->num_operands != 1 ||
+                    b_notnel->terminator->operands[0] != nil->result) {
+                    return false;
+                }
+            }
+
+            T2BasicBlock *b_base = b_notnel->terminator->succ_then;
+            T2BasicBlock *b_improper = b_notnel->terminator->succ_else;
+
+            /* base: const_int Base; return it (through copies). */
+            {
+                if (b_base->phis_head != nullptr ||
+                    b_base->terminator == nullptr ||
+                    b_base->terminator->kind != T2OpKind::Return ||
+                    b_base->terminator->num_operands != 1) {
+                    return false;
+                }
+
+                const T2Value *rv = br_uncopy(b_base->terminator->operands[0]);
+
+                if (rv->def == nullptr || rv->def->kind != T2OpKind::ConstInt ||
+                    !IS_SSMALL(rv->def->imm_int)) {
+                    return false;
+                }
+                m->base_const = rv->def->imm_int;
+
+                for (const T2Op *op = b_base->ops_head; op != nullptr;
+                     op = op->next) {
+                    if (op->kind != T2OpKind::ConstInt &&
+                        op->kind != T2OpKind::Copy) {
+                        return false;
+                    }
+                }
+            }
+
+            /* improper: the shared function_clause exit. */
+            if (b_improper->phis_head != nullptr ||
+                b_improper->ops_head != nullptr ||
+                b_improper->terminator == nullptr ||
+                b_improper->terminator->kind != T2OpKind::TailCallExt ||
+                (b_improper->terminator->flags & T2_OP_ERR_EXIT_SHARED) == 0) {
+                return false;
+            }
+
+            /* rec: allocate, [get_hd], get_tl, self call, ascent,
+             * deallocate, return — Copy hops tolerated, nothing else. */
+            {
+                const T2Op *head_op = nullptr;
+                const T2Op *tl_op = nullptr;
+                const T2Op *call = nullptr;
+                const T2Op *comb = nullptr;
+                bool saw_alloc = false, saw_dealloc = false;
+
+                if (b_rec->phis_head != nullptr ||
+                    b_rec->terminator == nullptr ||
+                    b_rec->terminator->kind != T2OpKind::Return ||
+                    b_rec->terminator->num_operands != 1) {
+                    return false;
+                }
+
+                for (const T2Op *op = b_rec->ops_head; op != nullptr;
+                     op = op->next) {
+                    switch (op->kind) {
+                    case T2OpKind::Copy:
+                        break;
+                    case T2OpKind::ConstInt:
+                        break; /* the combine constant */
+                    case T2OpKind::Allocate:
+                        if (saw_alloc) {
+                            return false;
+                        }
+                        saw_alloc = true;
+                        break;
+                    case T2OpKind::Deallocate:
+                        if (saw_dealloc) {
+                            return false;
+                        }
+                        saw_dealloc = true;
+                        break;
+                    case T2OpKind::GetHd:
+                        if (head_op != nullptr || op->num_operands != 1 ||
+                            br_uncopy(op->operands[0]) != br_uncopy(v0)) {
+                            return false;
+                        }
+                        head_op = op;
+                        break;
+                    case T2OpKind::GetTl:
+                        if (tl_op != nullptr || op->num_operands != 1 ||
+                            br_uncopy(op->operands[0]) != br_uncopy(v0)) {
+                            return false;
+                        }
+                        tl_op = op;
+                        break;
+                    case T2OpKind::Call:
+                        if (call != nullptr || op->mfa_m != fn.module ||
+                            op->mfa_f != fn.function || op->index != fn.arity ||
+                            op->num_operands != 1 || tl_op == nullptr ||
+                            br_uncopy(op->operands[0]) !=
+                                    br_uncopy(tl_op->result)) {
+                            return false;
+                        }
+                        call = op;
+                        break;
+                    case T2OpKind::Add:
+                    case T2OpKind::Mul:
+                        if (comb != nullptr || call == nullptr ||
+                            op->num_operands != 2 || op->flags != 0) {
+                            return false;
+                        }
+                        comb = op;
+                        break;
+                    default:
+                        /* Sub (alternating sign), IDiv, Rem, floats,
+                         * anything unexpected: not associative-
+                         * recomputable — reject. */
+                        return false;
+                    }
+                }
+
+                if (!saw_alloc || !saw_dealloc || tl_op == nullptr ||
+                    call == nullptr || comb == nullptr ||
+                    br_uncopy(b_rec->terminator->operands[0]) !=
+                            br_uncopy(comb->result)) {
+                    return false;
+                }
+
+                /* The ascent must read the recursive result; the other
+                 * operand is the combine: a small constant or the head. */
+                const T2Value *rec = br_uncopy(call->result);
+                const T2Value *other = nullptr;
+
+                if (br_uncopy(comb->operands[0]) == rec) {
+                    other = br_uncopy(comb->operands[1]);
+                } else if (br_uncopy(comb->operands[1]) == rec) {
+                    other = br_uncopy(comb->operands[0]);
+                } else {
+                    return false;
+                }
+
+                m->is_mul = comb->kind == T2OpKind::Mul;
+                if (other->def != nullptr &&
+                    other->def->kind == T2OpKind::ConstInt &&
+                    IS_SSMALL(other->def->imm_int)) {
+                    m->head_combine = false;
+                    m->combine_const = other->def->imm_int;
+                } else if (head_op != nullptr &&
+                           other == br_uncopy(head_op->result)) {
+                    m->head_combine = true;
+                    m->combine_const = 0;
+                } else {
+                    return false;
+                }
+            }
+
+            m->list = v0;
+            m->b_notnel = b_notnel;
+            m->b_rec = b_rec;
+            m->b_base = b_base;
+            m->b_improper = b_improper;
+            return true;
+        }
+
+        T2SyncMap *bodyrec_map(T2Function &fn,
+                               const std::vector<T2Value *> &xs,
+                               int32_t frame_size,
+                               const std::vector<T2Value *> &ys) {
+            T2SyncMap *m = fn.arena.create<T2SyncMap>();
+
+            m->x_live = (uint32_t)xs.size();
+            m->x = fn.arena.alloc_array<T2Value *>(xs.size());
+            for (size_t i = 0; i < xs.size(); i++) {
+                m->x[i] = xs[i];
+            }
+            m->frame_size = frame_size;
+            m->y = nullptr;
+            if (frame_size != T2_NO_FRAME) {
+                m->y = fn.arena.alloc_array<T2Value *>((size_t)frame_size);
+                for (int32_t i = 0; i < frame_size; i++) {
+                    m->y[i] = ys[(size_t)i];
+                }
+            }
+            return m;
+        }
+
+        int32_t *bodyrec_regs(T2Function &fn, const std::vector<int32_t> &rs) {
+            int32_t *a = fn.arena.alloc_array<int32_t>(rs.size());
+
+            for (size_t i = 0; i < rs.size(); i++) {
+                a[i] = rs[i];
+            }
+            return a;
+        }
+
+        /* The blocks made unreachable by the rewrite keep their ops (the
+         * validator structurally checks but never walks them, and isel
+         * emits them as dead code), but their PHIS must go: a phi's
+         * input-edge list must match the recomputed preds, and the dead
+         * entry edge no longer exists. Each dead phi is an SSA identity
+         * of its single input here, so rewrite its uses to that input
+         * (all uses are inside dead code by dominance). */
+        void bodyrec_strip_dead_phis(T2Function &fn, T2BasicBlock *b) {
+            for (T2Op *phi = b->phis_head; phi != nullptr; phi = phi->next) {
+                if (phi->num_operands == 0) {
+                    continue;
+                }
+
+                T2Value *from = phi->result;
+                T2Value *to = phi->operands[0];
+
+                for (T2BasicBlock *ob : fn.blocks) {
+                    auto fix_op = [&](T2Op *op) {
+                        for (uint16_t i = 0; i < op->num_operands; i++) {
+                            if (op->operands[i] == from) {
+                                op->operands[i] = to;
+                            }
+                        }
+                        if (op->sync != nullptr) {
+                            for (uint32_t i = 0; i < op->sync->x_live; i++) {
+                                if (op->sync->x[i] == from) {
+                                    op->sync->x[i] = to;
+                                }
+                            }
+                            for (int32_t i = 0;
+                                 op->sync->frame_size != T2_NO_FRAME &&
+                                 i < op->sync->frame_size;
+                                 i++) {
+                                if (op->sync->y[i] == from) {
+                                    op->sync->y[i] = to;
+                                }
+                            }
+                        }
+                    };
+
+                    for (T2Op *op = ob->phis_head; op != nullptr;
+                         op = op->next) {
+                        fix_op(op);
+                    }
+                    for (T2Op *op = ob->ops_head; op != nullptr;
+                         op = op->next) {
+                        fix_op(op);
+                    }
+                    if (ob->terminator != nullptr) {
+                        fix_op(ob->terminator);
+                    }
+                }
+            }
+            b->phis_head = nullptr;
+            b->phis_tail = nullptr;
+        }
+
+    } /* anonymous namespace */
+
+    bool t2_bodyrec(T2Function &fn,
+                    const void *code_hdr,
+                    bool *changed,
+                    std::string *err) {
+        *changed = false;
+
+        if (!bodyrec_transform_enabled() || bodyrec_disabled()) {
+            return true;
+        }
+        if (t2_bodyrec_classify(fn) != T2BodyRecKind::Integer) {
+            return true;
+        }
+
+        BodyRecMatch m;
+
+        if (!bodyrec_match(fn, &m)) {
+            if (bodyrec_trace()) {
+                erts_fprintf(stderr,
+                             "t2_bodyrec: %T:%T/%u integer shape did not "
+                             "match the strict transform pattern\n",
+                             fn.module,
+                             fn.function,
+                             (unsigned)fn.arity);
+            }
+            return true;
+        }
+
+        /* Every recall path needs the function's own T1 entry. */
+        const void *lf = nullptr;
+        {
+            const BeamCodeHeader *hdr = (const BeamCodeHeader *)code_hdr;
+
+            if (hdr != nullptr) {
+                for (Uint i = 0; i < hdr->num_functions; i++) {
+                    const ErtsCodeInfo *ci = hdr->functions[i];
+
+                    if (ci->mfa.function == fn.function &&
+                        ci->mfa.arity == fn.arity) {
+                        lf = (const void *)erts_codeinfo_to_code(ci);
+                        break;
+                    }
+                }
+            }
+        }
+        if (lf == nullptr) {
+            return true; /* cannot anchor the recall paths: leave as-is */
+        }
+
+        constexpr uint32_t SLOTS = 2; /* Y0 = cursor, Y1 = Acc */
+        T2BasicBlock *b0 = fn.blocks[0];
+        T2Value *v0 = m.list;
+
+        /* --- entry: keep the Params, drop the old guard + branch ------- */
+        {
+            T2Op *keep_head = nullptr, *keep_tail = nullptr;
+
+            for (T2Op *op = b0->ops_head; op != nullptr;) {
+                T2Op *next = op->next;
+
+                if (op->kind == T2OpKind::Param) {
+                    op->prev = keep_tail;
+                    op->next = nullptr;
+                    if (keep_tail != nullptr) {
+                        keep_tail->next = op;
+                    } else {
+                        keep_head = op;
+                    }
+                    keep_tail = op;
+                }
+                op = next;
+            }
+            b0->ops_head = keep_head;
+            b0->ops_tail = keep_tail;
+            b0->terminator = nullptr;
+        }
+
+        T2Value *base_v = fn.emit_const_int(b0, m.base_const);
+        T2Value *comb_const_v =
+                m.head_combine ? nullptr
+                               : fn.emit_const_int(b0, m.combine_const);
+
+        T2Op *alloc = fn.new_op(b0, T2OpKind::Allocate, T2Type::none());
+
+        fn.set_operands(alloc, {});
+        alloc->index = SLOTS;   /* Y slots */
+        alloc->imm_int = 0;     /* fused heap words */
+        alloc->live = fn.arity; /* GC live: the argument vector */
+        alloc->sync = bodyrec_map(fn, {v0}, T2_NO_FRAME, {});
+
+        T2Op *cur_init = fn.new_op(b0, T2OpKind::Copy, v0->type);
+
+        fn.set_operands(cur_init, {v0});
+        cur_init->dst_reg = t2_yreg(0);
+        cur_init->operand_regs = bodyrec_regs(fn, {t2_xreg(0)});
+
+        T2Op *acc_init = fn.new_op(b0, T2OpKind::Copy, base_v->type);
+
+        fn.set_operands(acc_init, {base_v});
+        acc_init->dst_reg = t2_yreg(1);
+
+        /* --- loop blocks ---------------------------------------------- */
+        T2BasicBlock *header = fn.new_block();
+        T2BasicBlock *body = fn.new_block();
+        T2BasicBlock *checknil = fn.new_block();
+        T2BasicBlock *base = fn.new_block();
+        T2BasicBlock *improper = fn.new_block();
+
+        fn.emit_jump(b0, header);
+
+        /* header: the Y-homed loop-carried state + the cons test. */
+        T2Op *cursor_phi = fn.new_phi(header, T2Type::any());
+        T2Op *acc_phi = fn.new_phi(header, T2Type::any());
+
+        cursor_phi->dst_reg = t2_yreg(0);
+        acc_phi->dst_reg = t2_yreg(1);
+
+        T2Op *nel = fn.new_op(header,
+                              T2OpKind::IsNonemptyList,
+                              T2Type::of(BEAM_TYPE_ATOM));
+
+        fn.set_operands(nel, {cursor_phi->result});
+        nel->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+        fn.emit_branch(header, nel->result, body, checknil);
+
+        /* body: advance the cursor, fold one cell, charge one red. */
+        T2Op *head_op = nullptr;
+
+        if (m.head_combine) {
+            head_op = fn.new_op(body, T2OpKind::GetHd, T2Type::any());
+            fn.set_operands(head_op, {cursor_phi->result});
+            head_op->dst_reg = t2_xreg(1);
+            head_op->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+        }
+
+        T2Op *tl_op = fn.new_op(body, T2OpKind::GetTl, T2Type::any());
+
+        fn.set_operands(tl_op, {cursor_phi->result});
+        tl_op->dst_reg = t2_yreg(0);
+        tl_op->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+
+        if (m.head_combine) {
+            /* The head must be a small before it may reach the
+             * flag-checked arithmetic; a non-small deopts through the
+             * frame-popping recall — T1 then re-raises (badarith) at
+             * the T1-exact frame depth. */
+            T2Op *spec =
+                    fn.new_op(body, T2OpKind::SpeculateType, T2Type::none());
+
+            fn.set_operands(spec, {head_op->result});
+            spec->operand_regs = bodyrec_regs(fn, {t2_xreg(1)});
+            spec->spec_type_class = 0; /* the small tag-bit guard */
+            spec->deopt_shape = T2DeoptShape::FrameRestart;
+            spec->live = SLOTS;
+            spec->sync = bodyrec_map(fn,
+                                     {v0},
+                                     (int32_t)SLOTS,
+                                     {tl_op->result, acc_phi->result});
+        }
+
+        T2Op *comb =
+                fn.new_op(body,
+                          m.is_mul ? T2OpKind::MulSmall : T2OpKind::AddSmall,
+                          T2Type::any());
+
+        fn.set_operands(comb,
+                        {acc_phi->result,
+                         m.head_combine ? head_op->result : comb_const_v});
+        comb->dst_reg = t2_yreg(1);
+        comb->operand_regs = bodyrec_regs(
+                fn,
+                {t2_yreg(1), m.head_combine ? t2_xreg(1) : T2_REG_NONE});
+        comb->deopt_shape = T2DeoptShape::FrameRestart;
+        comb->live = SLOTS; /* the trampoline's deallocate count */
+        comb->sync = bodyrec_map(fn,
+                                 {v0},
+                                 (int32_t)SLOTS,
+                                 {tl_op->result, acc_phi->result});
+
+        T2Op *rc = fn.new_op(body, T2OpKind::ReductionCheck, T2Type::none());
+
+        fn.set_operands(rc, {});
+        rc->flags = T2_OP_RC_FRAMED;
+        rc->index = 0; /* charge 1 per iteration (isel: 1 + index) */
+        rc->live = fn.arity;
+        rc->sync = bodyrec_map(fn,
+                               {v0},
+                               (int32_t)SLOTS,
+                               {tl_op->result, comb->result});
+        fn.emit_jump(body, header);
+
+        /* checknil: [] returns the accumulator; anything else is the
+         * improper-list recall. */
+        T2Op *nil = fn.new_op(checknil,
+                              T2OpKind::IsNil,
+                              T2Type::of(BEAM_TYPE_ATOM));
+
+        fn.set_operands(nil, {cursor_phi->result});
+        nil->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+        fn.emit_branch(checknil, nil->result, base, improper);
+
+        /* base: X0 = Acc, pop the frame, return. */
+        T2Op *ret_cp = fn.new_op(base, T2OpKind::Copy, T2Type::any());
+
+        fn.set_operands(ret_cp, {acc_phi->result});
+        ret_cp->dst_reg = t2_xreg(0);
+        ret_cp->operand_regs = bodyrec_regs(fn, {t2_yreg(1)});
+
+        T2Op *dealloc = fn.new_op(base, T2OpKind::Deallocate, T2Type::none());
+
+        fn.set_operands(dealloc, {});
+        dealloc->index = SLOTS;
+
+        fn.emit_return(base, ret_cp->result);
+        base->terminator->operand_regs = bodyrec_regs(fn, {t2_xreg(0)});
+        base->terminator->sync =
+                bodyrec_map(fn, {ret_cp->result}, T2_NO_FRAME, {});
+
+        /* improper: pop the frame and re-enter our own T1 body over the
+         * ORIGINAL argument (a tail-site DemoteCallee to self, past the
+         * patched prologue) — T1 re-descends and raises the byte-
+         * identical function_clause with its own frames on the stack. */
+        T2Op *imp_dealloc =
+                fn.new_op(improper, T2OpKind::Deallocate, T2Type::none());
+
+        fn.set_operands(imp_dealloc, {});
+        imp_dealloc->index = SLOTS;
+
+        T2Op *dm = fn.new_op(improper, T2OpKind::DemoteCallee, T2Type::none());
+
+        fn.set_operands(dm, {});
+        dm->mfa_m = fn.module;
+        dm->mfa_f = fn.function;
+        dm->live = fn.arity;
+        dm->imm_int = (Sint64)(UWord)lf;
+        dm->flags = T2_OP_TAIL_SITE;
+        dm->sync = bodyrec_map(fn, {v0}, T2_NO_FRAME, {});
+
+        /* --- loop-carried edges ---------------------------------------- */
+        fn.set_phi_inputs(cursor_phi,
+                          {cur_init->result, tl_op->result},
+                          {b0, body});
+        fn.set_phi_inputs(acc_phi,
+                          {acc_init->result, comb->result},
+                          {b0, body});
+
+        /* The original clause blocks are now unreachable dead code. */
+        bodyrec_strip_dead_phis(fn, m.b_notnel);
+        bodyrec_strip_dead_phis(fn, m.b_rec);
+        bodyrec_strip_dead_phis(fn, m.b_base);
+        bodyrec_strip_dead_phis(fn, m.b_improper);
+
+        fn.finalize();
+
+        if (bodyrec_trace()) {
+            erts_fprintf(stderr,
+                         "t2_bodyrec: %T:%T/%u lowered to a frame-carrying "
+                         "%s loop (%s combine, base %ld)\n",
+                         fn.module,
+                         fn.function,
+                         (unsigned)fn.arity,
+                         m.is_mul ? "product" : "sum",
+                         m.head_combine ? "head" : "const",
+                         (long)m.base_const);
+        }
+
+        *changed = true;
+        return true;
     }
 
     bool t2_intrinsics(T2Function &fn,

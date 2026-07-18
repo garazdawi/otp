@@ -408,6 +408,20 @@ int erts_t2_bs_match_check(const UWord *types,
 
 /* Literal resolver over the load-time BeamFile (the eligibility scan
  * runs at retain-commit, when the static literal table is live). */
+/* Body recursion (task #88): the opt-in transform gate. When set, a
+ * NON-TAIL self-recursive call is a loop shape too — the t2_bodyrec
+ * transform lowers the length/sum/product ascent to a frame-carrying
+ * accumulator loop — so such functions must be armed for tier-up.
+ * Off (the default), arming is byte-identical to before. */
+static int t2_bodyrec_arming(void) {
+    static int cached = -1;
+
+    if (cached < 0) {
+        cached = getenv("T2_BODYREC") != NULL;
+    }
+    return cached;
+}
+
 static Eterm scan_lit(void *env, SWord idx) {
     BeamFile *beam = (BeamFile *)env;
 
@@ -1109,6 +1123,17 @@ Uint32 *erts_t2_eligibility_scan(BeamFile *beam,
             }
             break;
         default:
+            /* Body recursion (task #88, opt-in T2_BODYREC): a non-tail
+             * self-recursive call is a loop shape too — the t2_bodyrec
+             * transform lowers the length/sum/product ascent to a
+             * frame-carrying accumulator loop — so arm its tier-up
+             * counter. Falls through to the unchanged generic
+             * accounting/oracle below (call_2 is an ordinary op there). */
+            if (op->op == genop_call_2 && t2_bodyrec_arming() &&
+                op->a[1].type == TAG_f && op->a[1].val == entry_label &&
+                entry_label != 0) {
+                fn_loop = 1;
+            }
             /* The threshold formula's size term (05 Â§15.1): count
              * the function's generic ops. */
             fn_size++;

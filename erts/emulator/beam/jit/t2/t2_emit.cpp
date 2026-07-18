@@ -239,6 +239,16 @@ namespace erts_t2 {
              * raw representation). The tombstone demote path runs on
              * the restored (tagged) vector and is not adjusted. */
             uint32_t raw_mask = 0;
+            /* Framed body-recursion back edge (task #88): the loop
+             * state lives in a synthesized frame of this many Y slots
+             * (the yield preserves it on the Erlang stack; the resume
+             * re-enters the header over it), and X0..arity-1 hold the
+             * ORIGINAL arguments. The tombstone demote must POP the
+             * frame (add E) before entering the frameless T1 body,
+             * and the rtab entry carries the count so a parked
+             * c_p->i translation pops the suspended process's stack
+             * the same way (t2_install.c phase 1). 0 = frameless. */
+            uint32_t frame_slots = 0;
         };
         std::vector<ResumeStub> resume_stubs;
 
@@ -540,6 +550,7 @@ namespace erts_t2 {
                                        (const char *)exec);
                 pt.t1_demote =
                         st.translate != nullptr ? st.translate : st.demote;
+                pt.frame_slots = st.frame_slots;
                 resume_points.push_back(pt);
             }
             std::sort(resume_points.begin(),
@@ -967,6 +978,9 @@ namespace erts_t2 {
             case T2LirKind::SubSmall:
                 emit_lir_addsub_small(op);
                 break;
+            case T2LirKind::MulSmall:
+                emit_lir_mul_small(op);
+                break;
             case T2LirKind::UntagInt:
             case T2LirKind::TagInt:
                 emit_lir_untag_tag(op);
@@ -1198,7 +1212,15 @@ namespace erts_t2 {
                 return;
             }
 
-            const Label &fl = rawLabels.at(fail_label_num(op.t1_pc_fail,
+            /* Body recursion (task #88): a frame_restart guard's deopt
+             * must deallocate the synthesized frame before the
+             * recall-from-top — the frameless fail trampoline cannot. */
+            const Label &fl =
+                    op.frame_restart
+                            ? rawLabels.at(frame_restart_label_num(
+                                      op.t1_pc_fail,
+                                      op.frame_restart_slots))
+                            : rawLabels.at(fail_label_num(op.t1_pc_fail,
                                                           op.t1_pc_cont,
                                                           op.spec_callsite,
                                                           op.raw_mask));
@@ -1648,6 +1670,95 @@ namespace erts_t2 {
                 } else {
                     mov_arg(loc_argval(op.dst), ARG1);
                 }
+            }
+        }
+
+        /* Flag-checked small multiply (body recursion, task #88):
+         * untag both operands, `mul` + `smulh`, and T1's high-65-bits
+         * overflow test (arm emit_i_times: the sign bit of the low 64
+         * bits repeated must equal the high 64 bits) — deopt strictly
+         * before the commit, through the frame-deallocating trampoline
+         * when frame_restart is set (the body-recursion accumulator,
+         * the only producer today). Scratch-then-commit only; no raw /
+         * rollback / no-ovf forms exist for multiply. */
+        void emit_lir_mul_small(const T2LirOp &op) {
+            if (op.num_srcs != 2 || op.dst.is_none() ||
+                op.t1_pc_fail == nullptr) {
+                fail("malformed flag-checked multiply op");
+                return;
+            }
+            if (op.raw_dst || op.raw_srcs != 0 || op.rollback || op.no_ovf) {
+                fail("flag-checked multiply outside the tagged "
+                     "scratch-then-commit form");
+                return;
+            }
+
+            const Label *flp;
+
+            if (op.frame_restart) {
+                flp = &rawLabels.at(
+                        frame_restart_label_num(op.t1_pc_fail,
+                                                op.frame_restart_slots));
+            } else {
+                flp = &rawLabels.at(fail_label_num(op.t1_pc_fail,
+                                                   op.t1_pc_cont,
+                                                   op.spec_callsite,
+                                                   op.raw_mask));
+            }
+            fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+
+            comment("T2 mul small (flag-checked)");
+
+            /* lhs cleared to `value << TAG_SIZE` (T1's and_ form), rhs
+             * arithmetic-shifted to the true value: the product is then
+             * the tagged-magnitude `(a*b) << TAG_SIZE` with zero low
+             * bits, re-tagged with one ORR after the check. */
+            a64::Gp lhs;
+
+            if (op.srcs[0].is_const) {
+                mov_imm(TMP2,
+                        (Uint64)op.srcs[0].term & ~(Uint64)_TAG_IMMED1_MASK);
+                lhs = TMP2;
+            } else {
+                a64::Gp v =
+                        op.srcs[0].loc.is_phys()
+                                ? phys_gp(op.srcs[0].loc)
+                                : load_source(src_argval(op.srcs[0]), TMP2).reg;
+
+                a.and_(TMP2, v, imm(~(Uint64)_TAG_IMMED1_MASK));
+                lhs = TMP2;
+            }
+
+            a64::Gp rhs;
+
+            if (op.srcs[1].is_const) {
+                mov_imm(TMP3, (Sint64)signed_val((Eterm)op.srcs[1].term));
+                rhs = TMP3;
+            } else {
+                a64::Gp v =
+                        op.srcs[1].loc.is_phys()
+                                ? phys_gp(op.srcs[1].loc)
+                                : load_source(src_argval(op.srcs[1]), TMP3).reg;
+
+                a.asr(TMP3, v, imm(_TAG_IMMED1_SIZE));
+                rhs = TMP3;
+            }
+
+            a.mul(ARG1, lhs, rhs);
+            a.smulh(TMP1, lhs, rhs);
+            a.orr(ARG1, ARG1, imm(_TAG_IMMED1_SMALL));
+
+            /* The high 65 bits must all equal the sign bit of the
+             * (shifted) small magnitude — T1's exact test. */
+            a.asr(TMP2, ARG1, imm(SMALL_BITS + _TAG_IMMED1_SIZE - 1));
+            a.cmp(TMP1, TMP2);
+            a.b_ne(resolve_label(*flp, disp1MB));
+
+            /* Deopt fired before this commit. */
+            if (op.dst.is_phys()) {
+                a.mov(phys_gp(op.dst), ARG1);
+            } else {
+                mov_arg(loc_argval(op.dst), ARG1);
             }
         }
 
@@ -2906,6 +3017,7 @@ namespace erts_t2 {
             st.header = block_label(header);
             st.beam_idx = op.beam_idx;
             st.raw_mask = op.raw_mask;
+            st.frame_slots = op.frame_restart ? op.frame_restart_slots : 0;
             if (callee) {
                 /* Intrinsic back edge (P2 commit 8): the stub embeds
                  * the CALLEE MFA (a suspended process introspects as
@@ -3215,6 +3327,17 @@ namespace erts_t2 {
                 a.b(st.header);
 
                 a.bind(demote);
+                if (st.frame_slots > 0) {
+                    /* Framed body-recursion back edge (task #88): the
+                     * parked stack still carries the synthesized
+                     * frame; the frameless T1 body the demote enters
+                     * expects the fresh-call stack (the entry CP at
+                     * [E]) — pop the loop frame first. The recall
+                     * vector (the ORIGINAL arguments) is the restored
+                     * X0..arity-1; the discarded cursor/accumulator
+                     * are recomputed by the full T1 re-execution. */
+                    a.add(E, E, imm(st.frame_slots * sizeof(Eterm)));
+                }
                 if (st.cont != nullptr) {
                     /* The CP push the skipped callee prologue would
                      * have done (P2 commit 8). */

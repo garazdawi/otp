@@ -183,6 +183,8 @@ namespace erts_t2 {
             return "add_small";
         case T2LirKind::SubSmall:
             return "sub_small";
+        case T2LirKind::MulSmall:
+            return "mul_small";
         case T2LirKind::UntagInt:
             return "untag_int";
         case T2LirKind::TagInt:

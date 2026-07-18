@@ -68,6 +68,11 @@
 typedef struct {
     Uint32 offset;         /* blob-relative resume PC                   */
     ErtsCodePtr t1_demote; /* c_p->i translation target for this entry  */
+    Uint32 frame_slots;    /* body recursion (task #88): Y slots of the
+                            * synthesized frame still on the parked
+                            * process's stack; the translation pops them
+                            * (p->stop += frame_slots) before targeting
+                            * the frameless t1_demote. 0 = frameless.   */
 } ErtsT2ResumeEntry;
 
 typedef struct {

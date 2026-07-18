@@ -161,6 +161,16 @@ namespace erts_t2 {
         TagInt,
         AddSmall,
         SubSmall,
+        /* Flag-checked small multiply (body recursion, task #88): the
+         * TAGGED sibling of AddSmall/SubSmall — untag both operands,
+         * multiply with the smulh high-word overflow check (T1's
+         * emit_i_times fast path), deopt strictly before the commit
+         * when the product leaves the small range. Both operands must
+         * be proven/guarded small (spec_check_op); no raw mode, no
+         * ROLLBACK/NO_OVF class. Synthesized only by the body-recursion
+         * transform's product shape (t2_bodyrec); the speculation pass
+         * never converts a generic Mul to it. */
+        MulSmall,
         MulRaw,
 
         /* Speculation guards (reserved) */
@@ -706,7 +716,20 @@ namespace erts_t2 {
          * whole get_map_elements). A hint only: isel drops it back to the
          * generic key scan if the shape is unsafe or the PC is
          * unavailable. Orthogonal to the deopt-class bits above. */
-        T2_OP_MAP_SHAPE_SPEC = 1 << 17
+        T2_OP_MAP_SHAPE_SPEC = 1 << 17,
+        /* A FRAMED back-edge ReductionCheck (body recursion, task #88):
+         * the loop state lives in the synthesized frame's Y slots (the
+         * scheduler preserves the Erlang stack across a yield), while
+         * X0..arity-1 still hold the ORIGINAL argument vector — the
+         * map is {x: params, y: loop state, frame: N}. The demote
+         * contract is recall-from-top AFTER a frame pop: the tombstone
+         * demote stub adds N slots back to E before entering the T1
+         * body, and a parked c_p->i is translated by popping the
+         * suspended process's stack (rtab frame_slots; t2_install.c
+         * phase 1) — unlike the frameless back edge, whose saved
+         * vector alone is the fresh call. Mutually exclusive with
+         * T2_OP_RC_CALLEE. Only the body-recursion transform sets it. */
+        T2_OP_RC_FRAMED = 1 << 18
     };
 
     /* One arm of a `switch` terminator. */
