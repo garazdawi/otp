@@ -37,10 +37,15 @@ Two properties frame everything else in this document:
   of hot code — integer/float tail loops and byte scanners — substantially
   faster, and is designed to fall back cleanly to the T1 floor on everything
   else rather than risk slowing it down.
-* **Tier 2 is safe by construction.** It never changes observable behaviour,
-  never raises where T1 would not, counts reductions identically, and keeps
-  stack introspection byte-identical. A static install-quality gate declines to
-  install a blob at all unless it can show it removes work relative to T1.
+* **Tier 2 is safe by construction.** It never changes observable *results* —
+  never raises where T1 would not, and keeps stack introspection byte-identical.
+  Reductions are counted identically by the core loop tiers; the one exception is
+  the opt-in body-recursion transform, which restructures recursion into loops and
+  so charges a *bounded per-element approximation* (≈0 % off T1 for most shapes,
+  up to ~13 % for the cons two-loop's extra reverse pass). Reductions are a
+  scheduler time-proxy, so what is preserved there is proportional yield timing,
+  not the exact count. A static install-quality gate declines to install a blob at
+  all unless it can show it removes work relative to T1.
 
 Tier 2 is **aarch64-only** and **opt-in** — off by default, with no plan to turn
 it on by default. The mid-end (HIR, LIR, instruction selection, register
@@ -554,7 +559,8 @@ variants exist:
   that are *born* 8-wide in the source rather than unrolled by the tier — one
   `bs_match` reading eight bytes, then a chain of per-byte `select_val`s
   classifying each byte into a `[lo,hi]`-minus-≤4-excluded character set (the
-  JSON string decoder's ASCII fast path, `json:string_ascii`). The recognizer
+  JSON string decoder's ASCII fast path, the `json` module's `string_ascii`). The
+  recognizer
   decodes the switch chain in place, replaces the eight `select_val`s with one
   wide load plus a branchless 8-lane class test, and keeps the original per-byte
   chain as the byte-exact sub-8-byte / unaligned tail. Its rollback anchors on
@@ -1007,10 +1013,18 @@ back cleanly to the T1 floor rather than slowing anything down.
 
 ### Does Tier 2 change any observable behaviour?
 
-No. It never raises where T1 would not, counts reductions identically at the same
-boundaries, and keeps stack introspection byte-identical. Hot-code loading,
-tracing, and NIF loading all force the affected blobs to be jettisoned back to
-T1.
+Results, no — it never raises where T1 would not, and keeps stack introspection
+byte-identical. Reductions: the core loop tiers count them identically at the same
+boundaries; the opt-in body-recursion transform (`T2_BODYREC`) is the one
+exception. Restructuring body recursion into loops — the cons form adds a reverse
+pass, the accumulator elides the per-element call T1 charges — it charges a
+*bounded per-element approximation* rather than the identical count (measured ≈0 %
+off T1 for `cnt`/`sumleaf`/`mapleaf`, up to ~13 % for the primitive cons
+two-loop). Because reductions are a scheduler time-proxy and the per-element charge
+stays a positive bounded constant (so a loop still yields, at a rate within a small
+constant factor of T1), yield timing stays proportional and no process can starve
+the scheduler. Hot-code loading, tracing, and NIF loading all force the affected
+blobs to be jettisoned back to T1.
 
 ### Is Tier 2 available on x86-64?
 
