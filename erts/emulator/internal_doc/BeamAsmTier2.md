@@ -247,10 +247,16 @@ re-execute?". The shape determines the resume PC and the required sync map.
 | **Entry** | the whole invocation (a callsite whose boundary was dissolved by sinking) | the function's T1 entry body |
 | **Redispatch** | the iteration inside the generic callee, with loop-carried state | the inlined loop function's T1 body |
 | **WindowCallee** | the iteration as a fresh helper call | the callee body, plus a pushed CP |
+| **FrameRestart** | the whole invocation body-recursively, after popping a synthesized loop frame | the function's T1 entry body (`L_f + test-yield offset`), with the loop frame deallocated first |
 
 `Window` is legal only on a **clean prefix** — no effect, no frame op, and no
 write of `X0..arity-1` before the op — because re-executing the whole iteration
-requires the entry vector to be intact. `Boundary` is what is used after an
+requires the entry vector to be intact. `FrameRestart` is the frame-carrying
+cousin used by the [body-recursion](#body-recursion) transform: the synthesized
+loop keeps its cursor and accumulator in Y-slots, so its trampoline first
+`Deallocate`s that frame and only then re-enters the T1 entry body, leaving `X0`
+(the original argument list, never written) as the fresh-call vector T1
+re-descends from. `Boundary` is what is used after an
 effect has already happened. A dedicated window validator re-proves the
 clean-prefix rule on the final HIR; if it cannot, the op must carry a `Boundary`
 shape or the function stays on T1.
@@ -489,6 +495,47 @@ is the *callee's* fresh-call vector — a fold at element *k* is
 the call site's T1 PC. A dedicated reduction op (`FoldBudget`) charges the whole
 batch against the reduction counter and side-exits *uncharged* when the budget is
 unavailable, so T1 does its own charging and yielding.
+
+### Body recursion
+
+Direct (first-order) body recursion — a function that calls *itself* non-tail and
+combines the result on the way back up — is turned into an explicit loop. The
+recognizer looks for a self-call whose value feeds a single post-call *ascent* op
+and classifies two families:
+
+* **integer accumulator** (`cnt` = `1 + f(T)`, `suml` = `H + f(T)`,
+  `prodl` = `H * f(T)`): lowered to one frame-carrying accumulator loop — a
+  cursor and the accumulator live in Y-slots, the ascent op becomes the loop's
+  `AddSmall`/`MulSmall`, and the base clause's constant seeds the accumulator;
+* **list-building cons** (`[combine(H) | f(T)]`, with `combine` the identity or a
+  pure per-element small-int transform): lowered to the *two-loop* form — a
+  **down** loop conses `combine(H)` onto a reversed accumulator, then an **up**
+  loop reverses that into the forward-ordered result.
+
+The loop state lives in a Y-frame rather than registers because of yield-safety:
+a reduction yield preserves only `X0..arity-1`, and the cursor-plus-accumulator
+state exceeds the arity, so it must sit on the scheduler-preserved Erlang stack.
+`X0` is pinned to the *original* argument list and never written, which is what
+lets the rare genuine deopt use the [`FrameRestart`](#deopt-shapes) shape:
+pop the frame, discard any partial work, and re-descend the whole call in T1 from
+`X0`. Because that recall re-runs the combine from scratch, the transform is
+admitted only for a **pure** combine (constant or head arithmetic); an improper
+tail (`function_clause`), a small→bignum overflow, and a type fault (`badarith`)
+therefore all reproduce T1's result *and* stacktrace byte-for-byte. Reductions
+are charged per element, so counts stay identical to T1's body-recursion cost at
+every length. The whole descent loop yields and resumes on the back edge exactly
+like a recovered tail loop; the up loop, walking a list the blob itself built,
+never faults.
+
+This transform is **correct but performance-neutral, and off by default**
+(`T2_BODYREC`). Measured against T1 it is at parity for `suml`, for every cons
+shape, and for all medium/large lists; the only measurable win is tight integer
+accumulation on very short lists (`cnt` ≈1.37× at length 10, ≈1.13× at 100). The
+reason is structural — the Y-homed loop pays per-element stack traffic that T1's
+already-cheap frame push/pop matches, and the cons form allocates 2N cells (the
+reversed intermediate plus the reverse-build) against T1's N. Realising a real
+win would require register-homing the loop-carried state, which yield-safety
+blocks; see [Evaluated and set aside](#evaluated-and-set-aside).
 
 ### Cursor-IV unrolling and SWAR
 
@@ -829,6 +876,14 @@ listed here so they are not silently re-attempted.
   expressible under re-call-only deopt (their intermediate list state has no
   fresh-call re-execution boundary), so they stay plain calls; only the
   tail-recursive foldl-class folds are intrinsified.
+* **Build-unrolling the body-recursion loops.** Manual source-level unrolling of
+  these loops is a real win (≈3.5× on `cnt`), so a K-wide JIT unroll of the
+  [body-recursion](#body-recursion) loop was prototyped (byte-exact, reductions
+  preserved). It captured none of the source-level win: flat at scale, a slight
+  regression at tiny N. The amortizable part (reduction check, back-jump, batched
+  add) is already free, and the part unrolling cannot touch — the serial
+  `get_tl` chain and the Y-slot round-trip forced by yield-safety — dominates. The
+  experiment was reverted; the win is gated behind register-homing, below.
 
 ### Identified but not built
 
@@ -840,7 +895,22 @@ next steps rather than dismissed ideas.
   a measured 1.4–3.2× win, but concentrated on Elixir-struct-shaped code that the
   current corpus underrepresents.
 * **The bs-ASCII/utf8 scan residue** — finishing the fused-scan frontier for the
-  cases that currently fall out of the wide-load fast path.
+  cases that currently fall out of the wide-load fast path. A prototype
+  `SwarByteClass` classifier op (a branchless 8-lane byte-set test) is built and
+  byte-exact-validated but sits inert on a side branch; the recognizer and
+  eligibility that would feed it real 8-way `select_val` classifier loops are not
+  wired.
+* **Register-homing the body-recursion loop state.** The measured performance
+  ceiling for the [body-recursion](#body-recursion) transform. Today cursor and
+  accumulator live in Y-slots for yield-safety, which costs per-element stack
+  traffic and holds the loop at parity with T1. Keeping them in registers and
+  spilling to the frame only at an actual yield point would unlock the
+  source-level win, but it is a loop-strength/regalloc redesign that has to keep
+  the yield and `FrameRestart` deopt paths correct — not attempted. Two smaller
+  refinements sit below it: an **in-place watermark reverse** for the cons form
+  (destructively reversing the freshly built, unshared reversed accumulator to
+  drop the 2N-cell allocation to N), and turning body recursion on by default,
+  which the current parity-with-T1 numbers do not justify.
 
 ## Debugging
 
