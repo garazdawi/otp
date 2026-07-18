@@ -787,7 +787,23 @@ namespace erts_t2 {
          * callee L_f) — T1 re-executes the iteration as a fresh helper call
          * from X0..callee_arity-1 — and additionally pushes the intrinsic
          * call site's T1 continuation as CP (fill_spec_cont). */
-        WindowCallee
+        WindowCallee,
+
+        /* FrameRestart (body recursion; task #89): recall-from-top from a
+         * FRAME-carrying synthesized loop. The body-recursion transform
+         * carries the loop's cursor + accumulator in Y slots (so a mid-loop
+         * reduction yield — which preserves only c_p->arity X registers —
+         * does not lose them), keeping the ORIGINAL args untouched in
+         * X0..arity-1. On overflow or an improper list the trampoline
+         * DEALLOCATES the synthesized frame (emit_deallocate pops the Y
+         * slots, leaving the entry CP at [E]) and branches to the function's
+         * own T1 entry (L_f + TEST_YIELD_RETURN_OFFSET), so T1 re-executes
+         * f(original args) body-recursively — the correct bignum on overflow,
+         * the byte-identical function_clause on an improper list. Same target
+         * PC as Window/Entry; it differs only in the frame pop the frameless
+         * trampoline cannot do (t2_isel routes it to frame_restart_tramps
+         * instead of the frameless fail_labels). */
+        FrameRestart
     };
 
     struct T2Op {

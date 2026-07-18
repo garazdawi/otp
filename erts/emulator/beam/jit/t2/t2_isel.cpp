@@ -380,12 +380,15 @@ namespace erts_t2 {
                     return (const void *)((const char *)(UWord)op->imm_int +
                                           erts_t2_test_yield_return_offset());
 
+                case T2DeoptShape::FrameRestart:
                 case T2DeoptShape::Window:
                 case T2DeoptShape::Entry: {
-                    /* Window shape, and the entry class (the make_fun
-                     * sink): both branch to the function's own T1 entry
-                     * body and re-execute the invocation from the
-                     * fresh-call vector in X0..arity-1. */
+                    /* Window shape, the entry class (the make_fun sink),
+                     * and FrameRestart (body recursion): all branch to the
+                     * function's own T1 entry body and re-execute the
+                     * invocation from the fresh-call vector in X0..arity-1.
+                     * FrameRestart additionally pops its synthesized frame
+                     * in the trampoline (see the emit frame_restart path). */
                     const void *lf = local_target(hir.function, hir.arity);
 
                     if (lf == nullptr) {
