@@ -252,12 +252,15 @@ int erts_t2_genop_build_only(int genop) {
     }
 }
 
-/* T2_PRESCAN task #92 opt-in lever (see t2_retain.h). Cached once. */
+/* T2_PRESCAN task #92: fused born-8-wide byte-class scanners. On by default;
+ * set T2_NO_PRESCAN to fall back to the byte-identical un-fused scan. The fuse
+ * is byte-exact against T1, so default-on changes code generation only, never
+ * observable behaviour. Cached once. */
 int erts_t2_prescan_enabled(void) {
     static int cached = -1;
 
     if (cached < 0) {
-        cached = (getenv("T2_PRESCAN") != NULL) ? 1 : 0;
+        cached = (getenv("T2_NO_PRESCAN") != NULL) ? 0 : 1;
     }
     return cached;
 }
