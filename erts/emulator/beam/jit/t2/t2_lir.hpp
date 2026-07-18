@@ -593,6 +593,16 @@ namespace erts_t2 {
          * bumps the erts_t2_rollback_deopts monitoring counter. */
         bool rollback;
 
+        /* FrameRestart (body recursion; #89): the overflow / improper-list
+         * deopt of a FRAME-carrying body-recursion accumulator loop. Its
+         * trampoline DEALLOCATES the synthesized frame (frame_restart_slots
+         * Y slots) before branching to t1_pc_fail (the function's own T1
+         * entry, L_f + offset), so T1 re-executes f(original args)
+         * body-recursively. Routed to frame_restart_tramps instead of the
+         * frameless fail_labels, which cannot pop a frame. */
+        bool frame_restart = false;
+        uint32_t frame_restart_slots = 0;
+
         /* S1b.3c (T2_OP_MAP_SHAPE_SPEC): a GetMapElement specialized to a
          * profiled monomorphic flatmap shape. imm_term is the baked keys-
          * tuple pointer (a compiled-module literal), imm is the key's fixed

@@ -163,6 +163,17 @@ namespace erts_t2 {
         };
         std::vector<RollbackTramp> rollback_tramps;
 
+        /* FrameRestart deopt trampolines (body recursion; #89): pop the
+         * synthesized frame's `frame_slots` Y slots (emit_deallocate leaves
+         * the entry CP at [E]) then branch to `t1_pc` (the function's own T1
+         * entry), so T1 re-executes f(original args) body-recursively. */
+        struct FrameRestartTramp {
+            Label label;
+            const void *t1_pc;
+            uint32_t frame_slots;
+        };
+        std::vector<FrameRestartTramp> frame_restart_tramps;
+
         /* Range-guard deopt trampolines (P-C L1, the utf8 ASCII
          * fastpath): one per SpeculateRange op. The trampoline re-tags
          * any masked raw homes, bumps the erts_t2_range_deopts
@@ -593,6 +604,20 @@ namespace erts_t2 {
             return n;
         }
 
+        /* Like fail_label_num but for a FrameRestart deopt (body recursion):
+         * records a FrameRestartTramp that pops `frame_slots` Y slots before
+         * branching to `t1_pc`. Not deduplicated (few per function, like the
+         * rollback trampolines). */
+        unsigned frame_restart_label_num(const void *t1_pc,
+                                         uint32_t frame_slots) {
+            unsigned n = next_label++;
+            Label lbl = a.new_label();
+
+            rawLabels.emplace(n, lbl);
+            frame_restart_tramps.push_back({lbl, t1_pc, frame_slots});
+            return n;
+        }
+
         /* P2 loop unboxing: re-tag (or re-clear) the masked X homes in
          * a cold path. Re-tag ORRs the small tag back (RAW -> term)
          * before T1 observes the register file; re-clear ANDs it away
@@ -685,6 +710,24 @@ namespace erts_t2 {
                 a.ldr(TMP3, a64::Mem(TMP2));
                 a.add(TMP3, TMP3, imm(1));
                 a.str(TMP3, a64::Mem(TMP2));
+                mov_imm(TMP1, (Uint64)t.t1_pc);
+                a.br(TMP1);
+                mark_unreachable();
+            }
+
+            /* FrameRestart deopt trampolines (body recursion; #89): pop the
+             * synthesized frame (emit_deallocate — leaves the entry CP at
+             * [E], where the T1 entry expects a fresh call) then branch to
+             * the function's own T1 entry, so T1 re-executes f(original args)
+             * body-recursively (the correct bignum on overflow / the
+             * byte-identical function_clause on an improper list). */
+            for (const FrameRestartTramp &t : frame_restart_tramps) {
+                reg_cache.invalidate();
+                bind_veneer_target(t.label);
+                comment("T2 frame-restart deopt: deallocate %u + "
+                        "recall-from-top",
+                        (unsigned)t.frame_slots);
+                emit_deallocate(ArgWord(t.frame_slots));
                 mov_imm(TMP1, (Uint64)t.t1_pc);
                 a.br(TMP1);
                 mark_unreachable();
@@ -1454,13 +1497,20 @@ namespace erts_t2 {
             const Label *flp = nullptr;
 
             if (!op.no_ovf) {
-                flp = fail_override != nullptr
-                              ? fail_override
-                              : &rawLabels.at(fail_label_num(op.t1_pc_fail,
-                                                             op.t1_pc_cont,
-                                                             op.spec_callsite,
-                                                             op.raw_mask));
-                if (fail_override == nullptr) {
+                if (fail_override != nullptr) {
+                    flp = fail_override;
+                } else if (op.frame_restart) {
+                    /* Body recursion (#89): the overflow deopt must
+                     * deallocate the synthesized frame before the
+                     * recall-from-top. */
+                    flp = &rawLabels.at(frame_restart_label_num(
+                            op.t1_pc_fail, op.frame_restart_slots));
+                    fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
+                } else {
+                    flp = &rawLabels.at(fail_label_num(op.t1_pc_fail,
+                                                       op.t1_pc_cont,
+                                                       op.spec_callsite,
+                                                       op.raw_mask));
                     fact(EmitFact::SpecDeoptPc, op.beam_idx, op.t1_pc_fail);
                 }
             }

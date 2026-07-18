@@ -1851,6 +1851,14 @@ namespace erts_t2 {
                      * "every speculative op deopts somewhere" rule),
                      * it is just never emitted. */
                     lop.no_ovf = (op->flags & T2_OP_NO_OVF) != 0;
+                    /* Body recursion (#89): a FrameRestart-shaped AddSmall
+                     * deopts by deallocating the synthesized frame (its Y
+                     * slot count rides in op->live, which flag-checked
+                     * arithmetic does not otherwise use) before the
+                     * recall-from-top to the function's T1 entry. */
+                    lop.frame_restart =
+                            op->deopt_shape == T2DeoptShape::FrameRestart;
+                    lop.frame_restart_slots = op->live;
                     if (op->dst_reg == T2_REG_NONE) {
                         return fail_op(op, "arith result without a home");
                     }
