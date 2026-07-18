@@ -6911,6 +6911,286 @@ namespace erts_t2 {
             return true;
         }
 
+        /* --- CONS (list-building) body recursion (task #87) ----------- */
+
+        struct BodyRecConsMatch {
+            T2Value *list;            /* Param #0                        */
+            T2BasicBlock *b_notnel;   /* is_nil block (dead after)       */
+            T2BasicBlock *b_rec;      /* descent block (dead after)      */
+            T2BasicBlock *b_base;     /* base-case block (dead after)    */
+            T2BasicBlock *b_improper; /* shared error block (dead)       */
+            bool identity;            /* combine == H (no arith)         */
+            T2OpKind combine_op;      /* Add/Sub/Mul when !identity      */
+            bool head_first;          /* H op k (true) vs k op H (false) */
+            Sint64 combine_const;     /* the constant k when !identity   */
+        };
+
+        /* Strict structural match of the list-building shape (verified
+         * against the decoded HIR of cp/1, dbl/1, inc/1 and a k-H form):
+         *
+         *   block0: param#0; is_nonempty_list; branch rec/notnel
+         *   notnel: [phi of param] is_nil; branch base/improper
+         *   rec:    [allocate] get_hd; get_tl; [combine=arith(H,k)];
+         *           call self(tl); [gc_test]; make_list(combine|H, rec);
+         *           [deallocate]; return
+         *   base:   return the is_nil'd value (nil) — cp([])->[]
+         *   improper: the shared function_clause exit
+         *
+         * combine is IDENTITY (make_list head == the cell head) or a
+         * PURE per-element small arith on the head with a constant
+         * (H+k / k+H / H*k / k*H / H-k / k-H); it must NOT read the
+         * recursive result. Anything else — an impure/rec-reading
+         * combine, IDiv/Rem/float, a non-nil base, multiple self-calls,
+         * extra ops — rejects (returns false, a silent no-op). */
+        bool bodyrec_match_cons(const T2Function &fn, BodyRecConsMatch *m) {
+            if (fn.arity != 1 || fn.blocks.size() < 5 || !fn.sync_complete) {
+                return false;
+            }
+
+            const T2BasicBlock *b0 = fn.blocks[0];
+            T2Value *v0 = nullptr;
+            const T2Op *nel = nullptr;
+
+            if (b0->phis_head != nullptr || b0->terminator == nullptr ||
+                b0->terminator->kind != T2OpKind::Branch) {
+                return false;
+            }
+            for (const T2Op *op = b0->ops_head; op != nullptr; op = op->next) {
+                if (op->kind == T2OpKind::Param && op->index == 0 &&
+                    v0 == nullptr) {
+                    v0 = op->result;
+                } else if (op->kind == T2OpKind::IsNonemptyList &&
+                           nel == nullptr && op->num_operands == 1 &&
+                           br_uncopy(op->operands[0]) ==
+                                   (v0 != nullptr ? br_uncopy(v0) : nullptr)) {
+                    nel = op;
+                } else {
+                    return false;
+                }
+            }
+            if (v0 == nullptr || nel == nullptr ||
+                b0->terminator->num_operands != 1 ||
+                b0->terminator->operands[0] != nel->result) {
+                return false;
+            }
+
+            T2BasicBlock *b_rec = b0->terminator->succ_then;
+            T2BasicBlock *b_notnel = b0->terminator->succ_else;
+
+            /* notnel: an optional phi-of-param, is_nil, branch. */
+            const T2Value *nil_tested = v0;
+            {
+                const T2Value *list_here = v0;
+
+                for (const T2Op *phi = b_notnel->phis_head; phi != nullptr;
+                     phi = phi->next) {
+                    if (phi->num_operands != 1 ||
+                        br_uncopy(phi->operands[0]) != br_uncopy(v0) ||
+                        list_here != v0 /* at most one */) {
+                        return false;
+                    }
+                    list_here = phi->result;
+                }
+
+                const T2Op *nil = b_notnel->ops_head;
+
+                if (nil == nullptr || nil->next != nullptr ||
+                    nil->kind != T2OpKind::IsNil || nil->num_operands != 1 ||
+                    br_uncopy(nil->operands[0]) != br_uncopy(list_here) ||
+                    b_notnel->terminator == nullptr ||
+                    b_notnel->terminator->kind != T2OpKind::Branch ||
+                    b_notnel->terminator->num_operands != 1 ||
+                    b_notnel->terminator->operands[0] != nil->result) {
+                    return false;
+                }
+                nil_tested = nil->operands[0];
+            }
+
+            T2BasicBlock *b_base = b_notnel->terminator->succ_then;
+            T2BasicBlock *b_improper = b_notnel->terminator->succ_else;
+
+            /* base: must return nil — the is_nil'd value (cp([])->[]) or
+             * an explicit ConstNil. Only Copy/ConstNil ops tolerated. */
+            {
+                if (b_base->phis_head != nullptr ||
+                    b_base->terminator == nullptr ||
+                    b_base->terminator->kind != T2OpKind::Return ||
+                    b_base->terminator->num_operands != 1) {
+                    return false;
+                }
+
+                const T2Value *rv = br_uncopy(b_base->terminator->operands[0]);
+                bool is_nil_ret = rv == br_uncopy(nil_tested) ||
+                                  (rv->def != nullptr &&
+                                   rv->def->kind == T2OpKind::ConstNil);
+
+                if (!is_nil_ret) {
+                    return false;
+                }
+                for (const T2Op *op = b_base->ops_head; op != nullptr;
+                     op = op->next) {
+                    if (op->kind != T2OpKind::ConstNil &&
+                        op->kind != T2OpKind::Copy) {
+                        return false;
+                    }
+                }
+            }
+
+            /* improper: the shared function_clause exit. */
+            if (b_improper->phis_head != nullptr ||
+                b_improper->ops_head != nullptr ||
+                b_improper->terminator == nullptr ||
+                b_improper->terminator->kind != T2OpKind::TailCallExt ||
+                (b_improper->terminator->flags & T2_OP_ERR_EXIT_SHARED) == 0) {
+                return false;
+            }
+
+            /* rec: get_hd, get_tl, self call, [combine], make_list,
+             * frame/heap ops — Copy/ConstInt/GcTest tolerated. */
+            {
+                const T2Op *head_op = nullptr;
+                const T2Op *tl_op = nullptr;
+                const T2Op *call = nullptr;
+                const T2Op *comb = nullptr;
+                const T2Op *ml = nullptr;
+                bool saw_alloc = false, saw_dealloc = false;
+
+                if (b_rec->phis_head != nullptr ||
+                    b_rec->terminator == nullptr ||
+                    b_rec->terminator->kind != T2OpKind::Return ||
+                    b_rec->terminator->num_operands != 1) {
+                    return false;
+                }
+
+                for (const T2Op *op = b_rec->ops_head; op != nullptr;
+                     op = op->next) {
+                    switch (op->kind) {
+                    case T2OpKind::Copy:
+                    case T2OpKind::ConstInt:
+                    case T2OpKind::GcTest:
+                        break;
+                    case T2OpKind::Allocate:
+                        if (saw_alloc) {
+                            return false;
+                        }
+                        saw_alloc = true;
+                        break;
+                    case T2OpKind::Deallocate:
+                        if (saw_dealloc) {
+                            return false;
+                        }
+                        saw_dealloc = true;
+                        break;
+                    case T2OpKind::GetHd:
+                        if (head_op != nullptr || op->num_operands != 1 ||
+                            br_uncopy(op->operands[0]) != br_uncopy(v0)) {
+                            return false;
+                        }
+                        head_op = op;
+                        break;
+                    case T2OpKind::GetTl:
+                        if (tl_op != nullptr || op->num_operands != 1 ||
+                            br_uncopy(op->operands[0]) != br_uncopy(v0)) {
+                            return false;
+                        }
+                        tl_op = op;
+                        break;
+                    case T2OpKind::Call:
+                        if (call != nullptr || op->mfa_m != fn.module ||
+                            op->mfa_f != fn.function || op->index != fn.arity ||
+                            op->num_operands != 1 || tl_op == nullptr ||
+                            br_uncopy(op->operands[0]) !=
+                                    br_uncopy(tl_op->result)) {
+                            return false;
+                        }
+                        call = op;
+                        break;
+                    case T2OpKind::Add:
+                    case T2OpKind::Sub:
+                    case T2OpKind::Mul:
+                        /* The per-element head combine (pure). Sub is
+                         * fine here (unlike the integer fold): each cell
+                         * is transformed independently, so recomputation
+                         * on recall is identical — no accumulation. */
+                        if (comb != nullptr || op->num_operands != 2 ||
+                            op->flags != 0) {
+                            return false;
+                        }
+                        comb = op;
+                        break;
+                    case T2OpKind::MakeList:
+                        if (ml != nullptr || op->num_operands != 2) {
+                            return false;
+                        }
+                        ml = op;
+                        break;
+                    default:
+                        return false;
+                    }
+                }
+
+                if (head_op == nullptr || tl_op == nullptr || call == nullptr ||
+                    ml == nullptr ||
+                    br_uncopy(b_rec->terminator->operands[0]) !=
+                            br_uncopy(ml->result)) {
+                    return false;
+                }
+
+                /* [combine(H) | rec]: tail is the recursive result, head
+                 * is the identity head or the pure arith on it. */
+                const T2Value *rec = br_uncopy(call->result);
+                const T2Value *head = br_uncopy(head_op->result);
+
+                if (br_uncopy(ml->operands[1]) != rec) {
+                    return false;
+                }
+
+                const T2Value *ml_head = br_uncopy(ml->operands[0]);
+
+                if (ml_head == head) {
+                    if (comb != nullptr) {
+                        return false; /* stray arith */
+                    }
+                    m->identity = true;
+                    m->combine_op = T2OpKind::Copy;
+                    m->head_first = true;
+                    m->combine_const = 0;
+                } else if (comb != nullptr &&
+                           ml_head == br_uncopy(comb->result)) {
+                    const T2Value *a = br_uncopy(comb->operands[0]);
+                    const T2Value *b = br_uncopy(comb->operands[1]);
+                    const T2Value *k = nullptr;
+
+                    if (a == head) {
+                        k = b;
+                        m->head_first = true;
+                    } else if (b == head) {
+                        k = a;
+                        m->head_first = false;
+                    } else {
+                        return false; /* combine does not read the head */
+                    }
+                    if (k->def == nullptr ||
+                        k->def->kind != T2OpKind::ConstInt ||
+                        !IS_SSMALL(k->def->imm_int)) {
+                        return false; /* not a small-constant transform */
+                    }
+                    m->identity = false;
+                    m->combine_op = comb->kind;
+                    m->combine_const = k->def->imm_int;
+                } else {
+                    return false;
+                }
+            }
+
+            m->list = v0;
+            m->b_notnel = b_notnel;
+            m->b_rec = b_rec;
+            m->b_base = b_base;
+            m->b_improper = b_improper;
+            return true;
+        }
+
         T2SyncMap *bodyrec_map(T2Function &fn,
                                const std::vector<T2Value *> &xs,
                                int32_t frame_size,
@@ -7001,6 +7281,12 @@ namespace erts_t2 {
 
     } /* anonymous namespace */
 
+    /* The list-building transform (task #87); defined below t2_bodyrec. */
+    static bool t2_bodyrec_cons(T2Function &fn,
+                                const void *code_hdr,
+                                bool *changed,
+                                std::string *err);
+
     bool t2_bodyrec(T2Function &fn,
                     const void *code_hdr,
                     bool *changed,
@@ -7010,7 +7296,13 @@ namespace erts_t2 {
         if (!bodyrec_transform_enabled() || bodyrec_disabled()) {
             return true;
         }
-        if (t2_bodyrec_classify(fn) != T2BodyRecKind::Integer) {
+
+        T2BodyRecKind kind = t2_bodyrec_classify(fn);
+
+        if (kind == T2BodyRecKind::Cons) {
+            return t2_bodyrec_cons(fn, code_hdr, changed, err);
+        }
+        if (kind != T2BodyRecKind::Integer) {
             return true;
         }
 
@@ -7264,6 +7556,403 @@ namespace erts_t2 {
                          m.is_mul ? "product" : "sum",
                          m.head_combine ? "head" : "const",
                          (long)m.base_const);
+        }
+
+        *changed = true;
+        return true;
+    }
+
+    /* ------------------------------------------------------------------ *
+     * Body-recursion CONS (list-building) transform (task #87)           *
+     *                                                                    *
+     * Lowers  f([]) -> [];  f([H|T]) -> [combine(H) | f(T)]  (combine    *
+     * pure: identity or per-element small arith on H with a constant)    *
+     * to a TWO-loop "one down, one up" reversal (the user's design):     *
+     *                                                                    *
+     *   DOWN loop  (frame {cursor Y0, RevAcc Y1}): walk the original     *
+     *     list, cons combine(H) onto RevAcc — one heap cons cell per     *
+     *     element, RevAcc GC-rooted in Y1 (a mid-loop collection cannot  *
+     *     reclaim the partial reversed list; the gc_test's Live count    *
+     *     also roots X0 = the original list). Produces RevAcc in         *
+     *     REVERSE order.                                                 *
+     *   UP loop    (frame {Result Y0, Rem Y1}): reverse RevAcc into the  *
+     *     correctly-ordered Result (one cons per element) and return it. *
+     *     RevAcc is a list WE built (proper, unshared), so the up loop   *
+     *     never faults and never recalls.                                *
+     *                                                                    *
+     * Both loops carry their state in Y slots, so a reduction yield      *
+     * PRESERVES and RESUMES them (no O(n^2) recall-from-top on yield —   *
+     * exactly #88's mechanism). X0 = the original list is never written  *
+     * and is live at every deopt/GC/yield, so every recall-from-top      *
+     * (jettison translation, or a genuine deopt) re-executes f(original) *
+     * in T1 and is byte-identical (combine is pure, + and the per-cell   *
+     * arith recompute identically):                                      *
+     *   - improper tail: a frame-popping tail-site DemoteCallee to self  *
+     *     -> T1 re-descends and raises the byte-identical function_clause;*
+     *   - a non-small / faulting head (dbl of an atom, per-element       *
+     *     overflow): the combine's FrameRestart AddSmall/SubSmall/       *
+     *     MulSmall discards the partial RevAcc (it becomes garbage) and  *
+     *     T1 rebuilds the spine down to the same element, raising / over-*
+     *     flowing byte-identically.                                      *
+     *                                                                    *
+     * PLAIN two-loop (2n cons cells; the RevAcc spine becomes garbage    *
+     * after the up loop). Correctness-first per the mandate; the in-     *
+     * place watermark reverse (n cells) is a later refinement. The       *
+     * Result is structurally identical to T1's (same element order,      *
+     * values, fresh spine, and — for identity — the same element         *
+     * sharing with the input). Reductions are byte-identical too: the    *
+     * down + up loop each charge 1 per element (2 total), matching T1's  *
+     * body-recursion cost exactly (measured equal at every length).      *
+     * Opt-in via T2_BODYREC.                                             *
+     * ------------------------------------------------------------------ */
+    static bool t2_bodyrec_cons(T2Function &fn,
+                                const void *code_hdr,
+                                bool *changed,
+                                std::string *err) {
+        (void)err;
+        *changed = false;
+
+        BodyRecConsMatch m;
+
+        if (!bodyrec_match_cons(fn, &m)) {
+            if (bodyrec_trace()) {
+                erts_fprintf(stderr,
+                             "t2_bodyrec: %T:%T/%u cons shape did not match "
+                             "the strict transform pattern\n",
+                             fn.module,
+                             fn.function,
+                             (unsigned)fn.arity);
+            }
+            return true;
+        }
+
+        /* Every recall path needs the function's own T1 entry. */
+        const void *lf = nullptr;
+        {
+            const BeamCodeHeader *hdr = (const BeamCodeHeader *)code_hdr;
+
+            if (hdr != nullptr) {
+                for (Uint i = 0; i < hdr->num_functions; i++) {
+                    const ErtsCodeInfo *ci = hdr->functions[i];
+
+                    if (ci->mfa.function == fn.function &&
+                        ci->mfa.arity == fn.arity) {
+                        lf = (const void *)erts_codeinfo_to_code(ci);
+                        break;
+                    }
+                }
+            }
+        }
+        if (lf == nullptr) {
+            return true;
+        }
+
+        constexpr uint32_t SLOTS = 2;
+        constexpr int32_t FR = (int32_t)SLOTS;
+        constexpr uint32_t CONS_WORDS = 2; /* one cons cell */
+        T2BasicBlock *b0 = fn.blocks[0];
+        T2Value *v0 = m.list;
+
+        /* --- entry: keep the Params, drop the old guard + branch ------- */
+        {
+            T2Op *keep_head = nullptr, *keep_tail = nullptr;
+
+            for (T2Op *op = b0->ops_head; op != nullptr;) {
+                T2Op *next = op->next;
+
+                if (op->kind == T2OpKind::Param) {
+                    op->prev = keep_tail;
+                    op->next = nullptr;
+                    if (keep_tail != nullptr) {
+                        keep_tail->next = op;
+                    } else {
+                        keep_head = op;
+                    }
+                    keep_tail = op;
+                }
+                op = next;
+            }
+            b0->ops_head = keep_head;
+            b0->ops_tail = keep_tail;
+            b0->terminator = nullptr;
+        }
+
+        /* A single arith constant (when the combine is not identity),
+         * materialized in the preheader like #88. */
+        T2Value *k_v =
+                m.identity ? nullptr : fn.emit_const_int(b0, m.combine_const);
+
+        T2Op *alloc = fn.new_op(b0, T2OpKind::Allocate, T2Type::none());
+
+        fn.set_operands(alloc, {});
+        alloc->index = SLOTS;
+        alloc->imm_int = 0;
+        alloc->live = fn.arity;
+        alloc->sync = bodyrec_map(fn, {v0}, T2_NO_FRAME, {});
+
+        /* Y0 = cursor = the original list; Y1 = RevAcc = []. */
+        T2Op *cur_init = fn.new_op(b0, T2OpKind::Copy, v0->type);
+
+        fn.set_operands(cur_init, {v0});
+        cur_init->dst_reg = t2_yreg(0);
+        cur_init->operand_regs = bodyrec_regs(fn, {t2_xreg(0)});
+
+        T2Value *nil0 = fn.emit_const_nil(b0);
+        T2Op *rev_init = fn.new_op(b0, T2OpKind::Copy, nil0->type);
+
+        fn.set_operands(rev_init, {nil0});
+        rev_init->dst_reg = t2_yreg(1);
+
+        /* --- blocks --------------------------------------------------- */
+        T2BasicBlock *dh = fn.new_block();  /* down header      */
+        T2BasicBlock *db = fn.new_block();  /* down body        */
+        T2BasicBlock *dcn = fn.new_block(); /* down checknil    */
+        T2BasicBlock *improper = fn.new_block();
+        T2BasicBlock *uinit = fn.new_block(); /* up preheader    */
+        T2BasicBlock *uh = fn.new_block();    /* up header       */
+        T2BasicBlock *ub = fn.new_block();    /* up body         */
+        T2BasicBlock *udone = fn.new_block(); /* up done         */
+
+        fn.emit_jump(b0, dh);
+
+        /* ===== DOWN loop ============================================== */
+        T2Op *cur_phi = fn.new_phi(dh, T2Type::any());
+        T2Op *rev_phi = fn.new_phi(dh, T2Type::any());
+
+        cur_phi->dst_reg = t2_yreg(0);
+        rev_phi->dst_reg = t2_yreg(1);
+
+        T2Op *dnel = fn.new_op(dh,
+                               T2OpKind::IsNonemptyList,
+                               T2Type::of(BEAM_TYPE_ATOM));
+
+        fn.set_operands(dnel, {cur_phi->result});
+        dnel->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+        fn.emit_branch(dh, dnel->result, db, dcn);
+
+        /* down body: head = get_hd(cursor); [combine]; gc_test;
+         * RevAcc' = [combine|RevAcc]; cursor' = get_tl(cursor); rc. */
+        T2Op *dhd = fn.new_op(db, T2OpKind::GetHd, T2Type::any());
+
+        fn.set_operands(dhd, {cur_phi->result});
+        dhd->dst_reg = t2_xreg(1);
+        dhd->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+
+        T2Value *cell_val = dhd->result; /* what gets consed */
+
+        if (!m.identity) {
+            /* The head must be a small before the flag-checked arith; a
+             * non-small / overflow deopts through the frame-popping
+             * recall, and T1 rebuilds + faults / bignums identically. */
+            T2Op *spec = fn.new_op(db, T2OpKind::SpeculateType, T2Type::none());
+
+            fn.set_operands(spec, {dhd->result});
+            spec->operand_regs = bodyrec_regs(fn, {t2_xreg(1)});
+            spec->spec_type_class = 0;
+            spec->deopt_shape = T2DeoptShape::FrameRestart;
+            spec->live = SLOTS;
+            spec->sync = bodyrec_map(fn,
+                                     {v0},
+                                     FR,
+                                     {cur_phi->result, rev_phi->result});
+
+            T2OpKind lk = m.combine_op == T2OpKind::Mul   ? T2OpKind::MulSmall
+                          : m.combine_op == T2OpKind::Sub ? T2OpKind::SubSmall
+                                                          : T2OpKind::AddSmall;
+            T2Op *comb = fn.new_op(db, lk, T2Type::any());
+
+            /* Add/Mul are commutative — normalize head first. Sub keeps
+             * the source operand order (H-k vs k-H). */
+            if (lk == T2OpKind::SubSmall && !m.head_first) {
+                fn.set_operands(comb, {k_v, dhd->result});
+                comb->operand_regs =
+                        bodyrec_regs(fn, {T2_REG_NONE, t2_xreg(1)});
+            } else {
+                fn.set_operands(comb, {dhd->result, k_v});
+                comb->operand_regs =
+                        bodyrec_regs(fn, {t2_xreg(1), T2_REG_NONE});
+            }
+            comb->dst_reg = t2_xreg(1);
+            comb->deopt_shape = T2DeoptShape::FrameRestart;
+            comb->live = SLOTS;
+            comb->sync = bodyrec_map(fn,
+                                     {v0},
+                                     FR,
+                                     {cur_phi->result, rev_phi->result});
+            cell_val = comb->result;
+        }
+
+        /* Heap for the cons cell; X0 (original) + X1 (cell value) live. */
+        T2Op *dgc = fn.new_op(db, T2OpKind::GcTest, T2Type::none());
+
+        fn.set_operands(dgc, {});
+        dgc->index = CONS_WORDS;
+        dgc->live = 2;
+        dgc->sync = bodyrec_map(fn,
+                                {v0, cell_val},
+                                FR,
+                                {cur_phi->result, rev_phi->result});
+
+        T2Op *rev_next = fn.new_op(db, T2OpKind::MakeList, T2Type::any());
+
+        fn.set_operands(rev_next, {cell_val, rev_phi->result});
+        rev_next->dst_reg = t2_yreg(1);
+        rev_next->operand_regs = bodyrec_regs(fn, {t2_xreg(1), t2_yreg(1)});
+
+        T2Op *cur_next = fn.new_op(db, T2OpKind::GetTl, T2Type::any());
+
+        fn.set_operands(cur_next, {cur_phi->result});
+        cur_next->dst_reg = t2_yreg(0);
+        cur_next->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+
+        T2Op *drc = fn.new_op(db, T2OpKind::ReductionCheck, T2Type::none());
+
+        fn.set_operands(drc, {});
+        drc->flags = T2_OP_RC_FRAMED;
+        drc->index = 0;
+        drc->live = fn.arity;
+        drc->sync =
+                bodyrec_map(fn, {v0}, FR, {cur_next->result, rev_next->result});
+        fn.emit_jump(db, dh);
+
+        /* down checknil: [] -> start the up loop; else improper recall. */
+        T2Op *dnil =
+                fn.new_op(dcn, T2OpKind::IsNil, T2Type::of(BEAM_TYPE_ATOM));
+
+        fn.set_operands(dnil, {cur_phi->result});
+        dnil->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+        fn.emit_branch(dcn, dnil->result, uinit, improper);
+
+        /* improper: pop the frame, recall f(original) in T1. */
+        T2Op *imp_dealloc =
+                fn.new_op(improper, T2OpKind::Deallocate, T2Type::none());
+
+        fn.set_operands(imp_dealloc, {});
+        imp_dealloc->index = SLOTS;
+
+        T2Op *dm = fn.new_op(improper, T2OpKind::DemoteCallee, T2Type::none());
+
+        fn.set_operands(dm, {});
+        dm->mfa_m = fn.module;
+        dm->mfa_f = fn.function;
+        dm->live = fn.arity;
+        dm->imm_int = (Sint64)(UWord)lf;
+        dm->flags = T2_OP_TAIL_SITE;
+        dm->sync = bodyrec_map(fn, {v0}, T2_NO_FRAME, {});
+
+        /* ===== UP loop (reverse RevAcc into Result) ================== *
+         * Homes: Result = Y0, Rem = Y1 (Rem stays where RevAcc lived). */
+        T2Value *nil1 = fn.emit_const_nil(uinit);
+        T2Op *res_init = fn.new_op(uinit, T2OpKind::Copy, nil1->type);
+
+        fn.set_operands(res_init, {nil1});
+        res_init->dst_reg = t2_yreg(0);
+        fn.emit_jump(uinit, uh);
+
+        T2Op *res_phi = fn.new_phi(uh, T2Type::any());
+        T2Op *rem_phi = fn.new_phi(uh, T2Type::any());
+
+        res_phi->dst_reg = t2_yreg(0);
+        rem_phi->dst_reg = t2_yreg(1);
+
+        T2Op *unel = fn.new_op(uh,
+                               T2OpKind::IsNonemptyList,
+                               T2Type::of(BEAM_TYPE_ATOM));
+
+        fn.set_operands(unel, {rem_phi->result});
+        unel->operand_regs = bodyrec_regs(fn, {t2_yreg(1)});
+        fn.emit_branch(uh, unel->result, ub, udone);
+
+        /* up body: h = get_hd(Rem); gc_test; Result' = [h|Result];
+         * Rem' = get_tl(Rem); rc. RevAcc is proper -> no fault/recall. */
+        T2Op *uhd = fn.new_op(ub, T2OpKind::GetHd, T2Type::any());
+
+        fn.set_operands(uhd, {rem_phi->result});
+        uhd->dst_reg = t2_xreg(1);
+        uhd->operand_regs = bodyrec_regs(fn, {t2_yreg(1)});
+
+        T2Op *ugc = fn.new_op(ub, T2OpKind::GcTest, T2Type::none());
+
+        fn.set_operands(ugc, {});
+        ugc->index = CONS_WORDS;
+        ugc->live = 2;
+        ugc->sync = bodyrec_map(fn,
+                                {v0, uhd->result},
+                                FR,
+                                {res_phi->result, rem_phi->result});
+
+        T2Op *res_next = fn.new_op(ub, T2OpKind::MakeList, T2Type::any());
+
+        fn.set_operands(res_next, {uhd->result, res_phi->result});
+        res_next->dst_reg = t2_yreg(0);
+        res_next->operand_regs = bodyrec_regs(fn, {t2_xreg(1), t2_yreg(0)});
+
+        T2Op *rem_next = fn.new_op(ub, T2OpKind::GetTl, T2Type::any());
+
+        fn.set_operands(rem_next, {rem_phi->result});
+        rem_next->dst_reg = t2_yreg(1);
+        rem_next->operand_regs = bodyrec_regs(fn, {t2_yreg(1)});
+
+        T2Op *urc = fn.new_op(ub, T2OpKind::ReductionCheck, T2Type::none());
+
+        fn.set_operands(urc, {});
+        urc->flags = T2_OP_RC_FRAMED;
+        urc->index = 0;
+        urc->live = fn.arity;
+        urc->sync =
+                bodyrec_map(fn, {v0}, FR, {res_next->result, rem_next->result});
+        fn.emit_jump(ub, uh);
+
+        /* up done: X0 = Result, pop the frame, return. */
+        T2Op *ret_cp = fn.new_op(udone, T2OpKind::Copy, T2Type::any());
+
+        fn.set_operands(ret_cp, {res_phi->result});
+        ret_cp->dst_reg = t2_xreg(0);
+        ret_cp->operand_regs = bodyrec_regs(fn, {t2_yreg(0)});
+
+        T2Op *udealloc = fn.new_op(udone, T2OpKind::Deallocate, T2Type::none());
+
+        fn.set_operands(udealloc, {});
+        udealloc->index = SLOTS;
+
+        fn.emit_return(udone, ret_cp->result);
+        udone->terminator->operand_regs = bodyrec_regs(fn, {t2_xreg(0)});
+        udone->terminator->sync =
+                bodyrec_map(fn, {ret_cp->result}, T2_NO_FRAME, {});
+
+        /* --- loop-carried edges --------------------------------------- */
+        fn.set_phi_inputs(cur_phi,
+                          {cur_init->result, cur_next->result},
+                          {b0, db});
+        fn.set_phi_inputs(rev_phi,
+                          {rev_init->result, rev_next->result},
+                          {b0, db});
+        fn.set_phi_inputs(res_phi,
+                          {res_init->result, res_next->result},
+                          {uinit, ub});
+        fn.set_phi_inputs(rem_phi,
+                          {rev_phi->result, rem_next->result},
+                          {uinit, ub});
+
+        /* The original clause blocks are now unreachable dead code. */
+        bodyrec_strip_dead_phis(fn, m.b_notnel);
+        bodyrec_strip_dead_phis(fn, m.b_rec);
+        bodyrec_strip_dead_phis(fn, m.b_base);
+        bodyrec_strip_dead_phis(fn, m.b_improper);
+
+        fn.finalize();
+
+        if (bodyrec_trace()) {
+            erts_fprintf(stderr,
+                         "t2_bodyrec: %T:%T/%u lowered to a two-loop cons "
+                         "reverse (%s combine)\n",
+                         fn.module,
+                         fn.function,
+                         (unsigned)fn.arity,
+                         m.identity                      ? "identity"
+                         : m.combine_op == T2OpKind::Mul ? "mul"
+                         : m.combine_op == T2OpKind::Sub ? "sub"
+                                                         : "add");
         }
 
         *changed = true;
