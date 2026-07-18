@@ -549,12 +549,27 @@ variants exist:
   cursor un-advanced and T1 re-processes all N bytes;
 * a **SWAR read-and-sum** form (`BsLoadWord`, `SwarByteSum`, `SwarAsciiTest`)
   that collapses N byte reads into one 64-bit wide load plus a horizontal
-  byte-sum fold, guarded by a cursor-alignment check.
+  byte-sum fold, guarded by a cursor-alignment check;
+* a **byte-class classifier** form (`BsLoadWord`, `SwarByteClass`) for scanners
+  that are *born* 8-wide in the source rather than unrolled by the tier — one
+  `bs_match` reading eight bytes, then a chain of per-byte `select_val`s
+  classifying each byte into a `[lo,hi]`-minus-≤4-excluded character set (the
+  JSON string decoder's ASCII fast path, `json:string_ascii`). The recognizer
+  decodes the switch chain in place, replaces the eight `select_val`s with one
+  wide load plus a branchless 8-lane class test, and keeps the original per-byte
+  chain as the byte-exact sub-8-byte / unaligned tail. Its rollback anchors on
+  the clause's `bs_get_position` EFFECT, because the resume clause's
+  `bs_start_match4` is dropped by the loader and records no PC to land on.
 
-Both keep reduction counts and deopt behaviour byte-identical to the 1-wide loop.
-This family is where the largest speedups come from (byte validators, digit
-scanners). A LICM-lite pass hoists loop-invariant, pure, never-faulting ops out
-of the loop header into a preheader.
+All three keep reduction counts and deopt behaviour byte-identical to the 1-wide
+loop. This family is where the largest speedups come from **when scanning is the
+bottleneck** (byte validators, digit scanners: 3–6×). Where it is not, the win is
+Amdahl-limited: the byte-class fuse is byte-exact but only ≈1.07× on `json:decode`,
+which is dominated by `binary_part` value copies and allocation, not the scan. The
+classifier fuse is **on by default** (`T2_NO_PRESCAN` disables it, restoring the
+byte-identical un-fused scan) and engages under normal counter-triggered tier-up —
+an eligible scanner arms on its own counter. A LICM-lite pass hoists loop-invariant,
+pure, never-faulting ops out of the loop header into a preheader.
 
 ### Leaf inlining
 
@@ -894,12 +909,20 @@ next steps rather than dismissed ideas.
   per-site / nested / cross-module shapes. The only lever with landed codegen and
   a measured 1.4–3.2× win, but concentrated on Elixir-struct-shaped code that the
   current corpus underrepresents.
-* **The bs-ASCII/utf8 scan residue** — finishing the fused-scan frontier for the
-  cases that currently fall out of the wide-load fast path. A prototype
-  `SwarByteClass` classifier op (a branchless 8-lane byte-set test) is built and
-  byte-exact-validated but sits inert on a side branch; the recognizer and
-  eligibility that would feed it real 8-way `select_val` classifier loops are not
-  wired.
+* **The utf8 / non-JSON scan residue.** The byte-class classifier fuse (see
+  [Cursor-IV unrolling and SWAR](#cursor-iv-unrolling-and-swar)) now lands the
+  JSON ASCII fast path on by default; the remaining frontier is multi-byte utf8
+  scanners and other in-place classifier shapes that do not match the born-8-wide
+  `select_val` pattern.
+* **Inlining a leaf combine into a body-recursion loop.** The common cons shape is
+  `[transform(H) | f(T)]` with `transform` a local function, which the current
+  [body-recursion](#body-recursion) transform rejects (it admits only primitive
+  arithmetic combines). Admitting a [leaf-inlinable](#leaf-inlining) *pure* combine
+  and splicing it into the synthesized loop — then unboxing/speculating the fused
+  body — removes a call per element: measured ≈1.3× at length 100, decaying to
+  parity by 10 000, the same small-N shape as the base transform. Bounded by the
+  same re-call-only deopt limit: the inlined combine must be pure so the
+  `FrameRestart` recall re-runs it identically.
 * **Register-homing the body-recursion loop state.** The measured performance
   ceiling for the [body-recursion](#body-recursion) transform. Today cursor and
   accumulator live in Y-slots for yield-safety, which costs per-element stack
