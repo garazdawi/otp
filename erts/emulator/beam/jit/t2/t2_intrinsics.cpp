@@ -9933,4 +9933,882 @@ namespace erts_t2 {
         return true;
     }
 
+    /* ================================================================ *
+     * T2_PRESCAN task #92 — born-8-wide byte-class scan fuse            *
+     * ================================================================ *
+     * Fuses the hand-unrolled x8 ASCII byte-class scanners the loader
+     * emits as ONE bs_match reading eight bytes into x8..x15 followed by
+     * a chain of eight per-byte select_val classifiers (json:string_ascii,
+     * escape_binary, ...). Every classifier tests the SAME byte class
+     * (`is_ascii_plain`: [0x20,0x7F] minus $" and $\\) and routes an
+     * out-of-class byte to the SAME bail (the T1 `string/N` clause). The
+     * whole eight-byte window is replaced by ONE 64-bit load + ONE
+     * SwarByteClass guard: on any out-of-class lane it rolls back to the
+     * clause entry with the cursor un-advanced, so T1 re-processes the
+     * eight bytes one at a time and bails at the exact byte (byte-exact).
+     *
+     * Gated behind erts_t2_prescan_enabled(); the recognizer's un-fused
+     * output (relaxed eligibility, correct multi-read build) is itself
+     * byte-exact, so a recognizer miss keeps the scan correct — just
+     * one-byte-at-a-time in T2 rather than SWAR-wide.                    */
+    namespace {
+
+        bool prescan_bail(const T2Function &fn, const char *why) {
+            if (getenv("T2_PRESCAN_TRACE") != nullptr) {
+                erts_fprintf(stderr,
+                             "t2_prescan: %T:%T/%u bail: %s\n",
+                             fn.module,
+                             fn.function,
+                             (unsigned)fn.arity,
+                             why);
+            }
+            return false;
+        }
+
+        /* This pass runs before the opt pass's copy/trivial-phi cleanup,
+         * so the SSA still carries single-input phis that merely re-label a
+         * value across a block boundary (Braun construction leftovers). See
+         * through them so the structural match sees the semantic value. */
+        T2Value *prescan_resolve(T2Value *v) {
+            int guard = 0;
+
+            while (v != nullptr && v->def != nullptr &&
+                   v->def->phi_blocks != nullptr && v->def->num_operands == 1 &&
+                   guard++ < 256) {
+                v = v->def->operands[0];
+            }
+            return v;
+        }
+
+        /* A block whose only content is dead single-input phis (no real
+         * body ops): the classifier chain's intermediate blocks re-label
+         * the byte read and switch on it, nothing else. */
+        bool prescan_only_trivial_phis(const T2BasicBlock *b) {
+            if (b->ops_head != nullptr) {
+                return false;
+            }
+            for (const T2Op *p = b->phis_head; p != nullptr; p = p->next) {
+                if (p->num_operands != 1) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /* Decode one classifier switch into a byte class. All cases must
+         * share ONE in-class target (SwarByteClass expresses a 2-way
+         * in/out split only); the default is the out-of-class edge. The
+         * present byte set must be an inclusive [lo,hi] range minus at
+         * most T2_BYTECLASS_MAX_EXCL holes, inside the byte-exact SWAR
+         * window. */
+        bool prescan_decode_class(const T2Op *sw,
+                                  T2ByteClass *bc,
+                                  T2BasicBlock **in_target,
+                                  T2BasicBlock **def_target) {
+            if (sw == nullptr || sw->kind != T2OpKind::Switch ||
+                sw->num_cases == 0 || (sw->flags & T2_OP_SWITCH_ARITY) != 0 ||
+                sw->default_target == nullptr) {
+                return false;
+            }
+
+            bool present[256];
+
+            for (int i = 0; i < 256; i++) {
+                present[i] = false;
+            }
+
+            T2BasicBlock *tgt = nullptr;
+
+            for (uint32_t i = 0; i < sw->num_cases; i++) {
+                Eterm v = sw->cases[i].value;
+
+                if (!is_small(v)) {
+                    return false;
+                }
+
+                Sint sv = signed_val(v);
+
+                if (sv < 0 || sv > 255) {
+                    return false;
+                }
+                if (tgt == nullptr) {
+                    tgt = sw->cases[i].target;
+                } else if (sw->cases[i].target != tgt) {
+                    return false;
+                }
+                present[sv] = true;
+            }
+            if (tgt == nullptr || tgt == sw->default_target) {
+                return false;
+            }
+
+            int lo = -1, hi = -1;
+
+            for (int b = 0; b < 256; b++) {
+                if (present[b]) {
+                    if (lo < 0) {
+                        lo = b;
+                    }
+                    hi = b;
+                }
+            }
+            if (lo < 0) {
+                return false;
+            }
+
+            unsigned n_excl = 0;
+            uint8_t excl[T2_BYTECLASS_MAX_EXCL];
+
+            for (int b = lo; b <= hi; b++) {
+                if (!present[b]) {
+                    if (n_excl >= T2_BYTECLASS_MAX_EXCL) {
+                        return false;
+                    }
+                    excl[n_excl++] = (uint8_t)b;
+                }
+            }
+
+            bc->lo = (uint8_t)lo;
+            bc->hi = (uint8_t)hi;
+            bc->n_excl = (uint8_t)n_excl;
+            for (unsigned i = 0; i < T2_BYTECLASS_MAX_EXCL; i++) {
+                bc->excl[i] = i < n_excl ? excl[i] : 0;
+            }
+            *in_target = tgt;
+            *def_target = sw->default_target;
+            return t2_byteclass_supported(*bc);
+        }
+
+        struct PrescanShape {
+            T2BasicBlock *h;       /* loop header (ensure + branch)         */
+            T2BasicBlock *readblk; /* base + 8 reads + sync + switch(B1)    */
+            T2BasicBlock *latch;   /* Len add + reduction_check + jump H    */
+            T2BasicBlock *bail;    /* out-of-class exit (T1 string/N)       */
+            T2Op *copy;            /* clause-entry anchor (bs_start_match4) */
+            T2Op *get_pos;         /* guard roll-back resume (EFFECT site)  */
+            T2Op *limit;
+            T2Op *cursor;
+            T2Op *ensure;
+            T2Op *base;
+            T2Op *first_read; /* B1 read (word-load beam_idx)              */
+            T2Op *bsync;
+            T2Op *adv_const; /* readblk's per-byte advance constant        */
+            T2Op *acc;       /* latch's generic Add (Len + C)              */
+            T2Op *acc_const; /* the const increment feeding acc            */
+            T2Op *rc;        /* latch reduction_check                      */
+            std::vector<T2Op *> phis_by_x; /* header phi per X reg          */
+            T2Op *acc_phi;                 /* Len phi (feeds latch add)     */
+            T2ByteClass bc;
+            Sint64 word_bits; /* 64                                        */
+            unsigned n_bytes; /* 8                                         */
+        };
+
+        bool prescan_recognize(T2Function &fn,
+                               const T2LoopInfo &li,
+                               size_t idx,
+                               const ErtsT2RetainedCode *ret,
+                               PrescanShape *out) {
+            const T2Loop &loop = li.loops[idx];
+
+            if (loop.preheader == T2_NO_LOOP_BLOCK) {
+                return prescan_bail(fn, "no preheader");
+            }
+            if (loop.parent != -1) {
+                return prescan_bail(fn, "nested loop (has a parent)");
+            }
+            for (size_t i = 0; i < li.loops.size(); i++) {
+                if (li.loops[i].parent == (int32_t)idx) {
+                    return prescan_bail(fn, "nested loop (has a child)");
+                }
+            }
+            if (loop.latches.size() != 1) {
+                return prescan_bail(fn, "multiple latches");
+            }
+
+            std::unordered_set<uint32_t> body(loop.body.begin(),
+                                              loop.body.end());
+            T2BasicBlock *h = fn.blocks[loop.header];
+            T2BasicBlock *latch = fn.blocks[loop.latches[0]];
+
+            /* --- header phis: exactly `arity`, one per param X0..N-1 --- */
+            std::vector<T2Op *> phis_by_x(fn.arity, nullptr);
+            uint32_t nphi = 0;
+
+            for (T2Op *p = h->phis_head; p != nullptr; p = p->next) {
+                if (p->num_operands < 2 || p->phi_blocks == nullptr ||
+                    p->dst_reg == T2_REG_NONE || !t2_reg_is_x(p->dst_reg) ||
+                    (p->flags & T2_OP_RAW_MODE) != 0) {
+                    return prescan_bail(fn, "header phi shape");
+                }
+                uint32_t xi = t2_reg_index(p->dst_reg);
+
+                if (xi >= fn.arity || phis_by_x[xi] != nullptr) {
+                    return prescan_bail(fn, "header phi home out of range");
+                }
+                phis_by_x[xi] = p;
+                nphi++;
+            }
+            if (nphi != fn.arity) {
+                return prescan_bail(fn, "header phi count != arity");
+            }
+
+            /* --- header body: copy (bs_start_match4 resume) + optional
+             *     bs_get_position + bs_limit + bs_cursor + bs_ensure ---- */
+            T2Op *copy = h->ops_head;
+
+            if (copy == nullptr || copy->kind != T2OpKind::Copy ||
+                copy->num_operands != 1 || copy->dst_reg == T2_REG_NONE ||
+                !t2_reg_is_x(copy->dst_reg) ||
+                t2_reg_index(copy->dst_reg) != 0) {
+                return prescan_bail(fn, "header ctx copy");
+            }
+            if (copy->operands[0] != phis_by_x[0]->result) {
+                return prescan_bail(fn, "ctx copy operand is not the x0 phi");
+            }
+
+            /* bs_get_position is REQUIRED: it is the guard's roll-back
+             * resume PC (a standalone i_bs_get_position records an EFFECT
+             * site under T2_PRESCAN — see pctab_get_position_effect). Its
+             * beam_idx anchors the Boundary deopt: T1 resumes there (cursor
+             * un-advanced), re-saves the window position to its home, then
+             * re-reads and re-classifies the window byte-by-byte. */
+            T2Op *op = copy->next;
+            T2Op *get_pos = nullptr;
+
+            if (op == nullptr || op->kind != T2OpKind::BsGetPosition ||
+                op->num_operands != 1 || op->operands[0] != copy->result ||
+                op->dst_reg == T2_REG_NONE || !t2_reg_is_x(op->dst_reg)) {
+                return prescan_bail(fn,
+                                    "header bs_get_position (roll-back "
+                                    "resume anchor) missing");
+            }
+            get_pos = op;
+            op = op->next;
+
+            /* limit/cursor in either textual order. */
+            T2Op *a = op;
+            T2Op *b = a != nullptr ? a->next : nullptr;
+
+            if (a == nullptr || b == nullptr ||
+                (a->kind != T2OpKind::BsLimit &&
+                 a->kind != T2OpKind::BsCursor) ||
+                (b->kind != T2OpKind::BsLimit &&
+                 b->kind != T2OpKind::BsCursor) ||
+                a->kind == b->kind) {
+                return prescan_bail(fn, "header cursor/limit projections");
+            }
+
+            T2Op *cursor = a->kind == T2OpKind::BsCursor ? a : b;
+            T2Op *limit = a->kind == T2OpKind::BsLimit ? a : b;
+
+            for (T2Op *pr : {cursor, limit}) {
+                if (pr->num_operands != 1 || pr->operands[0] != copy->result ||
+                    (pr->flags & T2_OP_RAW_MODE) == 0 ||
+                    pr->dst_reg == T2_REG_NONE || !t2_reg_is_x(pr->dst_reg)) {
+                    return prescan_bail(fn, "header cursor/limit shape");
+                }
+            }
+
+            T2Op *ensure = b->next;
+
+            if (ensure == nullptr || ensure->kind != T2OpKind::BsEnsure ||
+                ensure->num_operands != 2 ||
+                ensure->operands[0] != cursor->result ||
+                ensure->operands[1] != limit->result ||
+                ensure->next != nullptr) {
+                return prescan_bail(fn, "header bs_ensure");
+            }
+            /* A plain at-least bounds check of a whole 64-bit word (the
+             * per-byte reads set the granularity; the fused load needs the
+             * full word). bit0 (exactly) must be clear. */
+            if (ensure->imm_int <= 0 || ensure->imm_int % 8 != 0 ||
+                (ensure->index & 1) != 0) {
+                return prescan_bail(fn, "header ensure mode/size");
+            }
+
+            const T2Op *hterm = h->terminator;
+
+            if (hterm == nullptr || hterm->kind != T2OpKind::Branch ||
+                hterm->num_operands != 1 ||
+                hterm->operands[0] != ensure->result ||
+                hterm->succ_then == nullptr || hterm->succ_else == nullptr) {
+                return prescan_bail(fn, "header branch");
+            }
+
+            T2BasicBlock *readblk = hterm->succ_then;
+            T2BasicBlock *bail = hterm->succ_else;
+
+            if (body.count(readblk->id) == 0 || readblk == h ||
+                readblk == latch || body.count(bail->id) != 0) {
+                return prescan_bail(fn, "header edges");
+            }
+
+            /* --- readblk: bs_base + N*(bs_read + advance) + bs_sync +
+             *     switch(B1). Collect the N byte reads. ------------------ */
+            if (readblk->phis_head != nullptr) {
+                return prescan_bail(fn, "readblk has phis");
+            }
+
+            T2Op *base = readblk->ops_head;
+
+            if (base == nullptr || base->kind != T2OpKind::BsBase ||
+                base->num_operands != 1 || base->operands[0] != copy->result ||
+                (base->flags & T2_OP_RAW_MODE) == 0 ||
+                base->dst_reg == T2_REG_NONE || !t2_reg_is_x(base->dst_reg)) {
+                return prescan_bail(fn, "readblk bs_base");
+            }
+
+            std::vector<T2Op *> reads;
+            T2Value *cur_v = cursor->result;
+            T2Op *adv_const = nullptr;
+            T2Op *first_read = nullptr;
+            T2Op *o = base->next;
+
+            /* read k, then advance the raw cursor by 8 bits. The advance
+             * increment const may sit before each advance (pre-CSE) or be
+             * shared (post-CSE); accept both and take it from the add's
+             * operand. */
+            while (o != nullptr && o->kind == T2OpKind::BsRead) {
+                if (o->num_operands != 2 || o->operands[0] != base->result ||
+                    o->operands[1] != cur_v || o->imm_int != 8 ||
+                    o->flags != 0 || o->dst_reg == T2_REG_NONE ||
+                    !t2_reg_is_x(o->dst_reg)) {
+                    return prescan_bail(fn, "readblk bs_read shape");
+                }
+                reads.push_back(o);
+                if (first_read == nullptr) {
+                    first_read = o;
+                }
+
+                T2Op *nx = o->next;
+
+                if (nx != nullptr && nx->kind == T2OpKind::ConstInt) {
+                    nx = nx->next; /* the (maybe local) advance increment */
+                }
+
+                T2Op *adv = nx;
+
+                if (adv == nullptr || adv->kind != T2OpKind::AddSmall ||
+                    adv->num_operands != 2 || adv->operands[0] != cur_v ||
+                    (adv->flags & T2_OP_RAW_MODE) == 0 ||
+                    (adv->flags & T2_OP_NO_OVF) == 0 ||
+                    adv->dst_reg != cursor->dst_reg) {
+                    return prescan_bail(fn, "readblk cursor advance");
+                }
+
+                T2Value *av = adv->operands[1];
+
+                if (av == nullptr || av->def == nullptr ||
+                    av->def->kind != T2OpKind::ConstInt ||
+                    av->def->imm_int != 8) {
+                    return prescan_bail(fn, "readblk advance increment != 8");
+                }
+                if (adv_const == nullptr) {
+                    adv_const = av->def;
+                }
+                cur_v = adv->result;
+                o = adv->next;
+            }
+
+            unsigned n_bytes = (unsigned)reads.size();
+
+            if (n_bytes < 2 || (Sint64)n_bytes * 8 != 64) {
+                return prescan_bail(fn, "not exactly one 64-bit word of reads");
+            }
+            if ((Sint64)ensure->imm_int != (Sint64)n_bytes * 8) {
+                return prescan_bail(fn, "ensure size != read width");
+            }
+
+            /* bs_sync of the final advanced cursor, then the B1 switch. */
+            T2Op *bsync = o;
+
+            if (bsync == nullptr || bsync->kind != T2OpKind::BsSync ||
+                bsync->num_operands != 2 ||
+                bsync->operands[0] != copy->result ||
+                bsync->operands[1] != cur_v) {
+                return prescan_bail(fn, "readblk bs_sync");
+            }
+            if (bsync->next != nullptr) {
+                return prescan_bail(fn, "extra op after bs_sync");
+            }
+
+            const T2Op *r0term = readblk->terminator;
+
+            if (r0term == nullptr || r0term->kind != T2OpKind::Switch) {
+                return prescan_bail(fn, "readblk terminator not a switch");
+            }
+
+            /* --- the N-switch classifier chain: switch(B_k) routes the
+             *     in-class set to the next classifier and every other byte
+             *     to the SAME bail; the last routes in-class to the latch.
+             *     All N share ONE byte class. --------------------------- */
+            T2ByteClass bc;
+            bool have_bc = false;
+            T2BasicBlock *chain = readblk;
+
+            for (unsigned k = 0; k < n_bytes; k++) {
+                T2Op *sw = chain->terminator;
+
+                if (sw == nullptr || sw->kind != T2OpKind::Switch ||
+                    sw->num_operands != 1 ||
+                    prescan_resolve(sw->operands[0]) != reads[k]->result) {
+                    return prescan_bail(fn, "classifier switch operand");
+                }
+
+                T2ByteClass this_bc;
+                T2BasicBlock *in_target;
+                T2BasicBlock *def_target;
+
+                if (!prescan_decode_class(sw,
+                                          &this_bc,
+                                          &in_target,
+                                          &def_target)) {
+                    return prescan_bail(fn, "classifier not a supported class");
+                }
+                if (def_target != bail) {
+                    return prescan_bail(fn, "classifier default != bail");
+                }
+                if (!have_bc) {
+                    bc = this_bc;
+                    have_bc = true;
+                } else if (this_bc.lo != bc.lo || this_bc.hi != bc.hi ||
+                           this_bc.n_excl != bc.n_excl) {
+                    return prescan_bail(fn, "classifier class mismatch");
+                } else {
+                    for (unsigned e = 0; e < bc.n_excl; e++) {
+                        if (this_bc.excl[e] != bc.excl[e]) {
+                            return prescan_bail(fn, "classifier excl mismatch");
+                        }
+                    }
+                }
+
+                if (k + 1 < n_bytes) {
+                    /* mid-chain: the in-class edge is the next classifier
+                     * block, which holds only its byte's switch (and dead
+                     * single-input re-label phis — no observable body op
+                     * the fuse would drop). */
+                    if (in_target == readblk || in_target == h ||
+                        in_target == latch || body.count(in_target->id) == 0 ||
+                        !prescan_only_trivial_phis(in_target)) {
+                        return prescan_bail(fn, "mid-chain in-class target");
+                    }
+                    chain = in_target;
+                } else {
+                    /* last byte: in-class edge is the latch. */
+                    if (in_target != latch) {
+                        return prescan_bail(fn, "final in-class edge != latch");
+                    }
+                }
+            }
+
+            /* --- latch: acc' = Add(acc_phi, const C); reduction_check;
+             *     jump header. Const-increment accumulator (Len). The
+             *     increment const may be CSE-shared with the readblk byte
+             *     advances (both add 8), so it need not live in the latch;
+             *     take it from the add's second operand and skip any
+             *     leading const that IS still local. ------------------- */
+            for (const T2Op *p = latch->phis_head; p != nullptr; p = p->next) {
+                if (p->num_operands != 1) {
+                    return prescan_bail(fn, "latch non-trivial phi");
+                }
+            }
+
+            T2Op *acc = latch->ops_head;
+
+            while (acc != nullptr && acc->kind == T2OpKind::ConstInt) {
+                acc = acc->next;
+            }
+            if (acc == nullptr || acc->kind != T2OpKind::Add ||
+                acc->num_operands != 2 || acc->sync == nullptr ||
+                acc->sync->frame_size != T2_NO_FRAME || acc->raw_mask != 0 ||
+                acc->flags != 0 || acc->dst_reg == T2_REG_NONE ||
+                !t2_reg_is_x(acc->dst_reg)) {
+                return prescan_bail(fn, "latch accumulator add");
+            }
+
+            T2Value *inc_v = acc->operands[1];
+
+            if (inc_v == nullptr || inc_v->def == nullptr ||
+                inc_v->def->kind != T2OpKind::ConstInt ||
+                !IS_SSMALL(inc_v->def->imm_int)) {
+                return prescan_bail(fn,
+                                    "accumulator increment not a small const");
+            }
+            T2Op *acc_const = inc_v->def;
+
+            uint32_t acc_x = t2_reg_index(acc->dst_reg);
+
+            if (acc_x >= fn.arity || phis_by_x[acc_x] == nullptr ||
+                prescan_resolve(acc->operands[0]) != phis_by_x[acc_x]->result) {
+                return prescan_bail(fn, "latch add is not the acc phi update");
+            }
+
+            T2Op *acc_phi = phis_by_x[acc_x];
+
+            T2Op *rc = acc->next;
+
+            if (rc == nullptr || rc->kind != T2OpKind::ReductionCheck ||
+                rc->num_operands != 0 || rc->sync == nullptr ||
+                rc->sync->frame_size != T2_NO_FRAME || rc->next != nullptr) {
+                return prescan_bail(fn, "latch reduction_check");
+            }
+
+            const T2Op *lterm = latch->terminator;
+
+            if (lterm == nullptr || lterm->kind != T2OpKind::Jump ||
+                lterm->succ_then != h) {
+                return prescan_bail(fn, "latch back edge");
+            }
+
+            /* --- the acc phi must not be the ctx (x0) phi, and every
+             *     other phi (x1..N-1 except acc) must carry itself on the
+             *     latch edge (loop-invariant). ------------------------- */
+            if (acc_x == 0) {
+                return prescan_bail(fn, "acc phi aliases the ctx phi");
+            }
+            for (uint32_t xi = 0; xi < fn.arity; xi++) {
+                T2Op *p = phis_by_x[xi];
+
+                for (uint16_t i = 0; i < p->num_operands; i++) {
+                    if (p->phi_blocks[i] != latch) {
+                        continue;
+                    }
+                    T2Value *want = (xi == 0)       ? copy->result
+                                    : (xi == acc_x) ? acc->result
+                                                    : p->result;
+
+                    if (prescan_resolve(p->operands[i]) != want) {
+                        return prescan_bail(fn, "latch phi input");
+                    }
+                }
+            }
+
+            /* --- home disjointness: the fresh raw temps (cursor/limit/
+             *     base) must not alias any loop-carried term home, so the
+             *     FC re-projection cannot clobber a live value. --------- */
+            for (uint32_t xi = 0; xi < fn.arity; xi++) {
+                if (cursor->dst_reg == t2_xreg(xi) ||
+                    limit->dst_reg == t2_xreg(xi) ||
+                    base->dst_reg == t2_xreg(xi)) {
+                    return prescan_bail(fn, "raw temp aliases a term home");
+                }
+            }
+            if (cursor->dst_reg == limit->dst_reg ||
+                cursor->dst_reg == base->dst_reg ||
+                limit->dst_reg == base->dst_reg) {
+                return prescan_bail(fn, "cursor/limit/base home collision");
+            }
+
+            /* --- roll-back resume PCs (both Boundary/EFFECT sites). The
+             *     GUARD rolls back to the clause's standalone
+             *     bs_get_position (cursor un-advanced): T1 re-saves the
+             *     window position, re-reads and re-classifies all N bytes,
+             *     and bails at the exact byte. The fused Len ADD keeps the
+             *     original latch gc_bif's own EFFECT site (placed AFTER the
+             *     advance, so its overflow deopt resumes post-classifier
+             *     with the position already advanced, exactly like the
+             *     un-fused latch add). A missing EFFECT PC for either
+             *     degrades to the un-fused (still byte-exact) scan. ---- */
+            if (ret == nullptr || get_pos->beam_idx == 0 ||
+                erts_t2_pc_lookup_kind(ret,
+                                       fn.fn_index,
+                                       get_pos->beam_idx,
+                                       ERTS_T2_PC_EFFECT) == nullptr) {
+                return prescan_bail(fn,
+                                    "no EFFECT pctab entry for bs_get_position "
+                                    "(the guard roll-back anchor)");
+            }
+            if (acc->beam_idx == 0 ||
+                erts_t2_pc_lookup_kind(ret,
+                                       fn.fn_index,
+                                       acc->beam_idx,
+                                       ERTS_T2_PC_EFFECT) == nullptr) {
+                return prescan_bail(fn,
+                                    "no EFFECT pctab entry for the latch add");
+            }
+
+            out->h = h;
+            out->readblk = readblk;
+            out->latch = latch;
+            out->bail = bail;
+            out->copy = copy;
+            out->get_pos = get_pos;
+            out->limit = limit;
+            out->cursor = cursor;
+            out->ensure = ensure;
+            out->base = base;
+            out->first_read = first_read;
+            out->bsync = bsync;
+            out->adv_const = adv_const;
+            out->acc = acc;
+            out->acc_const = acc_const;
+            out->rc = rc;
+            out->phis_by_x = phis_by_x;
+            out->acc_phi = acc_phi;
+            out->bc = bc;
+            out->word_bits = (Sint64)n_bytes * 8;
+            out->n_bytes = n_bytes;
+            return true;
+        }
+
+    } /* anonymous namespace */
+
+    bool t2_prescan(T2Function &fn,
+                    const T2LoopInfo &li,
+                    const ErtsT2RetainedCode *ret,
+                    bool *changed,
+                    unsigned *fused_scans,
+                    std::string *err) {
+        (void)err;
+        *changed = false;
+        *fused_scans = 0;
+
+        if (!erts_t2_prescan_enabled() || fn.blocks.empty() ||
+            !fn.sync_complete) {
+            return true;
+        }
+
+        for (size_t idx = 0; idx < li.loops.size(); idx++) {
+            PrescanShape s;
+
+            if (!prescan_recognize(fn, li, idx, ret, &s)) {
+                continue;
+            }
+
+            /* The fused lane's accumulator (Len) add is a flag-checked
+             * AddSmall the speculation pass converts it to; forcing
+             * T2_NO_SPEC leaves it a generic (allocating) add with no
+             * roll-back, so skip the fuse and stay on the correct
+             * un-fused scan. */
+            if (getenv("T2_NO_SPEC") != nullptr) {
+                prescan_bail(fn, "T2_NO_SPEC (staying un-fused)");
+                continue;
+            }
+
+            /* Header-entry snapshot (the roll-back deopt state = "T1 about
+             * to run the clause"): x0 = the context copy, every param = its
+             * phi, and the accumulator slot = `acc_val` — the pre-increment
+             * phi at the guard / Len-add deopts, the FL's own post-increment
+             * result at the reduction-check. */
+            const uint32_t acc_x = t2_reg_index(s.acc->dst_reg);
+            auto make_hdr_map = [&](T2Value *acc_val) -> T2SyncMap * {
+                T2SyncMap *m = fn.arena.create<T2SyncMap>();
+
+                m->x_live = fn.arity;
+                m->x = fn.arena.alloc_array<T2Value *>(fn.arity);
+                for (uint32_t xi = 0; xi < fn.arity; xi++) {
+                    if (xi == 0) {
+                        m->x[xi] = s.copy->result;
+                    } else if (xi == acc_x) {
+                        m->x[xi] = acc_val;
+                    } else {
+                        m->x[xi] = s.phis_by_x[xi]->result;
+                    }
+                }
+                m->frame_size = T2_NO_FRAME;
+                m->y = nullptr;
+                return m;
+            };
+
+            auto clone_regs = [&](T2Op *dst, const T2Op *src) {
+                if (src->operand_regs == nullptr) {
+                    return;
+                }
+                dst->operand_regs =
+                        fn.arena.alloc_array<int32_t>(src->num_operands);
+                for (uint16_t i = 0; i < src->num_operands; i++) {
+                    dst->operand_regs[i] = src->operand_regs[i];
+                }
+            };
+
+            /* --- FC: the SWAR fast-path admission — same bounds as the
+             *     header ensure PLUS byte alignment (index bit 2), so the
+             *     64-bit load is aligned. On the else edge fall through to
+             *     the original readblk (the un-fused, alignment-agnostic
+             *     remainder). ----------------------------------------- */
+            T2BasicBlock *fc = fn.new_block();
+            T2BasicBlock *fl = fn.new_block();
+
+            T2Op *cur2 = fn.new_op(fc, T2OpKind::BsCursor, s.cursor->type);
+            fn.set_operands(cur2, {s.copy->result});
+            clone_regs(cur2, s.cursor);
+            cur2->dst_reg = s.cursor->dst_reg;
+            cur2->flags = s.cursor->flags;
+            cur2->beam_idx = s.cursor->beam_idx;
+            cur2->deopt_beam_idx = s.cursor->beam_idx;
+
+            T2Op *lim2 = fn.new_op(fc, T2OpKind::BsLimit, s.limit->type);
+            fn.set_operands(lim2, {s.copy->result});
+            clone_regs(lim2, s.limit);
+            lim2->dst_reg = s.limit->dst_reg;
+            lim2->flags = s.limit->flags;
+            lim2->beam_idx = s.limit->beam_idx;
+            lim2->deopt_beam_idx = s.limit->beam_idx;
+
+            T2Op *en2 = fn.new_op(fc, T2OpKind::BsEnsure, s.ensure->type);
+            fn.set_operands(en2, {cur2->result, lim2->result});
+            clone_regs(en2, s.ensure);
+            en2->imm_int = s.word_bits;
+            en2->index = s.ensure->index | 4; /* byte-alignment guard */
+            en2->beam_idx = s.ensure->beam_idx;
+            en2->deopt_beam_idx = s.ensure->beam_idx;
+
+            fn.emit_branch(fc, en2->result, fl, s.readblk);
+            fc->terminator->beam_idx = s.h->terminator->beam_idx;
+            fc->terminator->deopt_beam_idx = s.h->terminator->beam_idx;
+
+            /* Re-point the header's success edge at the fast check; the
+             * original readblk (+ classifier chain) becomes the
+             * remainder path (its predecessor becomes fc). */
+            s.h->terminator->succ_then = fc;
+
+            /* --- FL: one 64-bit load + one SwarByteClass guard + the
+             *     fused Len add + one advance + one sync + reduction. -- */
+            T2SyncMap *hdr_map = make_hdr_map(s.acc_phi->result);
+
+            T2Op *base2 = fn.new_op(fl, T2OpKind::BsBase, s.base->type);
+            fn.set_operands(base2, {s.copy->result});
+            clone_regs(base2, s.base);
+            base2->dst_reg = s.base->dst_reg;
+            base2->flags = s.base->flags;
+            base2->beam_idx = s.base->beam_idx;
+            base2->deopt_beam_idx = s.base->beam_idx;
+
+            /* ONE raw 64-bit load. Its raw temp reuses the (now dead)
+             * limit home. */
+            T2Op *word = fn.new_op(fl, T2OpKind::BsLoadWord, T2Type::any());
+            fn.set_operands(word, {base2->result, cur2->result});
+            word->operand_regs = fn.arena.alloc_array<int32_t>(2);
+            word->operand_regs[0] = s.base->dst_reg;
+            word->operand_regs[1] = s.cursor->dst_reg;
+            word->dst_reg = s.limit->dst_reg;
+            word->flags = T2_OP_RAW_MODE;
+            word->imm_int = s.word_bits;
+            word->beam_idx = s.first_read->beam_idx;
+            word->deopt_beam_idx = s.first_read->beam_idx;
+
+            /* ONE branchless byte-class guard, placed BEFORE the advance/
+             * sync so the cursor is un-advanced at its side exit. On any
+             * out-of-class lane it rolls back (Boundary shape) to the
+             * clause's standalone bs_get_position EFFECT site: T1 re-saves
+             * the window position, re-reads and re-classifies all N bytes,
+             * and bails at the exact byte. The header-entry sync map hands
+             * back the un-advanced context + pre-increment Len. */
+            T2Op *guard =
+                    fn.new_op(fl, T2OpKind::SwarByteClass, T2Type::none());
+            fn.set_operands(guard, {word->result});
+            guard->operand_regs = fn.arena.alloc_array<int32_t>(1);
+            guard->operand_regs[0] = s.limit->dst_reg;
+            guard->imm_int = t2_byteclass_encode(s.bc);
+            guard->deopt_beam_idx = s.get_pos->beam_idx;
+            guard->flags = T2_OP_ROLLBACK;
+            guard->deopt_shape = T2DeoptShape::Boundary;
+            guard->sync = hdr_map;
+
+            /* ONE cursor advance (N*8 bits) + ONE .start commit. Placed
+             * BEFORE the Len add so, when the (impossible-in-practice) Len
+             * overflow deopt fires, the context position is already
+             * advanced — exactly the post-classifier state the latch add's
+             * own T1 site (gc_bif '+') expects. */
+            T2Value *cs = fn.emit_const_int(fl, s.word_bits);
+            cs->def->beam_idx = s.adv_const->beam_idx;
+            cs->def->deopt_beam_idx = s.adv_const->beam_idx;
+
+            T2Op *adv1 = fn.new_op(fl, T2OpKind::AddSmall, s.cursor->type);
+            fn.set_operands(adv1, {cur2->result, cs});
+            adv1->operand_regs = fn.arena.alloc_array<int32_t>(2);
+            adv1->operand_regs[0] = s.cursor->dst_reg;
+            adv1->operand_regs[1] = T2_REG_NONE;
+            adv1->dst_reg = s.cursor->dst_reg;
+            adv1->flags = T2_OP_RAW_MODE | T2_OP_NO_OVF;
+            adv1->beam_idx = s.bsync->beam_idx;
+            adv1->deopt_beam_idx = s.bsync->beam_idx;
+
+            T2Op *sync1 = fn.new_op(fl, T2OpKind::BsSync, s.bsync->type);
+            fn.set_operands(sync1, {s.copy->result, adv1->result});
+            sync1->operand_regs = fn.arena.alloc_array<int32_t>(2);
+            sync1->operand_regs[0] = t2_xreg(0);
+            sync1->operand_regs[1] = s.cursor->dst_reg;
+            sync1->beam_idx = s.bsync->beam_idx;
+            sync1->deopt_beam_idx = s.bsync->beam_idx;
+
+            /* The fused Len accumulator: acc' = acc_phi + C — an exact
+             * clone of the latch's own add, deopting on overflow to that
+             * add's gc_bif EFFECT site (post-advance state). Generic Add
+             * here; the speculation pass converts it to boundary-class
+             * AddSmall. */
+            T2Value *inc = fn.emit_const_int(fl, s.acc_const->imm_int);
+            inc->def->beam_idx = s.acc_const->beam_idx;
+            inc->def->deopt_beam_idx = s.acc_const->beam_idx;
+
+            T2Op *facc = fn.new_op(fl, T2OpKind::Add, s.acc->type);
+            fn.set_operands(facc, {s.acc_phi->result, inc});
+            clone_regs(facc, s.acc);
+            facc->dst_reg = s.acc->dst_reg;
+            facc->live = s.acc->live;
+            facc->mfa_m = s.acc->mfa_m;
+            facc->mfa_f = s.acc->mfa_f;
+            facc->bif_num = s.acc->bif_num;
+            facc->beam_idx = s.acc->beam_idx;
+            facc->deopt_beam_idx = s.acc->beam_idx;
+            facc->sync = make_hdr_map(s.acc_phi->result);
+
+            /* One iteration of the 8-wide loop == one T1 clause call, so
+             * the fused lane charges exactly the latch's per-iteration
+             * amount (reductions stay T1-exact — no N-scaling: the T1
+             * scanner is already born 8-wide). */
+            T2Op *rc2 = fn.new_op(fl, T2OpKind::ReductionCheck, s.rc->type);
+            fn.set_operands(rc2, {});
+            rc2->index = s.rc->index;
+            rc2->beam_idx = s.rc->beam_idx;
+            rc2->deopt_beam_idx = s.rc->beam_idx;
+            rc2->sync = make_hdr_map(facc->result);
+
+            fn.emit_jump(fl, s.h);
+            fl->terminator->beam_idx = s.latch->terminator->beam_idx;
+            fl->terminator->deopt_beam_idx = s.latch->terminator->beam_idx;
+
+            /* --- header phis: add the FL back edge ------------------- */
+            for (uint32_t xi = 0; xi < fn.arity; xi++) {
+                T2Op *phi = s.phis_by_x[xi];
+                std::vector<T2Value *> vals;
+                std::vector<T2BasicBlock *> preds;
+
+                for (uint16_t i = 0; i < phi->num_operands; i++) {
+                    vals.push_back(phi->operands[i]);
+                    preds.push_back(phi->phi_blocks[i]);
+                }
+                if (xi == 0) {
+                    vals.push_back(s.copy->result);
+                } else if (xi == t2_reg_index(s.acc->dst_reg)) {
+                    vals.push_back(facc->result);
+                } else {
+                    vals.push_back(phi->result);
+                }
+                preds.push_back(fl);
+                fn.set_phi_inputs(phi, vals, preds);
+            }
+
+            fn.finalize();
+            *changed = true;
+            (*fused_scans)++;
+
+            if (getenv("T2_PRESCAN_TRACE") != nullptr) {
+                erts_fprintf(stderr,
+                             "t2_prescan: %T:%T/%u FUSED x%u (class "
+                             "[0x%02x,0x%02x] minus %u, header block%u)\n",
+                             fn.module,
+                             fn.function,
+                             (unsigned)fn.arity,
+                             s.n_bytes,
+                             s.bc.lo,
+                             s.bc.hi,
+                             s.bc.n_excl,
+                             s.h->id);
+            }
+        }
+
+        return true;
+    }
+
 } /* namespace erts_t2 */

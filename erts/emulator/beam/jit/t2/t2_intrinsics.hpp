@@ -234,6 +234,19 @@ namespace erts_t2 {
                    unsigned *fused_unrolls,
                    std::string *err);
 
+    /* T2_PRESCAN task #92: fuse the born-8-wide byte-class scan loops
+     * (json:string_ascii, escape_binary, ...) — one bs_match reading 8
+     * bytes + an 8-deep per-byte select_val classifier chain — into ONE
+     * 64-bit load + ONE SwarByteClass guard (rolling back to the clause
+     * entry, cursor un-advanced, on any out-of-class lane). A no-op
+     * unless erts_t2_prescan_enabled(). *fused_scans counts fired fuses. */
+    bool t2_prescan(T2Function &fn,
+                    const T2LoopInfo &li,
+                    const ErtsT2RetainedCode *ret,
+                    bool *changed,
+                    unsigned *fused_scans,
+                    std::string *err);
+
 } /* namespace erts_t2 */
 
 #endif /* _JIT_T2_INTRINSICS_HPP */

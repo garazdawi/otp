@@ -254,9 +254,20 @@ typedef struct ErtsT2BsCmd {
     int dst_arg;   /* generic-op arg index of the Dst operand, or -1     */
 } ErtsT2BsCmd;
 
-/* At most this many decoded commands per bs_match op (the scan subset
- * needs 2-3; a longer list is rejected as outside the subset). */
-#define ERTS_T2_BS_MAX_CMDS 8
+/* At most this many decoded commands per bs_match op (the plain scan
+ * subset needs 2-3; a longer list is rejected as outside the subset).
+ * The T2_PRESCAN born-8-wide byte-class scan needs one ensure_at_least
+ * plus eight 8-bit reads = 9 commands, so the array is sized for that;
+ * the *effective* limit stays ERTS_T2_BS_BASE_MAX_CMDS unless prescan is
+ * on (off-by-default byte-identical). */
+#define ERTS_T2_BS_MAX_CMDS 10
+#define ERTS_T2_BS_BASE_MAX_CMDS 8
+
+/* T2_PRESCAN: the born-8-wide byte-class scanner reads exactly eight
+ * bytes per iteration (json:string_ascii, escape_binary, ...). Outside
+ * prescan a bs_match producing more than one read destination is
+ * rejected (the builder carries one integer-read home). */
+#define ERTS_T2_BS_MAX_READS 8
 
 /* Parse + validate bs_match/3's command args (the generic op's args
  * 3..nargs-1, given as parallel type/val arrays indexed by *generic op

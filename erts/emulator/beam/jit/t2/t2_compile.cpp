@@ -166,6 +166,11 @@ namespace {
                                     * installs                            */
         unsigned switch_max_cases; /* widest Switch (T2 lowers linear;
                                     * T1 binary-searches)                 */
+        unsigned byteclass_fused;  /* SwarByteClass guards (T2_PRESCAN #92):
+                                    * the born-8-wide byte-class scan the
+                                    * wide classifier switches were fused
+                                    * into — the switches are now the
+                                    * un-fused tail remainder, not a tax   */
         unsigned spec_guards;      /* SpeculateSmall                       */
         unsigned map_specs;        /* GetMapElement specialized to a
                                     * profiled monomorphic flatmap shape
@@ -194,6 +199,7 @@ namespace {
         s->scan_runs = scan_runs;
         s->cursor_unroll = cursor_unroll;
         s->switch_max_cases = 0;
+        s->byteclass_fused = 0;
         s->spec_guards = 0;
         s->map_specs = 0;
         s->spills = 0;
@@ -214,11 +220,14 @@ namespace {
                 case T2LirKind::SubSmall:
                     s->fused_arith++;
                     break;
+                case T2LirKind::SwarByteClass:
+                    s->byteclass_fused++;
+                    s->spec_guards++;
+                    break;
                 case T2LirKind::SpeculateSmall:
                 case T2LirKind::SpeculateType:
                 case T2LirKind::SpeculateRange:
                 case T2LirKind::SwarAsciiTest:
-                case T2LirKind::SwarByteClass:
                     s->spec_guards++;
                     break;
                 case T2LirKind::StartMatch:
@@ -302,7 +311,14 @@ namespace {
          * -- lex_wl statically shows 3 add_small, only one per byte), yet
          * the slow bs loop dominates. Disqualify it outright so the
          * never-slower floor holds regardless of which arm accepted. */
-        bool disqualified = s.calls_retained >= 1 || s.switch_max_cases > 4 ||
+        /* A born-8-wide byte-class scan (T2_PRESCAN #92) keeps its wide
+         * classifier switches as the un-fused <8-byte / unaligned tail
+         * remainder; the SWAR SwarByteClass fast path is the hot lane. So
+         * the wide-switch disqualifier does not apply when the fuse fired
+         * (byteclass_fused >= 1) — the switch is handled work, not a
+         * linear-scan tax. */
+        bool wide_switch = s.switch_max_cases > 4 && s.byteclass_fused == 0;
+        bool disqualified = s.calls_retained >= 1 || wide_switch ||
                             bs_unfused ||
                             (s.spec_guards >= 1 && s.fused_arith == 0);
 
@@ -585,6 +601,46 @@ namespace {
                             return T2CompileStatus::IselUnsupported;
                         }
                         t2_loop_info(hir, &li);
+                        rewritten = true;
+                    }
+                }
+
+                /* T2_PRESCAN task #92: fuse the born-8-wide byte-class scan
+                 * loops into a SWAR SwarByteClass guard. A no-op unless the
+                 * opt-in lever is set (off-by-default byte-identical). Like
+                 * the unroll pass it mutates the CFG (fast-path FC/FL +
+                 * roll-back back edge), so on change the function is
+                 * re-validated and the loop analysis re-run before the
+                 * speculation/opt passes below read `li`; its fused Len add
+                 * is converted to a flag-checked AddSmall by the
+                 * speculation pass exactly like the unroll fuses. Credited
+                 * to the same roll-back-pinned FUSED cursor-IV install
+                 * signal (cursor_unroll). */
+                {
+                    bool prescanned = false;
+                    unsigned prescan_scans = 0;
+
+                    if (!t2_prescan(hir,
+                                    li,
+                                    ret,
+                                    &prescanned,
+                                    &prescan_scans,
+                                    &err)) {
+                        if (diag) {
+                            *diag = "prescan: " + err;
+                        }
+                        return T2CompileStatus::IselUnsupported;
+                    }
+                    if (prescanned) {
+                        t2_dump_stage("hir after prescan", hir);
+                        if (!t2_validate(hir, &err)) {
+                            if (diag) {
+                                *diag = "post-prescan validate: " + err;
+                            }
+                            return T2CompileStatus::IselUnsupported;
+                        }
+                        t2_loop_info(hir, &li);
+                        cursor_unroll += prescan_scans;
                         rewritten = true;
                     }
                 }

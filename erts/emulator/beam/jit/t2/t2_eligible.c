@@ -278,11 +278,20 @@ int erts_t2_bs_match_check(const UWord *types,
     int ncmds = 0;
     int read_dsts = 0;
     int tail_dsts = 0;
+    /* T2_PRESCAN task #92: the born-8-wide byte-class scan needs a longer
+     * command list (one ensure + eight reads) and more than one read
+     * destination. Both relaxations are gated on the opt-in lever so an
+     * unset environment admits exactly the same shapes as before (the
+     * off-by-default byte-identical requirement). */
+    const int prescan = erts_t2_prescan_enabled();
+    const int max_cmds =
+            prescan ? ERTS_T2_BS_MAX_CMDS : ERTS_T2_BS_BASE_MAX_CMDS;
+    const int max_reads = prescan ? ERTS_T2_BS_MAX_READS : 1;
 
     while (i < nargs) {
         ErtsT2BsCmd cmd;
 
-        if (ncmds == ERTS_T2_BS_MAX_CMDS) {
+        if (ncmds == max_cmds) {
             return -1;
         }
         if (types[i] != TAG_a) {
@@ -399,15 +408,23 @@ int erts_t2_bs_match_check(const UWord *types,
         ncmds++;
     }
 
-    if (ncmds == 0 || read_dsts > 1 || tail_dsts > 1) {
-        /* No commands is malformed. The builder carries exactly one
-         * integer-read result home and one get_tail result home
-         * (read_val/tail_val), so at most one of each is expressible;
-         * a second read or a second tail keeps the function T1. The
-         * read+tail pair itself is admitted: the builder flushes the
-         * read result to its home before the get_tail GC snapshot so
-         * the sync map names the value the register holds at that
-         * point (see the get_tail command in t2_hir_builder). */
+    if (ncmds == 0 || read_dsts > max_reads || tail_dsts > 1) {
+        /* No commands is malformed. Outside prescan the builder carries
+         * exactly one integer-read result home and one get_tail result
+         * home (read_val/tail_val), so at most one of each is
+         * expressible; a second read or a second tail keeps the function
+         * T1. The read+tail pair itself is admitted: the builder flushes
+         * the read result to its home before the get_tail GC snapshot so
+         * the sync map names the value the register holds at that point
+         * (see the get_tail command in t2_hir_builder). */
+        return -1;
+    }
+    if (read_dsts > 1 && tail_dsts != 0) {
+        /* T2_PRESCAN multi-read: only the pure "ensure + N reads" scan
+         * shape is built (the byte-class scanner has no get_tail — its
+         * `Rest` is the advanced match context, not an extracted tail).
+         * A multi-read list that also extracts a tail is outside what the
+         * builder's per-read flush was validated for; keep it T1. */
         return -1;
     }
     if (dst_count != NULL) {

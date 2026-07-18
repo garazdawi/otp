@@ -298,6 +298,36 @@ static int pctab_is_error(int op) {
     }
 }
 
+/* T2_PRESCAN task #92: the born-8-wide byte-class scanners' clause entry is
+ * `bs_start_match4 resume` (dropped when Ctx==Dst, records nothing) then a
+ * standalone bs_get_position; the SWAR byte-class guard rolls back to that
+ * position save (cursor un-advanced), so under the opt-in lever a STANDALONE
+ * bs_get_position is an EFFECT re-entry. Emit-side mirror: the
+ * op_i_bs_get_position_SS case in beam_asm_module.cpp (both backends).
+ *
+ * The one loader transform that removes a separate i_bs_get_position is the
+ * fusion `bs_start_match3 F Bin Live Ctx | bs_get_position Ctx2 Pos x _ |
+ * equal(Ctx,Ctx2) => i_bs_start_match3_gp` (ops.tab). That case emits NO
+ * standalone get_position, so it must NOT be counted here either — mirror
+ * the fusion exactly by inspecting the immediately preceding genop. Any
+ * other bs_get_position lowers 1:1 to i_bs_get_position (arch-64), so the
+ * decode/emit effect counts zip. Off by default (returns 0 unless the lever
+ * is set), so an unset environment records nothing new. */
+static int pctab_get_position_effect(const BeamOp *op,
+                                     int prev_op,
+                                     const BeamOpArg *prev_ctx) {
+    if (!erts_t2_prescan_enabled() || op->op != genop_bs_get_position_3) {
+        return 0;
+    }
+    /* Fused with the preceding start_match3 (same context)? Then the loader
+     * absorbs it — no standalone i_bs_get_position, so do not count. */
+    if (prev_op == genop_bs_start_match3_4 && op->arity >= 1 &&
+        prev_ctx->type == op->a[0].type && prev_ctx->val == op->a[0].val) {
+        return 0;
+    }
+    return 1;
+}
+
 /* Decode the retained code chunk and record, per function, the decode
  * ordinals (matching t2_hir_builder's numbering: entry label == 0, then
  * one per generic op) of every call/bif/gc_bif/error op. Returns a
@@ -325,6 +355,15 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
         Uint32 idx = 0;
         Uint32 call_cur = 0, bif_cur = 0, eff_cur = 0, err_cur = 0;
 
+        /* T2_PRESCAN: the immediately preceding genop and (when it is a
+         * bs_start_match3) its match-context operand, for the standalone-
+         * bs_get_position effect test (pctab_get_position_effect). Reset at
+         * every function boundary. */
+        int prev_op = -1;
+        BeamOpArg prev_ctx;
+
+        sys_memset(&prev_ctx, 0, sizeof(prev_ctx));
+
         pctab_view_init(&view, ret);
         beamopallocator_init(&op_alloc);
         reader = beamfile_get_code(&view, &op_alloc);
@@ -341,6 +380,7 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                 bif_cur = 0;
                 eff_cur = 0;
                 err_cur = 0;
+                prev_op = -1;
                 if (pass == 0 && fn_idx < fc) {
                     fns[fn_idx].function = (Eterm)op->a[3].val;
                     fns[fn_idx].arity = (Uint32)op->a[4].val;
@@ -371,7 +411,10 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                     } else if (pctab_is_effect(op->op) ||
                                pctab_guard_bif_effect(ret, op) ||
                                pctab_start_match_effect(op) ||
-                               pctab_utf8_effect(op)) {
+                               pctab_utf8_effect(op) ||
+                               pctab_get_position_effect(op,
+                                                         prev_op,
+                                                         &prev_ctx)) {
                         if (pass == 0) {
                             fns[fn_idx].effect_count++;
                         } else {
@@ -385,6 +428,15 @@ static PctabFnDecode *pctab_decode(const ErtsT2RetainedCode *ret) {
                         }
                     }
                     idx++;
+
+                    /* Track the previous BODY genop for the fusion test
+                     * above (capture the start_match3 context operand
+                     * before the op is freed). Only body ops advance it;
+                     * the func_start case resets it to -1. */
+                    prev_op = op->op;
+                    if (op->op == genop_bs_start_match3_4 && op->arity >= 4) {
+                        prev_ctx = op->a[3];
+                    }
                 }
                 break;
             }

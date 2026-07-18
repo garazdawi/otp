@@ -31,7 +31,8 @@ extern "C"
 #include "beam_bp.h"
 #include "erl_bits.h"
 #include "erl_map.h"
-#include "t2_pctab.h" /* ErtsT2PcKind constants for the PC side table */
+#include "t2_pctab.h"  /* ErtsT2PcKind constants for the PC side table */
+#include "t2_retain.h" /* erts_t2_prescan_enabled (T2_PRESCAN #92) */
 }
 
 using namespace asmjit;
@@ -746,6 +747,21 @@ void BeamModuleAssembler::t2_pc_classify(unsigned specific_op,
     case op_i_get_map_element_fSSS:
     case op_i_get_map_element_hash_fScWS:
         t2_pc_record(before, ERTS_T2_PC_EFFECT);
+        break;
+
+    /* T2_PRESCAN #92: the born-8-wide byte-class scanners resume the clause
+     * at a STANDALONE bs_get_position (bs_start_match4 `resume` with
+     * Ctx==Dst is dropped, so it records nothing). The SWAR byte-class
+     * guard's roll-back re-enters here with the cursor un-advanced; T1 then
+     * re-reads and re-classifies the window and bails at the exact byte.
+     * Only under the opt-in lever, and only the standalone lowering — the
+     * bs_start_match3+bs_get_position fusion emits i_bs_start_match3_gp, not
+     * this op, so it never reaches here. Decode-side mirror:
+     * pctab_get_position_effect in t2_pctab.c. */
+    case op_i_bs_get_position_SS:
+        if (erts_t2_prescan_enabled()) {
+            t2_pc_record(before, ERTS_T2_PC_EFFECT);
+        }
         break;
 
     /* Error-exit op sites (P1): a T2 side exit branches here and T1

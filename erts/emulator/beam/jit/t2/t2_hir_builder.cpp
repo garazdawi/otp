@@ -2677,6 +2677,41 @@ namespace erts_t2 {
                         break;
                     }
                     case ERTS_T2_BS_READ_INT8: {
+                        /* T2_PRESCAN task #92 multi-read (born-8-wide
+                         * byte-class scan): flush the PRIOR read's binding
+                         * to its home now, in program order, so the
+                         * following select_val classifier sees the value
+                         * the register holds. Only the *last* read stays
+                         * deferred to the end-of-op reconciliation (the
+                         * single-read contract). Reads carry no sync map
+                         * (no GC point sits between the reads of one
+                         * bs_match), so an early home write corrupts no
+                         * snapshot; the destinations are the fresh per-byte
+                         * homes, disjoint from the live context. Guard the
+                         * one shape the early write could observe wrong: a
+                         * read destination aliasing the still-live context
+                         * register (the compiler never emits it — the
+                         * context is live across the whole bs_match — but a
+                         * blob must not trust it). */
+                        if (read_val != nullptr && read_dst >= 0) {
+                            const DecodedArg &prd = dop.args[read_dst];
+
+                            if (ctx.reg != T2_REG_NONE &&
+                                t2_reg_is_x(ctx.reg) && prd.type == TAG_x &&
+                                reg_var(prd) == t2_reg_index(ctx.reg)) {
+                                fail_op(dop,
+                                        "bs_match intermediate read dst "
+                                        "aliases the context register");
+                                return;
+                            }
+                            write_dst_new(prd, read_val);
+                            if (failed) {
+                                return;
+                            }
+                            read_val = nullptr;
+                            read_dst = -1;
+                        }
+
                         if (base == nullptr) {
                             base = project(T2OpKind::BsBase, base_home);
                         }

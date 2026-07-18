@@ -1837,21 +1837,29 @@ namespace erts_t2 {
 
                 case T2OpKind::SwarByteClass:
                     /* T2_PRESCAN #92: the fused byte-class guard over the
-                     * wide word — same roll-back contract as
-                     * SwarAsciiTest (Boundary + header sync); the packed
-                     * class descriptor rides imm. Reject any descriptor
-                     * the SWAR emit cannot lower byte-exactly (degrade to
-                     * T1 rather than emit an inexact classifier). */
+                     * wide word — the same branchless SWAR verdict + a
+                     * roll-back that re-processes the window in T1. The
+                     * packed class descriptor rides imm. Two roll-back
+                     * shapes are used: Boundary (SwarAsciiTest's utf8
+                     * shape: resume the clause start_match's EFFECT PC),
+                     * and Entry (the born-8-wide resume-context scanners
+                     * whose bs_start_match4 `resume` records NO EFFECT PC —
+                     * resume the function's own T1 entry body from the
+                     * fresh-call vector, cursor un-advanced). Reject any
+                     * descriptor the SWAR emit cannot lower byte-exactly
+                     * (degrade to T1 rather than emit an inexact
+                     * classifier). */
                     lop.kind = T2LirKind::SwarByteClass;
                     if (op->num_operands != 1) {
                         return fail_op(op,
                                        "byte-class guard without exactly "
                                        "one operand");
                     }
-                    if (op->deopt_shape != T2DeoptShape::Boundary) {
+                    if (op->deopt_shape != T2DeoptShape::Boundary &&
+                        op->deopt_shape != T2DeoptShape::Entry) {
                         return fail_op(op,
                                        "byte-class guard outside the "
-                                       "boundary deopt class");
+                                       "boundary/entry deopt class");
                     }
                     if (op->sync == nullptr) {
                         return fail_op(op,
