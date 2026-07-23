@@ -44,6 +44,21 @@
 -module(beam_ssa_tmc).
 -moduledoc false.
 
+%% Structure: a front-end recognizer (extract/2) describes the recursion as an
+%% Info map -- the cell-building site (element + recursion arguments), the
+%% self-recursion, and the base seal-sites -- and a shape-agnostic
+%% destination-passing lowering (build_dps/4) consumes that Info to emit the
+%% Root/Dest-threading helper with set_cons_tail. build_dps is deliberately
+%% not welded to the body-recursive front-end: a second front-end (a
+%% tail-recursive accumulator-prepend whose base is lists:reverse(Acc), with a
+%% uniquely-owned Acc -- the same precondition Technique B / beam_ssa_alias
+%% already prove) can produce an equivalent Info and reuse the lowering to
+%% build forward in one pass rather than prepend-then-reverse. That second
+%% front-end is a later increment. Note for the tradeoff writeup: the TMC form
+%% carries the force-fullsweep tax on GC-spanning builds, whereas Technique B's
+%% rev_inplace copy-falls-back on a tenured spine -- so B stays the long-list
+%% fallback until the tracked-edge/builder-box refinement removes the tax.
+
 -export([module/2, recognize/2, eligible/2]).
 
 -include("beam_ssa.hrl").
