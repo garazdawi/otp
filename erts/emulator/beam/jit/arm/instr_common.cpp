@@ -1100,6 +1100,40 @@ void BeamModuleAssembler::emit_update_record_in_place(
 #endif
 }
 
+/* Destructively set the tail (CDR) of a cons cell (idea #68, technique A).
+ * Mirrors the emu instrs.tab semantics: store NewTail into the CDR slot, then
+ * -- if Cell is not in the young generation [high_water, HTOP) -- flag the
+ * process for a full-sweep GC so the possible old->young edge is repaired.
+ * Emitted only by the tail-modulo-cons transform, which guarantees Cell is a
+ * freshly built, unshared cons cell reachable only from registers. */
+void BeamModuleAssembler::emit_set_cons_tail(const ArgRegister &Cell,
+                                             const ArgSource &NewTail) {
+    auto [cell, newtail] = load_sources(Cell, ARG1, NewTail, ARG2);
+
+    /* CDR(Cell) := NewTail (getCDRRef folds in the list tag). */
+    a64::Gp cons_ptr = emit_ptr_val(TMP1, cell.reg);
+    stur(newtail.reg, getCDRRef(cons_ptr));
+
+    /* Force-fullsweep guard: skip when high_water <= Cell < HTOP (young). The
+     * cmp/ccmp/b_hs sequence is the same young-generation test as
+     * emit_update_record_in_place. */
+    a64::Gp untagged = ARG3;
+    emit_untag_ptr(untagged, cell.reg);
+
+    Label young = a.new_label();
+    a.ldr(ARG4, a64::Mem(c_p, offsetof(Process, high_water)));
+    a.cmp(untagged, HTOP);
+    a.ccmp(untagged, ARG4, imm(NZCV::kNone), imm(arm::CondCode::kLO));
+    a.b_hs(young);
+
+    /* Not young: p->flags |= F_NEED_FULLSWEEP. */
+    a.ldr(TMP2.w(), a64::Mem(c_p, offsetof(Process, flags)));
+    a.orr(TMP2, TMP2, imm(F_NEED_FULLSWEEP));
+    a.str(TMP2.w(), a64::Mem(c_p, offsetof(Process, flags)));
+
+    a.bind(young);
+}
+
 void BeamModuleAssembler::emit_set_tuple_element(const ArgSource &Element,
                                                  const ArgRegister &Tuple,
                                                  const ArgWord &Offset) {

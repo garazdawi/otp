@@ -1113,6 +1113,17 @@ void BeamModuleAssembler::emit_update_record_in_place(
 #endif
 }
 
+/* TODO (idea #68, technique A, A2): x86_64 T1 emitter for set_cons_tail.
+ * The aarch64 emitter (jit/arm/instr_common.cpp emit_set_cons_tail) is the
+ * reference: store NewTail into the CDR slot, then the force-fullsweep guard
+ * `if (Cell not in [high_water, HTOP)) p->flags |= F_NEED_FULLSWEEP`, mirroring
+ * the young-generation test in emit_update_record_in_place here. Deferred: it
+ * is a destructive-store + GC-guard (corruption-class) path and this branch is
+ * developed on an aarch64 host, so it must be added and re-proven (debug+ASan
+ * edge-repair) on an x86_64 host before shipping. Until then set_cons_tail is
+ * absent from x86/ops.tab, so a `+tmc'-compiled module stays interpreter-only
+ * on x86 (loads under -emu_flavor emu, not the x86 JIT) -- +tmc is off by
+ * default, so default x86 builds are unaffected. */
 void BeamModuleAssembler::emit_set_tuple_element(const ArgSource &Element,
                                                  const ArgRegister &Tuple,
                                                  const ArgWord &Offset) {

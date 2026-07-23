@@ -213,6 +213,10 @@ move_deallocate_return
 
 set_tuple_element s S P
 
+# Destructive set cons tail (idea #68 tail-modulo-cons)
+
+set_cons_tail S s
+
 #
 # Get tuple element. Since this instruction is frequently used, we will try
 # to only fetch the pointer to the tuple once for a sequence of BEAM
