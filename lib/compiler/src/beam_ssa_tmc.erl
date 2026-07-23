@@ -86,17 +86,28 @@ module(#b_module{body=Fs0}=Module, Opts) ->
 transform_fun(#b_function{anno=Anno}=F, Report) ->
     case Anno of
         #{func_info := {Mod,Name,Arity}} ->
-            case extract({Name,Arity}, F) of
+            FA = {Name,Arity},
+            case extract(FA, F) of
                 {ok, Info} ->
-                    _ = Report andalso
-                        io:format("tmc: rewrote ~p:~p/~p~n", [Mod,Name,Arity]),
-                    build_dps(F, Mod, {Name,Arity}, Info);
+                    report(Report, Mod, Name, Arity, "body-rec"),
+                    build_dps(F, Mod, FA, Info);
                 no ->
-                    [F]
+                    %% front-end 2: accumulator+reverse -> forward TMC.
+                    case extract_accrev(FA, F) of
+                        {ok, Info2} ->
+                            report(Report, Mod, Name, Arity, "acc+reverse"),
+                            build_dps_accrev(F, Mod, FA, Info2);
+                        no ->
+                            [F]
+                    end
             end;
         #{} ->
             [F]
     end.
+
+report(false, _, _, _, _) -> ok;
+report(true, Mod, Name, Arity, Kind) ->
+    io:format("tmc: rewrote ~p:~p/~p (~s)~n", [Mod,Name,Arity,Kind]).
 
 %%----------------------------------------------------------------------
 %% extract(FA, F) -> {ok, Info} | no
@@ -218,6 +229,189 @@ build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}
     FRw = F#b_function{bs = FBs, cnt = Cnt+1},
 
     [FRw, FDps].
+
+%%======================================================================
+%% Front-end 2: accumulator+reverse -> forward TMC.
+%%
+%%   f([H|T], Acc) -> f(T, [g(H)|Acc]);          %% tail self, prepend Acc
+%%   f([],   Acc) -> lists:reverse(Acc[, Tail]).  %% terminal reverse of Acc
+%%
+%% Lowered to the SAME destination-passing helper as the body-recursive
+%% front-end: build FORWARD with set_cons_tail instead of prepend, and seal
+%% the base with lists:reverse(Acc, Root). Because the base becomes
+%% reverse(Acc0, Root) = reverse(Acc0) ++ Root (Root is the forward list),
+%% the rewrite is correct for ANY initial Acc0 -- no "Acc0 = []" proof, and no
+%% uniqueness/alias proof is needed because Acc is never mutated (a fresh Root
+%% is built). The only precondition is observability: Acc must be used SOLELY
+%% as the prepend tail and the reverse argument (so eliminating the reversed
+%% accumulator changes nothing observable), and the prepend result must flow
+%% only into the self call.
+%%======================================================================
+extract_accrev(FA, #b_function{args=Args, bs=Blocks}) ->
+    Defs = def_map(Blocks),
+    SelfCalls = [{Dst,S} || {Dst, #b_set{op=call}=S} <- maps:to_list(Defs),
+                            is_self_call(S, FA)],
+    %% tail self call: exactly one self call, its result returned directly
+    RetSelf = [L || {L, #b_blk{last=#b_ret{arg=#b_var{}=V}}} <- maps:to_list(Blocks),
+                    lists:keymember(V, 1, SelfCalls)],
+    case {SelfCalls, RetSelf} of
+        {[{RecVar, #b_set{args=[_Callee|SelfArgs]}}], [RetL]} ->
+            ArgSet = sets:from_list(Args),
+            case find_prepend(SelfArgs, ArgSet, Defs) of
+                {ok, AccVar, Elem, PrependVar} ->
+                    case find_base_reverse(AccVar, Blocks, Defs) of
+                        {ok, Rev} ->
+                            Uses = use_map(Blocks),
+                            case acc_used_only(AccVar, PrependVar, Rev, Uses, Blocks)
+                                andalso used_only_by(PrependVar, RecVar, Uses, Blocks) of
+                                true ->
+                                    CallL = def_block(RecVar, Blocks),
+                                    RecArgs = replace(SelfArgs, PrependVar, AccVar),
+                                    {ok, #{call_block => CallL, ret_block => RetL,
+                                           rec => RecVar, elem => Elem,
+                                           rec_args => RecArgs, prepend => PrependVar,
+                                           acc => AccVar, rev => Rev}};
+                                false -> no
+                            end;
+                        no -> no
+                    end;
+                no -> no
+            end;
+        _ -> no
+    end.
+
+%% Exactly one self-call arg is put_list(Elem, AccVar) with AccVar a parameter.
+find_prepend(SelfArgs, ArgSet, Defs) ->
+    Prepends = [{A, Elem, Acc}
+                || A <- SelfArgs,
+                   {set, #b_set{op=put_list, args=[Elem, Acc]}} <- [resolve(A, Defs)],
+                   is_record(Acc, b_var),
+                   sets:is_element(Acc, ArgSet)],
+    case Prepends of
+        [{PrependVar, Elem, AccVar}] -> {ok, AccVar, Elem, PrependVar};
+        _ -> no
+    end.
+
+%% Exactly one `ret RevVar' where RevVar = lists:reverse(AccVar[, Tail]).
+find_base_reverse(AccVar, Blocks, Defs) ->
+    Revs = [{L, V, Arity, tl_arg(RevArgs)}
+            || {L, #b_blk{last=#b_ret{arg=#b_var{}=V}}} <- maps:to_list(Blocks),
+               {set, #b_set{op=call,
+                            args=[#b_remote{mod=#b_literal{val=lists},
+                                            name=#b_literal{val=reverse},
+                                            arity=Arity}, A0 | RevArgs]}}
+                   <- [resolve(V, Defs)],
+               A0 =:= AccVar, (Arity =:= 1 orelse Arity =:= 2)],
+    case Revs of
+        [{RetL, RevVar, Arity, TailArg}] ->
+            {ok, #{ret_block => RetL, rev_var => RevVar,
+                   arity => Arity, tail => TailArg,
+                   call_block => def_block(RevVar, Blocks)}};
+        _ -> no
+    end.
+
+tl_arg([]) -> #b_literal{val=[]};
+tl_arg([T]) -> T.
+
+%% AccVar is used only as the prepend tail and the reverse argument, and never
+%% escapes via a terminator.
+acc_used_only(AccVar, PrependVar, Rev, Uses, Blocks) ->
+    #{rev_var := RevVar} = Rev,
+    Users = maps:get(AccVar, Uses, []),
+    %% match_fail (the function_clause fallback carries the args for its error
+    %% message) is an error-only path, never reached on a valid list, so it does
+    %% not observe the accumulator in a way that affects the result.
+    lists:all(fun(#b_set{op=match_fail}) -> true;
+                 (#b_set{dst=D}) -> D =:= PrependVar orelse D =:= RevVar
+              end, Users)
+        andalso not returned_anywhere(AccVar, Blocks).
+
+used_only_by(Var, ConsumerDst, Uses, Blocks) ->
+    Users = maps:get(Var, Uses, []),
+    lists:all(fun(#b_set{dst=D}) -> D =:= ConsumerDst end, Users)
+        andalso not returned_anywhere(Var, Blocks).
+
+returned_anywhere(Var, Blocks) ->
+    lists:any(fun(#b_blk{last=#b_ret{arg=V}}) -> V =:= Var;
+                 (_) -> false
+              end, maps:values(Blocks)).
+
+def_block(Var, Blocks) ->
+    [L] = [L || {L, #b_blk{is=Is}} <- maps:to_list(Blocks),
+                lists:any(fun(#b_set{dst=D}) -> D =:= Var end, Is)],
+    L.
+
+replace(List, Old, New) ->
+    [case X of Old -> New; _ -> X end || X <- List].
+
+build_dps_accrev(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod,
+                 {Name,Arity}, Info) ->
+    #{call_block := Lcall, ret_block := Lret, rec := Rec, elem := Elem,
+      rec_args := RecArgs, prepend := PrependVar, acc := AccVar,
+      rev := #{ret_block := RevRetL, rev_var := RevVar, tail := TailArg,
+               call_block := RevCallL}} = Info,
+    DpsName = dps_name(Name, Arity),
+    DpsArity = Arity + 2,
+    DpsCallee = #b_local{name=#b_literal{val=DpsName}, arity=DpsArity},
+    Nil = #b_literal{val=[]},
+    RevRemote2 = #b_remote{mod=#b_literal{val=lists},
+                           name=#b_literal{val=reverse}, arity=2},
+
+    RootV = #b_var{name=Cnt},
+    DestV = #b_var{name=Cnt+1},
+    NewV  = #b_var{name=Cnt+2},
+    CallBlk0 = maps:get(Lcall, Bs),
+    %% keep the element/loop computations, drop the prepend, self call and its
+    %% succeeded test.
+    Kept = [I || I <- CallBlk0#b_blk.is,
+                 not is_dst(I, PrependVar),
+                 not is_dst(I, Rec),
+                 not is_succeeded_of(I, Rec)],
+
+    %% helper loop clause: build this cell, splice, tail-call threading Root/New.
+    DpsCallBlk = CallBlk0#b_blk{
+        is = Kept ++ [mk_set(NewV, put_list, [Elem, Nil]),
+                      mk_set(none, set_cons_tail, [DestV, NewV]),
+                      mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, NewV]])],
+        last = #b_ret{arg=Rec}},
+
+    %% helper base clause: seal the last hole (Tail or []) then reverse(Acc,Root).
+    RevCallBlk0 = maps:get(RevCallL, Bs),
+    KeptRev = [I || I <- RevCallBlk0#b_blk.is,
+                    not is_dst(I, RevVar),
+                    not is_succeeded_of(I, RevVar)],
+    DpsRevBlk = RevCallBlk0#b_blk{
+        is = KeptRev ++ [mk_set(none, set_cons_tail, [DestV, TailArg]),
+                         mk_set(RevVar, call, [RevRemote2, AccVar, RootV])],
+        last = #b_ret{arg=RevVar}},
+
+    DpsBs0 = Bs#{Lcall => DpsCallBlk, RevCallL => DpsRevBlk},
+    DpsBs1 = maps:remove(Lret, DpsBs0),
+    DpsBs = case RevRetL =:= RevCallL of
+                true -> DpsBs1;
+                false -> maps:remove(RevRetL, DpsBs1)
+            end,
+    FDps = #b_function{anno = Anno#{func_info => {Mod, DpsName, DpsArity}},
+                       args = Args ++ [RootV, DestV],
+                       bs = DpsBs,
+                       cnt = Cnt+3},
+
+    %% original f: first cell bootstraps the helper; the empty-input base clause
+    %% (its own reverse(Acc)) is left unchanged.
+    Root0 = #b_var{name=Cnt},
+    FCallBlk = CallBlk0#b_blk{
+        is = Kept ++ [mk_set(Root0, put_list, [Elem, Nil]),
+                      mk_set(Rec, call, [DpsCallee | RecArgs ++ [Root0, Root0]])],
+        last = #b_ret{arg=Rec}},
+    FBs = maps:remove(Lret, Bs#{Lcall => FCallBlk}),
+    FRw = F#b_function{bs = FBs, cnt = Cnt+1},
+
+    [FRw, FDps].
+
+is_dst(#b_set{dst=D}, Var) -> D =:= Var;
+is_dst(_, _) -> false.
+is_succeeded_of(#b_set{op={succeeded,_}, args=[A]}, Var) -> A =:= Var;
+is_succeeded_of(_, _) -> false.
 
 mk_set(Dst, Op, Args) ->
     #b_set{dst=Dst, op=Op, args=Args}.
