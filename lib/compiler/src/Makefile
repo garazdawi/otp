@@ -79,6 +79,7 @@ MODULES =  \
 	beam_ssa_share \
 	beam_ssa_ss \
 	beam_ssa_throw \
+	beam_ssa_tmc \
 	beam_ssa_type \
 	beam_trim \
 	beam_types \
