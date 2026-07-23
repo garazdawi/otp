@@ -755,3 +755,12 @@ BEAM_FORMAT_NUMBER=0
 ##      if extracting the value fails; otherwise, jump to label Lbl if
 ##      extraction fails.
 191: get_record_field/5
+
+## @spec set_cons_tail Cell NewTail
+## @doc  Destructively set the tail (CDR) of the cons cell in register Cell
+##       to NewTail. Emitted only by the tail-modulo-cons transform (idea
+##       #68, technique A), which guarantees Cell is a freshly built,
+##       unshared cons cell reachable only from registers. If Cell is not in
+##       the young generation the process is flagged for a full-sweep GC, so
+##       the resulting old-to-young edge is repaired by the next collection.
+192: set_cons_tail/2

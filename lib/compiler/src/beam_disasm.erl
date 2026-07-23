@@ -1009,6 +1009,8 @@ resolve_inst({get_tuple_element,[Src,{u,Off},Dst]},_,_,_) ->
     {get_tuple_element,resolve_arg(Src),Off,resolve_arg(Dst)};
 resolve_inst({set_tuple_element,[Src,Dst,{u,Off}]},_,_,_) ->
     {set_tuple_element,resolve_arg(Src),resolve_arg(Dst),Off};
+resolve_inst({set_cons_tail,[Cell,NewTail]},_,_,_) ->
+    {set_cons_tail,resolve_arg(Cell),resolve_arg(NewTail)};
 resolve_inst({put_list,[Src1,Src2,Dst]},_,_,_) ->
     {put_list,resolve_arg(Src1),resolve_arg(Src2),Dst};
 resolve_inst({put_tuple,[{u,Arity},Dst]},_,_,_) ->

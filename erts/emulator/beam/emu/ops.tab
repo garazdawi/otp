@@ -244,6 +244,10 @@ try_case_end s
 
 set_tuple_element s S P
 
+# Destructive set cons tail (idea #68 tail-modulo-cons)
+
+set_cons_tail S s
+
 # Get tuple element
 
 i_get_tuple_element xy P xy

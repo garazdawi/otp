@@ -462,6 +462,7 @@ classify_heap_need(recv_next) -> gc;
 classify_heap_need(remove_message) -> neutral;
 classify_heap_need(require_stack) -> neutral;
 classify_heap_need(resume) -> gc;
+classify_heap_need(set_cons_tail) -> neutral;
 classify_heap_need(succeeded) -> neutral;
 classify_heap_need(wait_timeout) -> gc.
 
@@ -1880,6 +1881,12 @@ cg_block([#cg_set{op=update_record,dst=Dst0,args=Args0,anno=Anno}|T], Context, S
     I = {update_record,Hint,Size,Src,Dst,{list,Ss}},
     {Is1,St} = cg_block(T, Context, St0),
     {[I|Is1],St};
+cg_block([#cg_set{op=set_cons_tail,args=Args0}|T], Context, St0) ->
+    %% Effect-only instruction (dst=none): destructively write CDR(Cell).
+    [Cell,NewTail] = beam_args(Args0, St0),
+    I = {set_cons_tail,Cell,NewTail},
+    {Is1,St} = cg_block(T, Context, St0),
+    {[I|Is1],St};
 cg_block([#cg_set{op=Op,dst=Dst0,args=Args0}=Set], none, St) ->
     [Dst|Args] = beam_args([Dst0|Args0], St),
     Is = cg_instr(Op, Args, Dst, Set),
@@ -2371,6 +2378,8 @@ cg_instr(bs_set_position, [Ctx,Pos], _Dst) ->
     [{bs_set_position,Ctx,Pos}];
 cg_instr(build_stacktrace, Args, Dst) ->
     setup_args(Args) ++ [build_stacktrace|copy({x,0}, Dst)];
+cg_instr(set_cons_tail=Op, [Cell,NewTail], _Dst) ->
+    [{Op,Cell,NewTail}];
 cg_instr({float,get}, [Src], Dst) ->
     [{fmove,Src,Dst}];
 cg_instr({float,put}, [Src], Dst) ->

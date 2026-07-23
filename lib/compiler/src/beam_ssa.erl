@@ -144,7 +144,7 @@
                       'bs_get' | 'bs_get_position' | 'bs_match_string' |
                       'bs_restore' | 'bs_save' | 'bs_set_position' | 'bs_skip' |
                       'copy' | 'match_fail' | 'put_tuple_arity' |
-                      'succeeded' |
+                      'set_cons_tail' | 'succeeded' |
                       'update_record'.
 
 -import(lists, [foldl/3,mapfoldl/3,reverse/1,reverse/2,sort/1]).

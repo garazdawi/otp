@@ -650,6 +650,14 @@ vi({put_tuple2,Dst,{list,Elements}}, Vst0) ->
     create_term(Type, put_tuple2, [], Dst, Vst);
 vi({update_record,_Hint,Size,Src,Dst,{list,Ss}}, Vst) ->
     verify_update_record(Size, Src, Dst, Ss, Vst);
+vi({set_cons_tail,Cell0,NewTail0}, Vst) ->
+    %% Destructively set CDR(Cell) := NewTail (idea #68 tail-modulo-cons).
+    %% Effect only; defines nothing.
+    Cell = unpack_typed_arg(Cell0, Vst),
+    NewTail = unpack_typed_arg(NewTail0, Vst),
+    assert_type(#t_cons{}, Cell, Vst),
+    assert_term(NewTail, Vst),
+    Vst;
 
 %%
 %% Calls

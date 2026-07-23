@@ -850,6 +850,27 @@ set_tuple_element(Element, Tuple, Offset) {
     *p = $Element;
 }
 
+// Destructively set the tail (CDR) of a cons cell (idea #68, technique A,
+// tail-modulo-cons). Emitted only by the TMC transform, which guarantees
+// Cell is a freshly built, unshared cons cell reachable only from registers.
+//
+// The store may create an old->young pointer if Cell has been tenured by a
+// GC that fired mid-build. BEAM keeps no remembered set, so instead of a
+// write barrier we flag the process for a full-sweep GC whenever Cell is not
+// in the young generation [high_water, HTOP): a full sweep scans the old heap
+// and rebuilds a single generation, repairing the edge. When Cell is young
+// (the common case -- the build has not spanned a GC) the store is a plain
+// young->young write and no flag is set.
+set_cons_tail(Cell, NewTail) {
+    Eterm *cellp = list_val($Cell);
+
+    ASSERT(is_list($Cell));
+    cellp[1] = $NewTail;
+    if (!(c_p->high_water <= cellp && cellp < HTOP)) {
+        c_p->flags |= F_NEED_FULLSWEEP;
+    }
+}
+
 swap(R1, R2) {
     Eterm V = $R1;
     $R1 = $R2;
