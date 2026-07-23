@@ -120,6 +120,7 @@ MODULES= \
 	system_profile_SUITE \
 	time_SUITE \
 	timer_bif_SUITE \
+	tmc_SUITE \
 	trace_SUITE \
 	trace_bif_SUITE \
 	trace_nif_SUITE \

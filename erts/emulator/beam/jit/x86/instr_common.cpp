@@ -1113,17 +1113,44 @@ void BeamModuleAssembler::emit_update_record_in_place(
 #endif
 }
 
-/* TODO (idea #68, technique A, A2): x86_64 T1 emitter for set_cons_tail.
- * The aarch64 emitter (jit/arm/instr_common.cpp emit_set_cons_tail) is the
- * reference: store NewTail into the CDR slot, then the force-fullsweep guard
- * `if (Cell not in [high_water, HTOP)) p->flags |= F_NEED_FULLSWEEP`, mirroring
- * the young-generation test in emit_update_record_in_place here. Deferred: it
- * is a destructive-store + GC-guard (corruption-class) path and this branch is
- * developed on an aarch64 host, so it must be added and re-proven (debug+ASan
- * edge-repair) on an x86_64 host before shipping. Until then set_cons_tail is
- * absent from x86/ops.tab, so a `+tmc'-compiled module stays interpreter-only
- * on x86 (loads under -emu_flavor emu, not the x86 JIT) -- +tmc is off by
- * default, so default x86 builds are unaffected. */
+/* Destructively set the tail (CDR) of a cons cell (idea #68, technique A,
+ * tail-modulo-cons). Mirrors the aarch64 emitter and the emu instrs.tab: store
+ * NewTail into the cons cell's CDR slot, then -- if Cell is not in the young
+ * generation [high_water, HTOP) -- OR F_NEED_FULLSWEEP into p->flags so the
+ * next collection is a full sweep that repairs the possible old->young edge.
+ * The young-generation test is the same tagged-pointer cmp/jae idiom as
+ * emit_update_record_in_place. Emitted only by the TMC transform, which
+ * guarantees Cell is a freshly built, unshared cons cell reachable only from
+ * registers (never a literal). */
+void BeamModuleAssembler::emit_set_cons_tail(const ArgRegister &Cell,
+                                             const ArgSource &NewTail) {
+    /* Keep the tagged cons cell in ARG1 for the guard below. */
+    mov_arg(ARG1, Cell);
+
+    /* CDR(Cell) := NewTail. getCDRRef folds in the list tag; emit_ptr_val only
+     * strips a possible literal tag. */
+    x86::Gp cons_ptr = emit_ptr_val(ARG4, ARG1);
+    mov_arg(getCDRRef(cons_ptr), NewTail, ARG2);
+
+    /* Force-fullsweep guard: do nothing when high_water <= Cell < HTOP
+     * (young). */
+    Label set_flag = a.new_label();
+    Label done = a.new_label();
+
+    a.mov(ARG3, x86::Mem(c_p, offsetof(Process, high_water)));
+    a.cmp(ARG1, HTOP);
+    a.short_().jae(set_flag);
+    a.cmp(ARG1, ARG3);
+    a.short_().jae(done);
+
+    a.bind(set_flag);
+    a.mov(ARG3d, x86::dword_ptr(c_p, offsetof(Process, flags)));
+    a.or_(ARG3d, imm(F_NEED_FULLSWEEP));
+    a.mov(x86::dword_ptr(c_p, offsetof(Process, flags)), ARG3d);
+
+    a.bind(done);
+}
+
 void BeamModuleAssembler::emit_set_tuple_element(const ArgSource &Element,
                                                  const ArgRegister &Tuple,
                                                  const ArgWord &Offset) {
