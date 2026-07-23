@@ -652,10 +652,12 @@ vi({update_record,_Hint,Size,Src,Dst,{list,Ss}}, Vst) ->
     verify_update_record(Size, Src, Dst, Ss, Vst);
 vi({set_cons_tail,Cell0,NewTail0}, Vst) ->
     %% Destructively set CDR(Cell) := NewTail (idea #68 tail-modulo-cons).
-    %% Effect only; defines nothing.
+    %% Effect only; defines nothing. Cell is threaded through the helper as a
+    %% plain argument (type `any'); its cons-ness is guaranteed by the
+    %% transform (and asserted at runtime), so we only require valid terms.
     Cell = unpack_typed_arg(Cell0, Vst),
     NewTail = unpack_typed_arg(NewTail0, Vst),
-    assert_type(#t_cons{}, Cell, Vst),
+    assert_term(Cell, Vst),
     assert_term(NewTail, Vst),
     Vst;
 

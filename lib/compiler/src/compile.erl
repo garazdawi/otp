@@ -1855,6 +1855,12 @@ kernel_passes() ->
        {iff,dssaopt,{listing,"ssaopt"}},
        {unless,no_ssa_opt,{iff,ssalint,{pass,beam_ssa_lint}}},
 
+       %% idea #68 technique A: tail-modulo-cons. Off by default; enable with
+       %% the `tmc' option. Runs after ssa_opt so it sees the final clause
+       %% shape and adds destination-passing helper functions.
+       {iff,tmc,{pass,beam_ssa_tmc}},
+       {iff,tmc,{iff,ssalint,{pass,beam_ssa_lint}}},
+
        {unless,no_throw_opt,{pass,beam_ssa_throw}},
        {iff,dthrow,{listing,"throw"}},
        {unless,no_throw_opt,{iff,ssalint,{pass,beam_ssa_lint}}}]},

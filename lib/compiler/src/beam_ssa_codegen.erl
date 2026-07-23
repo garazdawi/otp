@@ -576,6 +576,10 @@ prefer_xregs_terminator(#cg_switch{arg=Arg0}=I, Copies, St) ->
 
 prefer_xregs_prune(#cg_set{anno=#{clobbers:=true}}, _, _) ->
     #{};
+prefer_xregs_prune(#cg_set{dst=none}, Copies, _St) ->
+    %% Effect-only instruction (e.g. set_cons_tail); writes no register, so
+    %% it invalidates no register copies.
+    Copies;
 prefer_xregs_prune(#cg_set{dst=Dst}, Copies, St) ->
     DstReg = beam_arg(Dst, St),
     #{V => Alias || V := Alias <- Copies,

@@ -44,11 +44,179 @@
 -module(beam_ssa_tmc).
 -moduledoc false.
 
--export([recognize/2, eligible/2]).
+-export([module/2, recognize/2, eligible/2]).
 
 -include("beam_ssa.hrl").
 
 -type fa() :: {atom(), arity()}.
+
+%%----------------------------------------------------------------------
+%% module(Module, Opts) -> {ok, Module}
+%%
+%% The tail-modulo-cons pass. For every function whose sole self-recursion
+%% is a single cons-in-tail-position self call (the narrow v1 shape: map /
+%% filter-less / append), rewrite it into destination-passing style: the
+%% original function builds the first cell and tail-calls a generated helper
+%% `-tmc-Name/Arity-'/Arity+2 that threads the running list (Root) and the
+%% cell whose tail is the current hole (Dest), filling the hole with each new
+%% cell via set_cons_tail and sealing at the base clause. O(1) stack via the
+%% tail call; identical element order.
+%%----------------------------------------------------------------------
+-spec module(#b_module{}, [compile:option()]) -> {ok, #b_module{}}.
+module(#b_module{body=Fs0}=Module, Opts) ->
+    Report = proplists:get_bool(tmc_report, Opts),
+    Fs = lists:flatmap(fun(F) -> transform_fun(F, Report) end, Fs0),
+    {ok, Module#b_module{body=Fs}}.
+
+transform_fun(#b_function{anno=Anno}=F, Report) ->
+    case Anno of
+        #{func_info := {Mod,Name,Arity}} ->
+            case extract({Name,Arity}, F) of
+                {ok, Info} ->
+                    _ = Report andalso
+                        io:format("tmc: rewrote ~p:~p/~p~n", [Mod,Name,Arity]),
+                    build_dps(F, Mod, {Name,Arity}, Info);
+                no ->
+                    [F]
+            end;
+        #{} ->
+            [F]
+    end.
+
+%%----------------------------------------------------------------------
+%% extract(FA, F) -> {ok, Info} | no
+%%   Narrow rewritable shape: exactly one self call, in cons-tail position.
+%%----------------------------------------------------------------------
+extract(FA, #b_function{args=Args, bs=Blocks}) ->
+    case recognize(FA, Blocks) of
+        {true, _} ->
+            Defs = def_map(Blocks),
+            ConsSites = [{L,Elem,Rec}
+                         || {L,#b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks),
+                            {ok,Elem,Rec} <- [cons_site(V, FA, Defs)]],
+            SelfCalls = [Dst || {Dst,S} <- maps:to_list(Defs), is_self_call(S, FA)],
+            case {ConsSites, SelfCalls} of
+                {[{Lc,Elem,Rec}], [Rec]} ->
+                    %% exactly one cons site fed by the one and only self call
+                    Lcall = call_block_of(Rec, Blocks),
+                    #b_set{args=[_Callee|RecArgs]} = maps:get(Rec, Defs),
+                    case {Lcall, base_sites(Lc, Args, Blocks)} of
+                        {none, _} -> no;
+                        {_, []} -> no;
+                        {_, BaseSites} ->
+                            {ok, #{cons_block => Lc, elem => Elem, rec => Rec,
+                                   rec_args => RecArgs, call_block => Lcall,
+                                   base_sites => BaseSites}}
+                    end;
+                _ ->
+                    no
+            end;
+        false ->
+            no
+    end.
+
+%% V = put_list(Elem, Rec) where Rec is a self call.
+cons_site(V, FA, Defs) ->
+    case resolve(V, Defs) of
+        {set, #b_set{op=put_list, args=[Elem, Tl]}} ->
+            case resolve(Tl, Defs) of
+                {set, #b_set{op=call}=S} ->
+                    case is_self_call(S, FA) of
+                        true -> {ok, Elem, Tl};
+                        false -> no
+                    end;
+                _ -> no
+            end;
+        _ -> no
+    end.
+
+%% Which block defines Rec (the self call)?
+call_block_of(Rec, Blocks) ->
+    case [L || {L,#b_blk{is=Is}} <- maps:to_list(Blocks),
+               lists:any(fun(#b_set{dst=D}) -> D =:= Rec end, Is)] of
+        [L] -> L;
+        _ -> none
+    end.
+
+%% Base seal-sites: ret blocks (other than the cons block) whose value is []
+%% or a function argument. Excludes exception/error blocks (which return a
+%% call result), so their exception semantics are preserved.
+base_sites(ConsBlock, Args, Blocks) ->
+    ArgSet = sets:from_list(Args),
+    [{L, V} || {L, #b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks),
+               L =/= ConsBlock,
+               is_base_val(V, ArgSet)].
+
+is_base_val(#b_literal{val=[]}, _) -> true;
+is_base_val(#b_var{}=V, ArgSet) -> sets:is_element(V, ArgSet);
+is_base_val(_, _) -> false.
+
+%%----------------------------------------------------------------------
+%% build_dps(F, Mod, FA, Info) -> [F_rewritten, F_dps]
+%%----------------------------------------------------------------------
+build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}, Info) ->
+    #{cons_block := Lc, elem := Elem, rec := Rec, rec_args := RecArgs,
+      call_block := Lcall, base_sites := BaseSites} = Info,
+    DpsName = dps_name(Name, Arity),
+    DpsArity = Arity + 2,
+    DpsCallee = #b_local{name=#b_literal{val=DpsName}, arity=DpsArity},
+    Nil = #b_literal{val=[]},
+
+    %% ---- helper f_dps: original body + [Root,Dest] args ----
+    RootV = #b_var{name=Cnt},
+    DestV = #b_var{name=Cnt+1},
+    NewV  = #b_var{name=Cnt+2},
+    CallBlk0 = maps:get(Lcall, Bs),
+    %% Keep any element/argument computations in the call block (e.g. get_hd /
+    %% get_tl); drop only the self call and its succeeded test.
+    KeptIs = keep_call_instrs(CallBlk0#b_blk.is, Rec),
+    %% Rewrite the recursion block: build this cell, splice it onto the hole,
+    %% then tail-call the helper threading (Root, New).
+    DpsCallBlk = CallBlk0#b_blk{
+        is = KeptIs ++
+             [mk_set(NewV, put_list, [Elem, Nil]),
+              mk_set(none, set_cons_tail, [DestV, NewV]),
+              mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, NewV]])],
+        last = #b_ret{arg=Rec}},
+    DpsBs1 = maps:remove(Lc, Bs#{Lcall => DpsCallBlk}),
+    %% Seal each base block: fill the last hole with the base value, return Root.
+    DpsBs = lists:foldl(
+              fun({Lb, BaseVal}, Acc) ->
+                      #b_blk{is=Is0}=B = maps:get(Lb, Acc),
+                      B1 = B#b_blk{is = Is0 ++ [mk_set(none, set_cons_tail, [DestV, BaseVal])],
+                                   last = #b_ret{arg=RootV}},
+                      Acc#{Lb => B1}
+              end, DpsBs1, BaseSites),
+    FDps = #b_function{anno = Anno#{func_info => {Mod, DpsName, DpsArity}},
+                       args = Args ++ [RootV, DestV],
+                       bs = DpsBs,
+                       cnt = Cnt+3},
+
+    %% ---- original f: build the first cell, bootstrap into the helper ----
+    Root0 = #b_var{name=Cnt},                   %% separate namespace, reuse Cnt
+    FCallBlk = CallBlk0#b_blk{
+        is = KeptIs ++
+             [mk_set(Root0, put_list, [Elem, Nil]),
+              mk_set(Rec, call, [DpsCallee | RecArgs ++ [Root0, Root0]])],
+        last = #b_ret{arg=Rec}},
+    FBs = maps:remove(Lc, Bs#{Lcall => FCallBlk}),
+    FRw = F#b_function{bs = FBs, cnt = Cnt+1},
+
+    [FRw, FDps].
+
+mk_set(Dst, Op, Args) ->
+    #b_set{dst=Dst, op=Op, args=Args}.
+
+%% Drop the self call (defines Rec) and its succeeded test; keep the rest.
+keep_call_instrs(Is, Rec) ->
+    lists:filter(
+      fun(#b_set{dst=D}) when D =:= Rec -> false;
+         (#b_set{op={succeeded,_}, args=[A]}) when A =:= Rec -> false;
+         (_) -> true
+      end, Is).
+
+dps_name(Name, Arity) ->
+    list_to_atom(lists:concat(["-tmc-", Name, "/", Arity, "-"])).
 
 %%----------------------------------------------------------------------
 %% eligible(FA, Blocks) -> boolean()
