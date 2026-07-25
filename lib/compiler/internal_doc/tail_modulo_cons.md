@@ -21,13 +21,14 @@
 %% %CopyrightEnd%
 -->
 
-# Tail-Modulo-Cons (TMC) for Erlang/OTP
+# Tail-Modulo-Cons (TMC)
 
-An opt-in compiler transform that turns list-building recursion into an
+A compiler transform that turns list-building recursion into an
 **O(1)-stack destination-passing loop**, plus the runtime support it needs.
-Off by default (`+tmc`); with the option off the compiler output is
-byte-identical. This branch is TMC-only and independent of any JIT tiering
-experiment.
+**On by default**; disable per-module with `+no_tmc` (`erlc`) or the `no_tmc`
+compile option. With TMC disabled the compiler output is byte-identical to
+before the feature existed. The transform only touches *eligible* functions;
+every other function compiles exactly as it did.
 
 Modelled on OCaml's `[@tail_mod_cons]` (2022). The idea for Erlang goes back to
 erlang-questions (2002); it was never done because BEAM's heap is immutable and
@@ -36,7 +37,8 @@ TMC sidesteps that (see *GC mechanism*).
 
 ## What it transforms
 
-Two list-building idioms, lowered through **one** destination-passing core.
+Two list-building idioms, lowered through **one** destination-passing core
+(`beam_ssa_tmc`).
 
 **Front-end 1 — body-recursive builders** (`[H | self(...)]`: `map`, `filter`,
 `append`, list comprehensions, tree walks):
@@ -63,6 +65,10 @@ each iteration builds the next cell and splices it on with
 `set_cons_tail(Dest, New)`; the base clause seals the last hole and returns
 `Root`. Same element order, same evaluation order, no accumulator, no reverse.
 
+The list element may be any expression, including one that allocates on the
+heap (`[{K,V} | f(T)]`, `[<<...>> | f(T)]`, …): the element-building
+instructions are preserved and evaluated before the cell is spliced on.
+
 Front-end 2's base seals with `lists:reverse(Acc, Root)`
 (`= reverse(Acc0) ++ Root`), which is the original result for **any** initial
 accumulator, so it needs no interprocedural "seeded with `[]`" proof, and no
@@ -71,9 +77,21 @@ It fires only when the accumulator is used **solely** as the prepend tail and
 the reverse argument (so eliminating the reversed accumulator is unobservable),
 rejecting escapes, observed-before-reverse, multi-reverse and aliased cases.
 
-v1 scope: cons-only, single self-recursion. Multi-cons tails, nested
-constructors, mutual recursion and filter-shape accumulators are left
-unchanged (natural later extensions of the same core).
+Scope: cons-only, single self-recursion. Multi-cons tails (`[A, B | self()]`),
+self calls that are not directly a cons tail, mutual recursion and filter-shape
+accumulators are left unchanged (natural later extensions of the same core).
+
+## Semantic consequence: shallower stacks
+
+TMC converts a body-recursive builder into a tail loop, so a call that used to
+sit inside `n` stack frames now runs in one. This is observable:
+
+* an exception raised while building the list carries a **shorter
+  stacktrace** (the intermediate builder frames are gone), and
+* `erlang:process_info(P, stack_size)` / `current_stacktrace` report the
+  shallower stack.
+
+The list *value* and evaluation order are unchanged; only the stack shape is.
 
 ## The `set_cons_tail` instruction
 
@@ -81,12 +99,11 @@ A new BEAM instruction (opcode **192**), `set_cons_tail Cell NewTail`,
 destructively writes the tail (CDR) of `Cell`. Emitted **only** by the TMC
 transform, which guarantees `Cell` is a freshly built, unshared cons cell
 reachable only from registers. Implemented in the interpreter
-(`emu/instrs.tab`) and the aarch64 T1 BeamAsm JIT
-(`jit/arm/instr_common.cpp`); the x86_64 emitter is a documented TODO (a faithful
-mirror to be added and re-proven on an x86 host), so on x86 a `+tmc` module runs
-under the interpreter flavor. The compiler side is
-`beam_ssa_tmc` (recognizer + rewrite), wired into `compile:` behind the `tmc`
-option, with codegen / validator support.
+(`emu/instrs.tab`) and in both BeamAsm T1 JIT back-ends — aarch64
+(`jit/arm/instr_common.cpp`) and x86_64 (`jit/x86/instr_common.cpp`). The
+compiler side is `beam_ssa_tmc` (recognizer + rewrite), run from `compile:`
+unless `no_tmc` is given, with codegen (`beam_ssa_codegen`) and validator
+(`beam_validator`) support.
 
 ## GC mechanism (force-fullsweep)
 
@@ -121,9 +138,9 @@ AddressSanitizer builds.
   modest — this is the correct general transform, not a large %.
 * **Long-build tax.** A build that spans many GCs forces one full sweep per
   tenuring interval. Heap growth is geometric so this is ~O(log n) sweeps and
-  the list copy stays ~O(n), but a single-list build past ~1M elements can be a
-  modest wall regression versus plain body-recursion (still less memory). Because
-  the feature is opt-in, this is neutralized in practice.
+  the list copy stays ~O(n); a single-list build past ~1M elements can be a
+  modest wall regression versus plain body-recursion (still less memory). This
+  is the one case where `+no_tmc` may be worth reaching for.
 
 Removing the long-build tax without a full sweep needs a per-process
 tracked-edge remembered set scanned by the minor GC. That is a corruption-class
@@ -132,8 +149,9 @@ element/seal edges — a dedicated GC project, deliberately out of scope here.
 
 ## Using it
 
-    erlc +tmc mymod.erl          %% enable the transform
-    erlc +tmc +tmc_report ...    %% also print which functions were rewritten
+    erlc mymod.erl                 %% TMC is applied by default
+    erlc +no_tmc mymod.erl         %% disable the transform for this module
+    erlc +tmc_report mymod.erl     %% print which functions were rewritten
 
-Off by default. A `beam_ssa_tmc`-rewritten module runs on the interpreter and
-the aarch64 JIT; on x86 it currently runs under `-emu_flavor emu`.
+The legacy `+tmc` option is still accepted for compatibility; since the
+transform now runs by default it is a no-op.
