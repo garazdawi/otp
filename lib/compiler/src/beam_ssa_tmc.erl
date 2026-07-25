@@ -408,8 +408,9 @@ build_dps_accrev(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod,
 
     [FRw, FDps].
 
-is_dst(#b_set{dst=D}, Var) -> D =:= Var;
-is_dst(_, _) -> false.
+%% A block's instruction list contains only #b_set{} records, so a
+%% #b_set-only clause is total here (a catch-all would be unreachable).
+is_dst(#b_set{dst=D}, Var) -> D =:= Var.
 is_succeeded_of(#b_set{op={succeeded,_}, args=[A]}, Var) -> A =:= Var;
 is_succeeded_of(_, _) -> false.
 

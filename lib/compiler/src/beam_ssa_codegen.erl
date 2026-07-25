@@ -66,7 +66,7 @@ module(#b_module{anno=Anno,name=Mod,exports=Es,attributes=Attrs,body=Fs}, Opts) 
                  last :: terminator()}).
 
 -record(cg_set, {anno=#{} :: anno(),
-                 dst :: b_var(),
+                 dst :: b_var() | 'none',
                  op :: beam_ssa:op() | 'nop',
                  args :: [beam_ssa:argument()]}).
 
