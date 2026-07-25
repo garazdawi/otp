@@ -196,10 +196,16 @@ build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}
     %% Keep any element/argument computations in the call block (e.g. get_hd /
     %% get_tl); drop only the self call and its succeeded test.
     KeptIs = keep_call_instrs(CallBlk0#b_blk.is, Rec),
+    %% The element expression may have been sunk (by ssa_opt) into the cons
+    %% block Lc, which is removed below. Preserve those definitions -- every
+    %% instruction of Lc except the `put_list(Elem, Rec)' cell we are rebuilding
+    %% (the recognizer guarantees Rec is used only by that put_list, so none of
+    %% these reference Rec) -- and fold them into the rewritten call block.
+    ElemIs = cons_elem_instrs(Lc, Bs, Elem, Rec),
     %% Rewrite the recursion block: build this cell, splice it onto the hole,
     %% then tail-call the helper threading (Root, New).
     DpsCallBlk = CallBlk0#b_blk{
-        is = KeptIs ++
+        is = KeptIs ++ ElemIs ++
              [mk_set(NewV, put_list, [Elem, Nil]),
               mk_set(none, set_cons_tail, [DestV, NewV]),
               mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, NewV]])],
@@ -221,7 +227,7 @@ build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}
     %% ---- original f: build the first cell, bootstrap into the helper ----
     Root0 = #b_var{name=Cnt},                   %% separate namespace, reuse Cnt
     FCallBlk = CallBlk0#b_blk{
-        is = KeptIs ++
+        is = KeptIs ++ ElemIs ++
              [mk_set(Root0, put_list, [Elem, Nil]),
               mk_set(Rec, call, [DpsCallee | RecArgs ++ [Root0, Root0]])],
         last = #b_ret{arg=Rec}},
@@ -424,6 +430,18 @@ keep_call_instrs(Is, Rec) ->
          (#b_set{op={succeeded,_}, args=[A]}) when A =:= Rec -> false;
          (_) -> true
       end, Is).
+
+%% Element-supporting instructions that ssa_opt may have sunk into the cons
+%% block Lc (which build_dps removes). Keep all of Lc's instructions except the
+%% `put_list(Elem, Rec)' cell being rebuilt. Rec is used only by that put_list
+%% (recognizer invariant), so the kept instructions never reference it and are
+%% safe to fold in before the rebuilt cell. Lc is always distinct from the call
+%% block (the self call's succeeded test splits them), which build_dps already
+%% relies on when it removes Lc.
+cons_elem_instrs(Lc, Bs, Elem, Rec) ->
+    #b_blk{is=Is} = maps:get(Lc, Bs),
+    [I || #b_set{op=Op, args=As}=I <- Is,
+          not (Op =:= put_list andalso As =:= [Elem, Rec])].
 
 dps_name(Name, Arity) ->
     list_to_atom(lists:concat(["-tmc-", Name, "/", Arity, "-"])).
