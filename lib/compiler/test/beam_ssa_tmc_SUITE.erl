@@ -99,6 +99,17 @@ fe1_builders(_Config) ->
     same([1,2,3,0],
          "f([X|Xs]) -> [case X of a->1; b->2; c->3; _->0 end | f(Xs)];\n"
          "f([]) -> [].\n", f, [[a,b,c,x]]),
+    %% REGRESSION (epp:coalesce_strings/1 shape): a non-cons clause returns a
+    %% computed value (a call result) that must SEAL the prefix already built,
+    %% not replace it. The `stop' clause is hit mid-list, so the [1,2] prefix
+    %% must survive. (Miscompiled before the seal-any-tail fix: returned [4,3].)
+    same([1,2,4,3],
+         "f([stop|T]) -> lists:reverse(T);\n"
+         "f([H|T]) -> [H|f(T)];\nf([]) -> [].\n", f, [[1,2,stop,3,4]]),
+    %% a computed base returning the tail argument via a helper call
+    same([1,2,7,8],
+         "f([stop|T]) -> id(T);\nf([H|T]) -> [H|f(T)];\nf([]) -> [].\n"
+         "id(X) -> X.\n", f, [[1,2,stop,7,8]]),
     ok.
 
 %%%======================================================================

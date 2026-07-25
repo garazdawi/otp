@@ -179,7 +179,7 @@ report(true, Mod, Name, Arity, Kind) ->
 %% extract(FA, F) -> {ok, Info} | no
 %%   Narrow rewritable shape: exactly one self call, in cons-tail position.
 %%----------------------------------------------------------------------
-extract(FA, #b_function{args=Args, bs=Blocks}) ->
+extract(FA, #b_function{bs=Blocks}) ->
     case recognize(FA, Blocks) of
         {true, _} ->
             Defs = def_map(Blocks),
@@ -192,13 +192,14 @@ extract(FA, #b_function{args=Args, bs=Blocks}) ->
                     %% exactly one cons site fed by the one and only self call
                     Lcall = call_block_of(Rec, Blocks),
                     #b_set{args=[_Callee|RecArgs]} = maps:get(Rec, Defs),
-                    case base_sites(Lc, Args, Blocks) of
-                        [] -> no;
-                        BaseSites ->
-                            {ok, #{cons_block => Lc, elem => Elem, rec => Rec,
-                                   rec_args => RecArgs, call_block => Lcall,
-                                   base_sites => BaseSites}}
-                    end;
+                    %% There is at least one seal-site: a cons return block only
+                    %% exists (ConsSites =/= []) when the recursion also has a
+                    %% non-raising base clause, whose ret block base_sites/3
+                    %% keeps.
+                    BaseSites = base_sites(Lc, Blocks, Defs),
+                    {ok, #{cons_block => Lc, elem => Elem, rec => Rec,
+                           rec_args => RecArgs, call_block => Lcall,
+                           base_sites => BaseSites}};
                 _ ->
                     no
             end;
@@ -228,18 +229,36 @@ call_block_of(Rec, Blocks) ->
                 lists:any(fun(#b_set{dst=D}) -> D =:= Rec end, Is)],
     L.
 
-%% Base seal-sites: ret blocks (other than the cons block) whose value is []
-%% or a function argument. Excludes exception/error blocks (which return a
-%% call result), so their exception semantics are preserved.
-base_sites(ConsBlock, Args, Blocks) ->
-    ArgSet = sets:from_list(Args),
+%% Seal-sites: every ret block other than the cons block, excluding blocks that
+%% raise. In the destination-passing helper each seals the current hole (Dest)
+%% with its return value and returns Root. That value becomes the tail of the
+%% built list, which is exactly the body-recursive meaning of
+%% `[H1 | ... [Hk | Value]]' -- whether Value is `[]', a function argument, or
+%% any other expression (e.g. a call result, as in epp:coalesce_strings/1).
+%%
+%% The shared function_clause exception block returns an erlang:error(badarg)
+%% call result, so it matches #b_ret too; it must NOT be sealed. It throws before
+%% any seal could run, and codegen asserts it stays a bare erlang:error call
+%% (assert_exception_block/1). Leaving erlang:error ret blocks unchanged both
+%% keeps that invariant and preserves their exception semantics.
+%%
+%% The recognizer guarantees the only self call is the cons-edge one (SelfCalls
+%% =:= [Rec] in extract/2), so no seal-site returns a self-call result -- sealing
+%% never swallows a recursion that should have continued the loop.
+base_sites(ConsBlock, Blocks, Defs) ->
     [{L, V} || {L, #b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks),
                L =/= ConsBlock,
-               is_base_val(V, ArgSet)].
+               not is_error_ret(V, Defs)].
 
-is_base_val(#b_literal{val=[]}, _) -> true;
-is_base_val(#b_var{}=V, ArgSet) -> sets:is_element(V, ArgSet);
-is_base_val(_, _) -> false.
+is_error_ret(V, Defs) ->
+    case resolve(V, Defs) of
+        {set, #b_set{op=call,
+                     args=[#b_remote{mod=#b_literal{val=erlang},
+                                     name=#b_literal{val=error}} | _]}} ->
+            true;
+        _ ->
+            false
+    end.
 
 %%----------------------------------------------------------------------
 %% build_dps(F, Mod, FA, Info) -> [F_rewritten, F_dps]
