@@ -83,26 +83,22 @@ module(#b_module{body=Fs0}=Module, Opts) ->
     Fs = lists:flatmap(fun(F) -> transform_fun(F, Report) end, Fs0),
     {ok, Module#b_module{body=Fs}}.
 
-transform_fun(#b_function{anno=Anno}=F, Report) ->
-    case Anno of
-        #{func_info := {Mod,Name,Arity}} ->
-            FA = {Name,Arity},
-            case extract(FA, F) of
-                {ok, Info} ->
-                    report(Report, Mod, Name, Arity, "body-rec"),
-                    build_dps(F, Mod, FA, Info);
+transform_fun(#b_function{anno=#{func_info := {Mod,Name,Arity}}}=F, Report) ->
+    %% Every beam_ssa function carries a func_info annotation.
+    FA = {Name,Arity},
+    case extract(FA, F) of
+        {ok, Info} ->
+            report(Report, Mod, Name, Arity, "body-rec"),
+            build_dps(F, Mod, FA, Info);
+        no ->
+            %% front-end 2: accumulator+reverse -> forward TMC.
+            case extract_accrev(FA, F) of
+                {ok, Info2} ->
+                    report(Report, Mod, Name, Arity, "acc+reverse"),
+                    build_dps_accrev(F, Mod, FA, Info2);
                 no ->
-                    %% front-end 2: accumulator+reverse -> forward TMC.
-                    case extract_accrev(FA, F) of
-                        {ok, Info2} ->
-                            report(Report, Mod, Name, Arity, "acc+reverse"),
-                            build_dps_accrev(F, Mod, FA, Info2);
-                        no ->
-                            [F]
-                    end
-            end;
-        #{} ->
-            [F]
+                    [F]
+            end
     end.
 
 report(false, _, _, _, _) -> ok;
@@ -126,10 +122,9 @@ extract(FA, #b_function{args=Args, bs=Blocks}) ->
                     %% exactly one cons site fed by the one and only self call
                     Lcall = call_block_of(Rec, Blocks),
                     #b_set{args=[_Callee|RecArgs]} = maps:get(Rec, Defs),
-                    case {Lcall, base_sites(Lc, Args, Blocks)} of
-                        {none, _} -> no;
-                        {_, []} -> no;
-                        {_, BaseSites} ->
+                    case base_sites(Lc, Args, Blocks) of
+                        [] -> no;
+                        BaseSites ->
                             {ok, #{cons_block => Lc, elem => Elem, rec => Rec,
                                    rec_args => RecArgs, call_block => Lcall,
                                    base_sites => BaseSites}}
@@ -156,13 +151,12 @@ cons_site(V, FA, Defs) ->
         _ -> no
     end.
 
-%% Which block defines Rec (the self call)?
+%% Which block defines Rec (the self call)? SSA is single-assignment, so Rec is
+%% defined in exactly one block.
 call_block_of(Rec, Blocks) ->
-    case [L || {L,#b_blk{is=Is}} <- maps:to_list(Blocks),
-               lists:any(fun(#b_set{dst=D}) -> D =:= Rec end, Is)] of
-        [L] -> L;
-        _ -> none
-    end.
+    [L] = [L || {L,#b_blk{is=Is}} <- maps:to_list(Blocks),
+                lists:any(fun(#b_set{dst=D}) -> D =:= Rec end, Is)],
+    L.
 
 %% Base seal-sites: ret blocks (other than the cons block) whose value is []
 %% or a function argument. Excludes exception/error blocks (which return a
@@ -392,11 +386,11 @@ build_dps_accrev(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod,
         last = #b_ret{arg=RevVar}},
 
     DpsBs0 = Bs#{Lcall => DpsCallBlk, RevCallL => DpsRevBlk},
-    DpsBs1 = maps:remove(Lret, DpsBs0),
-    DpsBs = case RevRetL =:= RevCallL of
-                true -> DpsBs1;
-                false -> maps:remove(RevRetL, DpsBs1)
-            end,
+    %% Drop the two now-superseded ret blocks: the self-call ret (Lret) and the
+    %% reverse-call ret (RevRetL). RevRetL is always a distinct block from the
+    %% reverse call block RevCallL -- the reverse call's succeeded test splits
+    %% its result into a separate ret block.
+    DpsBs = maps:remove(RevRetL, maps:remove(Lret, DpsBs0)),
     FDps = #b_function{anno = Anno#{func_info => {Mod, DpsName, DpsArity}},
                        args = Args ++ [RootV, DestV],
                        bs = DpsBs,
@@ -542,9 +536,7 @@ def_map(Blocks) ->
     maps:fold(
       fun(_L, #b_blk{is=Is}, Acc) ->
               lists:foldl(
-                fun(#b_set{dst=Dst}=S, A) when Dst =/= none -> A#{Dst => S};
-                   (_, A) -> A
-                end, Acc, Is)
+                fun(#b_set{dst=Dst}=S, A) -> A#{Dst => S} end, Acc, Is)
       end, #{}, Blocks).
 
 use_map(Blocks) ->
@@ -564,10 +556,11 @@ use_map(Blocks) ->
 ret_var_set(Blocks) ->
     sets:from_list([V || #b_blk{last=#b_ret{arg=#b_var{}=V}} <- maps:values(Blocks)]).
 
+%% resolve/2 is only ever applied to values (put_list/call arguments and ret
+%% args), which are always a variable or a literal.
 resolve(#b_var{}=V, Defs) ->
     case maps:find(V, Defs) of
         {ok, S} -> {set, S};
         error -> {var, V}
     end;
-resolve(#b_literal{}=L, _) -> {lit, L};
-resolve(Other, _) -> {other, Other}.
+resolve(#b_literal{}=L, _) -> {lit, L}.
