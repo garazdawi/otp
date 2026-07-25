@@ -95,6 +95,10 @@ fe1_builders(_Config) ->
     same([1,2,3], "f([H|T]) when H > 0 -> [H|f(T)];\n"
                   "f([H|_]) -> [H|g(H)];\nf([]) -> [].\ng(X) -> [X].\n",
          f, [[1,2,3]]),
+    %% element built from a case -> the transformed helper carries a phi/switch
+    same([1,2,3,0],
+         "f([X|Xs]) -> [case X of a->1; b->2; c->3; _->0 end | f(Xs)];\n"
+         "f([]) -> [].\n", f, [[a,b,c,x]]),
     ok.
 
 %%%======================================================================
@@ -151,6 +155,10 @@ rejections(_Config) ->
     %% 20-deep nested cons of the self call -> good_use fuel exhausted
     same_ref("f([H|T]) when H > 0 -> [H|f(T)];\n"
              "f([_|T]) -> [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20|f(T)];\n"
+             "f([]) -> [].\n", f, [P]),
+    %% element computed AFTER the self call, from calls -- the lowering would
+    %% strand its definition, so the well-formedness guard rejects the transform
+    same_ref("f([X|Xs]) -> R = f(Xs), Y = list_to_atom(integer_to_list(X)), [Y|R];\n"
              "f([]) -> [].\n", f, [P]),
 
     %% ---- FE2 near-misses ----

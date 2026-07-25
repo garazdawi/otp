@@ -86,20 +86,90 @@ module(#b_module{body=Fs0}=Module, Opts) ->
 transform_fun(#b_function{anno=#{func_info := {Mod,Name,Arity}}}=F, Report) ->
     %% Every beam_ssa function carries a func_info annotation.
     FA = {Name,Arity},
+    case try_transform(FA, F, Mod) of
+        {ok, Kind, Result} ->
+            report(Report, Mod, Name, Arity, Kind),
+            Result;
+        no ->
+            [F]
+    end.
+
+%% Recognize and lower, then guard the result: a builder shape may pass the
+%% recognizer but produce a helper that is not well-formed SSA -- e.g. the list
+%% element is computed *after* the self call (so its definition is stranded when
+%% the call block becomes the tail-call). Such a transform is discarded and the
+%% function is compiled unchanged. This keeps the pass safe to run by default:
+%% the worst case is a missed optimization, never a broken module.
+try_transform(FA, F, Mod) ->
     case extract(FA, F) of
         {ok, Info} ->
-            report(Report, Mod, Name, Arity, "body-rec"),
-            build_dps(F, Mod, FA, Info);
+            accept(build_dps(F, Mod, FA, Info), "body-rec");
         no ->
             %% front-end 2: accumulator+reverse -> forward TMC.
             case extract_accrev(FA, F) of
                 {ok, Info2} ->
-                    report(Report, Mod, Name, Arity, "acc+reverse"),
-                    build_dps_accrev(F, Mod, FA, Info2);
+                    accept(build_dps_accrev(F, Mod, FA, Info2), "acc+reverse");
                 no ->
-                    [F]
+                    no
             end
     end.
+
+%% Commit the lowering only if every rewritten function is well-formed SSA.
+accept(Result, Kind) ->
+    case lists:all(fun valid_fun/1, Result) of
+        true -> {ok, Kind, Result};
+        false -> no
+    end.
+
+%% A lowering is valid only if every variable used in a block reachable from the
+%% entry is defined in a reachable block (or is a function argument). This
+%% rejects shapes where the list element depends on a value computed *after* the
+%% self call: build_dps turns the call block into the tail-call and thereby
+%% orphans the blocks that computed that value, leaving the (moved) element
+%% construction referencing a now-unreachable definition.
+valid_fun(#b_function{args=Args, bs=Bs}) ->
+    Reach = reachable_blocks(Bs),
+    Defined = lists:foldl(
+                fun(L, Acc) ->
+                        #b_blk{is=Is} = maps:get(L, Bs),
+                        lists:foldl(
+                          fun(#b_set{dst=#b_var{}=D}, A) -> A#{D => []};
+                             (_, A) -> A
+                          end, Acc, Is)
+                end, maps:from_keys(Args, []), Reach),
+    lists:all(
+      fun(L) ->
+              #b_blk{is=Is, last=Last} = maps:get(L, Bs),
+              lists:all(fun(I) -> args_defined(I, Defined) end, Is)
+                  andalso args_defined(Last, Defined)
+      end, Reach).
+
+%% A phi operand is supplied along its predecessor edge, so it need only be
+%% defined in that predecessor -- checking global reachable definedness is
+%% sufficient here.
+args_defined(#b_set{op=phi, args=Args}, Defined) ->
+    lists:all(fun({V, _Pred}) -> val_defined(V, Defined) end, Args);
+args_defined(#b_set{args=Args}, Defined) ->
+    lists:all(fun(A) -> val_defined(A, Defined) end, Args);
+args_defined(#b_ret{arg=A}, Defined) -> val_defined(A, Defined);
+args_defined(#b_br{bool=B}, Defined) -> val_defined(B, Defined);
+args_defined(#b_switch{arg=A}, Defined) -> val_defined(A, Defined).
+
+val_defined(#b_var{}=V, Defined) -> is_map_key(V, Defined);
+val_defined(_, _) -> true.
+
+reachable_blocks(Bs) ->
+    reach([0], Bs, sets:new()).
+
+reach([L|Ls], Bs, Seen) ->
+    case sets:is_element(L, Seen) of
+        true ->
+            reach(Ls, Bs, Seen);
+        false ->
+            reach(beam_ssa:successors(L, Bs) ++ Ls, Bs, sets:add_element(L, Seen))
+    end;
+reach([], _Bs, Seen) ->
+    sets:to_list(Seen).
 
 report(false, _, _, _, _) -> ok;
 report(true, Mod, Name, Arity, Kind) ->
