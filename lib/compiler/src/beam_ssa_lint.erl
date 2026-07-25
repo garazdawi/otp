@@ -120,6 +120,11 @@ vvars_assert_unique(Blocks, Args) ->
 -spec vvars_assert_unique_1(Is, Defined) -> ok when
       Is :: list(beam_ssa:b_set()),
       Defined :: #{ beam_ssa:b_var() => beam_ssa:b_set() }.
+vvars_assert_unique_1([#b_set{dst=none,anno=Anno}|Is], Defined) ->
+    %% Effect-only instruction (e.g. set_cons_tail) -- no destination, so it
+    %% defines no variable and cannot be a redefinition.
+    check_anno(Anno),
+    vvars_assert_unique_1(Is, Defined);
 vvars_assert_unique_1([#b_set{dst=Dst,anno=Anno}=I|Is], Defined) ->
     check_anno(Anno),
     case Defined of
