@@ -79,19 +79,61 @@
 -spec module(#b_module{}, [compile:option()]) -> {ok, #b_module{}}.
 module(#b_module{body=Fs0}=Module, Opts) ->
     Report = proplists:get_bool(tmc_report, Opts),
-    Fs = lists:flatmap(fun(F) -> transform_fun(F, Report) end, Fs0),
-    {ok, Module#b_module{body=Fs}}.
+    %% A generated helper duplicates its parent's blocks, including any
+    %% `debug_line' instructions (present under `beam_debug_info'). Those
+    %% indices are module-global and must stay unique, so the helper's copies
+    %% are re-indexed from above the highest index already in the module.
+    NextIdx0 = max_debug_index(Fs0) + 1,
+    {Fss, _NextIdx} =
+        lists:mapfoldl(fun(F, NextIdx) -> transform_fun(F, Report, NextIdx) end,
+                       NextIdx0, Fs0),
+    {ok, Module#b_module{body=lists:append(Fss)}}.
 
-transform_fun(#b_function{anno=#{func_info := {Mod,Name,Arity}}}=F, Report) ->
+transform_fun(#b_function{anno=#{func_info := {Mod,Name,Arity}}}=F, Report, NextIdx) ->
     %% Every beam_ssa function carries a func_info annotation.
     FA = {Name,Arity},
     case try_transform(FA, F, Mod) of
-        {ok, Kind, Result} ->
+        {ok, Kind, [FRw|Helpers]} ->
             report(Report, Mod, Name, Arity, Kind),
-            Result;
+            %% FRw keeps the parent's blocks (and debug_line indices); only the
+            %% generated helpers carry duplicated indices to re-index.
+            {Helpers1, NextIdx1} =
+                lists:mapfoldl(fun reindex_debug_lines/2, NextIdx, Helpers),
+            {[FRw|Helpers1], NextIdx1};
         no ->
-            [F]
+            {[F], NextIdx}
     end.
+
+%% Highest `debug_line' index in the module (0 when compiled without
+%% `beam_debug_info', so re-indexing is then a no-op).
+max_debug_index(Fs) ->
+    lists:foldl(
+      fun(#b_function{bs=Bs}, Max) ->
+              maps:fold(
+                fun(_, #b_blk{is=Is}, M) ->
+                        lists:foldl(
+                          fun(#b_set{op=debug_line, args=[#b_literal{val=Idx}]}, MM) ->
+                                  max(Idx, MM);
+                             (_, MM) -> MM
+                          end, M, Is)
+                end, Max, Bs)
+      end, 0, Fs).
+
+%% Give every `debug_line' in a generated helper a fresh module-unique index,
+%% preserving its source-location annotation (only the index tag changes).
+reindex_debug_lines(#b_function{bs=Bs}=F, NextIdx0) ->
+    {Ls, NextIdx} =
+        lists:mapfoldl(
+          fun({L, #b_blk{is=Is}=Blk}, N0) ->
+                  {Is1, N1} = lists:mapfoldl(fun reindex_is/2, N0, Is),
+                  {{L, Blk#b_blk{is=Is1}}, N1}
+          end, NextIdx0, lists:sort(maps:to_list(Bs))),
+    {F#b_function{bs=maps:from_list(Ls)}, NextIdx}.
+
+reindex_is(#b_set{op=debug_line, args=[#b_literal{}=Lit]}=I, N) ->
+    {I#b_set{args=[Lit#b_literal{val=N}]}, N+1};
+reindex_is(I, N) ->
+    {I, N}.
 
 %% Recognize and lower, then guard the result: a builder shape may pass the
 %% recognizer but produce a helper that is not well-formed SSA -- e.g. the list

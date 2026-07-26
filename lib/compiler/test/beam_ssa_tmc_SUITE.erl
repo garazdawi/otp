@@ -39,7 +39,7 @@
          init_per_suite/1, end_per_suite/1,
          init_per_group/2, end_per_group/2,
          fe1_builders/1, fe2_accrev/1, filters/1, multi_cons/1, rejections/1,
-         report/1, api/1, disasm/1]).
+         report/1, api/1, disasm/1, debug_info/1]).
 
 suite() ->
     [{ct_hooks, [ts_install_cth]},
@@ -51,7 +51,7 @@ all() ->
 groups() ->
     [{p, test_lib:parallel(),
       [fe1_builders, fe2_accrev, filters, multi_cons, rejections,
-       report, api, disasm]}].
+       report, api, disasm, debug_info]}].
 
 init_per_suite(Config) ->
     test_lib:recompile(?MODULE),
@@ -344,6 +344,35 @@ disasm(_Config) ->
     true = lists:any(fun({set_cons_tail,_,_}) -> true;
                         (_) -> false
                      end, Code),
+    ok.
+
+%%%======================================================================
+%%% beam_debug_info: DPS-generated helpers duplicate their parent's
+%%% `debug_line' indices, which must be re-indexed to stay module-unique or
+%%% beam_asm's debug-table assertion fails. Compile FE1 + FE2 builders (each
+%%% producing a helper) under `beam_debug_info' and assert they build, run and
+%%% keep every debug_line index unique.
+%%%======================================================================
+debug_info(_Config) ->
+    Src = "map([H|T]) -> [H*2|map(T)];\nmap([]) -> [].\n"
+          "filt([H|T]) when H > 0 -> [H|filt(T)];\n"
+          "filt([_|T]) -> filt(T);\nfilt([]) -> [].\n"
+          "acc([H|T],A) -> acc(T,[H|A]);\nacc([],A) -> lists:reverse(A).\n"
+          "accf([H|T],A) when H > 0 -> accf(T,[H|A]);\n"
+          "accf([_|T],A) -> accf(T,A);\naccf([],A) -> lists:reverse(A).\n",
+    {Mod, Bin} = compile_bin(Src, [beam_debug_info]),
+    _ = code:purge(Mod),
+    {module, Mod} = code:load_binary(Mod, atom_to_list(Mod) ++ ".beam", Bin),
+    [2,4,6] = Mod:map([1,2,3]),
+    [1,3] = Mod:filt([1,-2,3]),
+    [1,2,3] = Mod:acc([1,2,3], []),
+    [1,3] = Mod:accf([1,-2,3], []),
+    %% the exact failure was a duplicate index: assert every one is unique
+    {beam_file, Mod, _, _, _, Fns} = beam_disasm:file(Bin),
+    Idx = [element(4, T) || {function,_,_,_,Is} <- Fns, T <- Is,
+                            is_tuple(T), element(1, T) =:= debug_line],
+    true = Idx =/= [],
+    true = length(Idx) =:= length(lists:usort(Idx)),
     ok.
 
 %%%======================================================================
