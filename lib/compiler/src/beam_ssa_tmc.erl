@@ -187,19 +187,27 @@ extract(FA, #b_function{bs=Blocks}) ->
                          || {L,#b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks),
                             {ok,Elem,Rec} <- [cons_site(V, FA, Defs)]],
             SelfCalls = [Dst || {Dst,S} <- maps:to_list(Defs), is_self_call(S, FA)],
-            case {ConsSites, SelfCalls} of
-                {[{Lc,Elem,Rec}], [Rec]} ->
-                    %% exactly one cons site fed by the one and only self call
-                    Lcall = call_block_of(Rec, Blocks),
-                    #b_set{args=[_Callee|RecArgs]} = maps:get(Rec, Defs),
-                    %% There is at least one seal-site: a cons return block only
-                    %% exists (ConsSites =/= []) when the recursion also has a
-                    %% non-raising base clause, whose ret block base_sites/3
-                    %% keeps.
-                    BaseSites = base_sites(Lc, Blocks, Defs),
-                    {ok, #{cons_block => Lc, elem => Elem, rec => Rec,
-                           rec_args => RecArgs, call_block => Lcall,
-                           base_sites => BaseSites}};
+            case ConsSites of
+                [{Lc,Elem,Rec}] ->
+                    %% Exactly one cons site (the cons edge). Any OTHER self call
+                    %% must be a `continue' edge -- a self call returned directly
+                    %% (a filter skip). recognize/2 already proved every self call
+                    %% is good (returned or consed), and with a single cons site
+                    %% the others are all returned directly; verify that here.
+                    Continue = SelfCalls -- [Rec],
+                    RetVars = ret_var_set(Blocks),
+                    case lists:all(fun(C) -> sets:is_element(C, RetVars) end,
+                                   Continue) of
+                        true ->
+                            Lcall = call_block_of(Rec, Blocks),
+                            #b_set{args=[_Callee|RecArgs]} = maps:get(Rec, Defs),
+                            BaseSites = base_sites(Lc, Blocks, Defs, FA),
+                            {ok, #{cons_block => Lc, elem => Elem, rec => Rec,
+                                   rec_args => RecArgs, call_block => Lcall,
+                                   base_sites => BaseSites, continue => Continue}};
+                        false ->
+                            no
+                    end;
                 _ ->
                     no
             end;
@@ -245,10 +253,14 @@ call_block_of(Rec, Blocks) ->
 %% The recognizer guarantees the only self call is the cons-edge one (SelfCalls
 %% =:= [Rec] in extract/2), so no seal-site returns a self-call result -- sealing
 %% never swallows a recursion that should have continued the loop.
-base_sites(ConsBlock, Blocks, Defs) ->
+%% A ret block that returns a self-call result directly is a `continue' edge
+%% (a filter skip: `f([_|T]) -> f(T)') -- it must CONTINUE the loop, threaded to
+%% the helper, not be sealed. build_dps handles those separately.
+base_sites(ConsBlock, Blocks, Defs, FA) ->
     [{L, V} || {L, #b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks),
                L =/= ConsBlock,
-               not is_error_ret(V, Defs)].
+               not is_error_ret(V, Defs),
+               not is_self_ret(V, FA, Defs)].
 
 is_error_ret(V, Defs) ->
     case resolve(V, Defs) of
@@ -260,12 +272,18 @@ is_error_ret(V, Defs) ->
             false
     end.
 
+is_self_ret(V, FA, Defs) ->
+    case resolve(V, Defs) of
+        {set, S} -> is_self_call(S, FA);
+        _ -> false
+    end.
+
 %%----------------------------------------------------------------------
 %% build_dps(F, Mod, FA, Info) -> [F_rewritten, F_dps]
 %%----------------------------------------------------------------------
 build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}, Info) ->
     #{cons_block := Lc, elem := Elem, rec := Rec, rec_args := RecArgs,
-      call_block := Lcall, base_sites := BaseSites} = Info,
+      call_block := Lcall, base_sites := BaseSites, continue := Continue} = Info,
     DpsName = dps_name(Name, Arity),
     DpsArity = Arity + 2,
     DpsCallee = #b_local{name=#b_literal{val=DpsName}, arity=DpsArity},
@@ -302,9 +320,15 @@ build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}
                                    last = #b_ret{arg=RootV}},
                       Acc#{Lb => B1}
               end, DpsBs1, BaseSites),
+    %% Continue edges (filter skips: `f([_|T]) -> f(T)'): in the helper these
+    %% must tail-call the helper again threading the SAME Root/Dest, so the
+    %% element is skipped and the loop continues (they are NOT sealed). In the
+    %% original F they are left as plain self calls -- tail-recursive, O(1) --
+    %% that bootstrap the helper at the first cons.
+    DpsBsC = thread_continue(Continue, DpsCallee, RootV, DestV, DpsBs),
     FDps = #b_function{anno = Anno#{func_info => {Mod, DpsName, DpsArity}},
                        args = Args ++ [RootV, DestV],
-                       bs = DpsBs,
+                       bs = DpsBsC,
                        cnt = Cnt+3},
 
     %% ---- original f: build the first cell, bootstrap into the helper ----
@@ -318,6 +342,23 @@ build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}
     FRw = F#b_function{bs = FBs, cnt = Cnt+1},
 
     [FRw, FDps].
+
+%% In the helper, rewrite each continue-edge self call to call the helper
+%% instead (threading Root/Dest), so a skipped element continues the loop.
+thread_continue(Continue, DpsCallee, RootV, DestV, Bs) ->
+    lists:foldl(
+      fun(RecC, Acc) ->
+              L = call_block_of(RecC, Acc),
+              #b_blk{is=Is}=B = maps:get(L, Acc),
+              Is1 = [thread_self_call(I, RecC, DpsCallee, RootV, DestV) || I <- Is],
+              Acc#{L => B#b_blk{is=Is1}}
+      end, Bs, Continue).
+
+thread_self_call(#b_set{dst=RecC, op=call, args=[_Callee|As]}=S, RecC,
+                 DpsCallee, RootV, DestV) ->
+    S#b_set{args=[DpsCallee | As ++ [RootV, DestV]]};
+thread_self_call(I, _RecC, _DpsCallee, _RootV, _DestV) ->
+    I.
 
 %%======================================================================
 %% Front-end 2: accumulator+reverse -> forward TMC.

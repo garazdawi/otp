@@ -38,7 +38,7 @@
 -export([all/0, suite/0, groups/0,
          init_per_suite/1, end_per_suite/1,
          init_per_group/2, end_per_group/2,
-         fe1_builders/1, fe2_accrev/1, rejections/1,
+         fe1_builders/1, fe2_accrev/1, filters/1, rejections/1,
          report/1, api/1, disasm/1]).
 
 suite() ->
@@ -50,7 +50,7 @@ all() ->
 
 groups() ->
     [{p, test_lib:parallel(),
-      [fe1_builders, fe2_accrev, rejections, report, api, disasm]}].
+      [fe1_builders, fe2_accrev, filters, rejections, report, api, disasm]}].
 
 init_per_suite(Config) ->
     test_lib:recompile(?MODULE),
@@ -139,6 +139,33 @@ fe2_accrev(_Config) ->
     ok.
 
 %%%======================================================================
+%%% Filters -- multiple self calls: a cons edge plus `continue' (skip) edges
+%%% that must thread the loop, not seal. (Filtered list comprehensions compile
+%%% to exactly this shape.)
+%%%======================================================================
+filters(_Config) ->
+    In = [1, -2, 3, -4, 5, 0, 6, -7],
+    %% guarded filter: keep positives
+    same([1,3,5,6], "f([H|T]) when H > 0 -> [H|f(T)];\n"
+                    "f([_|T]) -> f(T);\nf([]) -> [].\n", f, [In]),
+    %% two distinct skip clauses
+    same([1,2,3], "f([a|T]) -> f(T);\nf([b|T]) -> f(T);\n"
+                  "f([H|T]) -> [H|f(T)];\nf([]) -> [].\n", f, [[a,1,b,2,a,3,b]]),
+    %% filter with a computed (non-[]) base -- seal the base, thread the skips
+    same([1,3,5,6,x], "f([H|T]) when H > 0 -> [H|f(T)];\n"
+                      "f([_|T]) -> f(T);\nf([]) -> [x].\n", f, [In]),
+    %% map+filter: transform the kept elements
+    same([10,30,50,60], "f([H|T]) when H > 0 -> [H*10|f(T)];\n"
+                        "f([_|T]) -> f(T);\nf([]) -> [].\n", f, [In]),
+    %% filtered list comprehension (the compiler-generated skip shape)
+    same([1,4,16,25], "f(L) -> [X*X || X <- L, X rem 3 =/= 0].\n", f,
+         [[1,2,3,4,5,6]]),
+    %% leading and trailing skips
+    same([2,4], "f([H|T]) when H rem 2 =:= 0 -> [H|f(T)];\n"
+                "f([_|T]) -> f(T);\nf([]) -> [].\n", f, [[1,2,3,4,5]]),
+    ok.
+
+%%%======================================================================
 %%% Recognizer rejections / near-misses. These must compile cleanly with
 %%% `tmc' and produce the same result as without it (i.e. left untransformed).
 %%%======================================================================
@@ -171,6 +198,10 @@ rejections(_Config) ->
     %% strand its definition, so the well-formedness guard rejects the transform
     same_ref("f([X|Xs]) -> R = f(Xs), Y = list_to_atom(integer_to_list(X)), [Y|R];\n"
              "f([]) -> [].\n", f, [P]),
+    %% one cons site plus a self call consed in a multi-cons clause (not a cons
+    %% site, so not a returned-directly continue edge) -> rejected
+    same_ref("f([H|T]) when H > 0 -> [H|f(T)];\n"
+             "f([H|T]) -> [H,extra|f(T)];\nf([]) -> [].\n", f, [P]),
 
     %% ---- FE2 near-misses ----
     %% base returns the accumulator itself, not reverse(Acc)
