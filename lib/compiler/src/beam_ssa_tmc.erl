@@ -86,29 +86,12 @@ transform_fun(#b_function{anno=#{func_info := {Mod,Name,Arity}}}=F, Report) ->
     %% Every beam_ssa function carries a func_info annotation.
     FA = {Name,Arity},
     case try_transform(FA, F, Mod) of
-        {ok, Kind, [FRw|Helpers]} ->
+        {ok, Kind, Result} ->
             report(Report, Mod, Name, Arity, Kind),
-            %% FRw keeps the parent's blocks (and its own `debug_line'
-            %% instructions). Each generated helper duplicated those blocks, so
-            %% under `beam_debug_info' the copied `debug_line' indices would
-            %% both collide with the parent's (beam_asm asserts each index is
-            %% registered once) and fall outside the abstract-code debug-line
-            %% map used by tooling (a helper has no source-level identity). A
-            %% helper is synthetic, so drop its `debug_line' instructions --
-            %% they are metadata only and never affect run-time behaviour.
-            [FRw | [strip_debug_lines(H) || H <- Helpers]];
+            Result;
         no ->
             [F]
     end.
-
-strip_debug_lines(#b_function{bs=Bs}=F) ->
-    Bs1 = maps:map(fun(_, #b_blk{is=Is}=Blk) ->
-                           Blk#b_blk{is=[I || I <- Is, not is_debug_line(I)]}
-                   end, Bs),
-    F#b_function{bs=Bs1}.
-
-is_debug_line(#b_set{op=debug_line}) -> true;
-is_debug_line(#b_set{}) -> false.
 
 %% Recognize and lower, then guard the result: a builder shape may pass the
 %% recognizer but produce a helper that is not well-formed SSA -- e.g. the list

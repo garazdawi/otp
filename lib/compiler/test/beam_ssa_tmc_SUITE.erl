@@ -353,13 +353,14 @@ disasm(_Config) ->
     ok.
 
 %%%======================================================================
-%%% beam_debug_info: DPS-generated helpers duplicate their parent's
-%%% `debug_line' indices, which both collide with the parent's (beam_asm's
-%%% debug-table assertion fails) and fall outside the abstract-code debug-line
-%%% map used by tooling. The synthetic helpers have no source identity, so their
-%%% `debug_line' instructions are stripped. Compile FE1 + FE2 builders (each
-%%% producing a helper) under `beam_debug_info' and assert they build, run, and
-%%% that no generated helper carries a debug_line while every index is unique.
+%%% beam_debug_info: a DPS-generated helper is created after the abstract-code
+%%% stage, so its `debug_line' instructions have no source-level identity and
+%%% break the debug-line semantics beam_debug_info records (index<->function map,
+%%% per-line reachability). A debugging build wants source-faithful code, so the
+%%% `beam_debug_info' option disables the pass (compile:expand_opt adds `no_tmc',
+%%% alongside no_copt/no_bsm_opt/...). Assert that FE1 and FE2 builders produce
+%%% NO `-tmc-' helper under beam_debug_info, and that the emitted code is
+%%% identical to a `no_tmc' build (the pass is fully gated off).
 %%%======================================================================
 debug_info(_Config) ->
     Src = "map([H|T]) -> [H*2|map(T)];\nmap([]) -> [].\n"
@@ -375,15 +376,13 @@ debug_info(_Config) ->
     [1,3] = Mod:filt([1,-2,3]),
     [1,2,3] = Mod:acc([1,2,3], []),
     [1,3] = Mod:accf([1,-2,3], []),
+    %% the pass is gated off under beam_debug_info: no generated helper exists
     {beam_file, Mod, _, _, _, Fns} = beam_disasm:file(Bin),
-    DbgLines = fun(Is) -> [T || T <- Is, is_tuple(T), element(1, T) =:= debug_line] end,
-    %% generated `-tmc-' helpers must carry no debug_line at all
-    [] = [N || {function, N, _, _, Is} <- Fns,
-               lists:prefix("-tmc-", atom_to_list(N)), _ <- DbgLines(Is)],
-    %% and every remaining index is unique (the original failure was a duplicate)
-    Idx = [element(4, T) || {function,_,_,_,Is} <- Fns, T <- DbgLines(Is)],
-    true = Idx =/= [],
-    true = length(Idx) =:= length(lists:usort(Idx)),
+    [] = [N || {function, N, _, _, _} <- Fns, lists:prefix("-tmc-", atom_to_list(N))],
+    %% and the Code chunk is identical to a `no_tmc' build (fully gated)
+    {_, BinRef} = compile_bin(Src, [beam_debug_info, no_tmc]),
+    {ok, {Mod, [{"Code", C}]}} = beam_lib:chunks(Bin, ["Code"]),
+    {ok, {_, [{"Code", C}]}} = beam_lib:chunks(BinRef, ["Code"]),
     ok.
 
 %%%======================================================================

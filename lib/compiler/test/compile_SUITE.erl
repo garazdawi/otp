@@ -1761,7 +1761,9 @@ bc_options(Config) ->
          {183, small, [line_coverage]},
 
          {184, small, [beam_debug_info]},
-         {192, big, [beam_debug_info]}
+         %% `beam_debug_info' disables tail-modulo-cons, so `big' uses no
+         %% `set_cons_tail' here -- the highest opcode is `debug_line' (184).
+         {184, big, [beam_debug_info]}
         ],
 
     Test = fun({Expected,Mod,Options}) ->

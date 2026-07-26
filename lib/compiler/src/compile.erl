@@ -1180,7 +1180,11 @@ expand_opt(r27, Os) ->
     %% by earlier releases, so targeting them disables the pass.
     [no_long_atoms, compressed_literals, no_tmc | Os];
 expand_opt(beam_debug_info, Os) ->
-    [beam_debug_info, no_copt, no_bsm_opt, no_bool_opt,
+    %% `no_tmc': tail-modulo-cons restructures a function into a generated
+    %% helper, which disturbs the source-line/variable mapping that
+    %% `beam_debug_info' records. A debugging build wants source-faithful code,
+    %% so disable the transform (as with the other opts below).
+    [beam_debug_info, no_tmc, no_copt, no_bsm_opt, no_bool_opt,
      no_share_opt, no_recv_opt, no_ssa_opt, no_throw_opt | Os];
 expand_opt({debug_info_key,_}=O, Os) ->
     [encrypt_debug_info,O|Os];
