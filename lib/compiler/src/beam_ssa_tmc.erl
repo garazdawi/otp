@@ -26,38 +26,37 @@
 %% into an O(1)-stack destination-passing-style tail loop (the map / filter /
 %% append / list-comprehension family).
 %%
-%% This module is the RECOGNIZER half (increment A1-1, dry-run). It reports
-%% the eligible functions and does not modify the SSA; the destination-passing
-%% rewrite lands in a follow-up increment. Gated behind the `tmc' compile
-%% option (default OFF); with the option off this module is never invoked and
-%% output is byte-identical.
-%%
-%% v1 scope: cons-only, self-recursion-as-loop. A function `F/A' is eligible
-%% when it has at least one return site of the shape `ret (put_list H, R)'
-%% where `R' is the result of a self call to `F/A' (the TMC edge), AND every
-%% self call in the function is in a "good" position -- either returned
-%% directly (a plain tail-self loop edge) or consumed only as the tail of a
-%% put_list that is itself returned (a TMC edge). Anything else (self call in
-%% head position, threaded through further computation, mutual recursion,
-%% multi-cons / nested-constructor tails) is left for later increments.
+%% This module performs the full destination-passing-style (DPS) rewrite. It
+%% runs by default; the `no_tmc' compile option disables it, and with the pass
+%% off output is byte-identical. A function `F/A' is rewritten when it has at
+%% least one return site of the shape `ret (put_list H, R)' where `R' is the
+%% result of a self call to `F/A' (the TMC edge), AND every self call in the
+%% function is in a "good" position -- either returned directly (a plain
+%% tail-self loop edge, i.e. a filter skip) or consumed only as the tail of a
+%% put_list that is itself returned (a TMC edge). Beyond the single-cons map
+%% shape this covers filter skips (`f([_|T]) -> f(T)'), multiple cons clauses
+%% (several cons edges feeding one hole) and multi-cons per step
+%% (`[A, B | f(T)]'). Anything else (self call in head position, threaded
+%% through further computation, mutual recursion) is left unchanged.
 
 -module(beam_ssa_tmc).
 -moduledoc false.
 
-%% Structure: a front-end recognizer (extract/2) describes the recursion as an
-%% Info map -- the cell-building site (element + recursion arguments), the
-%% self-recursion, and the base seal-sites -- and a shape-agnostic
-%% destination-passing lowering (build_dps/4) consumes that Info to emit the
-%% Root/Dest-threading helper with set_cons_tail. build_dps is deliberately
-%% not welded to the body-recursive front-end: a second front-end (a
-%% tail-recursive accumulator-prepend whose base is lists:reverse(Acc), with a
-%% uniquely-owned Acc -- the same precondition Technique B / beam_ssa_alias
-%% already prove) can produce an equivalent Info and reuse the lowering to
-%% build forward in one pass rather than prepend-then-reverse. That second
-%% front-end is a later increment. Note for the tradeoff writeup: the TMC form
-%% carries the force-fullsweep tax on GC-spanning builds, whereas Technique B's
-%% rev_inplace copy-falls-back on a tenured spine -- so B stays the long-list
-%% fallback until the tracked-edge/builder-box refinement removes the tax.
+%% Structure: two front-end recognizers each describe the recursion as an Info
+%% map -- extract/2 for the body-recursive builder (the cons sites, the self
+%% recursion, the base seal-sites and any filter continue edges) and
+%% extract_accrev/2 for the tail-recursive accumulator-prepend whose base is
+%% lists:reverse(Acc). Each has its own lowering (build_dps/4 and
+%% build_dps_accrev/4) that emits the Root/Dest-threading helper with
+%% set_cons_tail; the two lowerings share the cell/instruction helpers
+%% (build_cells, keep_call_instrs, ...). extract_accrev needs no
+%% uniqueness/alias proof because it never mutates Acc -- it builds a fresh Root
+%% forward and seals with reverse(Acc, Root); the only precondition is that Acc
+%% is observed solely as the prepend tail and the reverse argument. Note for the
+%% tradeoff writeup: the TMC form carries the force-fullsweep tax on GC-spanning
+%% builds, whereas Technique B's rev_inplace copy-falls-back on a tenured spine
+%% -- so B stays the long-list fallback until the tracked-edge/builder-box
+%% refinement removes the tax.
 
 -export([module/2, recognize/2, eligible/2]).
 
@@ -68,14 +67,14 @@
 %%----------------------------------------------------------------------
 %% module(Module, Opts) -> {ok, Module}
 %%
-%% The tail-modulo-cons pass. For every function whose sole self-recursion
-%% is a single cons-in-tail-position self call (the narrow v1 shape: map /
-%% filter-less / append), rewrite it into destination-passing style: the
-%% original function builds the first cell and tail-calls a generated helper
-%% `-tmc-Name/Arity-'/Arity+2 that threads the running list (Root) and the
-%% cell whose tail is the current hole (Dest), filling the hole with each new
-%% cell via set_cons_tail and sealing at the base clause. O(1) stack via the
-%% tail call; identical element order.
+%% The tail-modulo-cons pass. For every function whose self-recursion is in
+%% cons-tail position (map, filter, append, list comprehensions -- including
+%% multiple cons clauses and multi-cons steps `[A, B | f(T)]'), rewrite it into
+%% destination-passing style: the original function builds the first cell(s) and
+%% tail-calls a generated helper `-tmc-Name/Arity-'/Arity+2 that threads the
+%% running list (Root) and the cell whose tail is the current hole (Dest),
+%% filling the hole with each new cell via set_cons_tail and sealing at the base
+%% clause. O(1) stack via the tail call; identical element order.
 %%----------------------------------------------------------------------
 -spec module(#b_module{}, [compile:option()]) -> {ok, #b_module{}}.
 module(#b_module{body=Fs0}=Module, Opts) ->
@@ -128,21 +127,14 @@ accept(Result, Kind) ->
 %% orphans the blocks that computed that value, leaving the (moved) element
 %% construction referencing a now-unreachable definition.
 valid_fun(#b_function{args=Args, bs=Bs}) ->
-    Reach = reachable_blocks(Bs),
-    Defined = lists:foldl(
-                fun(L, Acc) ->
-                        #b_blk{is=Is} = maps:get(L, Bs),
-                        lists:foldl(
-                          fun(#b_set{dst=#b_var{}=D}, A) -> A#{D => []};
-                             (_, A) -> A
-                          end, Acc, Is)
-                end, maps:from_keys(Args, []), Reach),
+    RPO = beam_ssa:rpo(Bs),
+    Defined = maps:from_keys(Args ++ beam_ssa:def(RPO, Bs), []),
     lists:all(
       fun(L) ->
               #b_blk{is=Is, last=Last} = maps:get(L, Bs),
               lists:all(fun(I) -> args_defined(I, Defined) end, Is)
                   andalso args_defined(Last, Defined)
-      end, Reach).
+      end, RPO).
 
 %% A phi operand is supplied along its predecessor edge, so it need only be
 %% defined in that predecessor -- checking global reachable definedness is
@@ -158,19 +150,6 @@ args_defined(#b_switch{arg=A}, Defined) -> val_defined(A, Defined).
 val_defined(#b_var{}=V, Defined) -> is_map_key(V, Defined);
 val_defined(_, _) -> true.
 
-reachable_blocks(Bs) ->
-    reach([0], Bs, sets:new()).
-
-reach([L|Ls], Bs, Seen) ->
-    case sets:is_element(L, Seen) of
-        true ->
-            reach(Ls, Bs, Seen);
-        false ->
-            reach(beam_ssa:successors(L, Bs) ++ Ls, Bs, sets:add_element(L, Seen))
-    end;
-reach([], _Bs, Seen) ->
-    sets:to_list(Seen).
-
 report(false, _, _, _, _) -> ok;
 report(true, Mod, Name, Arity, Kind) ->
     io:format("tmc: rewrote ~p:~p/~p (~s)~n", [Mod,Name,Arity,Kind]).
@@ -182,7 +161,7 @@ report(true, Mod, Name, Arity, Kind) ->
 extract(FA, #b_function{bs=Blocks}) ->
     case recognize(FA, Blocks) of
         {true, _} ->
-            Defs = def_map(Blocks),
+            Defs = beam_ssa:definitions(maps:keys(Blocks), Blocks),
             ConsSites = [{L, Chain, Vars, Rec}
                          || {L,#b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks),
                             {ok, Chain, Vars, Rec} <- [cons_site(V, FA, Defs)]],
@@ -202,7 +181,7 @@ extract(FA, #b_function{bs=Blocks}) ->
                 true ->
                     ConsBlocks = [L || {L,_,_,_} <- ConsSites],
                     Sites = [{L, Chain, Vars, Rec, cons_args(Rec, Defs),
-                              call_block_of(Rec, Blocks)}
+                              def_block(Rec, Blocks)}
                              || {L, Chain, Vars, Rec} <- ConsSites],
                     BaseSites = base_sites(ConsBlocks, Blocks, Defs, FA),
                     {ok, #{cons_sites => Sites,
@@ -247,13 +226,6 @@ cons_chain(V, FA, Defs, ElemAcc, VarAcc) ->
 cons_args(Rec, Defs) ->
     #b_set{args=[_Callee|Args]} = maps:get(Rec, Defs),
     Args.
-
-%% Which block defines Rec (the self call)? SSA is single-assignment, so Rec is
-%% defined in exactly one block.
-call_block_of(Rec, Blocks) ->
-    [L] = [L || {L,#b_blk{is=Is}} <- maps:to_list(Blocks),
-                lists:any(fun(#b_set{dst=D}) -> D =:= Rec end, Is)],
-    L.
 
 %% Seal-sites: every ret block other than the cons block, excluding blocks that
 %% raise. In the destination-passing helper each seals the current hole (Dest)
@@ -315,9 +287,9 @@ build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}
     DestV = #b_var{name=Cnt+1},
     {DpsBs0, DpsCnt} =
         lists:foldl(fun(Site, {Acc, V}) ->
-                            dps_cons_block(Site, DpsCallee, RootV, DestV, Nil, Acc, V)
+                            cons_block(dps, Site, DpsCallee, RootV, DestV, Nil, Acc, V)
                     end, {Bs, Cnt+2}, Sites),
-    DpsBs1 = drop_blocks(ConsBlocks, DpsBs0),
+    DpsBs1 = maps:without(ConsBlocks, DpsBs0),
     %% Seal each base block: fill the last hole with the base value, return Root.
     DpsBs2 = lists:foldl(
                fun({Lb, BaseVal}, Acc) ->
@@ -340,40 +312,33 @@ build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}
     %% left as plain tail-recursive self calls that reach a cons and bootstrap.
     {FBs0, FrwCnt} =
         lists:foldl(fun(Site, {Acc, V}) ->
-                            frw_cons_block(Site, DpsCallee, Nil, Acc, V)
+                            cons_block(frw, Site, DpsCallee, RootV, DestV, Nil, Acc, V)
                     end, {Bs, Cnt}, Sites),
-    FBs = drop_blocks(ConsBlocks, FBs0),
+    FBs = maps:without(ConsBlocks, FBs0),
     FRw = F#b_function{bs = FBs, cnt = FrwCnt},
 
     [FRw, FDps].
 
-drop_blocks(Ls, Bs) ->
-    lists:foldl(fun(L, A) -> maps:remove(L, A) end, Bs, Ls).
-
-%% Rewrite a cons-site call block in the helper.
-dps_cons_block({L, Chain, ChainVars, Rec, RecArgs, Lcall}, DpsCallee,
-               RootV, DestV, Nil, Bs, Var) ->
+%% Rewrite a cons-site call block. The shared part builds this clause's cell
+%% chain (dropping the sunk chain vars, keeping the element/loop instructions);
+%% only the trailing instructions differ by mode. Mode `dps' (the helper)
+%% splices the chain head onto the current hole (Dest) and tail-calls threading
+%% Root and the chain's last cell as the new Dest. Mode `frw' (the bootstrap in
+%% the original function) tail-calls with the chain head as Root and the last
+%% cell as Dest, with no splice.
+cons_block(Mode, {L, Chain, ChainVars, Rec, RecArgs, Lcall}, DpsCallee,
+           RootV, DestV, Nil, Bs, Var) ->
     CallBlk = maps:get(Lcall, Bs),
     KeptIs = keep_call_instrs(CallBlk#b_blk.is, Rec),
     ElemIs = cons_elem_instrs(L, Bs, ChainVars),
     {Cells, HeadV, LastV, Var2} = build_cells(Chain, Nil, Var),
-    NewBlk = CallBlk#b_blk{
-               is = KeptIs ++ ElemIs ++ Cells ++
-                    [mk_set(none, set_cons_tail, [DestV, HeadV]),
-                     mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, LastV]])],
-               last = #b_ret{arg=Rec}},
-    {Bs#{Lcall => NewBlk}, Var2}.
-
-%% Rewrite a cons-site call block in the original function (bootstrap).
-frw_cons_block({L, Chain, ChainVars, Rec, RecArgs, Lcall}, DpsCallee, Nil, Bs, Var) ->
-    CallBlk = maps:get(Lcall, Bs),
-    KeptIs = keep_call_instrs(CallBlk#b_blk.is, Rec),
-    ElemIs = cons_elem_instrs(L, Bs, ChainVars),
-    {Cells, HeadV, LastV, Var2} = build_cells(Chain, Nil, Var),
-    NewBlk = CallBlk#b_blk{
-               is = KeptIs ++ ElemIs ++ Cells ++
-                    [mk_set(Rec, call, [DpsCallee | RecArgs ++ [HeadV, LastV]])],
-               last = #b_ret{arg=Rec}},
+    Tail = case Mode of
+               dps -> [mk_set(none, set_cons_tail, [DestV, HeadV]),
+                       mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, LastV]])];
+               frw -> [mk_set(Rec, call, [DpsCallee | RecArgs ++ [HeadV, LastV]])]
+           end,
+    NewBlk = CallBlk#b_blk{is = KeptIs ++ ElemIs ++ Cells ++ Tail,
+                           last = #b_ret{arg=Rec}},
     {Bs#{Lcall => NewBlk}, Var2}.
 
 %% Build the cell chain for `[E1, ..., Em]' from the tail up: cellm = [Em | Nil],
@@ -381,14 +346,16 @@ frw_cons_block({L, Chain, ChainVars, Rec, RecArgs, Lcall}, DpsCallee, Nil, Bs, V
 %% instructions (definition order), the head cell (cell1), the last cell (cellm,
 %% whose CDR becomes the next hole) and the next free var.
 build_cells(Chain, Nil, StartVar) ->
-    {Is, _Tail, Head, Last, Next} =
+    %% The accumulator's Tail slot holds the most recently built cell; after the
+    %% last iteration it is cell1, the head of the chain.
+    {Is, Head, Last, Next} =
         lists:foldl(
-          fun(E, {Acc, Tail, _Head, LastV, V}) ->
+          fun(E, {Acc, Tail, LastV, V}) ->
                   Cell = #b_var{name=V},
                   I = mk_set(Cell, put_list, [E, Tail]),
                   LastV1 = case LastV of undefined -> Cell; _ -> LastV end,
-                  {Acc ++ [I], Cell, Cell, LastV1, V+1}
-          end, {[], Nil, undefined, undefined, StartVar}, lists:reverse(Chain)),
+                  {Acc ++ [I], Cell, LastV1, V+1}
+          end, {[], Nil, undefined, StartVar}, lists:reverse(Chain)),
     {Is, Head, Last, Next}.
 
 %% In the helper, rewrite each continue-edge self call to call the helper
@@ -396,7 +363,7 @@ build_cells(Chain, Nil, StartVar) ->
 thread_continue(Continue, DpsCallee, RootV, DestV, Bs) ->
     lists:foldl(
       fun(RecC, Acc) ->
-              L = call_block_of(RecC, Acc),
+              L = def_block(RecC, Acc),
               #b_blk{is=Is}=B = maps:get(L, Acc),
               Is1 = [thread_self_call(I, RecC, DpsCallee, RootV, DestV) || I <- Is],
               Acc#{L => B#b_blk{is=Is1}}
@@ -426,7 +393,7 @@ thread_self_call(I, _RecC, _DpsCallee, _RootV, _DestV) ->
 %% only into the self call.
 %%======================================================================
 extract_accrev(FA, #b_function{args=Args, bs=Blocks}) ->
-    Defs = def_map(Blocks),
+    Defs = beam_ssa:definitions(maps:keys(Blocks), Blocks),
     SelfCalls = [{Dst,S} || {Dst, #b_set{op=call}=S} <- maps:to_list(Defs),
                             is_self_call(S, FA)],
     %% tail self call: exactly one self call, its result returned directly
@@ -481,9 +448,9 @@ find_base_reverse(AccVar, Blocks, Defs) ->
                    <- [resolve(V, Defs)],
                A0 =:= AccVar, (Arity =:= 1 orelse Arity =:= 2)],
     case Revs of
-        [{RetL, RevVar, Arity, TailArg}] ->
+        [{RetL, RevVar, _Arity, TailArg}] ->
             {ok, #{ret_block => RetL, rev_var => RevVar,
-                   arity => Arity, tail => TailArg,
+                   tail => TailArg,
                    call_block => def_block(RevVar, Blocks)}};
         _ -> no
     end.
@@ -576,10 +543,9 @@ build_dps_accrev(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod,
 
     %% original f: first cell bootstraps the helper; the empty-input base clause
     %% (its own reverse(Acc)) is left unchanged.
-    Root0 = #b_var{name=Cnt},
     FCallBlk = CallBlk0#b_blk{
-        is = Kept ++ [mk_set(Root0, put_list, [Elem, Nil]),
-                      mk_set(Rec, call, [DpsCallee | RecArgs ++ [Root0, Root0]])],
+        is = Kept ++ [mk_set(RootV, put_list, [Elem, Nil]),
+                      mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, RootV]])],
         last = #b_ret{arg=Rec}},
     FBs = maps:remove(Lret, Bs#{Lcall => FCallBlk}),
     FRw = F#b_function{bs = FBs, cnt = Cnt+1},
@@ -597,11 +563,7 @@ mk_set(Dst, Op, Args) ->
 
 %% Drop the self call (defines Rec) and its succeeded test; keep the rest.
 keep_call_instrs(Is, Rec) ->
-    lists:filter(
-      fun(#b_set{dst=D}) when D =:= Rec -> false;
-         (#b_set{op={succeeded,_}, args=[A]}) when A =:= Rec -> false;
-         (_) -> true
-      end, Is).
+    [I || I <- Is, not is_dst(I, Rec), not is_succeeded_of(I, Rec)].
 
 %% Element-supporting instructions that ssa_opt may have sunk into the cons
 %% block Lc (which build_dps removes). Keep all of Lc's instructions except the
@@ -635,7 +597,7 @@ eligible(FA, Blocks) ->
 -spec recognize(fa(), #{beam_ssa:label() => beam_ssa:b_blk()}) ->
           {true, [beam_ssa:label()]} | false.
 recognize(FA, Blocks) ->
-    Defs = def_map(Blocks),
+    Defs = beam_ssa:definitions(maps:keys(Blocks), Blocks),
     %% Collect the TMC cons return sites (block labels).
     Sites = [L || {L, #b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks),
                   is_tmc_cons_ret(V, FA, Defs)],
@@ -660,7 +622,6 @@ is_tmc_cons_ret(V, FA, Defs) ->
 %% Cleanliness: every self call is in a good position.
 %%----------------------------------------------------------------------
 self_calls_all_good(FA, Blocks) ->
-    Defs = def_map(Blocks),
     Uses = use_map(Blocks),
     RetVars = ret_var_set(Blocks),
     SelfVars = [Dst || #b_blk{is=Is} <- maps:values(Blocks),
@@ -669,9 +630,9 @@ self_calls_all_good(FA, Blocks) ->
     %% A function with no self call at all is not a loop (shouldn't reach here
     %% since recognize found a TMC site, which implies a self call).
     SelfVars =/= [] andalso
-        lists:all(fun(SV) -> good_use(SV, Uses, Defs, RetVars, 16) end, SelfVars).
+        lists:all(fun(SV) -> good_use(SV, Uses, RetVars, 16) end, SelfVars).
 
-good_use(SV, Uses, Defs, RetVars, Fuel) when Fuel > 0 ->
+good_use(SV, Uses, RetVars, Fuel) when Fuel > 0 ->
     case sets:is_element(SV, RetVars) of
         true ->
             true;   %% returned directly (plain tail-self edge)
@@ -684,13 +645,13 @@ good_use(SV, Uses, Defs, RetVars, Fuel) when Fuel > 0 ->
                     lists:all(
                       fun(#b_set{op=put_list, args=[_H, T], dst=D}) ->
                               T =:= SV andalso
-                                  good_use(D, Uses, Defs, RetVars, Fuel - 1);
+                                  good_use(D, Uses, RetVars, Fuel - 1);
                          (_) ->
                               false
                       end, Us)
             end
     end;
-good_use(_, _, _, _, _) ->
+good_use(_, _, _, _) ->
     false.
 
 is_succeeded(#b_set{op={succeeded,_}}) -> true;
@@ -705,13 +666,6 @@ is_self_call(_, _) ->
 %%----------------------------------------------------------------------
 %% SSA helpers.
 %%----------------------------------------------------------------------
-def_map(Blocks) ->
-    maps:fold(
-      fun(_L, #b_blk{is=Is}, Acc) ->
-              lists:foldl(
-                fun(#b_set{dst=Dst}=S, A) -> A#{Dst => S} end, Acc, Is)
-      end, #{}, Blocks).
-
 use_map(Blocks) ->
     maps:fold(
       fun(_L, #b_blk{is=Is}, Acc) ->
@@ -734,6 +688,6 @@ ret_var_set(Blocks) ->
 resolve(#b_var{}=V, Defs) ->
     case maps:find(V, Defs) of
         {ok, S} -> {set, S};
-        error -> {var, V}
+        error -> none
     end;
-resolve(#b_literal{}=L, _) -> {lit, L}.
+resolve(#b_literal{}, _) -> none.
