@@ -271,6 +271,12 @@ rejections(_Config) ->
     same_ref("f(0) -> [];\n"
              "f(X) -> R = f(X-1), case X rem 2 of 0 -> [a|R]; _ -> [b|R] end.\n",
              f, [4]),
+    %% ONE self call both consed AND skip-returned (the shape the inlined
+    %% lists:filter expands to: `R = f(T), case P of true -> [H|R]; false -> R'):
+    %% the cons edge's self call is also a direct return, so it is rejected --
+    %% otherwise the DPS lowering would drop the skip and keep every element.
+    same([2,4], "f([H|T]) -> R = f(T), case H rem 2 of 0 -> [H|R]; _ -> R end;\n"
+                "f([]) -> [].\n", f, [[1,2,3,4]]),
 
     %% ---- FE2 near-misses ----
     %% base returns the accumulator itself, not reverse(Acc)
@@ -348,10 +354,12 @@ disasm(_Config) ->
 
 %%%======================================================================
 %%% beam_debug_info: DPS-generated helpers duplicate their parent's
-%%% `debug_line' indices, which must be re-indexed to stay module-unique or
-%%% beam_asm's debug-table assertion fails. Compile FE1 + FE2 builders (each
-%%% producing a helper) under `beam_debug_info' and assert they build, run and
-%%% keep every debug_line index unique.
+%%% `debug_line' indices, which both collide with the parent's (beam_asm's
+%%% debug-table assertion fails) and fall outside the abstract-code debug-line
+%%% map used by tooling. The synthetic helpers have no source identity, so their
+%%% `debug_line' instructions are stripped. Compile FE1 + FE2 builders (each
+%%% producing a helper) under `beam_debug_info' and assert they build, run, and
+%%% that no generated helper carries a debug_line while every index is unique.
 %%%======================================================================
 debug_info(_Config) ->
     Src = "map([H|T]) -> [H*2|map(T)];\nmap([]) -> [].\n"
@@ -367,10 +375,13 @@ debug_info(_Config) ->
     [1,3] = Mod:filt([1,-2,3]),
     [1,2,3] = Mod:acc([1,2,3], []),
     [1,3] = Mod:accf([1,-2,3], []),
-    %% the exact failure was a duplicate index: assert every one is unique
     {beam_file, Mod, _, _, _, Fns} = beam_disasm:file(Bin),
-    Idx = [element(4, T) || {function,_,_,_,Is} <- Fns, T <- Is,
-                            is_tuple(T), element(1, T) =:= debug_line],
+    DbgLines = fun(Is) -> [T || T <- Is, is_tuple(T), element(1, T) =:= debug_line] end,
+    %% generated `-tmc-' helpers must carry no debug_line at all
+    [] = [N || {function, N, _, _, Is} <- Fns,
+               lists:prefix("-tmc-", atom_to_list(N)), _ <- DbgLines(Is)],
+    %% and every remaining index is unique (the original failure was a duplicate)
+    Idx = [element(4, T) || {function,_,_,_,Is} <- Fns, T <- DbgLines(Is)],
     true = Idx =/= [],
     true = length(Idx) =:= length(lists:usort(Idx)),
     ok.

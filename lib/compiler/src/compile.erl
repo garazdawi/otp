@@ -1176,7 +1176,9 @@ expand_opt(return, Os) ->
 expand_opt(r26, Os) ->
     [no_bsm_opt | expand_opt(r27, Os)];
 expand_opt(r27, Os) ->
-    [no_long_atoms, compressed_literals | Os];
+    %% `set_cons_tail' (emitted by the tail-modulo-cons pass) is not understood
+    %% by earlier releases, so targeting them disables the pass.
+    [no_long_atoms, compressed_literals, no_tmc | Os];
 expand_opt(beam_debug_info, Os) ->
     [beam_debug_info, no_copt, no_bsm_opt, no_bool_opt,
      no_share_opt, no_recv_opt, no_ssa_opt, no_throw_opt | Os];
@@ -3203,6 +3205,7 @@ pre_load() ->
 	 beam_ssa_share,
 	 beam_ssa_ss,
 	 beam_ssa_throw,
+	 beam_ssa_tmc,
 	 beam_ssa_type,
 	 beam_trim,
 	 beam_types,

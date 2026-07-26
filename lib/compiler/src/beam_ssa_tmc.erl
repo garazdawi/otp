@@ -79,61 +79,36 @@
 -spec module(#b_module{}, [compile:option()]) -> {ok, #b_module{}}.
 module(#b_module{body=Fs0}=Module, Opts) ->
     Report = proplists:get_bool(tmc_report, Opts),
-    %% A generated helper duplicates its parent's blocks, including any
-    %% `debug_line' instructions (present under `beam_debug_info'). Those
-    %% indices are module-global and must stay unique, so the helper's copies
-    %% are re-indexed from above the highest index already in the module.
-    NextIdx0 = max_debug_index(Fs0) + 1,
-    {Fss, _NextIdx} =
-        lists:mapfoldl(fun(F, NextIdx) -> transform_fun(F, Report, NextIdx) end,
-                       NextIdx0, Fs0),
-    {ok, Module#b_module{body=lists:append(Fss)}}.
+    Fs = lists:flatmap(fun(F) -> transform_fun(F, Report) end, Fs0),
+    {ok, Module#b_module{body=Fs}}.
 
-transform_fun(#b_function{anno=#{func_info := {Mod,Name,Arity}}}=F, Report, NextIdx) ->
+transform_fun(#b_function{anno=#{func_info := {Mod,Name,Arity}}}=F, Report) ->
     %% Every beam_ssa function carries a func_info annotation.
     FA = {Name,Arity},
     case try_transform(FA, F, Mod) of
         {ok, Kind, [FRw|Helpers]} ->
             report(Report, Mod, Name, Arity, Kind),
-            %% FRw keeps the parent's blocks (and debug_line indices); only the
-            %% generated helpers carry duplicated indices to re-index.
-            {Helpers1, NextIdx1} =
-                lists:mapfoldl(fun reindex_debug_lines/2, NextIdx, Helpers),
-            {[FRw|Helpers1], NextIdx1};
+            %% FRw keeps the parent's blocks (and its own `debug_line'
+            %% instructions). Each generated helper duplicated those blocks, so
+            %% under `beam_debug_info' the copied `debug_line' indices would
+            %% both collide with the parent's (beam_asm asserts each index is
+            %% registered once) and fall outside the abstract-code debug-line
+            %% map used by tooling (a helper has no source-level identity). A
+            %% helper is synthetic, so drop its `debug_line' instructions --
+            %% they are metadata only and never affect run-time behaviour.
+            [FRw | [strip_debug_lines(H) || H <- Helpers]];
         no ->
-            {[F], NextIdx}
+            [F]
     end.
 
-%% Highest `debug_line' index in the module (0 when compiled without
-%% `beam_debug_info', so re-indexing is then a no-op).
-max_debug_index(Fs) ->
-    lists:foldl(
-      fun(#b_function{bs=Bs}, Max) ->
-              maps:fold(
-                fun(_, #b_blk{is=Is}, M) ->
-                        lists:foldl(
-                          fun(#b_set{op=debug_line, args=[#b_literal{val=Idx}]}, MM) ->
-                                  max(Idx, MM);
-                             (_, MM) -> MM
-                          end, M, Is)
-                end, Max, Bs)
-      end, 0, Fs).
+strip_debug_lines(#b_function{bs=Bs}=F) ->
+    Bs1 = maps:map(fun(_, #b_blk{is=Is}=Blk) ->
+                           Blk#b_blk{is=[I || I <- Is, not is_debug_line(I)]}
+                   end, Bs),
+    F#b_function{bs=Bs1}.
 
-%% Give every `debug_line' in a generated helper a fresh module-unique index,
-%% preserving its source-location annotation (only the index tag changes).
-reindex_debug_lines(#b_function{bs=Bs}=F, NextIdx0) ->
-    {Ls, NextIdx} =
-        lists:mapfoldl(
-          fun({L, #b_blk{is=Is}=Blk}, N0) ->
-                  {Is1, N1} = lists:mapfoldl(fun reindex_is/2, N0, Is),
-                  {{L, Blk#b_blk{is=Is1}}, N1}
-          end, NextIdx0, lists:sort(maps:to_list(Bs))),
-    {F#b_function{bs=maps:from_list(Ls)}, NextIdx}.
-
-reindex_is(#b_set{op=debug_line, args=[#b_literal{}=Lit]}=I, N) ->
-    {I#b_set{args=[Lit#b_literal{val=N}]}, N+1};
-reindex_is(I, N) ->
-    {I, N}.
+is_debug_line(#b_set{op=debug_line}) -> true;
+is_debug_line(#b_set{}) -> false.
 
 %% Recognize and lower, then guard the result: a builder shape may pass the
 %% recognizer but produce a helper that is not well-formed SSA -- e.g. the list
@@ -217,7 +192,15 @@ extract(FA, #b_function{bs=Blocks}) ->
             ConsRecs = [R || {_,_,_,R} <- ConsSites],
             Continue = SelfCalls -- ConsRecs,
             RetVars = ret_var_set(Blocks),
+            %% A cons edge's self call must NOT also be returned directly: that
+            %% is the shape produced by the inlined `lists:filter' shape
+            %%   `Rec = f(T), case B of true -> [X|Rec]; false -> Rec end'
+            %% where one recursion result is BOTH consed and skip-returned. The
+            %% DPS lowering rewrites the call block into the cons path and would
+            %% drop the skip, so reject (leave the function unchanged).
             case length(lists:usort(ConsRecs)) =:= length(ConsRecs)
+                andalso lists:all(fun(R) -> not sets:is_element(R, RetVars) end,
+                                  ConsRecs)
                 andalso lists:all(fun(C) -> sets:is_element(C, RetVars) end,
                                   Continue) of
                 true ->

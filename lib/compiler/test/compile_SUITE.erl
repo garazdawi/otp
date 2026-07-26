@@ -1741,13 +1741,15 @@ bc_options(Config) ->
 
          {181, small_maps, [no_type_opt]},
 
-         {181, big, [no_ssa_opt_record,
+         %% `big' contains tail-modulo-cons-eligible list builders, so its
+         %% highest opcode is `set_cons_tail' (192).
+         {192, big, [no_ssa_opt_record,
                      no_ssa_opt_float,
                      no_line_info,
                      no_type_opt]},
 
          {181, funs, []},
-         {181, big, []},
+         {192, big, []},
 
          {182, small, [r26]},
          {182, small, []},
@@ -1759,7 +1761,7 @@ bc_options(Config) ->
          {183, small, [line_coverage]},
 
          {184, small, [beam_debug_info]},
-         {184, big, [beam_debug_info]}
+         {192, big, [beam_debug_info]}
         ],
 
     Test = fun({Expected,Mod,Options}) ->
