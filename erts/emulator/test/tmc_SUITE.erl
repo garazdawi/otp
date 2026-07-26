@@ -88,10 +88,11 @@ compile_load(Name, Opts) ->
     {module, Name} = code:load_binary(Name, atom_to_list(Name) ++ ".beam", Bin),
     Bin.
 
-%% tmc-transformed module + an untransformed reference module.
+%% tmc-transformed module + an untransformed reference module. The transform is
+%% on by default now, so the reference must disable it explicitly with `no_tmc'.
 setup() ->
     _ = compile_load(tmc_on, [tmc]),
-    _ = compile_load(tmc_ref, []),
+    _ = compile_load(tmc_ref, [no_tmc]),
     ok.
 
 %%%========================================================================
@@ -148,7 +149,7 @@ eval_order(_Config) ->
     ok.
 
 %%%========================================================================
-%%% +tmc off is byte-identical for a module with no eligible function
+%%% TMC is byte-identical (on vs no_tmc) for a module with no eligible function
 %%%========================================================================
 
 off_byte_identical(_Config) ->
@@ -156,7 +157,7 @@ off_byte_identical(_Config) ->
           "f(X) -> X + 1.\ng(A, B) -> {A, B, A * B}.\n",
     Forms = forms(Src),
     {ok, _, On}  = compile:forms(Forms, [binary, deterministic, tmc]),
-    {ok, _, Off} = compile:forms(Forms, [binary, deterministic]),
+    {ok, _, Off} = compile:forms(Forms, [binary, deterministic, no_tmc]),
     OnCode  = code_chunk(On),
     OffCode = code_chunk(Off),
     same = cmp(OnCode, OffCode),
