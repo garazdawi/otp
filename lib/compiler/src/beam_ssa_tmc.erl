@@ -381,61 +381,148 @@ thread_self_call(I, _RecC, _DpsCallee, _RootV, _DestV) ->
 %%   f([H|T], Acc) -> f(T, [g(H)|Acc]);          %% tail self, prepend Acc
 %%   f([],   Acc) -> lists:reverse(Acc[, Tail]).  %% terminal reverse of Acc
 %%
-%% Lowered to the SAME destination-passing helper as the body-recursive
-%% front-end: build FORWARD with set_cons_tail instead of prepend, and seal
-%% the base with lists:reverse(Acc, Root). Because the base becomes
-%% reverse(Acc0, Root) = reverse(Acc0) ++ Root (Root is the forward list),
-%% the rewrite is correct for ANY initial Acc0 -- no "Acc0 = []" proof, and no
-%% uniqueness/alias proof is needed because Acc is never mutated (a fresh Root
-%% is built). The only precondition is observability: Acc must be used SOLELY
-%% as the prepend tail and the reverse argument (so eliminating the reversed
-%% accumulator changes nothing observable), and the prepend result must flow
-%% only into the self call.
+%% Lowered to a destination-passing helper: build FORWARD with set_cons_tail
+%% instead of prepend, and seal the base with lists:reverse(Acc, Root). Because
+%% the base becomes reverse(Acc0, Root) = reverse(Acc0) ++ Root (Root is the
+%% forward list), the rewrite is correct for ANY initial Acc0 -- no "Acc0 = []"
+%% proof, and no uniqueness/alias proof is needed because Acc is never mutated
+%% (a fresh Root is built).
+%%
+%% Beyond the single-prepend map shape this handles, with the same seal-vs-
+%% continue rule as the body-recursive filter widening:
+%%   * filter / multi-self-call -- some self calls thread the accumulator
+%%     UNCHANGED (a skip edge, `f(T, Acc)'); a skip tail-calls the helper with
+%%     the same Root/Dest and NO splice, a prepend splices set_cons_tail and
+%%     threads Root/last-cell forward.
+%%   * multi-clause prepend -- several clauses each prepend, all feeding the one
+%%     shared Dest hole.
+%%   * multi-prepend per step -- `f(T, [b, a | Acc])' builds a forward cell chain.
+%%
+%% Preconditions (else the whole function is left unchanged): a single
+%% accumulator parameter terminally returned via lists:reverse; every self call
+%% is a tail call returned directly and threads the accumulator at one position
+%% as EITHER a clean prepend chain to Acc OR Acc unchanged; the accumulator and
+%% prepend cells never escape (used only in the chain, the recognized self
+%% calls, the reverse base, or a match_fail path, and never returned); and every
+%% return is a self call, the reverse base, or an erlang:error raise.
 %%======================================================================
 extract_accrev(FA, #b_function{args=Args, bs=Blocks}) ->
     Defs = beam_ssa:definitions(maps:keys(Blocks), Blocks),
     SelfCalls = [{Dst,S} || {Dst, #b_set{op=call}=S} <- maps:to_list(Defs),
                             is_self_call(S, FA)],
-    %% tail self call: exactly one self call, its result returned directly
-    RetSelf = [L || {L, #b_blk{last=#b_ret{arg=#b_var{}=V}}} <- maps:to_list(Blocks),
-                    lists:keymember(V, 1, SelfCalls)],
-    case {SelfCalls, RetSelf} of
-        {[{RecVar, #b_set{args=[_Callee|SelfArgs]}}], [RetL]} ->
-            ArgSet = sets:from_list(Args),
-            case find_prepend(SelfArgs, ArgSet, Defs) of
-                {ok, AccVar, Elem, PrependVar} ->
+    RetVars = ret_var_set(Blocks),
+    %% Every self call must be a tail call whose result is returned directly.
+    case SelfCalls =/= [] andalso
+        lists:all(fun({Dst,_}) -> sets:is_element(Dst, RetVars) end, SelfCalls) of
+        true ->
+            case find_acc(Blocks, Defs, Args) of
+                {ok, AccVar} ->
                     case find_base_reverse(AccVar, Blocks, Defs) of
                         {ok, Rev} ->
-                            Uses = use_map(Blocks),
-                            case acc_used_only(AccVar, PrependVar, Rev, Uses, Blocks)
-                                andalso used_only_by(PrependVar, RecVar, Uses, Blocks) of
-                                true ->
-                                    CallL = def_block(RecVar, Blocks),
-                                    RecArgs = replace(SelfArgs, PrependVar, AccVar),
-                                    {ok, #{call_block => CallL, ret_block => RetL,
-                                           rec => RecVar, elem => Elem,
-                                           rec_args => RecArgs, prepend => PrependVar,
-                                           acc => AccVar, rev => Rev}};
-                                false -> no
-                            end;
+                            accrev_info(FA, Args, Blocks, Defs, SelfCalls, AccVar, Rev);
                         no -> no
                     end;
                 no -> no
             end;
+        false -> no
+    end.
+
+%% The accumulator is the single parameter terminally returned via
+%% lists:reverse(Acc[,Tail]).
+find_acc(Blocks, Defs, Args) ->
+    Accs = lists:usort(
+             [A0 || {_L, #b_blk{last=#b_ret{arg=#b_var{}=V}}} <- maps:to_list(Blocks),
+                    {set, #b_set{op=call,
+                                 args=[#b_remote{mod=#b_literal{val=lists},
+                                                 name=#b_literal{val=reverse}},
+                                       A0 | _]}} <- [resolve(V, Defs)],
+                    is_record(A0, b_var), lists:member(A0, Args)]),
+    case Accs of
+        [AccVar] -> {ok, AccVar};
         _ -> no
     end.
 
-%% Exactly one self-call arg is put_list(Elem, AccVar) with AccVar a parameter.
-find_prepend(SelfArgs, ArgSet, Defs) ->
-    Prepends = [{A, Elem, Acc}
-                || A <- SelfArgs,
-                   {set, #b_set{op=put_list, args=[Elem, Acc]}} <- [resolve(A, Defs)],
-                   is_record(Acc, b_var),
-                   sets:is_element(Acc, ArgSet)],
-    case Prepends of
-        [{PrependVar, Elem, AccVar}] -> {ok, AccVar, Elem, PrependVar};
-        _ -> no
+%% Classify every self call as a prepend edge (accumulator argument is
+%% `[E1,...,Em | AccVar]') or a skip/continue edge (accumulator threaded
+%% unchanged), then verify the accumulator and prepend cells never escape and
+%% every return is accounted for. Any self call that is neither a clean prepend
+%% nor a clean skip rejects the whole function.
+accrev_info(FA, Args, Blocks, Defs, SelfCalls, AccVar, Rev) ->
+    #{rev_var := RevVar} = Rev,
+    P = index_of(AccVar, Args),
+    Classes = [classify_self(SC, P, AccVar, Defs, Blocks) || SC <- SelfCalls],
+    case lists:member(bad, Classes) of
+        true -> no;
+        false ->
+            PrependSites = [PS || {prepend, PS} <- Classes],
+            Skips = [Rec || {skip, Rec} <- Classes],
+            case PrependSites of
+                [] -> no;   %% no cons happens -- not a builder
+                _ ->
+                    ChainVars = lists:append([CV || {_,_,CV,_,_} <- PrependSites]),
+                    SelfRecs = [Rec || {_,_,_,Rec,_} <- PrependSites] ++ Skips,
+                    Uses = use_map(Blocks),
+                    case internal_uses_ok([AccVar | ChainVars], ChainVars,
+                                          SelfRecs, RevVar, Uses, Blocks)
+                        andalso all_rets_accounted(Blocks, Defs, FA, RevVar) of
+                        true ->
+                            {ok, #{prepends => PrependSites, skips => Skips,
+                                   base => Rev, acc => AccVar}};
+                        false -> no
+                    end
+            end
     end.
+
+%% AccVar must be referenced by exactly one argument, at the accumulator
+%% position P; that argument is either AccVar itself (skip) or a put_list chain
+%% ending in AccVar (prepend). Anything else is bad.
+classify_self({Rec, #b_set{args=[_Callee|SelfArgs]}}, P, AccVar, Defs, Blocks) ->
+    RefPositions = [I || {I, A} <- enumerate(SelfArgs),
+                         references_acc(A, AccVar, Defs)],
+    case RefPositions of
+        [P] ->
+            AArg = lists:nth(P, SelfArgs),
+            case AArg =:= AccVar of
+                true ->
+                    {skip, Rec};
+                false ->
+                    {ok, WalkElems, ChainVars} = prepend_chain(AArg, AccVar, Defs),
+                    Elems = lists:reverse(WalkElems),
+                    RecArgs = set_nth(P, SelfArgs, AccVar),
+                    Lcall = def_block(Rec, Blocks),
+                    {prepend, {Lcall, Elems, ChainVars, Rec, RecArgs}}
+            end;
+        _ ->
+            bad
+    end.
+
+references_acc(A, AccVar, Defs) ->
+    A =:= AccVar orelse prepend_chain(A, AccVar, Defs) =/= no.
+
+%% Walk a `[E1,...,Em | AccVar]' put_list chain. Returns the elements outermost
+%% first (the caller reverses them into forward build order) and the chain's
+%% put_list dst vars.
+prepend_chain(A, AccVar, Defs) ->
+    prepend_chain(A, AccVar, Defs, [], []).
+
+prepend_chain(A, AccVar, Defs, EAcc, VAcc) ->
+    case resolve(A, Defs) of
+        {set, #b_set{op=put_list, args=[E, Tl], dst=D}} ->
+            case Tl =:= AccVar of
+                true -> {ok, lists:reverse([E|EAcc]), lists:reverse([D|VAcc])};
+                false -> prepend_chain(Tl, AccVar, Defs, [E|EAcc], [D|VAcc])
+            end;
+        _ ->
+            no
+    end.
+
+enumerate(L) -> lists:zip(lists:seq(1, length(L)), L).
+
+set_nth(P, L, X) -> [case I of P -> X; _ -> E end || {I, E} <- enumerate(L)].
+
+%% Position (1-based) of AccVar in the argument list; AccVar is guaranteed
+%% present (it is a parameter, verified by find_acc).
+index_of(X, L) -> length(lists:takewhile(fun(Y) -> Y =/= X end, L)) + 1.
 
 %% Exactly one `ret RevVar' where RevVar = lists:reverse(AccVar[, Tail]).
 find_base_reverse(AccVar, Blocks, Defs) ->
@@ -458,23 +545,41 @@ find_base_reverse(AccVar, Blocks, Defs) ->
 tl_arg([]) -> #b_literal{val=[]};
 tl_arg([T]) -> T.
 
-%% AccVar is used only as the prepend tail and the reverse argument, and never
-%% escapes via a terminator.
-acc_used_only(AccVar, PrependVar, Rev, Uses, Blocks) ->
-    #{rev_var := RevVar} = Rev,
-    Users = maps:get(AccVar, Uses, []),
-    %% match_fail (the function_clause fallback carries the args for its error
-    %% message) is an error-only path, never reached on a valid list, so it does
-    %% not observe the accumulator in a way that affects the result.
-    lists:all(fun(#b_set{op=match_fail}) -> true;
-                 (#b_set{dst=D}) -> D =:= PrependVar orelse D =:= RevVar
-              end, Users)
-        andalso not returned_anywhere(AccVar, Blocks).
+%% AccVar and every prepend cell must be observed only inside the loop: as the
+%% next put_list in a recognized chain, as an argument of a recognized self call
+%% (prepend or skip), as the reverse base argument, or in a match_fail error
+%% path -- and never returned. Then eliminating the reversed accumulator in
+%% favour of a forward build changes nothing observable. (match_fail carries the
+%% function_clause args for the error message; it is an error-only path.)
+internal_uses_ok(Internal, ChainVars, SelfRecs, RevVar, Uses, Blocks) ->
+    lists:all(
+      fun(V) ->
+              %% use_map only ever records #b_set users, so these clauses are
+              %% total over the users list.
+              lists:all(
+                fun(#b_set{op=match_fail}) -> true;
+                   (#b_set{op=put_list, dst=D}) -> lists:member(D, ChainVars);
+                   (#b_set{dst=D}) -> lists:member(D, SelfRecs) orelse D =:= RevVar
+                end, maps:get(V, Uses, []))
+                  andalso not returned_anywhere(V, Blocks)
+      end, Internal).
 
-used_only_by(Var, ConsumerDst, Uses, Blocks) ->
-    Users = maps:get(Var, Uses, []),
-    lists:all(fun(#b_set{dst=D}) -> D =:= ConsumerDst end, Users)
-        andalso not returned_anywhere(Var, Blocks).
+%% Every return is a self call (rewritten), the reverse base (rewritten to
+%% seal + reverse) or an erlang:error raise (left intact). A return of anything
+%% else -- a raw value that would leave the Dest hole unsealed -- rejects the
+%% function (the FE1 coalesce_strings hazard, avoided by construction here).
+all_rets_accounted(Blocks, Defs, FA, RevVar) ->
+    lists:all(
+      fun(#b_blk{last=#b_ret{arg=V}}) ->
+              is_self_ret(V, FA, Defs) orelse V =:= RevVar
+                  orelse is_error_ret(V, Defs);
+         (#b_blk{}) ->
+              true
+      end, maps:values(Blocks)).
+
+ret_block_of(Rec, Blocks) ->
+    [L] = [L || {L, #b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks), V =:= Rec],
+    L.
 
 returned_anywhere(Var, Blocks) ->
     lists:any(fun(#b_blk{last=#b_ret{arg=V}}) -> V =:= Var;
@@ -486,71 +591,77 @@ def_block(Var, Blocks) ->
                 lists:any(fun(#b_set{dst=D}) -> D =:= Var end, Is)],
     L.
 
-replace(List, Old, New) ->
-    [case X of Old -> New; _ -> X end || X <- List].
-
 build_dps_accrev(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod,
                  {Name,Arity}, Info) ->
-    #{call_block := Lcall, ret_block := Lret, rec := Rec, elem := Elem,
-      rec_args := RecArgs, prepend := PrependVar, acc := AccVar,
-      rev := #{ret_block := RevRetL, rev_var := RevVar, tail := TailArg,
-               call_block := RevCallL}} = Info,
+    #{prepends := Prepends, skips := Skips, acc := AccVar,
+      base := #{ret_block := RevRetL, rev_var := RevVar, tail := TailArg,
+                call_block := RevCallL}} = Info,
     DpsName = dps_name(Name, Arity),
     DpsArity = Arity + 2,
     DpsCallee = #b_local{name=#b_literal{val=DpsName}, arity=DpsArity},
     Nil = #b_literal{val=[]},
     RevRemote2 = #b_remote{mod=#b_literal{val=lists},
                            name=#b_literal{val=reverse}, arity=2},
-
     RootV = #b_var{name=Cnt},
     DestV = #b_var{name=Cnt+1},
-    NewV  = #b_var{name=Cnt+2},
-    CallBlk0 = maps:get(Lcall, Bs),
-    %% keep the element/loop computations, drop the prepend, self call and its
-    %% succeeded test.
-    Kept = [I || I <- CallBlk0#b_blk.is,
-                 not is_dst(I, PrependVar),
-                 not is_dst(I, Rec),
-                 not is_succeeded_of(I, Rec)],
+    PrependRets = [ret_block_of(Rec, Bs) || {_,_,_,Rec,_} <- Prepends],
 
-    %% helper loop clause: build this cell, splice, tail-call threading Root/New.
-    DpsCallBlk = CallBlk0#b_blk{
-        is = Kept ++ [mk_set(NewV, put_list, [Elem, Nil]),
-                      mk_set(none, set_cons_tail, [DestV, NewV]),
-                      mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, NewV]])],
-        last = #b_ret{arg=Rec}},
-
-    %% helper base clause: seal the last hole (Tail or []) then reverse(Acc,Root).
-    RevCallBlk0 = maps:get(RevCallL, Bs),
-    KeptRev = [I || I <- RevCallBlk0#b_blk.is,
-                    not is_dst(I, RevVar),
-                    not is_succeeded_of(I, RevVar)],
+    %% ---- helper f_dps: prepend edges splice+thread, skip edges thread only ----
+    %% Each prepend rebuilds its cell chain forward, splices the chain head onto
+    %% the current hole (Dest) and threads Root + the chain's last cell. Each
+    %% skip tail-calls the helper with the SAME Root/Dest (no splice). The base
+    %% seals the last hole then reverse(Acc0, Root).
+    {DpsBs0, DpsCnt} =
+        lists:foldl(fun(P, {Acc, V}) ->
+                            accrev_prepend_block(dps, P, DpsCallee, RootV, DestV,
+                                                 Nil, Acc, V)
+                    end, {Bs, Cnt+2}, Prepends),
+    DpsBs1 = thread_continue(Skips, DpsCallee, RootV, DestV, DpsBs0),
+    RevCallBlk0 = maps:get(RevCallL, DpsBs1),
+    KeptRev = keep_call_instrs(RevCallBlk0#b_blk.is, RevVar),
     DpsRevBlk = RevCallBlk0#b_blk{
         is = KeptRev ++ [mk_set(none, set_cons_tail, [DestV, TailArg]),
                          mk_set(RevVar, call, [RevRemote2, AccVar, RootV])],
         last = #b_ret{arg=RevVar}},
-
-    DpsBs0 = Bs#{Lcall => DpsCallBlk, RevCallL => DpsRevBlk},
-    %% Drop the two now-superseded ret blocks: the self-call ret (Lret) and the
-    %% reverse-call ret (RevRetL). RevRetL is always a distinct block from the
-    %% reverse call block RevCallL -- the reverse call's succeeded test splits
-    %% its result into a separate ret block.
-    DpsBs = maps:remove(RevRetL, maps:remove(Lret, DpsBs0)),
+    DpsBs = maps:without([RevRetL | PrependRets], DpsBs1#{RevCallL => DpsRevBlk}),
     FDps = #b_function{anno = Anno#{func_info => {Mod, DpsName, DpsArity}},
                        args = Args ++ [RootV, DestV],
                        bs = DpsBs,
-                       cnt = Cnt+3},
+                       cnt = DpsCnt},
 
-    %% original f: first cell bootstraps the helper; the empty-input base clause
-    %% (its own reverse(Acc)) is left unchanged.
-    FCallBlk = CallBlk0#b_blk{
-        is = Kept ++ [mk_set(RootV, put_list, [Elem, Nil]),
-                      mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, RootV]])],
-        last = #b_ret{arg=Rec}},
-    FBs = maps:remove(Lret, Bs#{Lcall => FCallBlk}),
-    FRw = F#b_function{bs = FBs, cnt = Cnt+1},
+    %% ---- original f: prepend edges bootstrap into the helper (chain head =
+    %% Root, last cell = Dest); skip edges stay plain self calls that recurse
+    %% until a prepend bootstraps; the reverse base clause is left unchanged. ----
+    {FBs0, FrwCnt} =
+        lists:foldl(fun(P, {Acc, V}) ->
+                            accrev_prepend_block(frw, P, DpsCallee, RootV, DestV,
+                                                 Nil, Acc, V)
+                    end, {Bs, Cnt}, Prepends),
+    FBs = maps:without(PrependRets, FBs0),
+    FRw = F#b_function{bs = FBs, cnt = FrwCnt},
 
     [FRw, FDps].
+
+%% Rewrite a prepend-edge call block: drop the prepend put_list chain and the
+%% self call, rebuild the chain forward as cells, then either splice+thread
+%% (dps) or bootstrap (frw). RecArgs already threads AccVar unchanged in the
+%% accumulator position, so the helper carries Acc = Acc0 throughout and the
+%% base seals with reverse(Acc0, Root).
+accrev_prepend_block(Mode, {Lcall, Elems, ChainVars, Rec, RecArgs}, DpsCallee,
+                     RootV, DestV, Nil, Bs, Var) ->
+    CallBlk = maps:get(Lcall, Bs),
+    Kept = [I || I <- CallBlk#b_blk.is,
+                 not lists:any(fun(CV) -> is_dst(I, CV) end, ChainVars),
+                 not is_dst(I, Rec),
+                 not is_succeeded_of(I, Rec)],
+    {Cells, HeadV, LastV, Var2} = build_cells(Elems, Nil, Var),
+    Tail = case Mode of
+               dps -> [mk_set(none, set_cons_tail, [DestV, HeadV]),
+                       mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, LastV]])];
+               frw -> [mk_set(Rec, call, [DpsCallee | RecArgs ++ [HeadV, LastV]])]
+           end,
+    NewBlk = CallBlk#b_blk{is = Kept ++ Cells ++ Tail, last = #b_ret{arg=Rec}},
+    {Bs#{Lcall => NewBlk}, Var2}.
 
 %% A block's instruction list contains only #b_set{} records, so a
 %% #b_set-only clause is total here (a catch-all would be unreachable).

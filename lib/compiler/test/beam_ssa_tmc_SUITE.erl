@@ -137,6 +137,46 @@ fe2_accrev(_Config) ->
     %% reverse/2 with an empty (literal []) tail argument
     same([1,2,3,4], "f([H|T],A) -> f(T,[H|A]);\nf([],A) -> lists:reverse(A,[]).\n",
          f, [L, []]),
+
+    %% --- widening: tail-recursive filter (skip edge threads Acc unchanged) ---
+    %% guarded filter: keep positives
+    same([1,3,5], "f([H|T],A) when H > 0 -> f(T,[H|A]);\n"
+                  "f([_|T],A) -> f(T,A);\nf([],A) -> lists:reverse(A).\n",
+         f, [[1,-2,3,-4,5], []]),
+    %% case-driven skip: keep evens
+    same([2,4,6], "f([H|T],A) -> case H rem 2 of 0 -> f(T,[H|A]); _ -> f(T,A) end;\n"
+                  "f([],A) -> lists:reverse(A).\n", f, [[1,2,3,4,5,6], []]),
+    %% leading and trailing skips
+    same([a,b], "f([x|T],A) -> f(T,A);\nf([H|T],A) -> f(T,[H|A]);\n"
+                "f([],A) -> lists:reverse(A).\n", f, [[x,a,b,x], []]),
+    %% filter with a non-empty initial accumulator (reverse([z]) prefix survives)
+    same([z,1,3], "f([H|T],A) when H > 0 -> f(T,[H|A]);\n"
+                  "f([_|T],A) -> f(T,A);\nf([],A) -> lists:reverse(A).\n",
+         f, [[1,-2,3], [z]]),
+    %% map+filter
+    same([10,30], "f([H|T],A) when H > 0 -> f(T,[H*10|A]);\n"
+                  "f([_|T],A) -> f(T,A);\nf([],A) -> lists:reverse(A).\n",
+         f, [[1,-2,3,-4], []]),
+
+    %% --- widening: multiple prepend clauses (shared single Dest) ---
+    same([1,2,1,2], "f([a|T],A) -> f(T,[1|A]);\nf([b|T],A) -> f(T,[2|A]);\n"
+                    "f([],A) -> lists:reverse(A).\n", f, [[a,b,a,b], []]),
+    %% multi-clause + filter combined
+    same([1,2,1], "f([a|T],A) -> f(T,[1|A]);\nf([b|T],A) -> f(T,[2|A]);\n"
+                  "f([_|T],A) -> f(T,A);\nf([],A) -> lists:reverse(A).\n",
+         f, [[a,x,b,y,a], []]),
+
+    %% --- widening: multi-prepend per step (forward cell chain) ---
+    same([1,2,2,4], "f([H|T],A) -> f(T,[H*2,H|A]);\nf([],A) -> lists:reverse(A).\n",
+         f, [[1,2], []]),
+    %% filter + multi-prepend
+    same([1,1,3,3], "f([H|T],A) when H > 0 -> f(T,[H,H|A]);\n"
+                    "f([_|T],A) -> f(T,A);\nf([],A) -> lists:reverse(A).\n",
+         f, [[1,-2,3], []]),
+    %% multi-prepend with a reverse/2 tail
+    same([1,2,2,4,end0],
+         "f([H|T],A) -> f(T,[H*2,H|A]);\nf([],A) -> lists:reverse(A,[end0]).\n",
+         f, [[1,2], []]),
     ok.
 
 %%%======================================================================
@@ -235,7 +275,7 @@ rejections(_Config) ->
     %% ---- FE2 near-misses ----
     %% base returns the accumulator itself, not reverse(Acc)
     same_ref("f([H|T],A) -> f(T,[H|A]);\nf([],A) -> A.\n", f, [P, []]),
-    %% self-call arg is not a prepend of a parameter
+    %% pure skip loop -- no prepend edge, so nothing is built (PrependSites empty)
     same_ref("f([_|T],A) -> f(T,A);\nf([],A) -> lists:reverse(A).\n", f, [P, []]),
     %% reverse(Acc) is wrapped, not the sole terminal use (find_base_reverse no)
     same_ref("f([H|T],A) -> f(T,[H|A]);\n"
@@ -248,13 +288,18 @@ rejections(_Config) ->
              "f([],A) -> lists:reverse(A).\n", f, [P, []]),
     %% self call not returned directly (extract_accrev outer no)
     same_ref("f([_|T]) -> X = f(T), {ok,X};\nf([]) -> {ok,done}.\n", f, [P]),
-    %% two self calls
-    same_ref("f([H|T],A) when H > 0 -> f(T,[H|A]);\n"
-             "f([_|T],A) -> f(T,A);\nf([],A) -> lists:reverse(A).\n", f, [P, []]),
-    %% more than one lists:reverse base (find_base_reverse no)
-    same_ref("f([H|T],A) when H > 0 -> f(T,[H|A]);\n"
-             "f([],A) when A =/= [] -> lists:reverse(A);\n"
-             "f([],A) -> lists:reverse(A).\n", f, [P, []]),
+    %% AccVar referenced at two argument positions (not just the accumulator
+    %% position) -> classify_self bad (RefPositions =/= [P])
+    same_ref("f([H|_],A) -> f(A, [H|A]);\nf([],A) -> lists:reverse(A).\n",
+             f, [P, []]),
+    %% a clause returns a raw value (neither self, reverse-base nor error) that
+    %% would leave the Dest hole unsealed -> all_rets_accounted false
+    same_ref("f([stop|_],_) -> other;\nf([H|T],A) -> f(T,[H|A]);\n"
+             "f([],A) -> lists:reverse(A).\n", f, [[1,2,stop,3], []]),
+    %% two DISTINCT lists:reverse bases of the same accumulator (arity 1 and
+    %% arity 2, so they do not merge) -> find_base_reverse no
+    same_ref("f([a|T],A) -> f(T,[a|A]);\nf([],A) -> lists:reverse(A);\n"
+             "f([stop|T],A) -> lists:reverse(A, T).\n", f, [[a,a], []]),
     ok.
 
 %%%======================================================================
