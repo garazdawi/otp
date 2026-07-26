@@ -183,52 +183,70 @@ extract(FA, #b_function{bs=Blocks}) ->
     case recognize(FA, Blocks) of
         {true, _} ->
             Defs = def_map(Blocks),
-            ConsSites = [{L,Elem,Rec}
+            ConsSites = [{L, Chain, Vars, Rec}
                          || {L,#b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks),
-                            {ok,Elem,Rec} <- [cons_site(V, FA, Defs)]],
+                            {ok, Chain, Vars, Rec} <- [cons_site(V, FA, Defs)]],
             SelfCalls = [Dst || {Dst,S} <- maps:to_list(Defs), is_self_call(S, FA)],
-            case ConsSites of
-                [{Lc,Elem,Rec}] ->
-                    %% Exactly one cons site (the cons edge). Any OTHER self call
-                    %% must be a `continue' edge -- a self call returned directly
-                    %% (a filter skip). recognize/2 already proved every self call
-                    %% is good (returned or consed), and with a single cons site
-                    %% the others are all returned directly; verify that here.
-                    Continue = SelfCalls -- [Rec],
-                    RetVars = ret_var_set(Blocks),
-                    case lists:all(fun(C) -> sets:is_element(C, RetVars) end,
-                                   Continue) of
-                        true ->
-                            Lcall = call_block_of(Rec, Blocks),
-                            #b_set{args=[_Callee|RecArgs]} = maps:get(Rec, Defs),
-                            BaseSites = base_sites(Lc, Blocks, Defs, FA),
-                            {ok, #{cons_block => Lc, elem => Elem, rec => Rec,
-                                   rec_args => RecArgs, call_block => Lcall,
-                                   base_sites => BaseSites, continue => Continue}};
-                        false ->
-                            no
-                    end;
-                _ ->
+            %% recognize/2 found at least one TMC cons return, so ConsSites is
+            %% non-empty. Every cons clause is a cons edge (its own distinct self
+            %% call). Any OTHER self call must be a `continue' edge -- a self call
+            %% returned directly (a filter skip). recognize/2 already proved every
+            %% self call is good; verify the split (distinct cons edges, and the
+            %% rest returned directly).
+            ConsRecs = [R || {_,_,_,R} <- ConsSites],
+            Continue = SelfCalls -- ConsRecs,
+            RetVars = ret_var_set(Blocks),
+            case length(lists:usort(ConsRecs)) =:= length(ConsRecs)
+                andalso lists:all(fun(C) -> sets:is_element(C, RetVars) end,
+                                  Continue) of
+                true ->
+                    ConsBlocks = [L || {L,_,_,_} <- ConsSites],
+                    Sites = [{L, Chain, Vars, Rec, cons_args(Rec, Defs),
+                              call_block_of(Rec, Blocks)}
+                             || {L, Chain, Vars, Rec} <- ConsSites],
+                    BaseSites = base_sites(ConsBlocks, Blocks, Defs, FA),
+                    {ok, #{cons_sites => Sites,
+                           base_sites => BaseSites, continue => Continue}};
+                false ->
                     no
             end;
         false ->
             no
     end.
 
-%% V = put_list(Elem, Rec) where Rec is a self call.
+%% V is a chain of one or more put_lists ending in a self call:
+%% `[E1, E2, ..., Em | Rec]'. Returns {ok, ElemChain, ChainVars, Rec} where
+%% ChainVars are the put_list result vars of the chain (dropped from the cons
+%% block and rebuilt as cells by build_dps). A single cons is the m = 1 case;
+%% m > 1 is a multi-cons clause like `[H, g(H) | f(T)]'.
 cons_site(V, FA, Defs) ->
+    cons_chain(V, FA, Defs, [], []).
+
+cons_chain(V, FA, Defs, ElemAcc, VarAcc) ->
     case resolve(V, Defs) of
-        {set, #b_set{op=put_list, args=[Elem, Tl]}} ->
+        {set, #b_set{op=put_list, args=[E, Tl], dst=D}} ->
             case resolve(Tl, Defs) of
                 {set, #b_set{op=call}=S} ->
                     case is_self_call(S, FA) of
-                        true -> {ok, Elem, Tl};
-                        false -> no
+                        true ->
+                            {ok, lists:reverse([E|ElemAcc]),
+                             lists:reverse([D|VarAcc]), Tl};
+                        false ->
+                            no
                     end;
-                _ -> no
+                {set, #b_set{op=put_list}} ->
+                    cons_chain(Tl, FA, Defs, [E|ElemAcc], [D|VarAcc]);
+                _ ->
+                    no
             end;
-        _ -> no
+        _ ->
+            no
     end.
+
+%% The recursion arguments of a self call (its args minus the callee).
+cons_args(Rec, Defs) ->
+    #b_set{args=[_Callee|Args]} = maps:get(Rec, Defs),
+    Args.
 
 %% Which block defines Rec (the self call)? SSA is single-assignment, so Rec is
 %% defined in exactly one block.
@@ -256,9 +274,9 @@ call_block_of(Rec, Blocks) ->
 %% A ret block that returns a self-call result directly is a `continue' edge
 %% (a filter skip: `f([_|T]) -> f(T)') -- it must CONTINUE the loop, threaded to
 %% the helper, not be sealed. build_dps handles those separately.
-base_sites(ConsBlock, Blocks, Defs, FA) ->
+base_sites(ConsBlocks, Blocks, Defs, FA) ->
     [{L, V} || {L, #b_blk{last=#b_ret{arg=V}}} <- maps:to_list(Blocks),
-               L =/= ConsBlock,
+               not lists:member(L, ConsBlocks),
                not is_error_ret(V, Defs),
                not is_self_ret(V, FA, Defs)].
 
@@ -282,66 +300,96 @@ is_self_ret(V, FA, Defs) ->
 %% build_dps(F, Mod, FA, Info) -> [F_rewritten, F_dps]
 %%----------------------------------------------------------------------
 build_dps(#b_function{anno=Anno, args=Args, bs=Bs, cnt=Cnt}=F, Mod, {Name,Arity}, Info) ->
-    #{cons_block := Lc, elem := Elem, rec := Rec, rec_args := RecArgs,
-      call_block := Lcall, base_sites := BaseSites, continue := Continue} = Info,
+    #{cons_sites := Sites, base_sites := BaseSites, continue := Continue} = Info,
     DpsName = dps_name(Name, Arity),
     DpsArity = Arity + 2,
     DpsCallee = #b_local{name=#b_literal{val=DpsName}, arity=DpsArity},
     Nil = #b_literal{val=[]},
+    ConsBlocks = [L || {L,_,_,_,_,_} <- Sites],
 
     %% ---- helper f_dps: original body + [Root,Dest] args ----
+    %% Each cons clause builds its cell chain, splices the chain head onto the
+    %% current hole (Dest) and tail-calls the helper with the chain's LAST cell
+    %% as the new Dest (its CDR is now the hole).
     RootV = #b_var{name=Cnt},
     DestV = #b_var{name=Cnt+1},
-    NewV  = #b_var{name=Cnt+2},
-    CallBlk0 = maps:get(Lcall, Bs),
-    %% Keep any element/argument computations in the call block (e.g. get_hd /
-    %% get_tl); drop only the self call and its succeeded test.
-    KeptIs = keep_call_instrs(CallBlk0#b_blk.is, Rec),
-    %% The element expression may have been sunk (by ssa_opt) into the cons
-    %% block Lc, which is removed below. Preserve those definitions -- every
-    %% instruction of Lc except the `put_list(Elem, Rec)' cell we are rebuilding
-    %% (the recognizer guarantees Rec is used only by that put_list, so none of
-    %% these reference Rec) -- and fold them into the rewritten call block.
-    ElemIs = cons_elem_instrs(Lc, Bs, Elem, Rec),
-    %% Rewrite the recursion block: build this cell, splice it onto the hole,
-    %% then tail-call the helper threading (Root, New).
-    DpsCallBlk = CallBlk0#b_blk{
-        is = KeptIs ++ ElemIs ++
-             [mk_set(NewV, put_list, [Elem, Nil]),
-              mk_set(none, set_cons_tail, [DestV, NewV]),
-              mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, NewV]])],
-        last = #b_ret{arg=Rec}},
-    DpsBs1 = maps:remove(Lc, Bs#{Lcall => DpsCallBlk}),
+    {DpsBs0, DpsCnt} =
+        lists:foldl(fun(Site, {Acc, V}) ->
+                            dps_cons_block(Site, DpsCallee, RootV, DestV, Nil, Acc, V)
+                    end, {Bs, Cnt+2}, Sites),
+    DpsBs1 = drop_blocks(ConsBlocks, DpsBs0),
     %% Seal each base block: fill the last hole with the base value, return Root.
-    DpsBs = lists:foldl(
-              fun({Lb, BaseVal}, Acc) ->
-                      #b_blk{is=Is0}=B = maps:get(Lb, Acc),
-                      B1 = B#b_blk{is = Is0 ++ [mk_set(none, set_cons_tail, [DestV, BaseVal])],
-                                   last = #b_ret{arg=RootV}},
-                      Acc#{Lb => B1}
-              end, DpsBs1, BaseSites),
-    %% Continue edges (filter skips: `f([_|T]) -> f(T)'): in the helper these
-    %% must tail-call the helper again threading the SAME Root/Dest, so the
-    %% element is skipped and the loop continues (they are NOT sealed). In the
-    %% original F they are left as plain self calls -- tail-recursive, O(1) --
-    %% that bootstrap the helper at the first cons.
-    DpsBsC = thread_continue(Continue, DpsCallee, RootV, DestV, DpsBs),
+    DpsBs2 = lists:foldl(
+               fun({Lb, BaseVal}, Acc) ->
+                       #b_blk{is=Is0}=B = maps:get(Lb, Acc),
+                       B1 = B#b_blk{is = Is0 ++ [mk_set(none, set_cons_tail, [DestV, BaseVal])],
+                                    last = #b_ret{arg=RootV}},
+                       Acc#{Lb => B1}
+               end, DpsBs1, BaseSites),
+    %% Continue edges (filter skips: `f([_|T]) -> f(T)'): tail-call the helper
+    %% threading the SAME Root/Dest, so the element is skipped and the loop
+    %% continues (NOT sealed).
+    DpsBsC = thread_continue(Continue, DpsCallee, RootV, DestV, DpsBs2),
     FDps = #b_function{anno = Anno#{func_info => {Mod, DpsName, DpsArity}},
                        args = Args ++ [RootV, DestV],
                        bs = DpsBsC,
-                       cnt = Cnt+3},
+                       cnt = DpsCnt},
 
-    %% ---- original f: build the first cell, bootstrap into the helper ----
-    Root0 = #b_var{name=Cnt},                   %% separate namespace, reuse Cnt
-    FCallBlk = CallBlk0#b_blk{
-        is = KeptIs ++ ElemIs ++
-             [mk_set(Root0, put_list, [Elem, Nil]),
-              mk_set(Rec, call, [DpsCallee | RecArgs ++ [Root0, Root0]])],
-        last = #b_ret{arg=Rec}},
-    FBs = maps:remove(Lc, Bs#{Lcall => FCallBlk}),
-    FRw = F#b_function{bs = FBs, cnt = Cnt+1},
+    %% ---- original f: each cons clause builds its chain and bootstraps into
+    %% the helper (chain head = Root, chain last cell = Dest). Continue edges are
+    %% left as plain tail-recursive self calls that reach a cons and bootstrap.
+    {FBs0, FrwCnt} =
+        lists:foldl(fun(Site, {Acc, V}) ->
+                            frw_cons_block(Site, DpsCallee, Nil, Acc, V)
+                    end, {Bs, Cnt}, Sites),
+    FBs = drop_blocks(ConsBlocks, FBs0),
+    FRw = F#b_function{bs = FBs, cnt = FrwCnt},
 
     [FRw, FDps].
+
+drop_blocks(Ls, Bs) ->
+    lists:foldl(fun(L, A) -> maps:remove(L, A) end, Bs, Ls).
+
+%% Rewrite a cons-site call block in the helper.
+dps_cons_block({L, Chain, ChainVars, Rec, RecArgs, Lcall}, DpsCallee,
+               RootV, DestV, Nil, Bs, Var) ->
+    CallBlk = maps:get(Lcall, Bs),
+    KeptIs = keep_call_instrs(CallBlk#b_blk.is, Rec),
+    ElemIs = cons_elem_instrs(L, Bs, ChainVars),
+    {Cells, HeadV, LastV, Var2} = build_cells(Chain, Nil, Var),
+    NewBlk = CallBlk#b_blk{
+               is = KeptIs ++ ElemIs ++ Cells ++
+                    [mk_set(none, set_cons_tail, [DestV, HeadV]),
+                     mk_set(Rec, call, [DpsCallee | RecArgs ++ [RootV, LastV]])],
+               last = #b_ret{arg=Rec}},
+    {Bs#{Lcall => NewBlk}, Var2}.
+
+%% Rewrite a cons-site call block in the original function (bootstrap).
+frw_cons_block({L, Chain, ChainVars, Rec, RecArgs, Lcall}, DpsCallee, Nil, Bs, Var) ->
+    CallBlk = maps:get(Lcall, Bs),
+    KeptIs = keep_call_instrs(CallBlk#b_blk.is, Rec),
+    ElemIs = cons_elem_instrs(L, Bs, ChainVars),
+    {Cells, HeadV, LastV, Var2} = build_cells(Chain, Nil, Var),
+    NewBlk = CallBlk#b_blk{
+               is = KeptIs ++ ElemIs ++ Cells ++
+                    [mk_set(Rec, call, [DpsCallee | RecArgs ++ [HeadV, LastV]])],
+               last = #b_ret{arg=Rec}},
+    {Bs#{Lcall => NewBlk}, Var2}.
+
+%% Build the cell chain for `[E1, ..., Em]' from the tail up: cellm = [Em | Nil],
+%% cell_{m-1} = [E_{m-1} | cellm], ..., cell1 = [E1 | cell2]. Returns the
+%% instructions (definition order), the head cell (cell1), the last cell (cellm,
+%% whose CDR becomes the next hole) and the next free var.
+build_cells(Chain, Nil, StartVar) ->
+    {Is, _Tail, Head, Last, Next} =
+        lists:foldl(
+          fun(E, {Acc, Tail, _Head, LastV, V}) ->
+                  Cell = #b_var{name=V},
+                  I = mk_set(Cell, put_list, [E, Tail]),
+                  LastV1 = case LastV of undefined -> Cell; _ -> LastV end,
+                  {Acc ++ [I], Cell, Cell, LastV1, V+1}
+          end, {[], Nil, undefined, undefined, StartVar}, lists:reverse(Chain)),
+    {Is, Head, Last, Next}.
 
 %% In the helper, rewrite each continue-edge self call to call the helper
 %% instead (threading Root/Dest), so a skipped element continues the loop.
@@ -557,15 +605,14 @@ keep_call_instrs(Is, Rec) ->
 
 %% Element-supporting instructions that ssa_opt may have sunk into the cons
 %% block Lc (which build_dps removes). Keep all of Lc's instructions except the
-%% `put_list(Elem, Rec)' cell being rebuilt. Rec is used only by that put_list
-%% (recognizer invariant), so the kept instructions never reference it and are
-%% safe to fold in before the rebuilt cell. Lc is always distinct from the call
-%% block (the self call's succeeded test splits them), which build_dps already
-%% relies on when it removes Lc.
-cons_elem_instrs(Lc, Bs, Elem, Rec) ->
+%% put_list cells of the cons chain (ChainVars) -- those are rebuilt as fresh
+%% cells. The chain vars are used only within the chain (recognizer invariant),
+%% so the kept instructions never reference them and are safe to fold in before
+%% the rebuilt cells. Lc is always distinct from the call block (the self call's
+%% succeeded test splits them), which build_dps relies on when it removes Lc.
+cons_elem_instrs(Lc, Bs, ChainVars) ->
     #b_blk{is=Is} = maps:get(Lc, Bs),
-    [I || #b_set{op=Op, args=As}=I <- Is,
-          not (Op =:= put_list andalso As =:= [Elem, Rec])].
+    [I || #b_set{dst=D}=I <- Is, not lists:member(D, ChainVars)].
 
 dps_name(Name, Arity) ->
     list_to_atom(lists:concat(["-tmc-", Name, "/", Arity, "-"])).
@@ -604,13 +651,9 @@ recognize(FA, Blocks) ->
 %% A returned value V is a TMC cons site iff V = put_list(H, R) and R is a
 %% self call to FA.
 is_tmc_cons_ret(V, FA, Defs) ->
-    case resolve(V, Defs) of
-        {set, #b_set{op=put_list, args=[_Hd, Tl]}} ->
-            case resolve(Tl, Defs) of
-                {set, #b_set{op=call}=S} -> is_self_call(S, FA);
-                _ -> false
-            end;
-        _ -> false
+    case cons_site(V, FA, Defs) of
+        {ok, _Chain, _Vars, _Rec} -> true;
+        no -> false
     end.
 
 %%----------------------------------------------------------------------

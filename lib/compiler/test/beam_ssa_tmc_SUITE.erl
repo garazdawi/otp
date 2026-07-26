@@ -38,7 +38,7 @@
 -export([all/0, suite/0, groups/0,
          init_per_suite/1, end_per_suite/1,
          init_per_group/2, end_per_group/2,
-         fe1_builders/1, fe2_accrev/1, filters/1, rejections/1,
+         fe1_builders/1, fe2_accrev/1, filters/1, multi_cons/1, rejections/1,
          report/1, api/1, disasm/1]).
 
 suite() ->
@@ -50,7 +50,8 @@ all() ->
 
 groups() ->
     [{p, test_lib:parallel(),
-      [fe1_builders, fe2_accrev, filters, rejections, report, api, disasm]}].
+      [fe1_builders, fe2_accrev, filters, multi_cons, rejections,
+       report, api, disasm]}].
 
 init_per_suite(Config) ->
     test_lib:recompile(?MODULE),
@@ -166,6 +167,33 @@ filters(_Config) ->
     ok.
 
 %%%======================================================================
+%%% Multiple cons clauses (several cons edges) and multi-cons per step
+%%% (`[A, B | self()]'): more than one clause conses into the single Dest, and
+%%% a clause may build a chain of cells per iteration.
+%%%======================================================================
+multi_cons(_Config) ->
+    L = [1, -2, 3, -4, 5],
+    %% multi-clause: two cons edges with different elements
+    same([1,2,3,4,5], "f([H|T]) when H > 0 -> [H|f(T)];\n"
+                      "f([H|T]) -> [-H|f(T)];\nf([]) -> [].\n", f, [L]),
+    %% multi-clause with distinct guards/bases
+    same([1,2,0,1,0], "f([a|T]) -> [1|f(T)];\nf([b|T]) -> [2|f(T)];\n"
+                      "f([_|T]) -> [0|f(T)];\nf([]) -> [].\n", f, [[a,b,x,a,y]]),
+    %% multi-cons: two elements per step
+    same([1,2,2,4,3,6], "f([H|T]) -> [H, H*2 | f(T)];\nf([]) -> [].\n", f, [[1,2,3]]),
+    %% multi-cons: three elements per step, heap element
+    same([1,{1},2,2,{2},3], "f([H|T]) -> [H, {H}, H+1 | f(T)];\nf([]) -> [].\n",
+         f, [[1,2]]),
+    %% multi-cons with a non-nil base (append-like)
+    same([1,1,2,2,x,y], "f([H|T],A) -> [H, H | f(T,A)];\nf([],A) -> A.\n",
+         f, [[1,2], [x,y]]),
+    %% combined: multi-clause + multi-cons + filter skip
+    same([1,plus,3,plus,7,plus], "f([H|T]) when H > 0 -> [H, plus | f(T)];\n"
+                                 "f([0|T]) -> f(T);\nf([H|T]) -> [H|f(T)];\nf([]) -> [].\n",
+         f, [[1, 0, 3, 0, 7]]),
+    ok.
+
+%%%======================================================================
 %%% Recognizer rejections / near-misses. These must compile cleanly with
 %%% `tmc' and produce the same result as without it (i.e. left untransformed).
 %%%======================================================================
@@ -198,10 +226,11 @@ rejections(_Config) ->
     %% strand its definition, so the well-formedness guard rejects the transform
     same_ref("f([X|Xs]) -> R = f(Xs), Y = list_to_atom(integer_to_list(X)), [Y|R];\n"
              "f([]) -> [].\n", f, [P]),
-    %% one cons site plus a self call consed in a multi-cons clause (not a cons
-    %% site, so not a returned-directly continue edge) -> rejected
-    same_ref("f([H|T]) when H > 0 -> [H|f(T)];\n"
-             "f([H|T]) -> [H,extra|f(T)];\nf([]) -> [].\n", f, [P]),
+    %% two cons returns sharing ONE self call (`R = f(...), ...[a|R]...[b|R]...')
+    %% -> the cons edges are not distinct, so it is rejected
+    same_ref("f(0) -> [];\n"
+             "f(X) -> R = f(X-1), case X rem 2 of 0 -> [a|R]; _ -> [b|R] end.\n",
+             f, [4]),
 
     %% ---- FE2 near-misses ----
     %% base returns the accumulator itself, not reverse(Acc)
