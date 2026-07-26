@@ -68,7 +68,14 @@ exports(Config) when is_list(Config) ->
 %% correct.
 functions(Config) when is_list(Config) ->
     All = all_functions(),
-    All = lists:sort(?MODULE:module_info(functions)),
+    %% Exclude compiler-generated helper functions (their names start with
+    %% `-'), e.g. the `-tmc-add_arity/2-' helper the tail-modulo-cons pass
+    %% adds for the accumulator+reverse builder add_arity/2. Those are
+    %% implementation details, not source functions, and their names are not
+    %% stable across compiler options.
+    Source = [{N,A} || {N,A} <- ?MODULE:module_info(functions),
+                       hd(atom_to_list(N)) =/= $-],
+    All = lists:sort(Source),
     ok.
 
 nifs(Config) when is_list(Config) ->
