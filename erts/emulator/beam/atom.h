@@ -33,6 +33,7 @@
 #define MIN_ATOM_TABLE_SIZE 8192
 #define ATOM_BAD_ENCODING_ERROR -1
 #define ATOM_MAX_CHARS_ERROR -2
+#define ATOM_MAX_LIMIT_ERROR -3 /* atom table full (catchable system_limit) */
 
 #ifndef ARCH_32
 /* Internal atom cache needs MAX_ATOM_TABLE_SIZE to be less than an
@@ -158,6 +159,9 @@ int atom_table_sz(void);	/* table size in bytes, excluding stored objects */
 
 Eterm am_atom_put(const char*, Sint); /* ONLY 7-bit ascii! */
 Eterm erts_atom_put(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc);
+/* Like erts_atom_put() but aborts the node on failure; for internal call
+   sites that cannot propagate a full-atom-table error (see atom.c). */
+Eterm erts_atom_put_or_die(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc);
 int erts_atom_put_index(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc);
 void init_atom_table(void);
 void atom_info(fmtfn_t, void *);

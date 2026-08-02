@@ -82,7 +82,7 @@ BIF_RETTYPE erts_internal_open_port_2(BIF_ALIST_2)
                 BIF_ERROR(BIF_P, EXC_INTERNAL_ERROR);
 	} else if (err_type == -2) {
 	    str = erl_errno_id(err_num);
-            res = erts_atom_put((byte *) str, sys_strlen(str), ERTS_ATOM_ENC_LATIN1, 1);
+            res = erts_atom_put_or_die((byte *) str, sys_strlen(str), ERTS_ATOM_ENC_LATIN1, 1);
 	} else {
 	    res = am_einval;
 	}

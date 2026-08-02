@@ -72,24 +72,35 @@ erts_index_init(ErtsAlcType_t type, IndexTable* t, char* name,
 }
 
 IndexSlot*
-index_put_entry(IndexTable* t, void* tmpl)
+index_put_entry_may_fail(IndexTable* t, void* tmpl)
 {
-    int ix;
-    IndexSlot* p = (IndexSlot*) hash_put(&t->htable, tmpl);
+    int ix = t->entries;
+    IndexSlot* p;
 
+    /*
+     * Accepting a *new* entry here would require growing past the limit, so
+     * the table is full. Refuse without inserting anything, returning NULL so
+     * the caller can raise a catchable error instead of aborting the node
+     * (see index_put_entry()). An entry that is already present must still
+     * resolve even when full, so probe with hash_get (which never inserts)
+     * rather than hash_put -- this avoids a tentative insertion we would have
+     * to undo, and undoing is not free: the alloc callback may have
+     * side effects (e.g. atom_alloc() registers a global literal).
+     *
+     * The (ix >= size && ix >= limit) condition is exactly the point at which
+     * index_put_entry() used to abort, so behaviour is unchanged otherwise.
+     */
+    if (ix >= t->size && ix >= t->limit) {
+	return (IndexSlot*) hash_get(&t->htable, tmpl);
+    }
+
+    p = (IndexSlot*) hash_put(&t->htable, tmpl);
     if (p->index >= 0) {
 	return p;
     }
 
-    ix = t->entries;
     if (ix >= t->size) {
-	Uint sz;
-	if (ix >= t->limit) {
-	    /* A core dump is unnecessary */
-	    erts_exit(ERTS_DUMP_EXIT, "no more index entries in %s (max=%d)\n",
-		     t->htable.name, t->limit);
-	}
-	sz = INDEX_PAGE_SIZE*sizeof(IndexSlot*);
+	Uint sz = INDEX_PAGE_SIZE*sizeof(IndexSlot*);
 	t->seg_table[ix>>INDEX_PAGE_SHIFT] = erts_alloc(t->type, sz);
 	t->size += INDEX_PAGE_SIZE;
     }
@@ -103,6 +114,18 @@ index_put_entry(IndexTable* t, void* tmpl)
     ERTS_THR_WRITE_MEMORY_BARRIER;
     t->entries++;
 
+    return p;
+}
+
+IndexSlot*
+index_put_entry(IndexTable* t, void* tmpl)
+{
+    IndexSlot* p = index_put_entry_may_fail(t, tmpl);
+    if (p == NULL) {
+	/* A core dump is unnecessary */
+	erts_exit(ERTS_DUMP_EXIT, "no more index entries in %s (max=%d)\n",
+		 t->htable.name, t->limit);
+    }
     return p;
 }
 

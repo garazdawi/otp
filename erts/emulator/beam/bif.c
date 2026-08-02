@@ -3223,8 +3223,12 @@ BIF_RETTYPE list_to_atom_1(BIF_ALIST_1)
 	BIF_ERROR(BIF_P, BADARG);
     }
     res = erts_atom_put(buf, written, ERTS_ATOM_ENC_UTF8, 1);
-    ASSERT(is_atom(res));
     erts_free(ERTS_ALC_T_TMP, (void *) buf);
+    if (is_non_value(res)) {
+        /* The name is already validated above, so the only way to get here
+           is a full atom table. */
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+    }
     BIF_RET(res);
 }
 
