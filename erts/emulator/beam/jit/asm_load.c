@@ -1043,7 +1043,13 @@ int beam_load_finish_emit(LoaderState *stp) {
         ERTS_INIT_OFF_HEAP(&code_off_heap);
 
         lit_asize = ERTS_LITERAL_AREA_ALLOC_SIZE(tot_lit_size);
-        literal_area = erts_alloc(ERTS_ALC_T_LITERAL, lit_asize);
+        literal_area = erts_alloc_fnf(ERTS_ALC_T_LITERAL, lit_asize);
+        if (literal_area == NULL) {
+            /* Out of memory for this module's literals. Fail the load with a
+               catchable error rather than aborting the whole node; nothing
+               has been committed to the code tables yet at this point. */
+            BeamLoadError0(stp, "out of memory allocating module literals");
+        }
         ptr = &literal_area->start[0];
         literal_area->end = ptr + tot_lit_size;
 
