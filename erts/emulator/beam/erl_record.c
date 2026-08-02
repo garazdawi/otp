@@ -174,7 +174,7 @@ erts_record_put(Eterm module, Eterm name) {
     record_template_t template;
 
     init_record_template(&template, module, name);
-    return record_staged_upsert(&template);
+    return record_staged_upsert(&template, 0);
 }
 
 struct record_module_delete_args {

@@ -293,7 +293,7 @@ ErlFunEntry *erts_fun_entry_put(Eterm mod,
 {
     fun_template_t template;
     init_fun_template(&template, mod, old_uniq, old_index, uniq, index, arity);
-    return fun_staged_upsert(&template);
+    return fun_staged_upsert(&template, 0);
 }
 
 const ErlFunEntry *erts_fun_entry_get_or_make_stub(Eterm mod,
@@ -305,7 +305,7 @@ const ErlFunEntry *erts_fun_entry_get_or_make_stub(Eterm mod,
 {
     fun_template_t template;
     init_fun_template(&template, mod, old_uniq, old_index, uniq, index, arity);
-    return fun_staged_upsert(&template);
+    return fun_staged_upsert(&template, 0);
 }
 
 void erts_fun_start_staging(void)

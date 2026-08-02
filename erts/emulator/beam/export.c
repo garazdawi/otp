@@ -238,7 +238,32 @@ Export *erts_export_get_or_make_stub(Eterm mod, Eterm func, unsigned int arity)
     object->info.mfa.function = func;
     object->info.mfa.arity = arity;
 
-    return export_staged_upsert(&template);
+    return export_staged_upsert(&template, 0);
+}
+
+/*
+ * Like erts_export_get_or_make_stub() but returns NULL instead of aborting
+ * the node when the export table is full. Used by paths that decode
+ * untrusted input (e.g. an external fun in binary_to_term/distribution),
+ * where a full export table must raise a catchable error rather than kill
+ * the node.
+ */
+
+Export *erts_export_get_or_make_stub_or_null(Eterm mod, Eterm func,
+                                             unsigned int arity)
+{
+    export_template_t template;
+    Export *object;
+
+    ASSERT(is_atom(mod));
+    ASSERT(is_atom(func));
+
+    object = export_staged_init_template(&template);
+    object->info.mfa.module = mod;
+    object->info.mfa.function = func;
+    object->info.mfa.arity = arity;
+
+    return export_staged_upsert(&template, 1);
 }
 
 Export *export_list(int i, ErtsCodeIndex code_ix)

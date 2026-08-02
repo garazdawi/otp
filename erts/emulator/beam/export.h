@@ -134,6 +134,9 @@ ERTS_GLB_INLINE const Export *erts_active_export_entry(Eterm m,
 Export* erts_export_put(Eterm mod, Eterm func, unsigned int arity);
 
 Export* erts_export_get_or_make_stub(Eterm, Eterm, unsigned);
+/* Like erts_export_get_or_make_stub() but returns NULL instead of aborting
+   the node when the export table is full (for untrusted decode paths). */
+Export* erts_export_get_or_make_stub_or_null(Eterm, Eterm, unsigned);
 
 Export *export_list(int,ErtsCodeIndex);
 int export_list_size(ErtsCodeIndex);
