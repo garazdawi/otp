@@ -82,6 +82,7 @@ void module_info(fmtfn_t, void *);
 
 Module *module_code(int, ErtsCodeIndex);
 int module_code_size(ErtsCodeIndex);
+int erts_module_table_would_fit(int need);
 int module_table_sz(void);
 
 ERTS_GLB_INLINE void erts_rwlock_old_code(ErtsCodeIndex);

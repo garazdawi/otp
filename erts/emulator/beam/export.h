@@ -140,6 +140,7 @@ Export* erts_export_get_or_make_stub_or_null(Eterm, Eterm, unsigned);
 
 Export *export_list(int,ErtsCodeIndex);
 int export_list_size(ErtsCodeIndex);
+int erts_export_table_would_fit(int need);
 int export_table_sz(void);
 int export_entries_sz(void);
 const Export *export_get(const Export*);

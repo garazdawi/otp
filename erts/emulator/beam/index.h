@@ -63,6 +63,9 @@ IndexSlot* index_put_entry(IndexTable*, void*);
    the table is full, so the caller can raise a catchable error. */
 IndexSlot* index_put_entry_may_fail(IndexTable*, void*);
 
+/* Returns non-zero if 'need' more entries would fit under the table limit. */
+int erts_index_table_would_fit(IndexTable*, int need);
+
 /* Erase all entries with index 'ix' and higher
 */
 void index_erase_latest_from(IndexTable*, Uint ix);

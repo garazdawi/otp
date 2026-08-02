@@ -129,6 +129,11 @@ index_put_entry(IndexTable* t, void* tmpl)
     return p;
 }
 
+int erts_index_table_would_fit(IndexTable* t, int need)
+{
+    return erts_index_num_entries(t) + need <= t->limit;
+}
+
 int index_get(IndexTable* t, void* tmpl)
 {
     IndexSlot* p = (IndexSlot*) hash_get(&t->htable, tmpl);

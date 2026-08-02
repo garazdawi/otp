@@ -564,6 +564,16 @@ ERTS_CODE_STAGED_FUNC__(list_size)(ErtsCodeIndex code_ix)
 }
 #endif
 
+#ifdef ERTS_CODE_STAGED_WANT_WOULD_FIT
+static int
+ERTS_CODE_STAGED_FUNC__(would_fit)(ErtsCodeIndex code_ix, int need)
+{
+    IndexTable * const tables = ERTS_CODE_STAGED_CONCAT_MACRO_VALUES__
+                                (ERTS_CODE_STAGED_PREFIX, _tables);
+    return erts_index_table_would_fit(&tables[code_ix], need);
+}
+#endif
+
 #ifdef ERTS_CODE_STAGED_WANT_TABLE_SIZE
 static int
 ERTS_CODE_STAGED_FUNC__(table_size)(void)

@@ -102,6 +102,7 @@ void erts_init_fun_table(void);
 void erts_fun_info(fmtfn_t, void *);
 int erts_fun_table_sz(void);
 int erts_fun_entries_sz(void);
+int erts_fun_table_would_fit(int need);
 
 /* Finds or inserts a fun entry that matches the given signature. */
 ErlFunEntry *erts_fun_entry_put(Eterm mod, int old_uniq, int old_index,

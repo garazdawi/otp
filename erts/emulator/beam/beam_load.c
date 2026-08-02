@@ -224,6 +224,29 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
                        "Erlang/OTP 25 or later.\n");
     }
 
+    /*
+     * Refuse the load up front with a catchable system_limit if the module,
+     * export or fun table cannot hold this module's entries, rather than
+     * aborting the node from index_put_entry() while committing the code.
+     *
+     * The export estimate (own exports + imports) is a conservative upper
+     * bound: imports that resolve to already-present entries consume no slot,
+     * so a load may be refused slightly before the true limit. The check uses
+     * the staging table (the one a load inserts into); a concurrent atomic
+     * multi-module load could in principle still overflow between here and the
+     * commit, in which case the old abort behaviour remains as a backstop.
+     */
+    if (!erts_module_table_would_fit(1)
+        || !erts_export_table_would_fit(stp->beam.exports.count
+                                        + stp->beam.imports.count)
+        || !erts_fun_table_would_fit(stp->beam.lambdas.count)) {
+        retval = am_system_limit;
+        beam_load_report_error(__LINE__, stp,
+                               "no room to load module: the module, export "
+                               "or fun table is full");
+        goto load_error;
+    }
+
     if (!load_code(stp)) {
         goto load_error;
     }

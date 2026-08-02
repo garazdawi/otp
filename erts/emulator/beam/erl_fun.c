@@ -127,6 +127,7 @@ static void fun_stage(ErlFunEntry *entry,
 #define ERTS_CODE_STAGED_WANT_FOREACH_ACTIVE
 #define ERTS_CODE_STAGED_WANT_ENTRY_BYTES
 #define ERTS_CODE_STAGED_WANT_TABLE_SIZE
+#define ERTS_CODE_STAGED_WANT_WOULD_FIT
 #define ERTS_CODE_STAGED_WANT_INFO
 
 #include "erl_code_staged.h"
@@ -144,6 +145,13 @@ void erts_fun_info(fmtfn_t to, void *to_arg)
 int erts_fun_table_sz(void)
 {
     return fun_staged_table_size();
+}
+
+/* Staging-table (the table a load inserts into) capacity check for the
+ * loader pre-flight; see beam_load.c. */
+int erts_fun_table_would_fit(int need)
+{
+    return fun_staged_would_fit(erts_staging_code_ix(), need);
 }
 
 int erts_fun_entries_sz(void)
