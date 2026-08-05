@@ -256,6 +256,7 @@ atom dotall
 atom driver
 atom driver_options
 atom dsend_continue_trap
+atom dump
 atom duplicate_bag
 atom duplicated
 atom dupnames
@@ -527,6 +528,7 @@ atom not_loaded_by_this_process
 atom not_pending
 atom not_owner
 atom not_purged
+atom not_supported
 atom notalive
 atom notbol
 atom noteol
