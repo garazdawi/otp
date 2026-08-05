@@ -80,7 +80,8 @@ MODULES= \
 	ct_util_SUITE \
 	ct_tc_repeat_SUITE \
 	ct_property_test_SUITE \
-	ct_doctest_SUITE
+	ct_doctest_SUITE \
+	ct_coverage_SUITE
 
 ERL_FILES= $(MODULES:%=%.erl)
 HRL_FILES= test_server_test_lib.hrl
