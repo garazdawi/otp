@@ -99,12 +99,6 @@ jobs:
           - id: dirty_signal_handling
             app: emulator
             args: "-suite signal_SUITE -case dirty_signal_handling"
-          # Re-enabled from emulator_gh.spec ("Unstable TC"). The unload/reload
-          # race (f624bfe7c0) and the GC/timing issues (dfab409461) were fixed
-          # after it was disabled; soak it to confirm it is stable again.
-          - id: dynamic_resource_call
-            app: emulator
-            args: "-suite nif_SUITE -case t_dynamic_resource_call"
           - id: misc_ssh_options
             app: ssh
             args: "-suite ssh_basic_SUITE -group p_basic -case misc_ssh_options"
