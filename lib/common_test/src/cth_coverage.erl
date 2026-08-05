@@ -79,21 +79,21 @@ id(_Opts) ->
     ?MODULE.
 
 init(_Id, Opts) ->
-    Enabled = code:coverage_support() andalso
-        code:get_coverage_mode() =/= none,
-    case Enabled of
+    %% Gate only on coverage_support(): modules compiled with
+    %% +force_line_counters are line-counted regardless of the global
+    %% coverage mode, so the per-module probe (instrumented_modules/1)
+    %% is what decides what to collect -- not code:get_coverage_mode/0.
+    case code:coverage_support() of
         true ->
             Dir = filename:absname(output_dir(Opts)),
             _ = filelib:ensure_path(Dir),
             {ok, #state{enabled = true, dir = Dir, level = line}};
         false ->
+            %% No native coverage on this emulator (needs the JIT).
             %% Log once and become a no-op.
-            logger:notice("cth_coverage: native coverage not available "
-                          "(coverage_support: ~w, coverage mode: ~w); "
-                          "per-testcase coverage collection is disabled",
-                          [code:coverage_support(),
-                           try code:get_coverage_mode()
-                           catch _:_ -> undefined end]),
+            logger:notice("cth_coverage: native coverage not supported on "
+                          "this emulator; per-testcase coverage collection "
+                          "is disabled"),
             {ok, #state{enabled = false}}
     end.
 
