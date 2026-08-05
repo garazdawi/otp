@@ -132,6 +132,7 @@ const Process erts_invalid_process = {{ERTS_INVALID_PID}};
 int ERTS_WRITE_UNLIKELY(erts_default_spo_flags) = SPO_ON_HEAP_MSGQ;
 int ERTS_WRITE_UNLIKELY(erts_sched_compact_load);
 int ERTS_WRITE_UNLIKELY(erts_sched_balance_util) = 0;
+int ERTS_WRITE_UNLIKELY(erts_sched_inline_handoff) = ERTS_SCHED_HANDOFF_INLINE;
 Uint ERTS_WRITE_UNLIKELY(erts_no_schedulers);
 Uint ERTS_WRITE_UNLIKELY(erts_no_total_schedulers);
 Uint ERTS_WRITE_UNLIKELY(erts_no_dirty_cpu_schedulers) = 0;
@@ -3970,6 +3971,35 @@ enqueue_process(ErtsRunQueue *runq, int prio, Process *p)
     enqueue_process_internal(rpq, p);
 }
 
+/*
+ * Mirror of enqueue_process() that prepends instead of appends, placing
+ * the process at the HEAD of its run queue (a queue jump). Used by
+ * inline scheduling handoff (+sih) so the woken process runs next, on
+ * the waker's donated reductions.
+ */
+static ERTS_INLINE void
+enqueue_process_head(ErtsRunQueue *runq, int prio, Process *p)
+{
+    ErtsRunPrioQueue *rpq;
+
+    ERTS_LC_ASSERT(erts_lc_runq_is_locked(runq));
+
+    erts_inc_runq_len(runq, &runq->procs.prio_info[prio], prio);
+
+    if (prio == PRIORITY_LOW) {
+        p->schedule_count = RESCHEDULE_LOW;
+        rpq = &runq->procs.prio[PRIORITY_NORMAL];
+    }
+    else {
+        p->schedule_count = 1;
+        rpq = &runq->procs.prio[prio];
+    }
+    p->next = rpq->first;
+    rpq->first = p;
+    if (!rpq->last)
+        rpq->last = p;
+}
+
 static ERTS_INLINE void
 unqueue_process_no_update_lengths(ErtsRunPrioQueue *rpq,
 		Process *prev_proc,
@@ -6048,6 +6078,13 @@ init_scheduler_data(ErtsSchedulerData* esdp, int num,
     esdp->virtual_reds = 0;
     esdp->cpu_id = -1;
 
+    esdp->handoff.hint = 0;
+    esdp->handoff.pid = NIL;
+    esdp->handoff.reds = 0;
+    esdp->handoff.granted = CONTEXT_REDS;
+    esdp->handoff.count = 0;
+    esdp->handoff.picks = 0;
+
     erts_init_atom_cache_map(&esdp->atom_cache_map);
 
     esdp->last_monotonic_time = 0;
@@ -6864,34 +6901,113 @@ schedule_out_process(ErtsRunQueue *c_rq, erts_aint32_t *statep, Process *p,
     }
 }
 
+/*
+ * Smallest donated time slice worth an inline handoff; with less left
+ * than this the woken process is granted a full slice as usual.
+ */
+#define ERTS_SCHED_HANDOFF_MIN_REDS (CONTEXT_REDS / 20)
+
+/*
+ * Inline scheduling handoff (reduction sharing).
+ *
+ * When the currently executing process wakes another process up by
+ * sending it a message, the woken process is placed on the current
+ * scheduler's run queue without notifying any other scheduler, and
+ * the scheduler is armed to donate the remaining part of the sender's
+ * time slice to the woken process when it is picked for execution.
+ * This makes synchronous call patterns (send + blocking receive)
+ * behave more like a direct function call: no inter-scheduler wakeup,
+ * better cache locality, and a shared reduction budget that bounds
+ * inline call chains.
+ */
+static ERTS_INLINE ErtsRunQueue *
+maybe_handoff_runq(int enqueue, erts_aint32_t prio, Process *proc,
+                   ErtsRunQueue *runq, int *handoffp)
+{
+    ErtsSchedulerData *esdp;
+    int mode = erts_sched_inline_handoff;
+
+    if (mode == ERTS_SCHED_HANDOFF_OFF
+        || enqueue != ERTS_ENQUEUE_NORMAL_QUEUE
+        || prio != PRIORITY_NORMAL)
+        return runq;
+
+    esdp = erts_get_scheduler_data();
+    if (!esdp
+        || esdp->type != ERTS_SCHED_NORMAL
+        || !esdp->handoff.hint
+        || !esdp->current_process
+        || esdp->current_process == proc)
+        return runq;
+
+    if (runq != esdp->run_queue) {
+        if (!erts_try_change_runq_proc(proc, esdp->run_queue))
+            return runq; /* Bound to another run queue */
+        runq = esdp->run_queue;
+    }
+
+    esdp->handoff.count++;
+    if (mode == ERTS_SCHED_HANDOFF_INLINE && esdp->handoff.pid == NIL) {
+        esdp->handoff.pid = proc->common.id;
+        *handoffp = ERTS_SCHED_HANDOFF_INLINE;
+    }
+    else {
+        *handoffp = ERTS_SCHED_HANDOFF_MIGRATE;
+    }
+    return runq;
+}
+
 static ERTS_INLINE void
 add2runq(int enqueue, erts_aint32_t prio,
 	 Process *proc, erts_aint32_t state)
 {
     ErtsRunQueue *runq;
+    int handoff = 0;
 
     runq = select_enqueue_run_queue(enqueue, prio, proc, state);
 
     if (runq) {
 	Process *sched_p = proc;
-        
+
 	if (enqueue < 0) { /* use proxy */
 	    Process *pxy;
 
 	    pxy = NULL;
 	    sched_p = make_proxy_proc(pxy, proc, prio);
 	}
+        else {
+            runq = maybe_handoff_runq(enqueue, prio, proc, runq, &handoff);
+        }
 
         if (ERTS_RUNQ_IX_IS_DIRTY(runq->ix))
             erts_proc_inc_refc(proc);
-        
+
 	erts_runq_lock(runq);
 
 	/* Enqueue the process */
-	enqueue_process(runq, (int) prio, sched_p);
+        if (handoff == ERTS_SCHED_HANDOFF_INLINE) {
+            /*
+             * Queue-jump to the head of the run queue: the woken
+             * process runs next, inline on the reductions donated by
+             * the waker, so it takes no more scheduler time than the
+             * waker was already entitled to. If the donation turns out
+             * to be exhausted it is demoted to the tail at the next
+             * pick (see erts_schedule()).
+             */
+            enqueue_process_head(runq, (int) prio, sched_p);
+        }
+        else {
+            enqueue_process(runq, (int) prio, sched_p);
+        }
 
 	erts_runq_unlock(runq);
-	smp_notify_inc_runq(runq);
+        /*
+         * No need to notify when handing off; the woken process will
+         * be picked up by this scheduler when the current process
+         * yields or suspends.
+         */
+        if (!handoff)
+            smp_notify_inc_runq(runq);
     }
 }
 
@@ -9679,6 +9795,20 @@ Process *erts_schedule(ErtsSchedulerData *esdp, Process *p, int calls)
 
     internal_sched_out_proc:
 
+        if (is_normal_sched && esdp->handoff.pid != NIL) {
+            /*
+             * The process being scheduled out armed an inline handoff;
+             * record the unused part of its time slice so that it can
+             * be donated to the woken process at the next pick.
+             */
+            int hreds = esdp->handoff.granted - actual_reds;
+            if (hreds < 0)
+                hreds = 0;
+            else if (hreds > CONTEXT_REDS)
+                hreds = CONTEXT_REDS;
+            esdp->handoff.reds = hreds;
+        }
+
 	ERTS_CHK_HAVE_ONLY_MAIN_PROC_LOCK(p);
         ASSERT(p->scheduler_data || ERTS_SCHEDULER_IS_DIRTY(esdp));
 
@@ -9936,6 +10066,8 @@ Process *erts_schedule(ErtsSchedulerData *esdp, Process *p, int calls)
 	    }
 
 	    (void) ERTS_RUNQ_FLGS_UNSET(rq, ERTS_RUNQ_FLG_EXEC);
+            /* Disarm any stale inline handoff before going to sleep */
+            esdp->handoff.pid = NIL;
 	    scheduler_wait(&fcalls, esdp, rq);
 	    flags = ERTS_RUNQ_FLGS_SET_NOB(rq, ERTS_RUNQ_FLG_EXEC);
 	    flags |= ERTS_RUNQ_FLG_EXEC;
@@ -9994,6 +10126,27 @@ Process *erts_schedule(ErtsSchedulerData *esdp, Process *p, int calls)
 	    erts_aint32_t psflg_band_mask;
 	    int prio_q;
 	    int qmask, qbit;
+
+            if (is_normal_sched
+                && esdp->handoff.pid != NIL
+                && esdp->handoff.reds < ERTS_SCHED_HANDOFF_MIN_REDS) {
+                /*
+                 * The donated time slice is exhausted; demote the
+                 * queue-jumped process to the tail of the queue so
+                 * that it cannot starve other runnable processes.
+                 */
+                ErtsRunPrioQueue *rpq = &rq->procs.prio[PRIORITY_NORMAL];
+                Process *hop = rpq->first;
+                if (hop
+                    && hop->common.id == esdp->handoff.pid
+                    && hop != rpq->last) {
+                    rpq->first = hop->next;
+                    rpq->last->next = hop;
+                    rpq->last = hop;
+                    hop->next = NULL;
+                }
+                esdp->handoff.pid = NIL;
+            }
 
 	    flags = ERTS_RUNQ_FLGS_GET_NOB(rq);
 	    qmask = (int) (flags & ERTS_RUNQ_FLGS_PROCS_QMASK);
@@ -10181,6 +10334,26 @@ execute_process:
 
 	    calls = 0;
 	    reds = context_reds;
+
+            if (is_normal_sched
+                && erts_sched_inline_handoff != ERTS_SCHED_HANDOFF_OFF) {
+                if (esdp->handoff.pid != NIL) {
+                    if (esdp->handoff.pid == p->common.id) {
+                        esdp->handoff.picks++;
+                        if (esdp->handoff.reds >= ERTS_SCHED_HANDOFF_MIN_REDS) {
+                            /*
+                             * Run the woken process inline on the unused
+                             * part of the waker's time slice.
+                             */
+                            reds = esdp->handoff.reds;
+                        }
+                    }
+                    esdp->handoff.pid = NIL;
+                }
+                /* Record the budget granted, so that the unused part can
+                 * be donated if this process arms a handoff in turn. */
+                esdp->handoff.granted = reds;
+            }
 
 	    erts_runq_unlock(rq);
 
