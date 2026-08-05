@@ -5020,7 +5020,12 @@ dec_term_atom_common:
                     }
                 }
 
-                export = erts_export_get_or_make_stub(mod, name, arity);
+                export = erts_export_get_or_make_stub_or_null(mod, name, arity);
+                if (export == NULL) {
+                    /* Export table full: fail the decode rather than abort
+                       the node (untrusted input). */
+                    goto error;
+                }
                 *objp = export->lambda;
             }
             break;

@@ -59,6 +59,12 @@ int index_table_sz(IndexTable *);
 int index_get(IndexTable*, void*);
 
 IndexSlot* index_put_entry(IndexTable*, void*);
+/* Like index_put_entry() but returns NULL instead of aborting the node when
+   the table is full, so the caller can raise a catchable error. */
+IndexSlot* index_put_entry_may_fail(IndexTable*, void*);
+
+/* Returns non-zero if 'need' more entries would fit under the table limit. */
+int erts_index_table_would_fit(IndexTable*, int need);
 
 /* Erase all entries with index 'ix' and higher
 */

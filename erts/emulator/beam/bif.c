@@ -3223,8 +3223,12 @@ BIF_RETTYPE list_to_atom_1(BIF_ALIST_1)
 	BIF_ERROR(BIF_P, BADARG);
     }
     res = erts_atom_put(buf, written, ERTS_ATOM_ENC_UTF8, 1);
-    ASSERT(is_atom(res));
     erts_free(ERTS_ALC_T_TMP, (void *) buf);
+    if (is_non_value(res)) {
+        /* The name is already validated above, so the only way to get here
+           is a full atom table. */
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+    }
     BIF_RET(res);
 }
 
@@ -4477,7 +4481,11 @@ BIF_RETTYPE make_fun_3(BIF_ALIST_3)
         BIF_ERROR(BIF_P, BADARG);
     }
 
-    ep = erts_export_get_or_make_stub(BIF_ARG_1, BIF_ARG_2, (Uint) arity);
+    ep = erts_export_get_or_make_stub_or_null(BIF_ARG_1, BIF_ARG_2, (Uint) arity);
+    if (ep == NULL) {
+        /* Export table full -> catchable system_limit, not a node abort. */
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+    }
     BIF_RET(ep->lambda);
 }
 

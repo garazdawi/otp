@@ -127,6 +127,7 @@ static void fun_stage(ErlFunEntry *entry,
 #define ERTS_CODE_STAGED_WANT_FOREACH_ACTIVE
 #define ERTS_CODE_STAGED_WANT_ENTRY_BYTES
 #define ERTS_CODE_STAGED_WANT_TABLE_SIZE
+#define ERTS_CODE_STAGED_WANT_WOULD_FIT
 #define ERTS_CODE_STAGED_WANT_INFO
 
 #include "erl_code_staged.h"
@@ -144,6 +145,13 @@ void erts_fun_info(fmtfn_t to, void *to_arg)
 int erts_fun_table_sz(void)
 {
     return fun_staged_table_size();
+}
+
+/* Staging-table (the table a load inserts into) capacity check for the
+ * loader pre-flight; see beam_load.c. */
+int erts_fun_table_would_fit(int need)
+{
+    return fun_staged_would_fit(erts_staging_code_ix(), need);
 }
 
 int erts_fun_entries_sz(void)
@@ -293,7 +301,7 @@ ErlFunEntry *erts_fun_entry_put(Eterm mod,
 {
     fun_template_t template;
     init_fun_template(&template, mod, old_uniq, old_index, uniq, index, arity);
-    return fun_staged_upsert(&template);
+    return fun_staged_upsert(&template, 0);
 }
 
 const ErlFunEntry *erts_fun_entry_get_or_make_stub(Eterm mod,
@@ -305,7 +313,7 @@ const ErlFunEntry *erts_fun_entry_get_or_make_stub(Eterm mod,
 {
     fun_template_t template;
     init_fun_template(&template, mod, old_uniq, old_index, uniq, index, arity);
-    return fun_staged_upsert(&template);
+    return fun_staged_upsert(&template, 0);
 }
 
 void erts_fun_start_staging(void)

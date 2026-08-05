@@ -467,7 +467,10 @@ Eterm
 erts_bld_atom(Uint **hpp, Uint *szp, char *str)
 {
     if (hpp)
-	return erts_atom_put((byte *) str, sys_strlen(str), ERTS_ATOM_ENC_LATIN1, 1);
+	/* The THE_NON_VALUE below is the sizing-pass sentinel; a build-pass
+	   failure (full atom table) must abort rather than be mistaken for
+	   it, since callers use this result directly as a term. */
+	return erts_atom_put_or_die((byte *) str, sys_strlen(str), ERTS_ATOM_ENC_LATIN1, 1);
     else
 	return THE_NON_VALUE;
 }

@@ -1517,7 +1517,12 @@ apply(Process* p, Eterm* reg, ErtsCodePtr I, Uint stack_offset)
 
     /* Call the referenced function, if any: should the function not be found,
      * create a stub entry which in turn calls the error handler. */
-    ep = erts_export_get_or_make_stub(module, function, arity);
+    ep = erts_export_get_or_make_stub_or_null(module, function, arity);
+    if (ep == NULL) {
+        /* Export table full -> catchable system_limit, not a node abort. */
+        p->freason = SYSTEM_LIMIT;
+        goto error2;
+    }
 
     apply_bif_error_adjustment(p, ep, reg, arity, I, stack_offset);
     DTRACE_GLOBAL_CALL_FROM_EXPORT(p, ep);
@@ -1558,7 +1563,12 @@ fixed_apply(Process* p, Eterm* reg, Uint arity,
 
     /* Call the referenced function, if any: should the function not be found,
      * create a stub entry which in turn calls the error handler. */
-    ep = erts_export_get_or_make_stub(module, function, arity);
+    ep = erts_export_get_or_make_stub_or_null(module, function, arity);
+    if (ep == NULL) {
+        /* Export table full -> catchable system_limit, not a node abort. */
+        p->freason = SYSTEM_LIMIT;
+        return NULL;
+    }
 
     apply_bif_error_adjustment(p, ep, reg, arity, I, stack_offset);
     DTRACE_GLOBAL_CALL_FROM_EXPORT(p, ep);

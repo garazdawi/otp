@@ -256,6 +256,14 @@ int module_code_size(ErtsCodeIndex code_ix)
     return module_tables[code_ix].entries;
 }
 
+/* Staging-table (the table a load inserts into) capacity check for the
+ * loader pre-flight; see beam_load.c. */
+int erts_module_table_would_fit(int need)
+{
+    return erts_index_table_would_fit(&module_tables[erts_staging_code_ix()],
+                                      need);
+}
+
 int module_table_sz(void)
 {
     return erts_atomic_read_nob(&tot_module_bytes);

@@ -121,6 +121,7 @@ static void export_stage(Export *export,
 #define ERTS_CODE_STAGED_WANT_PUT
 #define ERTS_CODE_STAGED_WANT_LIST
 #define ERTS_CODE_STAGED_WANT_LIST_SIZE
+#define ERTS_CODE_STAGED_WANT_WOULD_FIT
 #define ERTS_CODE_STAGED_WANT_ENTRY_BYTES
 #define ERTS_CODE_STAGED_WANT_TABLE_SIZE
 #define ERTS_CODE_STAGED_WANT_INFO
@@ -225,7 +226,8 @@ Export *erts_export_put(Eterm mod, Eterm func, unsigned int arity)
  * Stub export entries will be placed in the staging export table.
  */
 
-Export *erts_export_get_or_make_stub(Eterm mod, Eterm func, unsigned int arity)
+static Export *get_or_make_stub(Eterm mod, Eterm func, unsigned int arity,
+                                int may_fail)
 {
     export_template_t template;
     Export *object;
@@ -238,7 +240,25 @@ Export *erts_export_get_or_make_stub(Eterm mod, Eterm func, unsigned int arity)
     object->info.mfa.function = func;
     object->info.mfa.arity = arity;
 
-    return export_staged_upsert(&template);
+    return export_staged_upsert(&template, may_fail);
+}
+
+Export *erts_export_get_or_make_stub(Eterm mod, Eterm func, unsigned int arity)
+{
+    return get_or_make_stub(mod, func, arity, 0);
+}
+
+/*
+ * Like erts_export_get_or_make_stub() but returns NULL instead of aborting
+ * the node when the export table is full. Used by paths that decode
+ * untrusted input (e.g. an external fun in binary_to_term/distribution),
+ * where a full export table must raise a catchable error rather than kill
+ * the node.
+ */
+Export *erts_export_get_or_make_stub_or_null(Eterm mod, Eterm func,
+                                             unsigned int arity)
+{
+    return get_or_make_stub(mod, func, arity, 1);
 }
 
 Export *export_list(int i, ErtsCodeIndex code_ix)
@@ -249,6 +269,13 @@ Export *export_list(int i, ErtsCodeIndex code_ix)
 int export_list_size(ErtsCodeIndex code_ix)
 {
     return export_staged_list_size(code_ix);
+}
+
+/* Staging-table (the table a load inserts into) capacity check for the
+ * loader pre-flight; see beam_load.c. */
+int erts_export_table_would_fit(int need)
+{
+    return export_staged_would_fit(erts_staging_code_ix(), need);
 }
 
 int export_table_sz(void)
