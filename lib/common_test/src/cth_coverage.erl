@@ -48,6 +48,17 @@
 %%%
 %%% Buckets with no executed lines produce no file.
 %%%
+%%% When the whole test run ends (hook terminate) a one-time line
+%%% manifest is written:
+%%%
+%%%    <dir>/coverage.manifest
+%%%
+%%% containing term_to_binary([{Module, [Line]}]) with ALL
+%%% instrumented lines of every instrumented module, including lines
+%%% never executed, unioned across all nodes. ct_cover_to_lcov uses
+%%% it to emit DA records with count 0 for un-hit lines, making the
+%%% LCOV LF/LH totals meaningful.
+%%%
 %%% Reset and collection fan out to all connected peer nodes
 %%% ([node() | nodes()]). The instrumented-modules probe runs on each
 %%% node (each node has its own loaded set and its own counters), via
@@ -84,7 +95,7 @@
          terminate/1]).
 
 %% Exported only for erpc use on peer nodes; not part of the hook API.
--export([reset_local/1, collect_local/1]).
+-export([reset_local/1, collect_local/1, manifest_local/1]).
 
 -behaviour(ct_hooks).
 
@@ -203,6 +214,8 @@ post_end_per_testcase(Suite, TC, _Config, Return,
 post_end_per_testcase(_Suite, _TC, _Config, Return, State) ->
     {Return, State}.
 
+terminate(#state{enabled = true, dir = Dir, level = Level}) ->
+    ok = write_manifest(Dir, manifest_all(Level));
 terminate(_State) ->
     ok.
 
@@ -278,6 +291,81 @@ collect_local(Level) ->
               end, instrumented_modules(Level));
         false ->
             []
+    end.
+
+%%%-----------------------------------------------------------------
+%%% Line manifest (all instrumented lines, executed or not)
+
+%% The full instrumented-line set from every node, unioned per module.
+manifest_all(Level) ->
+    merge_manifest([manifest_on_node(N, Level) || N <- coverage_nodes()]).
+
+manifest_on_node(Node, Level) when Node =:= node() ->
+    manifest_local(Level);
+manifest_on_node(Node, Level) ->
+    %% As for collection: a node that is down, does not have this
+    %% module, or does not support coverage is skipped silently.
+    try erpc:call(Node, ?MODULE, manifest_local, [Level], ?REMOTE_TIMEOUT)
+    catch _:_ -> []
+    end.
+
+%% Runs on the node whose instrumented-line set is read (locally or
+%% via erpc). Same probe as collect_local/1 but keeps EVERY
+%% instrumented line, not only those with a non-zero count.
+manifest_local(Level) ->
+    case code:coverage_support() of
+        true ->
+            lists:filtermap(
+              fun(M) ->
+                      case instrumented_lines(Level, M) of
+                          [] -> false;
+                          Lines -> {true, {M, Lines}}
+                      end
+              end, instrumented_modules(Level));
+        false ->
+            []
+    end.
+
+%% Every instrumented line of M, regardless of execution count.
+instrumented_lines(Level, M) ->
+    try code:get_coverage(Level, M) of
+        LineData -> [Line || {Line, _Cov} <- LineData, is_integer(Line)]
+    catch
+        _:_ -> []
+    end.
+
+%% Union per-node manifests per module. As in merge_coverage/1,
+%% entries without the expected shape are ignored.
+merge_manifest(PerNode) ->
+    Merged = lists:foldl(fun merge_manifest_node/2, #{}, PerNode),
+    lists:sort([{M, lists:usort(Lines)} || {M, Lines} <- maps:to_list(Merged)]).
+
+merge_manifest_node(NodeLines, Acc) when is_list(NodeLines) ->
+    lists:foldl(fun merge_manifest_module/2, Acc, NodeLines);
+merge_manifest_node(_Bad, Acc) ->
+    Acc.
+
+merge_manifest_module({M, Lines}, Acc) when is_atom(M), is_list(Lines) ->
+    Good = [Line || Line <- Lines, is_integer(Line)],
+    maps:update_with(M, fun(Ls) -> Good ++ Ls end, Good, Acc);
+merge_manifest_module(_Bad, Acc) ->
+    Acc.
+
+%% Write the one-time line manifest, read by ct_cover_to_lcov to emit
+%% DA:<Line>,0 records for lines never executed. An empty manifest
+%% (no instrumented modules) produces no file.
+write_manifest(_Dir, []) ->
+    ok;
+write_manifest(Dir, Manifest) ->
+    File = filename:join(Dir, "coverage.manifest"),
+    _ = filelib:ensure_path(Dir),
+    case file:write_file(File, term_to_binary(Manifest)) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            logger:warning("cth_coverage: failed to write ~ts: ~p",
+                           [File, Reason]),
+            ok
     end.
 
 %% Merge per-node sparse coverage lists, summing counts per

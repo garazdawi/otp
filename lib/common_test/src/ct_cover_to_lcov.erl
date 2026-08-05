@@ -34,18 +34,18 @@
 %%% merged by summing counts per {Module, Line} before the LCOV
 %%% output is written.
 %%%
-%%% TODO: the sparse coverdata written by cth_coverage only contains
-%%%       EXECUTED lines, so this converter cannot emit DA records
-%%%       for instrumented-but-unexecuted lines. As a consequence LF
-%%%       equals the number of executed lines and every file appears
-%%%       fully covered (LH == LF) in LCOV consumers. To fix, feed
-%%%       this tool the full instrumented-line set per module: a
-%%%       single code:get_coverage(line, Module) call returns ALL
-%%%       instrumented lines including those with count 0 (which
-%%%       cth_coverage currently filters out for sparsity), and emit
-%%%       DA:<line>,0 for the un-hit ones.
+%%% The sparse coverdata only contains EXECUTED lines. To also emit
+%%% DA records for instrumented-but-unexecuted lines, supply the line
+%%% manifest written by cth_coverage at the end of the run
+%%% (<dir>/coverage.manifest, term_to_binary([{Module, [Line]}]) with
+%%% ALL instrumented lines) via the {manifest, File} option of
+%%% convert/3 or the --manifest escript argument. Un-hit manifest
+%%% lines are then emitted as DA:<line>,0, making LF (instrumented
+%%% lines) and LH (hit lines) meaningful. Without a manifest only
+%%% executed lines are emitted, so every file appears fully covered
+%%% (LH == LF) in LCOV consumers.
 
--export([convert/2, main/1]).
+-export([convert/2, convert/3, main/1]).
 
 -doc """
 Read all `InFiles`, merge their per-line execution counts, and write
@@ -57,20 +57,50 @@ standard error.
 -spec convert(InFiles, OutFile) -> ok | {error, term()} when
       InFiles :: [file:filename()],
       OutFile :: file:filename().
-convert(InFiles, OutFile) when is_list(InFiles) ->
-    Merged = lists:foldl(fun merge_file/2, #{}, InFiles),
-    write_lcov(Merged, OutFile).
+convert(InFiles, OutFile) ->
+    convert(InFiles, OutFile, []).
+
+-doc """
+As `convert/2`, with options.
+
+`{manifest, ManifestFile}` names a line manifest written by
+cth_coverage (`term_to_binary([{Module, [Line]}])` with all
+instrumented lines). Manifest lines not present in the merged
+coverdata are emitted with count 0, so instrumented-but-unexecuted
+lines show up as un-hit. An unreadable or malformed manifest is an
+error (not skipped): silently emitting all-covered output would
+defeat its purpose.
+""".
+-spec convert(InFiles, OutFile, Opts) -> ok | {error, term()} when
+      InFiles :: [file:filename()],
+      OutFile :: file:filename(),
+      Opts :: [{manifest, file:filename()}].
+convert(InFiles, OutFile, Opts) when is_list(InFiles), is_list(Opts) ->
+    case load_manifest(proplists:get_value(manifest, Opts)) of
+        {ok, Manifest} ->
+            Merged = lists:foldl(fun merge_file/2, #{}, InFiles),
+            write_lcov(apply_manifest(Manifest, Merged), OutFile);
+        {error, _} = Error ->
+            Error
+    end.
 
 -doc """
 Escript entry point.
 
-Usage: `ct_cover_to_lcov <out.info> <in1.coverdata> ...`
+Usage: `ct_cover_to_lcov [--manifest <file>] <out.info> <in1.coverdata> ...`
 
 If a single input argument is given and it is a directory, all
-`*.coverdata` files in it are converted.
+`*.coverdata` files in it are converted. With `--manifest`, the line
+manifest written by cth_coverage (`<dir>/coverage.manifest`) is used
+to emit un-hit instrumented lines with count 0.
 """.
 -spec main(Args :: [string()]) -> ok | no_return().
-main([OutFile, MaybeDir]) ->
+main(["--manifest", ManifestFile | Args]) ->
+    main(Args, [{manifest, ManifestFile}]);
+main(Args) ->
+    main(Args, []).
+
+main([OutFile, MaybeDir], Opts) ->
     InFiles =
         case filelib:is_dir(MaybeDir) of
             true ->
@@ -78,21 +108,23 @@ main([OutFile, MaybeDir]) ->
             false ->
                 [MaybeDir]
         end,
-    run(InFiles, OutFile);
-main([OutFile | InFiles]) when InFiles =/= [] ->
-    run(InFiles, OutFile);
-main(_) ->
+    run(InFiles, OutFile, Opts);
+main([OutFile | InFiles], Opts) when InFiles =/= [] ->
+    run(InFiles, OutFile, Opts);
+main(_, _Opts) ->
     io:format(standard_error,
-              "usage: ct_cover_to_lcov <out.info> <in1.coverdata> ...~n"
-              "       ct_cover_to_lcov <out.info> <coverdata-dir>~n", []),
+              "usage: ct_cover_to_lcov [--manifest <file>] "
+              "<out.info> <in1.coverdata> ...~n"
+              "       ct_cover_to_lcov [--manifest <file>] "
+              "<out.info> <coverdata-dir>~n", []),
     erlang:halt(1).
 
-run([], _OutFile) ->
+run([], _OutFile, _Opts) ->
     io:format(standard_error,
               "ct_cover_to_lcov: error: no input .coverdata files~n", []),
     erlang:halt(1);
-run(InFiles, OutFile) ->
-    case convert(InFiles, OutFile) of
+run(InFiles, OutFile, Opts) ->
+    case convert(InFiles, OutFile, Opts) of
         ok ->
             ok;
         {error, Reason} ->
@@ -142,6 +174,51 @@ warn(File, Reason) ->
     io:format(standard_error,
               "ct_cover_to_lcov: warning: skipping ~ts: ~tp~n",
               [File, Reason]).
+
+%%%-----------------------------------------------------------------
+%%% Line manifest (all instrumented lines, executed or not)
+
+%% Load the manifest into #{Module => [Line]} (lines sorted, unique).
+load_manifest(undefined) ->
+    {ok, #{}};
+load_manifest(File) ->
+    case file:read_file(File) of
+        {ok, Bin} ->
+            try binary_to_term(Bin) of
+                Data when is_list(Data) ->
+                    try
+                        {ok, lists:foldl(fun manifest_module/2, #{}, Data)}
+                    catch
+                        _:_ ->
+                            {error, {manifest, File, malformed_manifest}}
+                    end;
+                _Other ->
+                    {error, {manifest, File, malformed_manifest}}
+            catch
+                error:badarg ->
+                    {error, {manifest, File, not_external_term_format}}
+            end;
+        {error, Reason} ->
+            {error, {manifest, File, Reason}}
+    end.
+
+manifest_module({Module, Lines}, Acc) when is_atom(Module), is_list(Lines) ->
+    Good = lists:usort([L || L <- Lines, is_integer(L), L > 0]),
+    maps:update_with(Module, fun(Ls) -> lists:umerge(Good, Ls) end,
+                     Good, Acc).
+
+%% Extend the merged coverdata with count-0 entries for every
+%% manifest line that was never hit. Modules present only in the
+%% manifest get all-zero records; modules present only in the
+%% coverdata are kept as-is.
+apply_manifest(Manifest, Merged) when map_size(Manifest) =:= 0 ->
+    Merged;
+apply_manifest(Manifest, Merged) ->
+    maps:fold(
+      fun(Module, Lines, Acc) ->
+              Hit = maps:get(Module, Acc, #{}),
+              Acc#{Module => maps:merge(maps:from_keys(Lines, 0), Hit)}
+      end, Merged, Manifest).
 
 %%%-----------------------------------------------------------------
 %%% LCOV output
