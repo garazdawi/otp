@@ -127,6 +127,7 @@
          supported_eccs/2,
          no_result/1,
          receive_tickets/1,
+         wait_for_session_ticket_store/1,
          set_protocol_versions/1,
          user_lookup/3,
          digest/0,
@@ -3273,6 +3274,41 @@ receive_tickets(N, Acc) ->
     receive
         {ssl, session_ticket, Ticket} ->
             receive_tickets(N - 1, [Ticket|Acc])
+    end.
+
+%% In {session_tickets, auto} mode a received NewSessionTicket is stored
+%% internally in tls_client_ticket_store and, unlike manual mode, no
+%% {ssl, session_ticket, _} message is sent to the test process. This
+%% deterministically waits (bounded) until at least N tickets have actually
+%% been received and stored, so a subsequent resumption attempt does not race
+%% the (possibly HRR-delayed) arrival of the ticket instead of relying on a
+%% fixed sleep.
+wait_for_session_ticket_store(N) ->
+    wait_for_session_ticket_store(N, 50).
+%%
+wait_for_session_ticket_store(N, 0) ->
+    ?CT_FAIL("~nTimeout waiting for ~p stored session ticket(s)", [N]);
+wait_for_session_ticket_store(N, Retries) ->
+    case stored_session_tickets() of
+        Stored when Stored >= N ->
+            ok;
+        _ ->
+            ct:sleep(100),
+            wait_for_session_ticket_store(N, Retries - 1)
+    end.
+
+stored_session_tickets() ->
+    case whereis(tls_client_ticket_store) of
+        undefined ->
+            0;
+        Pid ->
+            %% tls_client_ticket_store keeps its tickets in a gb_trees held in
+            %% the second element (#state.db) of its gen_server state.
+            try gb_trees:size(element(2, sys:get_state(Pid)))
+            catch
+                _:_ ->
+                    0
+            end
     end.
 
 check_tickets(Client) ->
