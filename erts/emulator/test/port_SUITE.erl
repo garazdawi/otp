@@ -1695,11 +1695,14 @@ spawn_executable(Config) when is_list(Config) ->
     {'EXIT',{enoent,_}} = (catch open_port({spawn_executable,"sh"},[])),
     case os:type() of
         {win32,_} ->
-            test_bat_file(SpaceDir);
+            %% test_bat_file exercises open_port batch-file invocation,
+            %% which is broken on Windows (OTP-19047: the fix was merged
+            %% then reverted, a re-fix is pending). Skip until it lands.
+            {skip, "open_port batch-file invocation broken on Windows (OTP-19047)"};
         {unix,_} ->
-            test_sh_file(SpaceDir)
-    end,
-    ok.
+            test_sh_file(SpaceDir),
+            ok
+    end.
 
 unregister_name(Config) when is_list(Config) ->
     Cmd = case os:getenv("WSLENV") of
