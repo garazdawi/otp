@@ -75,10 +75,19 @@
 %%%       coverage to the wrong case. Detect parallel groups (see
 %%%       cth_log_redirect's use of tc_group_properties) and fall back
 %%%       to one bucket for the whole group, or serialize collection.
-%%% TODO: native (C) coverage. When the emulator is built with gcov,
-%%%       dump/reset C-level coverage per test case as well (via
-%%%       erts_debug coverage support), so ERTS changes can be mapped
-%%%       to the test cases that exercise them.
+%%% Native (C/JIT) coverage: on an emulator built with native coverage
+%%% (the clangcov or gcov build type) the emulator's own C and JIT
+%%% emitter coverage is also dumped, via erts_debug:coverage/1, into
+%%%
+%%%    <dir>/native/          (for clang, erl_<pid>.profraw per node)
+%%%
+%%% one file per emulator OS process. These are aggregate whole-run
+%%% counters -- unlike the BEAM line coverage they are NOT reset per
+%%% test case, so they carry no per-test attribution; convert them with
+%%% llvm-profdata + llvm-cov (clang) against the emulator binary. The
+%%% local node is dumped when the run ends; still-connected peer nodes
+%%% are also dumped after each test case (short-lived peers are subject
+%%% to the same not-captured limitation as the BEAM coverage above).
 
 %% CTH Callbacks
 -export([id/1, init/2,
@@ -100,6 +109,7 @@
 -behaviour(ct_hooks).
 
 -record(state, {enabled = false :: boolean(),
+                native = false :: boolean(),
                 dir :: file:filename() | undefined,
                 level = line :: line}).
 
@@ -121,7 +131,11 @@ init(_Id, Opts) ->
         true ->
             Dir = filename:absname(output_dir(Opts)),
             _ = filelib:ensure_path(Dir),
-            {ok, #state{enabled = true, dir = Dir, level = line}};
+            Native = native_supported(),
+            _ = Native andalso
+                    filelib:ensure_path(filename:join(Dir, "native")),
+            {ok, #state{enabled = true, native = Native,
+                        dir = Dir, level = line}};
         false ->
             %% No native coverage on this emulator (needs the JIT).
             %% Log once and become a no-op.
@@ -210,11 +224,17 @@ pre_init_per_testcase(_Suite, _TC, Config, State) ->
 post_end_per_testcase(Suite, TC, _Config, Return,
                       #state{enabled = true, level = Level} = State) ->
     ok = write_coverdata(State#state.dir, [Suite, TC], collect_all(Level)),
+    %% Best-effort: dump native coverage of any still-connected peer
+    %% nodes while they are alive (the local node is dumped at terminate).
+    ok = dump_native_peers(State),
     {Return, State};
 post_end_per_testcase(_Suite, _TC, _Config, Return, State) ->
     {Return, State}.
 
-terminate(#state{enabled = true, dir = Dir, level = Level}) ->
+terminate(#state{enabled = true, native = Native, dir = Dir, level = Level}) ->
+    %% Dump native (C/JIT) coverage of the local node and any nodes
+    %% still connected, then write the BEAM line manifest.
+    _ = Native andalso dump_native(Dir, [node() | nodes()]),
     ok = write_manifest(Dir, manifest_all(Level));
 terminate(_State) ->
     ok.
@@ -291,6 +311,49 @@ collect_local(Level) ->
               end, instrumented_modules(Level));
         false ->
             []
+    end.
+
+%%%-----------------------------------------------------------------
+%%% Native (C/JIT) coverage
+%%%
+%%% On a clangcov/gcov emulator, dump the emulator's own coverage
+%%% counters (C code plus the JIT emitter) via erts_debug:coverage/1.
+
+%% True iff this emulator supports native coverage (build_type
+%% clangcov/gcov). As a side effect the local counters are reset, so the
+%% collected coverage covers the test run rather than emulator start-up.
+native_supported() ->
+    try erts_debug:coverage(reset) of
+        ok -> true;
+        _ -> false
+    catch
+        _:_ -> false
+    end.
+
+%% Dump native coverage of any connected peer nodes; the local node is
+%% dumped once at terminate.
+dump_native_peers(#state{native = true, dir = Dir}) ->
+    dump_native(Dir, nodes());
+dump_native_peers(_State) ->
+    ok.
+
+%% Dump native coverage of the given nodes into <Dir>/native. A node
+%% that is down or does not support native coverage is skipped.
+dump_native(_Dir, []) ->
+    ok;
+dump_native(Dir, Nodes) ->
+    NativeDir = filename:join(Dir, "native"),
+    _ = [dump_native_on_node(N, NativeDir) || N <- Nodes],
+    ok.
+
+dump_native_on_node(Node, NativeDir) when Node =:= node() ->
+    try erts_debug:coverage({dump, NativeDir})
+    catch _:_ -> ok
+    end;
+dump_native_on_node(Node, NativeDir) ->
+    try erpc:call(Node, erts_debug, coverage, [{dump, NativeDir}],
+                  ?REMOTE_TIMEOUT)
+    catch _:_ -> ok
     end.
 
 %%%-----------------------------------------------------------------
