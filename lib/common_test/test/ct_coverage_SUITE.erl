@@ -45,14 +45,16 @@
 -include_lib("common_test/include/ct.hrl").
 
 -export([suite/0, all/0, init_per_suite/1, end_per_suite/1]).
--export([per_testcase_isolation/1, config_phase_buckets/1]).
+-export([per_testcase_isolation/1, config_phase_buckets/1,
+         report_generation/1]).
 
 suite() ->
     [{timetrap, {minutes, 2}}].
 
 all() ->
     [per_testcase_isolation,
-     config_phase_buckets].
+     config_phase_buckets,
+     report_generation].
 
 init_per_suite(Config) ->
     case code:coverage_support() of
@@ -137,6 +139,44 @@ config_phase_buckets(Config) ->
     assert_not_covered([helper_line(a), helper_line(b), helper_line(si)],
                        Ipg, init_per_group),
     ok.
+
+%% Render the per-testcase coverdata written by the inner run as an HTML
+%% attribution report and verify that a source line is attributed to
+%% exactly the test case that executed it.
+report_generation(Config) ->
+    CovDir = proplists:get_value(cov_dir, Config),
+    WorkDir = proplists:get_value(work_dir, Config),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    OutDir = filename:join(PrivDir, "attrib_html"),
+    Files = filelib:wildcard(filename:join(CovDir, "*.coverdata")),
+    %% covhelper/covinner_SUITE live in a flat work dir, not an ebin/src
+    %% app layout, so tell the reporter where their sources are.
+    SMap = #{covhelper => filename:join(WorkDir, "covhelper.erl"),
+             covinner_SUITE => filename:join(WorkDir, "covinner_SUITE.erl")},
+    Manifest = filename:join(CovDir, "coverage.manifest"),
+    Opts = [{source_map, SMap}, {title, "covinner attribution"}] ++
+           [{manifest, Manifest} || filelib:is_regular(Manifest)],
+    ok = ct_cover_to_html:convert(Files, OutDir, Opts),
+    true = filelib:is_regular(filename:join(OutDir, "index.html")),
+    HelperPage = filename:join(OutDir, "covhelper.html"),
+    true = filelib:is_regular(HelperPage),
+    {ok, Bin} = file:read_file(HelperPage),
+    Html = unicode:characters_to_list(Bin),
+    %% covhelper:a/0 sits alone on helper_line(a) and is executed only by
+    %% tc_a; likewise b/0 by tc_b. The embedded attribution must say so.
+    assert_attributed(Html, helper_line(a), "covinner_SUITE.tc_a"),
+    assert_attributed(Html, helper_line(b), "covinner_SUITE.tc_b"),
+    %% The source was supplied, so the page must carry it (not the fallback).
+    nomatch = string:find(Html, "source not available"),
+    ok.
+
+assert_attributed(Html, Line, TestId) ->
+    Expect = lists:flatten(
+               io_lib:format("\"~w\":{\"n\":1,\"t\":[\"~ts\"]}", [Line, TestId])),
+    case string:find(Html, Expect) of
+        nomatch -> ct:fail({attribution_missing, Line, TestId, Expect});
+        _ -> ok
+    end.
 
 %%%-------------------------------------------------------------------
 %%% Generated modules

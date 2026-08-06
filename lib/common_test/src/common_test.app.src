@@ -23,6 +23,7 @@
  [{description, "The OTP Common Test application"},
   {vsn, "%VSN%"},
   {modules, [ct_cover,
+	     ct_cover_to_html,
 	     ct_cover_to_lcov,
 	     ct,
 	     ct_doctest,
