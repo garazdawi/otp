@@ -284,6 +284,13 @@ if [ -n "${FLAVOR}" ]; then
     ERL_AFLAGS="${ERL_AFLAGS} -emu_flavor ${FLAVOR}"
 fi
 
+# Run the tests on a specific emulator type without changing the build
+# TYPE above (e.g. EMU_TYPE=clangcov to collect native C/JIT coverage on
+# a clangcov emulator). See $ERL_TOP/HOWTO/DEVELOPMENT.md.
+if [ -n "${EMU_TYPE}" ]; then
+    ERL_AFLAGS="${ERL_AFLAGS} -emu_type ${EMU_TYPE}"
+fi
+
 # Compile test server and configure
 if [ ! -f "$ERL_TOP/lib/common_test/test_server/variables.${TYPE}.${FLAVOR}" ]; then
     cd "$ERL_TOP/lib/common_test/test_server"

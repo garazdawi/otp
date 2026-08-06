@@ -28,6 +28,11 @@
 ## single LCOV tracefile (coverage.info) uploaded as the
 ## otp-coverage-lcov artifact.
 ##
+## A separate 'native' job additionally builds the clangcov emulator
+## (clang source-based coverage), runs a focused suite on it under
+## cth_coverage -- which then also dumps the emulator's own C and JIT
+## emitter coverage -- and uploads it as otp-coverage-native-lcov.
+##
 ## The normal push/pull request CI is unaffected: all coverage plumbing
 ## in the reusable workflows and in the build-base-image action is
 ## behind default-false inputs.
@@ -229,3 +234,49 @@ jobs:
         with:
           name: otp-coverage-attribution
           path: coverage/attrib
+
+  native:
+    name: Native C/JIT coverage (clangcov)
+    runs-on: ubuntu-latest
+    ## Independent of the BEAM coverage test/aggregate jobs, so a clang
+    ## build issue here cannot affect them.
+    needs: pack
+    if: ${{ !cancelled() && needs.pack.result == 'success' }}
+    permissions:
+      contents: read   # actions/checkout + ./.github/actions/build-base-image
+      actions:  write  # actions/upload-artifact
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-base-image
+        with:
+            BASE_BRANCH: ${{ needs.pack.outputs.base_branch }}
+            COVERAGE: true
+      - name: Build clangcov emulator, run a focused suite on it, convert
+        run: |
+          set -x
+          mkdir -p native
+          ## Build the clang source-based coverage emulator (clangcov) with
+          ## clang, run a focused suite (stdlib) on it via EMU_TYPE=clangcov
+          ## under cth_coverage -- which then also dumps native C + JIT
+          ## coverage into make_test_dir/coverage/native -- and convert the
+          ## profraw to an LCOV tracefile with llvm-cov. The system under
+          ## test keeps the image's line instrumentation, so this run also
+          ## produces BEAM coverdata; only the native LCOV is uploaded here.
+          docker run -v "$PWD/native:/native" otp "
+            sudo apt-get update -qq && sudo apt-get install -y -qq clang llvm &&
+            ( cd /buildroot/otp/erts && make clangcov CC=clang CXX=clang++ ) &&
+            cd /buildroot/otp &&
+            { make stdlib_test COVERAGE=yes EMU_TYPE=clangcov OTP_LINE_COVERAGE= || true; } &&
+            ./make/native_cov_to_lcov.sh \
+              lib/stdlib/make_test_dir/coverage/native \
+              /buildroot/otp/bin /native/native.info
+          "
+          ls -l native/native.info 2>/dev/null || echo "no native coverage produced"
+      - name: Upload native C/JIT LCOV
+        if: ${{ hashFiles('native/native.info') != '' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp-coverage-native-lcov
+          path: native/native.info

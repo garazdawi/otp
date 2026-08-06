@@ -48,9 +48,14 @@ else
     skip "llvm-profdata/llvm-cov not found"
 fi
 
-# If the exact binary is absent, fall back to any beam.clangcov.* sibling
+# Resolve the emulator binary. Accept a file, a directory to search
+# recursively, or a missing path whose sibling beam.clangcov.* is used
 # (the flavor suffix is .jit on JIT targets, .smp elsewhere).
-if [ ! -f "$EMU" ]; then
+if [ -d "$EMU" ]; then
+    found=$(find "$EMU" -name 'beam.clangcov.*' -type f 2>/dev/null | head -n 1)
+    [ -n "$found" ] || skip "no clangcov emulator found under $EMU"
+    EMU="$found"
+elif [ ! -f "$EMU" ]; then
     found=""
     for cand in "$(dirname "$EMU")"/beam.clangcov.*; do
         [ -f "$cand" ] && found="$cand" && break
