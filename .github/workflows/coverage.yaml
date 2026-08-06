@@ -83,7 +83,7 @@ jobs:
       coverage:    true
 
   aggregate:
-    name: Aggregate coverage into LCOV
+    name: Aggregate coverage (LCOV + HTML + attribution)
     runs-on: ubuntu-latest
     ## Run even if some test jobs failed so that whatever coverage was
     ## collected still ends up in the artifact.
@@ -92,8 +92,9 @@ jobs:
       - pack
       - test
     permissions:
-      contents: read   # actions/checkout + ./.github/actions/build-base-image
-      actions:  write  # actions/download-artifact + actions/upload-artifact
+      contents: read    # actions/checkout + ./.github/actions/build-base-image
+      actions:  write   # actions/download-artifact + actions/upload-artifact
+      id-token: write   # Codecov OIDC (tokenless upload for public repos)
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
         with:
@@ -163,18 +164,31 @@ jobs:
                           ok = file:write_file(MergedFile, term_to_binary(Manifest)),
                           [{manifest, MergedFile}]
                   end,
-              case ct_cover_to_lcov:convert(CoverData, OutFile, Opts) of
+              ok = case ct_cover_to_lcov:convert(CoverData, OutFile, Opts) of
+                       ok ->
+                           ok;
+                       {error, LReason} ->
+                           io:format(standard_error,
+                                     "ct_cover_to_lcov failed: ~tp~n", [LReason]),
+                           halt(1)
+                   end,
+              %% Same inputs, but keeping the per-testcase dimension: an
+              %% interactive report of which testcases cover each line.
+              AttribDir = filename:join(filename:dirname(OutFile), "attrib"),
+              case ct_cover_to_html:convert(
+                     CoverData, AttribDir,
+                     [{title, "Erlang/OTP coverage attribution"} | Opts]) of
                   ok ->
-                      ok;
-                  {error, Reason} ->
+                      io:format("Wrote attribution report to ~ts~n", [AttribDir]);
+                  {error, HReason} ->
                       io:format(standard_error,
-                                "ct_cover_to_lcov failed: ~tp~n", [Reason]),
+                                "ct_cover_to_html failed: ~tp~n", [HReason]),
                       halt(1)
               end.
           ESCRIPT
           docker run -v "$PWD/coverage:/cov" otp \
             "escript /cov/aggregate.escript /cov/coverage.info /cov/results"
-          ls -l coverage/coverage.info
+          ls -l coverage/coverage.info coverage/attrib/index.html
           ## Render a browsable HTML report from the LCOV tracefile. genhtml
           ## runs inside the image because the SF: paths in coverage.info are
           ## the in-container source paths (/buildroot/otp/lib/*/src/*.erl);
@@ -188,8 +202,26 @@ jobs:
         with:
           name: otp-coverage-lcov
           path: coverage/coverage.info
+      ## Feed the same LCOV tracefile to Codecov for dashboards, trends and
+      ## PR checks. Never fail the coverage leg on a Codecov hiccup or a
+      ## missing token; the artifacts are the source of truth. Needs the
+      ## CODECOV_TOKEN secret (or the Codecov app, tokenless via OIDC) set
+      ## on the repository for the upload to be accepted.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # ratchet:codecov/codecov-action@v5
+        continue-on-error: true
+        with:
+          files: coverage/coverage.info
+          disable_search: true
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload HTML coverage report
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
         with:
           name: otp-coverage-html
           path: coverage/html
+      - name: Upload per-testcase attribution report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp-coverage-attribution
+          path: coverage/attrib
