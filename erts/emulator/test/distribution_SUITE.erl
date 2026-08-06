@@ -172,7 +172,8 @@ init_per_group(_, Config) ->
 end_per_group(_, Config) ->
     Config.
 
-init_per_testcase(async_dist_port_dctrlr, Config) ->
+init_per_testcase(TC, Config)
+  when TC =:= async_dist_port_dctrlr; TC =:= async_dist_proc_dctrlr ->
     case os:type() of
         {win32, _} ->
             %% This test depends on keeping the distribution port busy
