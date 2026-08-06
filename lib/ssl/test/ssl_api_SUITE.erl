@@ -3777,22 +3777,30 @@ invalid_options_tls13(Config) when is_list(Config) ->
 ssl_not_started() ->
     [{doc, "Test that an error is returned if ssl is not started"}].
 ssl_not_started(Config) when is_list(Config) ->
+    %% Connect to a locally listening TCP port so that the transport
+    %% connection succeeds and 'ssl not started' is what actually fails the
+    %% call. Connecting to a closed port would fail earlier with a transport
+    %% error (e.g. econnrefused when nothing listens on the port, as happens
+    %% for the previously hardcoded port 22 on the Windows CI host).
+    {ok, LSock} = gen_tcp:listen(0, [{active, false}, {reuseaddr, true}]),
+    {ok, Port} = inet:port(LSock),
     application:stop(ssl),
     R1 = try
-             {error, ssl_not_started} = ssl:connect("localhost", 22, [{verify, verify_none},
+             {error, ssl_not_started} = ssl:connect("localhost", Port, [{verify, verify_none},
                                                                       {protocol, tls}]),
              ok
          catch _:Reason ->
                  Reason
          end,
     R2 = try
-             {error, ssl_not_started} = ssl:connect("localhost", 22, [{verify, verify_none},
+             {error, ssl_not_started} = ssl:connect("localhost", Port, [{verify, verify_none},
                                                                       {protocol, dtls}]),
              ok
          catch _:Reason2 ->
                  Reason2
          end,
     ssl:start(),
+    gen_tcp:close(LSock),
     ok = R1 = R2.
 
 cookie() ->
