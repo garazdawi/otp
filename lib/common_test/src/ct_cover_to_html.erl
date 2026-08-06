@@ -232,13 +232,13 @@ all_tests(Attr) ->
                         maps:fold(fun(_L, Ts, A) -> Ts ++ A end, Acc, LM)
                 end, [], Attr)).
 
+%% Hit = every line some test case executed (a hit line is, by definition,
+%% instrumented). Instr = the instrumented lines, i.e. the manifest unioned
+%% with the hit lines, so the ratio is correct even with no manifest.
 stats(AttrM, ManL) ->
-    Instr = length(ManL),
-    Hit = length([1 || L <- ManL, maps:is_key(L, AttrM)]),
-    %% Lines hit but absent from the manifest (e.g. no manifest supplied)
-    %% still count towards both totals.
-    Extra = length([1 || L <- maps:keys(AttrM), not lists:member(L, ManL)]),
-    {Hit + Extra, Instr + Extra}.
+    Union = lists:foldl(fun(L, A) -> A#{L => true} end,
+                        maps:from_keys(ManL, true), maps:keys(AttrM)),
+    {maps:size(AttrM), maps:size(Union)}.
 
 pct(_, 0) -> 100.0;
 pct(H, I) -> 100.0 * H / I.
