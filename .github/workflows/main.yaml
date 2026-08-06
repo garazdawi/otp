@@ -232,7 +232,7 @@ jobs:
       - name: Setup nl behaviour for wsl
         shell: cmd
         run: git config --global core.autocrlf input
-      - uses: actions/checkout@v4.2.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
       - uses: ./.github/actions/setup-wsl-runner
         with:
           installer_name: ${{ needs.build-windows.outputs.installer_name }}
@@ -268,7 +268,7 @@ jobs:
         if: ${{ !cancelled() && matrix.type != 'debug' }}
         run: tar czf ${{ matrix.type }}_win32_test_results.tar.gz release/tests/test_server
       - name: Upload test results
-        uses: actions/upload-artifact@v4.4.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
         if: ${{ !cancelled() && matrix.type != 'debug' }}
         with:
           name: ${{ matrix.type }}_win32_test_results
@@ -286,13 +286,13 @@ jobs:
       - name: Setup nl behaviour for wsl
         shell: cmd
         run: git config --global core.autocrlf input
-      - uses: actions/checkout@v4.2.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
       - uses: ./.github/actions/setup-wsl-runner
         with:
           installer_name: ${{ needs.build-windows.outputs.installer_name }}
 
       - name: Download test results
-        uses: actions/download-artifact@v4.1.8
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # ratchet:actions/download-artifact@v6.0.0
       - name: Merge test results
         run: |
           shopt -s nullglob
@@ -325,7 +325,7 @@ jobs:
           tar czf test_results_win32.tar.gz release/tests/test_server
           
       - name: Upload test results
-        uses: actions/upload-artifact@v4.4.0
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
         if: ${{ !cancelled() }}
         with:
           name: test_results_win32
