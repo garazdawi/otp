@@ -3098,7 +3098,11 @@ altname(Config) when is_list(Config) ->
 	case ?FILE_MODULE:altname(NewDir) of
 	    {error, enotsup} ->
 		{skipped, "Altname not supported on this platform"};
-	    {ok, "LONGAL~1"} -> 
+	    {ok, "long alternative path name with spaces"} ->
+		%% 8.3 short-name generation is disabled on this volume, so
+		%% altname/1 returns the long final component unchanged.
+		{skipped, "Short (8.3) file names not enabled on this volume"};
+	    {ok, "LONGAL~1"} ->
 		{ok, "A_FILE~1"} = ?FILE_MODULE:altname(Name),
 		{ok, "c:/"} = ?FILE_MODULE:altname("C:/"),
 		{ok, "c:/"} = ?FILE_MODULE:altname("C:\\"),
