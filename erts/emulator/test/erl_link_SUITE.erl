@@ -377,14 +377,6 @@ busy_dist_port_monitor(Config) when is_list(Config) ->
 %% Tests distributed link/1, unlink/1, and 'EXIT'
 %% message over busy distribution port
 busy_dist_port_link(Config) when is_list(Config) ->
-    case os:type() of
-        {win32, _} ->
-            {skip, "Cannot reliably keep the distribution port busy on Windows"};
-        _ ->
-            busy_dist_port_link_test(Config)
-    end.
-
-busy_dist_port_link_test(Config) ->
     Tracer = case os:getenv("TRACE_BUSY_DIST_PORT") of
                  "true" -> start_busy_dist_port_tracer();
                  _ -> false

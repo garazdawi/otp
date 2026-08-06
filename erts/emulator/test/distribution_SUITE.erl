@@ -172,19 +172,6 @@ init_per_group(_, Config) ->
 end_per_group(_, Config) ->
     Config.
 
-init_per_testcase(TC, Config)
-  when TC =:= async_dist_port_dctrlr; TC =:= async_dist_proc_dctrlr ->
-    case os:type() of
-        {win32, _} ->
-            %% This test depends on keeping the distribution port busy
-            %% (busy_dist_port) while a second sender performs a send that
-            %% must block on the busy port. On Windows the large TCP socket
-            %% buffers and timing make the busy condition impossible to hold
-            %% reliably, so the send returns instead of blocking.
-            {skip, "Cannot reliably keep the distribution port busy on Windows"};
-        _ ->
-            Config
-    end;
 init_per_testcase(_TestCase, Config) ->
     Config.
 end_per_testcase(_TestCase, Config) ->

@@ -874,14 +874,7 @@ use_fallback_pollset() ->
     [{timetrap, {minutes, 2}}].
 
 use_fallback_pollset(Config) when is_list(Config) ->
-    case os:type() of
-        {win32, _} ->
-            %% The fallback pollset composition/timing is unreliable on the
-            %% Windows CI, so this check flakes; skip it there.
-            {skip, "Fallback pollset check unreliable on Windows"};
-        _ ->
-            rpc(Config, fun() -> use_fallback_pollset_t(Config) end)
-    end.
+    rpc(Config, fun() -> use_fallback_pollset_t(Config) end).
 
 use_fallback_pollset_t(Config) when is_list(Config) ->
     FlbkFun = fun () ->

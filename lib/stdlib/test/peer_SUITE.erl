@@ -162,14 +162,6 @@ dist() ->
 
 %% Classic 'slave': start new node locally, with random name, ask peer control process to exit normally
 dist(Config) when is_list(Config) ->
-    case os:type() of
-        {win32, _} ->
-            {skip, "peer distribution start/stop timing is unreliable on Windows"};
-        _ ->
-            dist_test(Config)
-    end.
-
-dist_test(_Config) ->
     {ok, Peer, Node} = peer:start_link(),
     %% distribution is expected to be connected
     ?assertEqual(Node, erpc:call(Node, erlang, node, [])),

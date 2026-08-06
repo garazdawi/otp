@@ -73,19 +73,6 @@ init_per_testcase(erl_bif_types, Config) when is_list(Config) ->
     skip_missing_erl_bif_types(Config);
 init_per_testcase(shadow_comments, Config) when is_list(Config) ->
     skip_missing_erl_bif_types(Config);
-init_per_testcase(halt_flush_timeout, Config) when is_list(Config) ->
-    case os:type() of
-        {win32, _} ->
-            %% This test relies on the distribution output buffer staying
-            %% full so that halt/2 flushing blocks until flush_timeout is
-            %% reached. On Windows the large TCP socket buffers let the
-            %% flush complete before the timeout (the node exits with status
-            %% 0 in ~0.5s instead of hitting the ~1s timeout), so the timing
-            %% check cannot be satisfied.
-            {skip, "Cannot reliably force flush timeout on Windows"};
-        _ ->
-            Config
-    end;
 init_per_testcase(Func, Config) when is_atom(Func), is_list(Config) ->
     Config.
 
