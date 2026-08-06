@@ -469,7 +469,15 @@ init_per_testcase(select_best_cert, Config) ->
     end;
 init_per_testcase(_TestCase, Config) ->
     ssl_test_lib:ct_log_supported_protocol_versions(Config),
-    ct:timetrap({seconds, 10}),
+    %% DTLS runs over UDP: under the heavy parallelism of these groups a
+    %% dropped datagram forces DTLS retransmission (with second-scale
+    %% backoff), which can blow a 10s timetrap on a loaded CI host even
+    %% though the handshake itself is healthy. Give DTLS more room while
+    %% keeping TLS tight so genuine TLS hangs are still caught quickly.
+    ct:timetrap(case proplists:get_value(protocol, Config) of
+                    dtls -> {seconds, 30};
+                    _    -> {seconds, 10}
+                end),
     Config.
 
 end_per_testcase(_TestCase, Config) ->     
