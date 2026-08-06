@@ -235,7 +235,16 @@ init_per_group(erlang_server, Config) ->
     [{peer, {fmt_host(HostX),PortX}}, {group, erlang_server}, {sftpd, Sftpd} | Config];
 
 init_per_group(openssh_server, Config) ->
-    verify_openssh(Config);
+    case os:type() of
+        {win32, _} ->
+            %% No openssh server (sshd) is available on the Windows CI
+            %% runners. verify_openssh's connect/retry/backoff would
+            %% otherwise exceed the init_per_group timetrap and fail the
+            %% group instead of skipping it cleanly.
+            {skip, "No openssh server on Windows"};
+        _ ->
+            verify_openssh(Config)
+    end;
 
 init_per_group(remote_tar, Config) ->
     ct:comment("Begin ~p",[grps(Config)]),
