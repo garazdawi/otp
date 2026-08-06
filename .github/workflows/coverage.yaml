@@ -1,0 +1,182 @@
+# %CopyrightBegin%
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright Ericsson AB 2026. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# %CopyrightEnd%
+
+##
+## Scheduled (and manually dispatched) per-testcase line-coverage run.
+##
+## Builds Erlang/OTP with native line instrumentation
+## (OTP_LINE_COVERAGE=yes, i.e. +line_coverage +force_line_counters),
+## runs the test suites with the cth_coverage CT hook enabled, and
+## aggregates the per-testcase coverdata from all test jobs into a
+## single LCOV tracefile (coverage.info) uploaded as the
+## otp-coverage-lcov artifact.
+##
+## The normal push/pull request CI is unaffected: all coverage plumbing
+## in the reusable workflows and in the build-base-image action is
+## behind default-false inputs.
+##
+
+name: Coverage of Erlang/OTP
+
+on:
+  workflow_dispatch:
+  schedule:
+      ## Weekly, Sundays at 03:00 UTC
+      - cron: 0 3 * * 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    uses: ./.github/workflows/reusable-setup.yaml
+
+  pack:
+    name: Build Erlang/OTP (64-bit, line coverage)
+    needs: setup
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/reusable-pack.yaml
+    with:
+      base_branch:          ${{ needs.setup.outputs.base_branch }}
+      ## Always do a full build: the coverage image must not reuse any
+      ## uninstrumented pre-built beams, and we want the full app list
+      ## in the 'changes' output so that all test suites are run.
+      ## (The expression form keeps the value typed as a string.)
+      full_build_and_check: ${{ 'true' }}
+      bypass_erlang_repo:   false
+      coverage:             true
+
+  test:
+    name: Test Erlang/OTP (coverage)
+    needs: pack
+    if: needs.pack.outputs.changes != '[]'
+    permissions:
+      contents: read
+      actions:  write
+    uses: ./.github/workflows/reusable-test.yaml
+    with:
+      changes:     ${{ needs.pack.outputs.changes }}
+      base_branch: ${{ needs.pack.outputs.base_branch }}
+      coverage:    true
+
+  aggregate:
+    name: Aggregate coverage into LCOV
+    runs-on: ubuntu-latest
+    ## Run even if some test jobs failed so that whatever coverage was
+    ## collected still ends up in the artifact.
+    if: ${{ !cancelled() && needs.pack.result == 'success' }}
+    needs:
+      - pack
+      - test
+    permissions:
+      contents: read   # actions/checkout + ./.github/actions/build-base-image
+      actions:  write  # actions/download-artifact + actions/upload-artifact
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+      ## Re-create the otp image (from this run's otp_prebuilt artifact)
+      ## so that ct_cover_to_lcov from this source tree can be used.
+      - uses: ./.github/actions/build-base-image
+        with:
+            BASE_BRANCH: ${{ needs.pack.outputs.base_branch }}
+            COVERAGE: true
+      - name: Download test results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # ratchet:actions/download-artifact@v6.0.0
+        with:
+          pattern: "*_test_results"
+          path: test_results
+      - name: Aggregate coverage
+        run: |
+          set -x
+          mkdir -p coverage/results
+          ## Each test job tars its make_test_dir; the cth_coverage output
+          ## (per-testcase *.coverdata + coverage.manifest) is in
+          ## make_test_dir/coverage. Unpack only that part of each tarball.
+          shopt -s nullglob
+          for tarball in test_results/*/*.tar.gz; do
+            name=$(basename "$tarball" .tar.gz)
+            mkdir -p "coverage/results/$name"
+            tar -xzf "$tarball" -C "coverage/results/$name" make_test_dir/coverage ||
+              echo "No coverage data in $tarball"
+          done
+          cat > coverage/aggregate.escript <<'ESCRIPT'
+          #!/usr/bin/env escript
+          %% -*- erlang -*-
+          %%! -pa /buildroot/otp/lib/common_test/ebin
+
+          %% Merge every *.coverdata file (per-testcase native line coverage
+          %% written by cth_coverage) found under Root into one LCOV
+          %% tracefile. The per-node coverage.manifest files are concatenated
+          %% into one manifest so that instrumented-but-unexecuted lines are
+          %% emitted with count 0 (ct_cover_to_lcov unions duplicate module
+          %% entries).
+          main([OutFile, Root]) ->
+              CoverData = filelib:wildcard(filename:join(Root, "**/*.coverdata")),
+              Manifests = filelib:wildcard(filename:join(Root, "**/coverage.manifest")),
+              io:format("Aggregating ~w coverdata files and ~w manifests~n",
+                        [length(CoverData), length(Manifests)]),
+              case CoverData of
+                  [] ->
+                      io:format(standard_error,
+                                "error: no .coverdata files found under ~ts~n",
+                                [Root]),
+                      halt(1);
+                  _ ->
+                      ok
+              end,
+              Opts =
+                  case Manifests of
+                      [] ->
+                          [];
+                      _ ->
+                          Manifest =
+                              lists:append(
+                                [begin
+                                     {ok, Bin} = file:read_file(F),
+                                     binary_to_term(Bin)
+                                 end || F <- Manifests]),
+                          MergedFile = filename:join(Root, "merged.manifest"),
+                          ok = file:write_file(MergedFile, term_to_binary(Manifest)),
+                          [{manifest, MergedFile}]
+                  end,
+              case ct_cover_to_lcov:convert(CoverData, OutFile, Opts) of
+                  ok ->
+                      ok;
+                  {error, Reason} ->
+                      io:format(standard_error,
+                                "ct_cover_to_lcov failed: ~tp~n", [Reason]),
+                      halt(1)
+              end.
+          ESCRIPT
+          docker run -v "$PWD/coverage:/cov" otp \
+            "escript /cov/aggregate.escript /cov/coverage.info /cov/results"
+          ls -l coverage/coverage.info
+      - name: Upload LCOV tracefile
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp-coverage-lcov
+          path: coverage/coverage.info
