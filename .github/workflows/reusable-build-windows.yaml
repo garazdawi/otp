@@ -66,7 +66,10 @@ jobs:
       - name: Install openssl
         shell: cmd
         run: |
-          choco install openssl --version=3.1.1
+          rem Keep aligned with the OpenSSL the runner loads at runtime so that
+          rem crypto's compiled and linked OpenSSL versions match (crypto:info
+          rem checks this, and SHAKE/XOF hashing needs compiled OpenSSL >= 3.4).
+          choco install openssl --version=3.6.3
           IF EXIST "c:\\Program Files\\OpenSSL-Win64" (move "c:\\Program Files\\OpenSSL-Win64" "c:\\OpenSSL-Win64") ELSE (move "c:\\Program Files\\OpenSSL" "c:\\OpenSSL-Win64")
 
       - name: Cache wxWidgets
