@@ -175,8 +175,21 @@ jobs:
           docker run -v "$PWD/coverage:/cov" otp \
             "escript /cov/aggregate.escript /cov/coverage.info /cov/results"
           ls -l coverage/coverage.info
+          ## Render a browsable HTML report from the LCOV tracefile. genhtml
+          ## runs inside the image because the SF: paths in coverage.info are
+          ## the in-container source paths (/buildroot/otp/lib/*/src/*.erl);
+          ## --prefix trims that lead from the displayed tree. lcov is installed
+          ## on demand so the shared base image is left untouched.
+          docker run -v "$PWD/coverage:/cov" otp \
+            "(command -v genhtml >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq lcov)) && genhtml /cov/coverage.info --output-directory /cov/html --prefix /buildroot/otp --title 'Erlang/OTP line coverage' --legend --quiet --ignore-errors source"
+          ls -l coverage/html/index.html
       - name: Upload LCOV tracefile
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
         with:
           name: otp-coverage-lcov
           path: coverage/coverage.info
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp-coverage-html
+          path: coverage/html
