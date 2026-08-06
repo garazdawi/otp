@@ -2093,7 +2093,8 @@ timetrap_scale_factor() ->
 	{ 6, fun() -> is_debug() end},
 	{10, fun() -> is_cover() end},
         {10, fun() -> is_valgrind() end},
-        {2,  fun() -> is_asan() end}
+        {2,  fun() -> is_asan() end},
+        {2,  fun() -> is_windows() end}
     ]).
 
 timetrap_scale_factor(Scales) ->
@@ -3102,6 +3103,11 @@ is_valgrind() ->
 %% Returns true if address-sanitizer is running, else false
 is_asan() ->
     memory_checker() =:= asan.
+
+%% Returns true when running on Windows. Used to scale up timetraps for
+%% the slower Windows/WSL test environment.
+is_windows() ->
+    element(1, os:type()) =:= win32.
 
 %% Returns the error checker running (valgrind | asan | none).
 memory_checker() ->
