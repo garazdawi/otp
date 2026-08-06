@@ -158,6 +158,19 @@ endif
 ENABLE_ALLOC_TYPE_VARS += debug
 else
 
+ifeq ($(TYPE),clangcov)
+TYPEMARKER = .clangcov
+# Clang source-based coverage. Unlike gcov (which forces -O0), this stays
+# optimized, so the JIT emitter (C++) and the rest of the emulator are
+# covered under real optimization. -fprofile-instr-generate/-fcoverage-mapping
+# instrument at compile time; the LLVM profile runtime is pulled in at link
+# via -fprofile-instr-generate (LDFLAGS below). Coverage flags live in
+# TYPE_FLAGS, which feeds both CFLAGS and (via CFLAGS) CXXFLAGS.
+TYPE_FLAGS = @CFLAGS@ -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
+TYPE_CXXFLAGS = @CXXFLAGS@
+LDFLAGS += -fprofile-instr-generate
+else
+
 ifeq ($(TYPE),valgrind)
 TYPEMARKER = .valgrind
 TYPE_FLAGS = @DEBUG_CFLAGS@ -DVALGRIND -DNO_JUMP_TABLE @NO_MAYBE_UNINITIALIZED@
@@ -208,6 +221,7 @@ override TYPE=opt
 TYPEMARKER =
 TYPE_FLAGS = @CFLAGS@
 TYPE_CXXFLAGS = @CXXFLAGS@
+endif
 endif
 endif
 endif

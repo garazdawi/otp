@@ -65,6 +65,11 @@ CFLAGS=@DEBUG_CFLAGS@ -DGCOV -fprofile-arcs -ftest-coverage -O0
 TYPE_SUFFIX=.gcov
 PRE_LD=
 else
+ifeq ($(TYPE),clangcov)
+CFLAGS:=$(CFLAGS) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
+TYPE_SUFFIX=.clangcov
+PRE_LD=
+else
 ifeq ($(TYPE),valgrind)
 CFLAGS=@DEBUG_CFLAGS@ -DVALGRIND
 TYPE_SUFFIX=.valgrind
@@ -105,6 +110,7 @@ OMIT_FP=true
 endif
 TYPE_SUFFIX=
 PRE_LD=
+endif
 endif
 endif
 endif
