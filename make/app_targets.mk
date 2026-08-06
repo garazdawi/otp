@@ -30,6 +30,24 @@ test:
 	  $(ERL_TOP)/make/test_target_script.sh $(ERL_TOP)
 endif
 
+# Turn the per-testcase coverdata collected by `make test COVERAGE=yes`
+# (see $(ERL_TOP)/HOWTO/DEVELOPMENT.md) into an LCOV tracefile and an
+# interactive per-testcase attribution report.
+COVERAGE_DIR ?= make_test_dir/coverage
+.PHONY: coverage_report
+coverage_report:
+	@test -f "$(COVERAGE_DIR)/coverage.manifest" || { \
+	  echo "No coverdata in $(COVERAGE_DIR). Run 'make test COVERAGE=yes' first."; \
+	  exit 1; }
+	$(ERL_TOP)/bin/escript $(ERL_TOP)/lib/common_test/ebin/ct_cover_to_lcov.beam \
+	  --manifest "$(COVERAGE_DIR)/coverage.manifest" \
+	  "$(COVERAGE_DIR)/coverage.info" "$(COVERAGE_DIR)"
+	$(ERL_TOP)/bin/escript $(ERL_TOP)/lib/common_test/ebin/ct_cover_to_html.beam \
+	  --manifest "$(COVERAGE_DIR)/coverage.manifest" --max-per-line 5 \
+	  "$(COVERAGE_DIR)/html" "$(COVERAGE_DIR)"
+	@echo "LCOV tracefile:     $(COVERAGE_DIR)/coverage.info"
+	@echo "Attribution report: $(COVERAGE_DIR)/html/index.html"
+
 docs: $(filter src java_src, $(SUB_DIRECTORIES))
 
 info:

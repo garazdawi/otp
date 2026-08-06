@@ -258,6 +258,20 @@ fi
 
 ARGS="${ARGS} ${EXTRA_ARGS}"
 
+# Native per-testcase line coverage (see $ERL_TOP/HOWTO/DEVELOPMENT.md).
+# COVERAGE=yes wires in the cth_coverage hook and a default output directory.
+# The system under test must have been built with `make OTP_LINE_COVERAGE=yes`
+# (only the system under test is instrumented, not the test suites).
+case "${COVERAGE}" in
+    yes|true|1)
+        ARGS="${ARGS} -ct_hooks cth_coverage"
+        CT_COVERAGE_DIR="${CT_COVERAGE_DIR:-$MAKE_TEST_DIR/coverage}"
+        export CT_COVERAGE_DIR
+        mkdir -p "$CT_COVERAGE_DIR"
+        print_highlighted_msg $LIGHT_CYAN "Coverage enabled: cth_coverage -> $CT_COVERAGE_DIR"
+        ;;
+esac
+
 if ([ -n "${TYPE}" ] || [ -n "${FLAVOR}" ]) && [ "${WSLcross}" = "true" ]; then
     print_highlighted_msg $RED "Setting TYPE or FLAVOR is not implemented yet for WSL"
     exit 1;
