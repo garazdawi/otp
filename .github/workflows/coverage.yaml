@@ -175,9 +175,13 @@ jobs:
               %% Same inputs, but keeping the per-testcase dimension: an
               %% interactive report of which testcases cover each line.
               AttribDir = filename:join(filename:dirname(OutFile), "attrib"),
+              %% A hot line (e.g. in lists) is reached by huge numbers of
+              %% testcases across apps; list at most 5 as examples (the true
+              %% count is still shown) to keep the whole-tree report small.
               case ct_cover_to_html:convert(
                      CoverData, AttribDir,
-                     [{title, "Erlang/OTP coverage attribution"} | Opts]) of
+                     [{title, "Erlang/OTP coverage attribution"},
+                      {max_tests_per_line, 5} | Opts]) of
                   ok ->
                       io:format("Wrote attribution report to ~ts~n", [AttribDir]);
                   {error, HReason} ->
