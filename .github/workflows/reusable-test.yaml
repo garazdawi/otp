@@ -88,12 +88,21 @@ jobs:
           sudo bash -c "echo 'core.%p' > /proc/sys/kernel/core_pattern"
           EXTRA_ARGS="-ct_hooks cth_surefire [{path,\"/buildroot/otp/$DIR/make_test_dir/${MATRIX_TYPE}_junit.xml\"}]"
           COVERAGE_ENV=()
+          TEST_MAKE_COV=""
           if [ "$COVERAGE" = "true" ]; then
             ## Collect native per-testcase line coverage. The coverage dir is
             ## placed inside the mounted make_test_dir so that the coverdata
             ## rides along in the ${MATRIX_TYPE}_test_results.tar.gz artifact.
             EXTRA_ARGS="$EXTRA_ARGS and cth_coverage"
             COVERAGE_ENV=(-e "CT_COVERAGE_DIR=/buildroot/otp/$DIR/make_test_dir/coverage")
+            ## Only the system under test is line-coverage instrumented (built
+            ## into the image). The test suites themselves must NOT be: their
+            ## own coverage is not wanted, and instrumenting generated
+            ## compiler-test variants (e.g. *_no_type_opt_SUITE) trips a compiler
+            ## bug in the +no_type_opt / +line_coverage combination. Turn the
+            ## flag off for the test-suite compilation only (the system under
+            ## test was already built with it in the image).
+            TEST_MAKE_COV=" OTP_LINE_COVERAGE="
           fi
           docker run --ulimit core=-1 --ulimit nofile=5000:5000 --pids-limit 1024 \
             -e CTRUN_TIMEOUT=90 -e SPEC_POSTFIX=gh \
@@ -102,7 +111,7 @@ jobs:
             "${COVERAGE_ENV[@]}" \
             -v "$PWD/make_test_dir:/buildroot/otp/$DIR/make_test_dir" \
             -v "$PWD/scripts:/buildroot/otp/scripts" \
-            otp "./otp_build download_gdb_tools && make emulator && make TYPE=${TYPE} && make ${APP}_test TYPE=${TYPE}"
+            otp "./otp_build download_gdb_tools && make emulator && make TYPE=${TYPE} && make ${APP}_test TYPE=${TYPE}${TEST_MAKE_COV}"
           ## Rename os_mon to debug for debug build
           if [ "$APP" != "${MATRIX_TYPE}" ]; then
             mv make_test_dir/${APP}_test "make_test_dir/${MATRIX_TYPE}_test"
