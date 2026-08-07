@@ -469,7 +469,15 @@ init_per_testcase(select_best_cert, Config) ->
     end;
 init_per_testcase(_TestCase, Config) ->
     ssl_test_lib:ct_log_supported_protocol_versions(Config),
-    ct:timetrap({seconds, 10}),
+    %% DTLS runs over UDP: under the heavy parallelism of these groups a
+    %% dropped datagram forces DTLS retransmission (with second-scale
+    %% backoff), which can blow a 10s timetrap on a loaded CI host even
+    %% though the handshake itself is healthy. Give DTLS more room while
+    %% keeping TLS tight so genuine TLS hangs are still caught quickly.
+    ct:timetrap(case proplists:get_value(protocol, Config) of
+                    dtls -> {seconds, 30};
+                    _    -> {seconds, 10}
+                end),
     Config.
 
 end_per_testcase(_TestCase, Config) ->     
@@ -3777,22 +3785,30 @@ invalid_options_tls13(Config) when is_list(Config) ->
 ssl_not_started() ->
     [{doc, "Test that an error is returned if ssl is not started"}].
 ssl_not_started(Config) when is_list(Config) ->
+    %% Connect to a locally listening TCP port so that the transport
+    %% connection succeeds and 'ssl not started' is what actually fails the
+    %% call. Connecting to a closed port would fail earlier with a transport
+    %% error (e.g. econnrefused when nothing listens on the port, as happens
+    %% for the previously hardcoded port 22 on the Windows CI host).
+    {ok, LSock} = gen_tcp:listen(0, [{active, false}, {reuseaddr, true}]),
+    {ok, Port} = inet:port(LSock),
     application:stop(ssl),
     R1 = try
-             {error, ssl_not_started} = ssl:connect("localhost", 22, [{verify, verify_none},
+             {error, ssl_not_started} = ssl:connect("localhost", Port, [{verify, verify_none},
                                                                       {protocol, tls}]),
              ok
          catch _:Reason ->
                  Reason
          end,
     R2 = try
-             {error, ssl_not_started} = ssl:connect("localhost", 22, [{verify, verify_none},
+             {error, ssl_not_started} = ssl:connect("localhost", Port, [{verify, verify_none},
                                                                       {protocol, dtls}]),
              ok
          catch _:Reason2 ->
                  Reason2
          end,
     ssl:start(),
+    gen_tcp:close(LSock),
     ok = R1 = R2.
 
 cookie() ->

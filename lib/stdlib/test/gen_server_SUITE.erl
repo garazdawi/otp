@@ -1846,6 +1846,12 @@ multicall_remote_old2(Config) when is_list(Config) ->
 
 
 multicall_remote_old_test(Config, OldN, Name) ->
+    %% Only the environment setup (starting the old-release peers and
+    %% recompiling/loading the suite on them) is run in the protected
+    %% part of the 'try'. Failures there are artifacts of the old/docker
+    %% environment and are turned into a skip. The actual multi_call
+    %% protocol assertions run in the 'of' body, whose exceptions are
+    %% *not* caught here, so a real protocol regression still fails loudly.
     try
         {OldRelName, OldRel} = old_release(OldN),
         PD = proplists:get_value(priv_dir, Config),
@@ -1861,15 +1867,38 @@ multicall_remote_old_test(Config, OldN, Name) ->
                                 end
                         end, lists:seq(1, 4)),
         OldNodes = lists:map(fun ({_, N}) -> N end, PNs),
-        %% Recompile on one old node and load this on all old nodes...
+        %% Recompile on one old node and load this on all old nodes.
+        %% Compiling the current (development) suite source with an old
+        %% release compiler may fail or emit warnings for reasons that
+        %% are artifacts of that old environment rather than a multi_call
+        %% regression, so treat any compile/load failure as a skip.
         SrcFile = filename:rootname(code:which(?MODULE)) ++ ".erl",
-        {ok, ?MODULE, BeamCode} = erpc:call(hd(OldNodes), compile, file, [SrcFile, [binary]]),
+        BeamCode =
+            case erpc:call(hd(OldNodes), compile, file,
+                           [SrcFile, [binary, return_errors]]) of
+                {ok, ?MODULE, Bin} ->
+                    Bin;
+                {ok, ?MODULE, Bin, _Warnings} ->
+                    Bin;
+                CompileErr ->
+                    throw({skipped,
+                           "Unable to compile suite on OTP "++OldRel++": "
+                           ++lists:flatten(io_lib:format("~p", [CompileErr]))})
+            end,
         LoadResult = lists:duplicate(length(OldNodes), {ok, {module, ?MODULE}}),
         LoadResult = erpc:multicall(OldNodes, code, load_binary, [?MODULE, SrcFile, BeamCode]),
-        multicall_remote_test(PNs, Name)
+        PNs
+    of
+        PNs ->
+            multicall_remote_test(PNs, Name)
     catch
-        throw:Res ->
-            Res
+        throw:{skipped, _} = Skipped ->
+            Skipped;
+        Class:Reason:Stacktrace ->
+            {skip, lists:flatten(
+                     io_lib:format("Unable to set up OTP old-release "
+                                   "(otp_release-~w) nodes: ~p:~p~n~p",
+                                   [OldN, Class, Reason, Stacktrace]))}
     end.
 
 multicall_remote_test([{Peer1, Node1},

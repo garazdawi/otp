@@ -27,6 +27,10 @@ on:
       base_branch:
         required: true
         type: string
+    outputs:
+      installer_name:
+        description: 'Filename of the built Windows installer'
+        value: ${{ jobs.build-windows.outputs.installer_name }}
 
 permissions:
   contents: read
@@ -41,6 +45,8 @@ jobs:
       WXWIDGETS_VERSION: 3.2.6
     name: Build Erlang/OTP (Windows)
     runs-on: windows-2025
+    outputs:
+      installer_name: ${{ steps.compile-erlang.outputs.installer_name }}
     permissions:
       contents: read   # actions/cache (restore/save wxWidgets cache)
       actions:  write  # actions/download-artifact + actions/upload-artifact
@@ -50,7 +56,7 @@ jobs:
           distribution: Ubuntu-18.04
 
       - name: Install WSL dependencies
-        run: apt update && apt install -y make autoconf unzip
+        run: apt update && apt install -y make autoconf unzip zip
 
       - name: Install NSIS
         shell: cmd
@@ -60,6 +66,10 @@ jobs:
       - name: Install openssl
         shell: cmd
         run: |
+          rem Do NOT bump this without checking ssl: building OTP against a
+          rem newer OpenSSL (3.x) raises the security level and drops legacy
+          rem TLS 1.0/1.1 and cipher support, which breaks the ssl interop
+          rem tests against the older OpenSSL in the WSL test environment.
           choco install openssl --version=3.1.1
           IF EXIST "c:\\Program Files\\OpenSSL-Win64" (move "c:\\Program Files\\OpenSSL-Win64" "c:\\OpenSSL-Win64") ELSE (move "c:\\Program Files\\OpenSSL" "c:\\OpenSSL-Win64")
 
@@ -102,7 +112,8 @@ jobs:
         shell: cmd
         run: |
           cd wxWidgets\\build\\msw
-          call "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\Auxiliary\\Build\\vcvars64.bat"
+          for /f "usebackq tokens=*" %%i in (`"C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSPATH=%%i"
+          call "%VSPATH%\\VC\\Auxiliary\\Build\\vcvars64.bat"
           nmake TARGET_CPU=amd64 BUILD=release SHARED=0 DIR_SUFFIX_CPU= -f makefile.vc
 
       - name: Download source archive
@@ -111,6 +122,9 @@ jobs:
           name: otp_prebuilt
 
       - name: Compile Erlang
+        id: compile-erlang
+        env:
+          WSLENV: GITHUB_OUTPUT/p
         run: |
           mkdir -p /mnt/c/opt/local64/pgm/
           cp -R wxWidgets /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}
@@ -134,9 +148,18 @@ jobs:
           cp /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}/3rdparty/webview2/runtimes/win-x64/native/WebView2Loader.dll $ERL_TOP/release/win32/erts-*/bin/
           ./otp_build debuginfo_win32
           ./otp_build installer_win32
+          echo "installer_name=$(ls release/win32/otp*.exe | xargs basename)" >> $GITHUB_OUTPUT
+          make release_tests
+          zip -r tests.zip release/tests
 
       - name: Upload installer
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
         with:
           name: otp_win32_installer
           path: otp/release/win32/otp*.exe
+
+      - name: Upload tests
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp_tests
+          path: otp/tests.zip

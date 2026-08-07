@@ -135,6 +135,17 @@ reboot() ->
     [{doc, "Check that a node is up and running after a init:reboot/0"}].
 
 reboot(Config) when is_list(Config) ->
+    case os:type() of
+        {win32, _} ->
+            %% Heart restarts the node with a Unix-style background command
+            %% (trailing "&"), which is not portable to Windows, so the
+            %% rebooted node is never brought back up here.
+            {skip, "Heart-driven node restart not supported on Windows"};
+        _ ->
+            reboot_test(Config)
+    end.
+
+reboot_test(_Config) ->
     {ok, _Peer, Node} = ?CT_PEER(heart_args()),
     heart_monitor(Node),
     ok = rpc:call(Node, heart, set_cmd,
@@ -252,6 +263,16 @@ set_cmd(Config) when is_list(Config) ->
     ok.
 
 clear_cmd(Config) when is_list(Config) ->
+    case os:type() of
+        {win32, _} ->
+            %% Relies on heart restarting the node (see reboot/1), which uses
+            %% a Unix-style background command not portable to Windows.
+            {skip, "Heart-driven node restart not supported on Windows"};
+        _ ->
+            clear_cmd_test(Config)
+    end.
+
+clear_cmd_test(_Config) ->
     {ok, _Peer, Node} = ?CT_PEER(heart_args()),
     heart_monitor(Node),
     ok = rpc:call(Node, heart, set_cmd,

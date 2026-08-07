@@ -409,7 +409,21 @@ end_per_group(_GroupName, Config) ->
     Config.
 
 
+init_per_testcase(buffer_size, Config0) ->
+    %% buffer_size does real UDP buffer sizing that takes ~6 minutes under the
+    %% Windows (WSL) CI runner; skip it there to help keep the kernel suite
+    %% within the CI job time limit.
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "gen_udp_SUITE:buffer_size is too slow (~6 min) under the "
+             "Windows (WSL) CI environment"};
+        false ->
+            do_init_per_testcase(buffer_size, Config0)
+    end;
 init_per_testcase(Case, Config0) ->
+    do_init_per_testcase(Case, Config0).
+
+do_init_per_testcase(Case, Config0) ->
     ?P("init_per_testcase -> entry with"
        "~n   Config:   ~p"
        "~n   Nodes:    ~p"

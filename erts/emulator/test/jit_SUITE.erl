@@ -272,7 +272,7 @@ named_labels(_Config) ->
                              nomatch -> Lbl
                          end
                  end,
-    case re:run(Data, "^(.*)\:\n",
+    case re:run(Data, "^(.*):\r?\n",
                 [global,multiline,{capture,all_but_first,list}]) of
         {match,Labels} ->
             Found = sets:from_list([ StripSeqNo(NA) || [NA] <- Labels]),

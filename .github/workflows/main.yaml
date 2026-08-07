@@ -215,6 +215,122 @@ jobs:
     with:
       base_branch:              ${{ needs.setup.outputs.base_branch }}
 
+  test-windows:
+    name: Test Win64 Erlang/OTP
+    needs: [pack, build-windows]
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    runs-on: windows-2022
+    if: needs.pack.outputs.changes != '[]'
+    strategy:
+      matrix:
+        type: ${{ fromJson(needs.pack.outputs.changes) }}
+        # type: ["os_mon","sasl"]
+      fail-fast: false
+    steps:
+      - name: Setup nl behaviour for wsl
+        shell: cmd
+        run: git config --global core.autocrlf input
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+      - uses: ./.github/actions/setup-wsl-runner
+        with:
+          installer_name: ${{ needs.build-windows.outputs.installer_name }}
+
+      - name: Run tests
+        id: run-tests
+        run: |
+          set -x
+          unzip -q tests.zip
+          export ERL_TOP="$(pwd)"
+          export MAKEFLAGS=-j$(($(nproc) + 2))
+
+          eval `./otp_build env_win32 x64`
+
+          export PATH=`pwd`/release/win32/bin/:$PATH
+
+          APP="${{ matrix.type }}"
+          TYPE=opt
+          ## Need to specialize for epmd, emulator and debug
+          case "${APP}" in
+            debug)
+               echo "No debug tests on windows"
+               ;;
+            *)
+               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -emu_type $TYPE -noinput -eval "ts:install()" -eval "ts:run($APP,[batch])" -s init stop)
+               if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.${APP}_test.logs/run*/suite.log; then
+                  exit 1
+               fi
+               ;;
+          esac
+
+      - name: Cleanup tests
+        if: ${{ !cancelled() && matrix.type != 'debug' }}
+        run: tar czf ${{ matrix.type }}_win32_test_results.tar.gz release/tests/test_server
+      - name: Upload test results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        if: ${{ !cancelled() && matrix.type != 'debug' }}
+        with:
+          name: ${{ matrix.type }}_win32_test_results
+          path: ${{ matrix.type }}_win32_test_results.tar.gz
+
+  system-test-windows:
+    name: Test Win64 Erlang/OTP (system)
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    runs-on: windows-2022
+    if: ${{ !cancelled() }} # Run even if the need has failed
+    needs: [test-windows, build-windows]
+    steps:
+      - name: Setup nl behaviour for wsl
+        shell: cmd
+        run: git config --global core.autocrlf input
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+      - uses: ./.github/actions/setup-wsl-runner
+        with:
+          installer_name: ${{ needs.build-windows.outputs.installer_name }}
+
+      - name: Download test results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # ratchet:actions/download-artifact@v6.0.0
+      - name: Merge test results
+        run: |
+          shopt -s nullglob
+          for file in *_win32_test_results/*.tar.gz; do
+            tar xvzf $file
+          done
+          export PATH=`pwd`/release/win32/bin/:$PATH
+          cd release/tests/test_server && ct_run.exe -noshell -refresh_logs $(wslpath -w `pwd`)
+
+      - name: Run system tests
+        run: |
+          set -x
+          unzip -q -o tests.zip
+
+          export ERL_TOP="$(pwd)/otp"
+          export MAKEFLAGS=-j$(($(nproc) + 2))
+
+          eval `./otp_build env_win32 x64`
+
+          export PATH=`pwd`/release/win32/bin/:$PATH
+
+          (cd release/tests/test_server && erl.exe -noshell -env OTP_WINDOWS_CI true -eval "ts:install()" -eval "ts:run(system,[batch])" -s init stop)
+          if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.system_test.logs/run*/suite.log; then
+               exit 1
+          fi
+
+      - name: Cleanup tests
+        if: ${{ !cancelled() }}
+        run: |
+          tar czf test_results_win32.tar.gz release/tests/test_server
+          
+      - name: Upload test results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        if: ${{ !cancelled() }}
+        with:
+          name: test_results_win32
+          path: test_results_win32.tar.gz
+
   test:
     name: Test Erlang/OTP
     needs: pack

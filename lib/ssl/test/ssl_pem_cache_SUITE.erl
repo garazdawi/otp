@@ -430,10 +430,19 @@ alternative_path_symlink_relative() ->
       "as a result establishing 2nd connection should add new data to tables."}].
 %% see alternative_path_hardlink for detailed specification
 alternative_path_symlink_relative(Config) when is_list(Config) ->
-    Expected = #{init => [0, 0, 0, 0], connected1 => [6, 6, 2, 2],
-                 connected2 => [7, 9, 3, 3], connected3 => [8, 12, 4, 4],
-                 disconnected => [8, 0, 0, 0]},
-    alternative_path_helper(Config, fun make_symlink_noabspath/1, Expected).
+    case os:type() of
+        {win32, _} ->
+            %% Relative symbolic links are not reliably resolved by the
+            %% Windows file layer - opening the cacertfile through a link
+            %% with a relative target fails with enoent (absolute-target
+            %% symlinks work, see alternative_path_symlink).
+            {skip, "Relative symlinks not supported on Windows"};
+        _ ->
+            Expected = #{init => [0, 0, 0, 0], connected1 => [6, 6, 2, 2],
+                         connected2 => [7, 9, 3, 3], connected3 => [8, 12, 4, 4],
+                         disconnected => [8, 0, 0, 0]},
+            alternative_path_helper(Config, fun make_symlink_noabspath/1, Expected)
+    end.
 
 cache_file_does_not_exist() ->
     [{doc, "White box test, that a none existing file will provide an empty content. "

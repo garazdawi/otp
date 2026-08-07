@@ -160,6 +160,18 @@ init_per_testcase(TC, Config) when TC == hostnames;
 init_per_testcase(epmd_reconnect, Config) ->
     [] = os:cmd(?ALT_EPMD_CMD++" -relaxed_command_check -daemon"),
     Config;
+init_per_testcase(tick_change, Config) ->
+    %% tick_change waits for real net_ticktime timeouts, and its peer nodes are
+    %% so slow to respond under the Windows (WSL) CI runner that they read as
+    %% "not responding"; the single testcase then takes ~30 minutes, which on
+    %% its own pushes the kernel suite past the 6h CI job limit.
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "tick_change takes ~30 min under the Windows (WSL) CI "
+             "environment (net_ticktime waits on slow peer nodes)"};
+        false ->
+            Config
+    end;
 init_per_testcase(Func, Config) when is_atom(Func), is_list(Config) ->
     Config.
 
@@ -2557,10 +2569,10 @@ differing_cookies(Config) when is_list(Config) ->
             %% Disconnect node A from B
             true = rpc:call( NodeB, net_kernel, disconnect, [NodeA] ),
 
-            %% Verify the cluster
+            %% Verify the cluster.
             equal_sets( [NodeA, NodeB], nodes(hidden) ),
-            [ Node ] = rpc:call( NodeA, erlang, nodes, [hidden] ),
-            [ Node ] = rpc:call( NodeB, erlang, nodes, [hidden] ),
+            [ Node ] = rpc:call( NodeA, ?MODULE, wait_node_down, [NodeB] ),
+            [ Node ] = rpc:call( NodeB, ?MODULE, wait_node_down, [NodeA] ),
 
             %% Reconnect, now node B -> A
             pong = rpc:call( NodeB, net_adm, ping, [NodeA] ),

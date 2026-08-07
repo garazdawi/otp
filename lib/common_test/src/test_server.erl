@@ -50,6 +50,7 @@
 -export([app_test/1, app_test/2, appup_test/1]).
 -export([comment/1, make_priv_dir/0]).
 -export([run_on_shielded_node/2]).
+-export([is_windows_ci/0]).
 -export([is_cover/0,is_debug/0,is_commercial/0]).
 
 -export([break/1,break/2,break/3,continue/0,continue/1]).
@@ -2093,7 +2094,8 @@ timetrap_scale_factor() ->
 	{ 6, fun() -> is_debug() end},
 	{10, fun() -> is_cover() end},
         {10, fun() -> is_valgrind() end},
-        {2,  fun() -> is_asan() end}
+        {2,  fun() -> is_asan() end},
+        {2,  fun() -> is_windows() end}
     ]).
 
 timetrap_scale_factor(Scales) ->
@@ -3102,6 +3104,20 @@ is_valgrind() ->
 %% Returns true if address-sanitizer is running, else false
 is_asan() ->
     memory_checker() =:= asan.
+
+%% Returns true when running on Windows. Used to scale up timetraps for
+%% the slower Windows/WSL test environment.
+is_windows() ->
+    element(1, os:type()) =:= win32.
+
+%% Returns true when running in this project's Windows CI environment. The
+%% test-windows GitHub Actions jobs run erl.exe under WSL and set the
+%% OTP_WINDOWS_CI marker. Used to skip suites that cannot run reliably under
+%% that specific virtualized/WSL harness (openssl-interop slowness, socket
+%% peer-node churn, scheduler-utilization noise) while keeping them enabled on
+%% real Windows, where OTP_WINDOWS_CI is not set.
+is_windows_ci() ->
+    os:getenv("OTP_WINDOWS_CI") =:= "true".
 
 %% Returns the error checker running (valgrind | asan | none).
 memory_checker() ->
