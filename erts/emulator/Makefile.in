@@ -166,8 +166,12 @@ TYPEMARKER = .clangcov
 # instrument at compile time; the LLVM profile runtime is pulled in at link
 # via -fprofile-instr-generate (LDFLAGS below). Coverage flags live in
 # TYPE_FLAGS, which feeds both CFLAGS and (via CFLAGS) CXXFLAGS.
-TYPE_FLAGS = @CFLAGS@ -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
-TYPE_CXXFLAGS = @CXXFLAGS@
+# clangcov always compiles with clang; drop GCC-only flags that a
+# gcc-configured @CFLAGS@ may carry (e.g. a hardening -Wtrampolines) and
+# the blanket -Werror that would make clang's "unknown warning option"
+# fatal. Specific -Werror=<name> flags are kept (clang supports them).
+TYPE_FLAGS = $(filter-out -Werror -Wtrampolines,@CFLAGS@) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
+TYPE_CXXFLAGS = $(filter-out -Werror -Wtrampolines,@CXXFLAGS@)
 LDFLAGS += -fprofile-instr-generate
 else
 

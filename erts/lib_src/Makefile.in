@@ -66,7 +66,9 @@ TYPE_SUFFIX=.gcov
 PRE_LD=
 else
 ifeq ($(TYPE),clangcov)
-CFLAGS:=$(CFLAGS) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
+# Built with clang: drop GCC-only flags a gcc-configured @CFLAGS@ may
+# carry (-Wtrampolines) and blanket -Werror (keeps -Werror=<name>).
+CFLAGS:=$(filter-out -Werror -Wtrampolines,$(CFLAGS)) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
 TYPE_SUFFIX=.clangcov
 PRE_LD=
 else
