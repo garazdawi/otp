@@ -73,6 +73,17 @@ init_per_testcase(erl_bif_types, Config) when is_list(Config) ->
     skip_missing_erl_bif_types(Config);
 init_per_testcase(shadow_comments, Config) when is_list(Config) ->
     skip_missing_erl_bif_types(Config);
+init_per_testcase(halt_flush_timeout, Config) ->
+    %% halt_flush relies on filling a socket buffer so that the flush blocks;
+    %% the Windows (WSL) large socket buffers absorb the data, so the premise
+    %% never holds and the test cannot pass in that environment.
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "halt_flush needs a socket buffer to block the flush, which "
+             "the Windows (WSL) large buffers absorb"};
+        false ->
+            Config
+    end;
 init_per_testcase(Func, Config) when is_atom(Func), is_list(Config) ->
     Config.
 
