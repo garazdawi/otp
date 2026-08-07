@@ -6334,12 +6334,14 @@ send_timeout_cfg(Config) ->
     send_timeout_cfg(Config, default).
 
 send_timeout_cfg(Config, Case) ->
-    case ?IS_SOCKET_BACKEND(Config) of
-        true when (Case =:= send_timeout_check_length) ->
+    case {os:type(), ?IS_SOCKET_BACKEND(Config), Case} of
+        {{win32, _}, _, send_timeout_basic_wo_autoclose} ->
+            {1,   1000, binary:copy(<<$a:8>>, 1*1024),   4*1024};
+        {_, true, send_timeout_check_length} ->
             {100, 3000, binary:copy(<<$a:8>>, 1*1024),   5*1024};
-        true ->
+        {_, true, _} ->
             {100, 3000, binary:copy(<<$a:8>>, 10*1024),  5*1024};
-        false ->
+        {_, false, _} ->
             {1,   1000, binary:copy(<<$a:8>>, 1*1024),   16*1024}
     end.    
 
@@ -6363,7 +6365,8 @@ send_timeout_basic_wo_autoclose(Config) when is_list(Config) ->
 
 do_send_timeout_basic_wo_autoclose(Config, Addr, RNode) ->
     ?P("begin"),
-    {TslTimeout, SndTimeout, BinData, SndBuf} = send_timeout_cfg(Config),
+    {TslTimeout, SndTimeout, BinData, SndBuf} =
+        send_timeout_cfg(Config, send_timeout_basic_wo_autoclose),
     send_timeout_basic(Config, Addr, BinData, SndBuf, TslTimeout, SndTimeout,
 		       false, RNode),
     ?P("done"),

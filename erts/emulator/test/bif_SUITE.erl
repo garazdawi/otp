@@ -945,7 +945,10 @@ halt_flush_timeout_test_try(HaltCmd, HaltOpt, N) ->
         {true, false} ->
             ct:log("Test no ~p with command line arg~n", [N])
     end,
-    {ok, Peer, Node} = ?CT_PEER(),
+    DistBuffer = "[{sndbuf,4096},{recbuf,4096}]",
+    {ok, Peer, Node} =
+        ?CT_PEER(["-kernel", "inet_dist_connect_options", DistBuffer,
+                  "-kernel", "inet_dist_listen_options", DistBuffer]),
     try
         ok = halt_flush_timeout_test_run(Node, HaltCmd, HaltOpt),
         peer:stop(Peer),
