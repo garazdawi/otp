@@ -115,6 +115,27 @@ init_per_testcase(ThreadCase, Config) when ThreadCase =:= poll_threads;
         1 -> {skip,"Needs more than one scheduler online"};
         _ -> init_per_tc(ThreadCase, Config)
     end;
+init_per_testcase(Case, Config)
+  when Case =:= equal;
+       Case =:= few_low;
+       Case =:= many_low;
+       Case =:= equal_with_part_time_high;
+       Case =:= equal_and_high_with_part_time_max;
+       Case =:= equal_with_part_time_max;
+       Case =:= equal_with_high;
+       Case =:= equal_with_high_max;
+       Case =:= bound_process ->
+    %% These measure scheduler load-balancing ratios, which are far too noisy
+    %% to assert on under the virtualized Windows (WSL) CI environment (a
+    %% scheduler reads 0.0 utilization and the check fails). Keep them on
+    %% real hardware / non-CI runs.
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "Scheduler-utilization balancing is too noisy to measure "
+             "reliably under the virtualized Windows (WSL) CI environment"};
+        false ->
+            init_per_tc(Case, Config)
+    end;
 init_per_testcase(Case, Config) when is_list(Config) ->
     init_per_tc(Case, Config).
 

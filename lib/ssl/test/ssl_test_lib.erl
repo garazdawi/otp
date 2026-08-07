@@ -333,6 +333,15 @@ init_per_suite(Config0, Type) ->
             ssl:clear_pem_cache(),
             case Type of
                 openssl ->
+                    case test_server:is_windows_ci() of
+                        true ->
+                            throw({skip, "OpenSSL interop tests are too slow and "
+                                   "unreliable under the Windows (WSL) CI environment "
+                                   "(each test spawns a slow openssl s_client/s_server "
+                                   "subprocess)"});
+                        false ->
+                            ok
+                    end,
                     Version = portable_cmd("openssl", ["version"]),
                     case Version of
                         "OpenSSL" ++ _ -> ok;
