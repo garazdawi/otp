@@ -257,7 +257,7 @@ jobs:
                echo "No debug tests on windows"
                ;;
             *)
-               (cd release/tests/test_server && erl.exe -env USER ${USER} -emu_type $TYPE -noinput -eval "ts:install()" -eval "ts:run($APP,[batch])" -s init stop)
+               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -emu_type $TYPE -noinput -eval "ts:install()" -eval "ts:run($APP,[batch])" -s init stop)
                if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.${APP}_test.logs/run*/suite.log; then
                   exit 1
                fi
@@ -314,7 +314,7 @@ jobs:
 
           export PATH=`pwd`/release/win32/bin/:$PATH
 
-          (cd release/tests/test_server && erl.exe -noshell -eval "ts:install()" -eval "ts:run(system,[batch])" -s init stop)
+          (cd release/tests/test_server && erl.exe -noshell -env OTP_WINDOWS_CI true -eval "ts:install()" -eval "ts:run(system,[batch])" -s init stop)
           if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.system_test.logs/run*/suite.log; then
                exit 1
           fi
