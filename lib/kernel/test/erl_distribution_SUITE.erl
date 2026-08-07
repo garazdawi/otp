@@ -164,6 +164,18 @@ init_per_testcase(epmd_reconnect, Config) ->
     EpmdPort = integer_to_list(Port),
     [] = os:cmd("epmd -port "++EpmdPort++" -relaxed_command_check -daemon"),
     [{epmd_port, EpmdPort}, {saved_erl_epmd_port, SavedEpmdPort} | Config];
+init_per_testcase(tick_change, Config) ->
+    %% tick_change waits for real net_ticktime timeouts, and its peer nodes are
+    %% so slow to respond under the Windows (WSL) CI runner that they read as
+    %% "not responding"; the single testcase then takes ~30 minutes, which on
+    %% its own pushes the kernel suite past the 6h CI job limit.
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "tick_change takes ~30 min under the Windows (WSL) CI "
+             "environment (net_ticktime waits on slow peer nodes)"};
+        false ->
+            Config
+    end;
 init_per_testcase(Func, Config) when is_atom(Func), is_list(Config) ->
     Config.
 
