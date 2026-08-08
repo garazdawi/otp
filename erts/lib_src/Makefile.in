@@ -67,8 +67,9 @@ PRE_LD=
 else
 ifeq ($(TYPE),clangcov)
 # Built with clang: drop GCC-only flags a gcc-configured @CFLAGS@ may
-# carry (-Wtrampolines) and blanket -Werror (keeps -Werror=<name>).
-CFLAGS:=$(filter-out -Werror -Wtrampolines,$(CFLAGS)) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
+# carry (-Wtrampolines), the blanket -Werror (keeps -Werror=<name>), and
+# UBSan (-fsanitize=..., whose runtime is not linked into a coverage build).
+CFLAGS:=$(filter-out -Werror -Wtrampolines -fsanitize=signed-integer-overflow,$(CFLAGS)) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
 TYPE_SUFFIX=.clangcov
 PRE_LD=
 else

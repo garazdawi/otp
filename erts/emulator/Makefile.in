@@ -98,16 +98,19 @@ CONFIGURE_CXXFLAGS = @CXXFLAGS@
 DEBUG_CFLAGS = @DEBUG_CFLAGS@
 DEBUG_CXXFLAGS = @DEBUG_CXXFLAGS@
 
-# clangcov compiles the bundled zstd/zlib libraries with clang via
-# $(CONFIGURE_CFLAGS); strip the GCC-only flags a gcc-configured build
-# carries (-Wtrampolines) and the blanket -Werror so they build under
-# clang (the specific -Werror=<name> flags are kept). The emulator's own
-# objects are handled in the clangcov TYPE_FLAGS below.
+# Flags a gcc-configured coverage build carries that the clang (clangcov)
+# build must drop: GCC-only warnings (-Wtrampolines), the blanket -Werror
+# (the specific -Werror=<name> flags are kept), and UBSan
+# (-fsanitize=signed-integer-overflow), whose runtime is not linked into a
+# coverage build. Applied to CONFIGURE_/DEBUG_ flags so the bundled
+# libraries (zstd, zlib) that compile with $(CONFIGURE_CFLAGS) build too;
+# the emulator's own objects filter the same set in TYPE_FLAGS below.
+CLANGCOV_FILTER_OUT = -Werror -Wtrampolines -fsanitize=signed-integer-overflow
 ifeq ($(TYPE),clangcov)
-CONFIGURE_CFLAGS := $(filter-out -Werror -Wtrampolines,$(CONFIGURE_CFLAGS))
-CONFIGURE_CXXFLAGS := $(filter-out -Werror -Wtrampolines,$(CONFIGURE_CXXFLAGS))
-DEBUG_CFLAGS := $(filter-out -Werror -Wtrampolines,$(DEBUG_CFLAGS))
-DEBUG_CXXFLAGS := $(filter-out -Werror -Wtrampolines,$(DEBUG_CXXFLAGS))
+CONFIGURE_CFLAGS := $(filter-out $(CLANGCOV_FILTER_OUT),$(CONFIGURE_CFLAGS))
+CONFIGURE_CXXFLAGS := $(filter-out $(CLANGCOV_FILTER_OUT),$(CONFIGURE_CXXFLAGS))
+DEBUG_CFLAGS := $(filter-out $(CLANGCOV_FILTER_OUT),$(DEBUG_CFLAGS))
+DEBUG_CXXFLAGS := $(filter-out $(CLANGCOV_FILTER_OUT),$(DEBUG_CXXFLAGS))
 endif
 
 #
@@ -182,8 +185,8 @@ TYPEMARKER = .clangcov
 # gcc-configured @CFLAGS@ may carry (e.g. a hardening -Wtrampolines) and
 # the blanket -Werror that would make clang's "unknown warning option"
 # fatal. Specific -Werror=<name> flags are kept (clang supports them).
-TYPE_FLAGS = $(filter-out -Werror -Wtrampolines,@CFLAGS@) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
-TYPE_CXXFLAGS = $(filter-out -Werror -Wtrampolines,@CXXFLAGS@)
+TYPE_FLAGS = $(filter-out $(CLANGCOV_FILTER_OUT),@CFLAGS@) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
+TYPE_CXXFLAGS = $(filter-out $(CLANGCOV_FILTER_OUT),@CXXFLAGS@)
 LDFLAGS += -fprofile-instr-generate
 else
 
