@@ -253,28 +253,30 @@ jobs:
         with:
             BASE_BRANCH: ${{ needs.pack.outputs.base_branch }}
             COVERAGE: true
-      - name: Build clangcov emulator, run a focused suite on it, convert
+      - name: Build clangcov emulator, exercise it, convert to LCOV
         run: |
           set -x
           mkdir -p native
           ## Build the clang source-based coverage emulator (clangcov) with
-          ## clang, run a focused suite (stdlib) on it via EMU_TYPE=clangcov
-          ## under cth_coverage -- which then also dumps native C + JIT
-          ## coverage into make_test_dir/coverage/native -- and convert the
-          ## profraw to an LCOV tracefile with llvm-cov. The system under
-          ## test keeps the image's line instrumentation, so this run also
-          ## produces BEAM coverdata; only the native LCOV is uploaded here.
+          ## clang (only lib_src + the emulator are needed to run
+          ## -emu_type clangcov), run a workload on it that broadly
+          ## exercises the runtime and the JIT emitter (clangcov_probe.escript
+          ## dumps the native C + JIT coverage via erts_debug:coverage/1), and
+          ## convert the resulting .profraw to an LCOV tracefile with llvm-cov.
+          ## A direct workload is used rather than `make <app>_test`: apps that
+          ## release before testing cannot select -emu_type clangcov from a
+          ## release that does not contain that emulator.
           docker run -v "$PWD/native:/native" otp "
             sudo apt-get update -qq && sudo apt-get install -y -qq clang llvm &&
             ( cd /buildroot/otp/erts/lib_src && make clangcov CC=clang CXX=clang++ ) &&
             ( cd /buildroot/otp/erts/emulator && make clangcov CC=clang CXX=clang++ ) &&
             cd /buildroot/otp &&
-            { make stdlib_test COVERAGE=yes EMU_TYPE=clangcov OTP_LINE_COVERAGE= || true; } &&
-            ./make/native_cov_to_lcov.sh \
-              lib/stdlib/make_test_dir/coverage/native \
-              /buildroot/otp/bin /native/native.info
+            ERL_AFLAGS='-emu_type clangcov' ./bin/escript make/clangcov_probe.escript /buildroot/otp/native_cov &&
+            ./make/native_cov_to_lcov.sh /buildroot/otp/native_cov /buildroot/otp/bin /native/native.info
           "
-          ls -l native/native.info 2>/dev/null || echo "no native coverage produced"
+          ## Fail honestly if no native coverage was produced.
+          test -f native/native.info
+          ls -l native/native.info
       - name: Upload native C/JIT LCOV
         if: ${{ hashFiles('native/native.info') != '' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
