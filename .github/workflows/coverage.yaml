@@ -29,9 +29,9 @@
 ## otp-coverage-lcov artifact.
 ##
 ## A separate 'native' job additionally builds the clangcov emulator
-## (clang source-based coverage), runs a focused suite on it under
-## cth_coverage -- which then also dumps the emulator's own C and JIT
-## emitter coverage -- and uploads it as otp-coverage-native-lcov.
+## (clang source-based coverage), exercises it with a workload that dumps
+## the emulator's own C and JIT-emitter coverage (erts_debug:coverage/1),
+## and uploads it as the otp-coverage-native-lcov artifact.
 ##
 ## The normal push/pull request CI is unaffected: all coverage plumbing
 ## in the reusable workflows and in the build-base-image action is
