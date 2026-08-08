@@ -467,6 +467,22 @@ init_per_testcase(select_best_cert, Config) ->
         _ ->
             Config
     end;
+init_per_testcase(inet_backend_option_order, Config) ->
+    %% Spawns a client bound to a specific inet_backend; the connect times out
+    %% under the slow Windows (WSL) CI runner (start_client timeout, once per
+    %% protocol group).
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "inet_backend_option_order times out under the Windows "
+             "(WSL) CI environment"};
+        false ->
+            ssl_test_lib:ct_log_supported_protocol_versions(Config),
+            ct:timetrap(case proplists:get_value(protocol, Config) of
+                            dtls -> {seconds, 30};
+                            _    -> {seconds, 10}
+                        end),
+            Config
+    end;
 init_per_testcase(_TestCase, Config) ->
     ssl_test_lib:ct_log_supported_protocol_versions(Config),
     %% DTLS runs over UDP: under the heavy parallelism of these groups a
