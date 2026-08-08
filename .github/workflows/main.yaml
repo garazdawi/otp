@@ -223,10 +223,12 @@ jobs:
         shell: wsl-bash {0}
     runs-on: windows-2022
     if: needs.pack.outputs.changes != '[]'
+    timeout-minutes: 60  # TEMP fast-debug: cap so a hanging suite dies fast
     strategy:
       matrix:
-        type: ${{ fromJson(needs.pack.outputs.changes) }}
-        # type: ["os_mon","sasl"]
+        # TEMP fast-debug: only the failing apps (restore the fromJson line after)
+        type: ["emulator","ssl","kernel"]
+        # type: ${{ fromJson(needs.pack.outputs.changes) }}
       fail-fast: false
     steps:
       - name: Setup nl behaviour for wsl
@@ -251,13 +253,21 @@ jobs:
 
           APP="${{ matrix.type }}"
           TYPE=opt
+          ## TEMP fast-debug: run only the currently-failing suites per app so
+          ## each iteration takes minutes (restore full "ts:run($APP,...)" after).
+          case "${APP}" in
+            emulator) SUITES=", [distribution_SUITE,driver_SUITE]" ;;
+            ssl)      SUITES=", [ssl_api_SUITE,dtls_api_SUITE]" ;;
+            kernel)   SUITES=", [socket_sctp_SUITE,socket_sctp_example_SUITE,gen_sctp_SUITE,wrap_log_reader_SUITE]" ;;
+            *)        SUITES="" ;;
+          esac
           ## Need to specialize for epmd, emulator and debug
           case "${APP}" in
             debug)
                echo "No debug tests on windows"
                ;;
             *)
-               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -emu_type $TYPE -noinput -eval "ts:install()" -eval "ts:run($APP,[batch])" -s init stop)
+               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -emu_type $TYPE -noinput -eval "ts:install()" -eval "ts:run(${APP}${SUITES},[batch])" -s init stop)
                if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.${APP}_test.logs/run*/suite.log; then
                   exit 1
                fi
