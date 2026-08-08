@@ -266,7 +266,8 @@ jobs:
           ## produces BEAM coverdata; only the native LCOV is uploaded here.
           docker run -v "$PWD/native:/native" otp "
             sudo apt-get update -qq && sudo apt-get install -y -qq clang llvm &&
-            ( cd /buildroot/otp/erts && make clangcov CC=clang CXX=clang++ ) &&
+            ( cd /buildroot/otp/erts/lib_src && make clangcov CC=clang CXX=clang++ ) &&
+            ( cd /buildroot/otp/erts/emulator && make clangcov CC=clang CXX=clang++ ) &&
             cd /buildroot/otp &&
             { make stdlib_test COVERAGE=yes EMU_TYPE=clangcov OTP_LINE_COVERAGE= || true; } &&
             ./make/native_cov_to_lcov.sh \

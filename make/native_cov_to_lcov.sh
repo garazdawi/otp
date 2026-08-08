@@ -39,14 +39,22 @@ OUT=${3:?missing output file argument}
 
 skip() { echo "native_cov_to_lcov: $1; skipping" >&2; exit 0; }
 
-# Locate the llvm tools: on PATH (typical Linux) or via xcrun (macOS).
+# Locate the llvm tools: unversioned on PATH (typical), via xcrun (macOS),
+# or a versioned pair (Ubuntu's `llvm` package often ships only llvm-cov-NN).
+PROFDATA=""; COV=""
 if command -v llvm-profdata >/dev/null 2>&1 && command -v llvm-cov >/dev/null 2>&1; then
     PROFDATA="llvm-profdata"; COV="llvm-cov"
 elif command -v xcrun >/dev/null 2>&1 && xcrun --find llvm-profdata >/dev/null 2>&1; then
     PROFDATA="xcrun llvm-profdata"; COV="xcrun llvm-cov"
 else
-    skip "llvm-profdata/llvm-cov not found"
+    for v in 22 21 20 19 18 17 16 15 14 13 12 11; do
+        if command -v "llvm-profdata-$v" >/dev/null 2>&1 \
+           && command -v "llvm-cov-$v" >/dev/null 2>&1; then
+            PROFDATA="llvm-profdata-$v"; COV="llvm-cov-$v"; break
+        fi
+    done
 fi
+[ -n "$PROFDATA" ] && [ -n "$COV" ] || skip "llvm-profdata/llvm-cov not found"
 
 # Resolve the emulator binary. Accept a file, a directory to search
 # recursively, or a missing path whose sibling beam.clangcov.* is used
