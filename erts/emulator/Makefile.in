@@ -98,6 +98,18 @@ CONFIGURE_CXXFLAGS = @CXXFLAGS@
 DEBUG_CFLAGS = @DEBUG_CFLAGS@
 DEBUG_CXXFLAGS = @DEBUG_CXXFLAGS@
 
+# clangcov compiles the bundled zstd/zlib libraries with clang via
+# $(CONFIGURE_CFLAGS); strip the GCC-only flags a gcc-configured build
+# carries (-Wtrampolines) and the blanket -Werror so they build under
+# clang (the specific -Werror=<name> flags are kept). The emulator's own
+# objects are handled in the clangcov TYPE_FLAGS below.
+ifeq ($(TYPE),clangcov)
+CONFIGURE_CFLAGS := $(filter-out -Werror -Wtrampolines,$(CONFIGURE_CFLAGS))
+CONFIGURE_CXXFLAGS := $(filter-out -Werror -Wtrampolines,$(CONFIGURE_CXXFLAGS))
+DEBUG_CFLAGS := $(filter-out -Werror -Wtrampolines,$(DEBUG_CFLAGS))
+DEBUG_CXXFLAGS := $(filter-out -Werror -Wtrampolines,$(DEBUG_CXXFLAGS))
+endif
+
 #
 # Run this make file with TYPE set to the type of emulator you want.
 # Different versions of the emulator for different uses. The default
