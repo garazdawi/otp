@@ -928,6 +928,8 @@ error_info(_Config) ->
 
          {has_prepared_code_on_load, 1},
          {hd, [abc]},
+         {hibernate, [a]},
+         {hibernate, [a, b]},
          {hibernate, [1,2,a]},
          {insert_element, [a, b, c]},
          {insert_element, [0, b, c]},

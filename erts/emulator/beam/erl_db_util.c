@@ -3839,12 +3839,19 @@ done:
 /* Our own "cleanup_offheap"
  * as BinRef and ErtsMRefThing may be unaligned in compressed terms
 */
-void db_cleanup_offheap_comp(DbTerm* obj)
+/*
+ * Release the off-heap references (refc binaries, magic refs, external things)
+ * that erts_encode_ext_ets() threaded into a compressed-term byte buffer. The
+ * BinRef/header structs are written unaligned into the buffer, so each must be
+ * aligned before inspection. Used both by compressed ETS terms and by
+ * compressed process hibernation (erl_gc.c).
+ */
+void erts_cleanup_compressed_offheap_list(struct erl_off_heap_header *first)
 {
     union erl_off_heap_ptr u;
     union erts_tmp_aligned_offheap tmp;
 
-    for (u.hdr = obj->first_oh; u.hdr; u.hdr = u.hdr->next) {
+    for (u.hdr = first; u.hdr; u.hdr = u.hdr->next) {
         erts_align_offheap(&u, &tmp);
         switch (thing_subtag(u.hdr->thing_word)) {
         case BIN_REF_SUBTAG:
@@ -3860,6 +3867,11 @@ void db_cleanup_offheap_comp(DbTerm* obj)
             break;
         }
     }
+}
+
+void db_cleanup_offheap_comp(DbTerm* obj)
+{
+    erts_cleanup_compressed_offheap_list(obj->first_oh);
 
 #ifdef DEBUG_CLONE
     if (obj->debug_clone != NULL) {

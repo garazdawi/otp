@@ -463,6 +463,7 @@ typedef enum {
     ERTS_PSTT_FTMQ,     /* Flush trace msg queue */
     ERTS_PSTT_ETS_FREE_FIXATION,
     ERTS_PSTT_PRIO_SIG,  /* Elevate prio on signal management */
+    ERTS_PSTT_HIBERNATE, /* Hibernate (shrink, optionally compress) another process */
     ERTS_PSTT_TEST
 } ErtsProcSysTaskType;
 
@@ -10288,6 +10289,13 @@ execute_process:
 
 	erts_proc_unlock(p, ERTS_PROC_LOCK_STATUS);
 
+        /* If the process was hibernated with a compressed heap (idea #1,
+         * step 3) we must restore its heap before it is allowed to touch it
+         * again (tracing, signal handling, system tasks or Erlang code). We
+         * hold the main lock here. */
+        if (p->flags & F_COMPRESSED)
+            erts_decompress_hibernated(p);
+
         if (ERTS_IS_P_TRACED(p))
             trace_schedule_in(p, state);
 
@@ -10386,9 +10394,10 @@ execute_process:
 
                         /* Tracing, handling signals and running sys_tasks may
                            have created data on the process heap that should
-                           be GC:ed. */
+                           be GC:ed. (A process whose heap was just compressed
+                           by a hibernate system task must never be GC:ed.) */
                         if (ERTS_IS_GC_DESIRED(p)
-                            && !(p->flags & (F_DELAY_GC|F_DISABLE_GC))) {
+                            && !(p->flags & (F_DELAY_GC|F_DISABLE_GC|F_COMPRESSED))) {
                             int cost = scheduler_gc_proc(p, reds);
                             calls += cost;
                             reds -= cost;
@@ -10414,7 +10423,7 @@ execute_process:
 
             if (ERTS_IS_GC_DESIRED(p)) {
                 if (!(state & ERTS_PSFLG_EXITING)
-                    && !(p->flags & (F_DELAY_GC|F_DISABLE_GC))) {
+                    && !(p->flags & (F_DELAY_GC|F_DISABLE_GC|F_COMPRESSED))) {
                     int cost = scheduler_gc_proc(p, reds);
                     state = erts_atomic32_read_nob(&p->state);
                     calls += cost;
@@ -10856,6 +10865,26 @@ execute_sys_tasks(Process *c_p, erts_aint32_t *statep, int in_reds)
 		st_res = am_true;
 	    }
 	    break;
+        case ERTS_PSTT_HIBERNATE:
+            /* Shrink the process heap to a single minimal block (idea #1,
+             * step 1). If requested (and the shrink completed on this
+             * scheduler rather than being deferred to a dirty one), also
+             * compress the heap (step 3). */
+            if (c_p->flags & (F_DISABLE_GC|F_DELAY_GC)) {
+                st_res = am_false;
+            }
+            else {
+                erts_garbage_collect_hibernate(c_p);
+                if (st->arg[0] == am_true
+                    && (c_p->flags & F_HIBERNATED)
+                    && !(c_p->flags & (F_DIRTY_MAJOR_GC
+                                       | F_DIRTY_MINOR_GC
+                                       | F_DIRTY_GC_HIBERNATE))) {
+                    erts_compress_hibernated(c_p);
+                }
+                st_res = am_true;
+            }
+            break;
 	case ERTS_PSTT_CPC: {
 	    int fcalls;
             int cpc_reds = 0;
@@ -11033,6 +11062,7 @@ cleanup_sys_tasks(Process *c_p, erts_aint32_t in_state, int in_reds)
         case ERTS_PSTT_GC_MINOR:
 	case ERTS_PSTT_CPC:
         case ERTS_PSTT_ETS_FREE_FIXATION:
+        case ERTS_PSTT_HIBERNATE:
         case ERTS_PSTT_TEST:
 	    st_res = am_false;
 	    break;
@@ -11441,6 +11471,19 @@ request_system_task(Process *c_p, Eterm requester, Eterm target,
          * in erl_process.c.
          */
 	fail_state |= ERTS_PSFLG_DIRTY_RUNNING;
+	break;
+
+    case am_hibernate:
+	if (c_p->common.id == requester)
+	    signal = !0;
+	/* st->arg[0] is 'true' to also compress the heap, 'false' to only
+	 * shrink it (idea #1). */
+	if (st->arg[0] != am_true && st->arg[0] != am_false)
+	    goto badarg;
+	st->type = ERTS_PSTT_HIBERNATE;
+	noproc_res = am_false;
+	if (!rp)
+	    goto noproc;
 	break;
 
     default:
@@ -12599,6 +12642,7 @@ erl_create_process(Process* parent, /* Parent of process (default group leader).
     p->htop = p->heap;
     p->heap_sz = sz;
     p->abandoned_heap = NULL;
+    p->hib_image = NULL;
     p->live_hf_end = ERTS_INVALID_HFRAG_PTR;
     p->catches = 0;
     p->return_trace_frames = 0;
@@ -13209,6 +13253,7 @@ void erts_init_empty_process(Process *p)
     p->hend = NULL;
     p->heap = NULL;
     p->abandoned_heap = NULL;
+    p->hib_image = NULL;
     p->live_hf_end = ERTS_INVALID_HFRAG_PTR;
     p->gen_gcs = 0;
     p->max_gen_gcs = 0;
@@ -13401,6 +13446,12 @@ delete_process(Process* p)
     VERBOSE(DEBUG_PROCESSES, ("Removing process: %T\n",p->common.id));
     VERBOSE(DEBUG_SHCOPY, ("[pid=%T] delete process: %p %p %p %p\n", p->common.id,
                            HEAP_START(p), HEAP_END(p), OLD_HEAP(p), OLD_HEND(p)));
+
+    /* A compressed-hibernated process is normally decompressed at schedule-in
+     * before it gets a chance to exit. Restore it here defensively so that its
+     * heap and off-heap data (binaries/funs) below are released correctly. */
+    if (p->flags & F_COMPRESSED)
+        erts_decompress_hibernated(p);
 
     /* free all pending messages */
     erts_proc_sig_cleanup_queues(p);
