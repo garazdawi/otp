@@ -521,7 +521,7 @@ a_test_failed(Where, Context) ->
            true ->
             ""
         end,
-    io_lib:format("A test failed in ~ts~ts:~n~n", [Where, LineNo]).
+    io_ansi:format([red,"A test failed in ~ts~ts:~n~n"], [Where, LineNo]).
 
 format_error_context(#{ test := {test, Index, Test, Match}, message := Message }) ->
     io_lib:format("~ts> ~ts~n~ts~n~n~ts~n", [Index, Test, string:trim(Match), string:trim(Message)]);
