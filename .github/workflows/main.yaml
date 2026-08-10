@@ -268,7 +268,7 @@ jobs:
                VERDICT=$(find release/tests -name ct_rerun_verdict 2>/dev/null | head -1)
                if [ -n "$VERDICT" ]; then
                   echo "ct_rerun verdict: $(cat "$VERDICT")"
-                  grep -q '^FAIL' "$VERDICT" && exit 1
+                  if grep -q '^FAIL' "$VERDICT"; then exit 1; fi
                elif grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.${APP}_test.logs/run*/suite.log; then
                   exit 1
                fi
