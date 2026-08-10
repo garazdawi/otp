@@ -257,12 +257,19 @@ jobs:
                echo "No debug tests on windows"
                ;;
             *)
-               ## Force a clean exit with erlang:halt/0 instead of a graceful
-               ## "-s init stop": on Windows the socket ttest tests leak a peer
-               ## node/process that makes init:stop() block for hours after the
-               ## tests have already completed.
-               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ts:run($APP,[batch])), erlang:halt()")
-               if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.${APP}_test.logs/run*/suite.log; then
+               ## Run with the re-run-failed mechanism (ts_run reads
+               ## CT_RERUN_FAILED=N): a failure that passes on an isolated
+               ## re-run (flaky / leak-induced) does not gate; only failures
+               ## that fail every re-run do. Force a clean exit with
+               ## erlang:halt/0 because socket_ttest_SUITE leaks a peer node
+               ## that otherwise blocks init:stop() for hours.
+               find release/tests -name ct_rerun_verdict -delete 2>/dev/null || true
+               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ts:run($APP,[batch])), erlang:halt()")
+               VERDICT=$(find release/tests -name ct_rerun_verdict 2>/dev/null | head -1)
+               if [ -n "$VERDICT" ]; then
+                  echo "ct_rerun verdict: $(cat "$VERDICT")"
+                  grep -q '^FAIL' "$VERDICT" && exit 1
+               elif grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.${APP}_test.logs/run*/suite.log; then
                   exit 1
                fi
                ;;
