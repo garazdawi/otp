@@ -258,7 +258,7 @@ jobs:
           case "${APP}" in
             emulator) SUITES=", [distribution_SUITE,driver_SUITE]" ;;
             ssl)      SUITES=", [ssl_api_SUITE,dtls_api_SUITE]" ;;
-            kernel)   SUITES=", [socket_sctp_SUITE,socket_sctp_example_SUITE,gen_sctp_SUITE,wrap_log_reader_SUITE]" ;;
+            kernel)   SUITES=", [socket_ttest_SUITE]" ;;  # the leak source (shutdown hang)
             *)        SUITES="" ;;
           esac
           ## Need to specialize for epmd, emulator and debug
@@ -267,7 +267,17 @@ jobs:
                echo "No debug tests on windows"
                ;;
             *)
-               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -emu_type $TYPE -noinput -eval "ts:install()" -eval "ts:run(${APP}${SUITES},[batch])" -s init stop)
+               ## TEMP diagnostic: background monitor of leaked OS erl.exe
+               ## processes (peer/ttest nodes) over time.
+               ( while true; do echo "=OSMON $(date -u +%H:%M:%S) erl_exe=$(tasklist.exe 2>/dev/null | grep -ci 'erl.exe')"; sleep 20; done ) &
+               OSMON=$!
+               ## Force a clean exit with erlang:halt/0 instead of a graceful
+               ## "-s init stop": on Windows some suites (e.g. the socket ttest
+               ## group) leak a peer node/process that makes init:stop() block
+               ## for hours after the tests have already completed. Also spawn
+               ## an in-VM monitor of nodes/procs/ports over time.
+               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -emu_type $TYPE -noinput -eval 'spawn(fun F() -> io:format("=ERLMON t=~w nodes=~w procs=~w ports=~w~n",[erlang:system_time(second),length(nodes()),erlang:system_info(process_count),length(erlang:ports())]), timer:sleep(20000), F() end)' -eval "ts:install()" -eval "(catch ts:run(${APP}${SUITES},[batch])), erlang:halt()")
+               kill $OSMON 2>/dev/null || true
                if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.${APP}_test.logs/run*/suite.log; then
                   exit 1
                fi
