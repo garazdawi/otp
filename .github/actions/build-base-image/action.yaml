@@ -28,6 +28,9 @@ inputs:
     default: '64-bit'
   BUILD_IMAGE:
     default: true
+  COVERAGE:
+    description: 'Build the otp image with native per-line coverage instrumentation (OTP_LINE_COVERAGE=yes). Skips the pre-built caches so that instrumented beams are neither taken from nor saved into them.'
+    default: false
   github_token:
     description: 'GITHUB_TOKEN'
     default: '${{ github.token }}'
@@ -67,9 +70,13 @@ runs:
           INPUTS_TYPE: ${{ inputs.TYPE }}
         run: .github/scripts/build-base-image.sh "${INPUTS_BASE_BRANCH}" "${INPUTS_TYPE}"
 
+      ## For coverage builds the pre-built caches are bypassed (the src cache
+      ## would either provide uninstrumented beams or be re-saved with
+      ## instrumented ones); the otp_prebuilt artifact from the coverage pack
+      ## job is downloaded instead.
       - name: Cache pre-built src
         id: cache-src
-        if: inputs.BUILD_IMAGE == 'true'
+        if: inputs.BUILD_IMAGE == 'true' && inputs.COVERAGE != 'true'
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # ratchet:actions/cache@v5.0.3
         with:
             path: otp_src.tar.gz
@@ -100,10 +107,15 @@ runs:
         shell: bash -eo pipefail {0}
         env:
           INPUTS_TYPE: ${{ inputs.TYPE }}
+          INPUTS_COVERAGE: ${{ inputs.COVERAGE }}
         run: |
           .github/scripts/restore-from-prebuilt.sh `pwd` .github/otp.tar.gz
           rm -f otp_{src,cache}.tar.gz
-          docker build --tag otp \
+          COVERAGE_ARGS=()
+          if [ "$INPUTS_COVERAGE" = "true" ]; then
+            COVERAGE_ARGS=(--build-arg OTP_LINE_COVERAGE=yes)
+          fi
+          docker build --tag otp "${COVERAGE_ARGS[@]}" \
             --build-arg MAKEFLAGS=-j$(($(nproc) + 2)) \
             --file ".github/dockerfiles/Dockerfile.${INPUTS_TYPE}" \
             .github/
