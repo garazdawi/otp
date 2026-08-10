@@ -396,30 +396,33 @@ tricky_print_data(Port, Timeout) ->
 	    io:put_chars(Bytes),
 	    tricky_print_data(Port, Timeout);
 	{Port, eof} ->
-	    Port ! {self(), close}, 
+	    Port ! {self(), close},
 	    receive
 		{Port, closed} ->
 		    true
-	    end, 
+	    end,
 	    receive
-		{'EXIT',  Port,  _} -> 
+		{'EXIT',  Port,  _} ->
 		    ok
 	    after 1 ->				% force context switch
 		    ok
 	    end,
             receive
-                {Port, {exit_status, 0}} ->
-                    ok;
-                {Port, {exit_status, 123 = N}} ->
-                    io:format(user, "Test run exited with status ~p,"
-                              "aborting rest of test~n", [N]),
-                    erlang:halt(123, [{flush,false}]);
                 {Port, {exit_status, N}} ->
-                    io:format(user, "Test run exited with status ~p~n", [N])
+                    handle_test_exit_status(N)
             after 1 ->
                     %% This shouldn't happen, but better safe then hanging
                     ok
-            end
+            end;
+	{Port, {exit_status, N}} ->
+	    %% The spawned test VM has exited. On Windows a leaked peer node
+	    %% can inherit and keep the test VM's stdout pipe open, so
+	    %% {Port,eof} never arrives and we would otherwise wait here until
+	    %% the CI job timeout kills everything. The OS process exit is
+	    %% authoritative that the test run is over, so drain any buffered
+	    %% output and act on the status instead of waiting for EOF.
+	    drain_port_data(Port),
+	    handle_test_exit_status(N)
     after Timeout ->
 	    case erl_epmd:names() of
 		{ok,Names} ->
@@ -438,6 +441,32 @@ tricky_print_data(Port, Timeout) ->
 is_testnode_dead([]) -> true;
 is_testnode_dead([{"test_server",_}|_]) -> false;
 is_testnode_dead([_|T]) -> is_testnode_dead(T).
+
+handle_test_exit_status(0) ->
+    ok;
+handle_test_exit_status(123 = N) ->
+    io:format(user, "Test run exited with status ~p,"
+              "aborting rest of test~n", [N]),
+    erlang:halt(123, [{flush,false}]);
+handle_test_exit_status(N) ->
+    io:format(user, "Test run exited with status ~p~n", [N]).
+
+%% Drain whatever output is still buffered from the (already exited) test VM,
+%% without blocking indefinitely: leaked orphan processes may hold the pipe
+%% open so {Port,eof} is never delivered.
+drain_port_data(Port) ->
+    receive
+        {Port, {data, Bytes}} ->
+            io:put_chars(Bytes),
+            drain_port_data(Port);
+        {Port, eof} ->
+            catch (Port ! {self(), close}),
+            drain_port_data(Port);
+        {Port, closed} ->
+            ok
+    after 500 ->
+            ok
+    end.
 
 run_interactive(Vars, _Spec, State) ->
     Command = State#state.command,
