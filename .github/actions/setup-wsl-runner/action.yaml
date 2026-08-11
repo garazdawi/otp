@@ -1,0 +1,70 @@
+# %CopyrightBegin%
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright Ericsson AB 2025-2026. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# %CopyrightEnd%
+
+name: Setup Windows WSL Runner
+description: 'Setup a WSL Runner for building and testing Erlang/OTP'
+
+inputs:
+  installer_name:
+    default: false
+  github_token:
+    description: 'GITHUB_TOKEN'
+    default: '${{ github.token }}'
+
+runs:
+    using: composite
+    steps:
+      - name: Set timezone to CET
+        shell: cmd
+        run: tzutil /s "W. Europe Standard Time"
+
+      - uses: Vampire/setup-wsl@6a8db447be7ed35f2f499c02c6e60ff77ef11278 # ratchet:Vampire/setup-wsl@v6.0.0
+        with:
+          distribution: Ubuntu-18.04
+
+      - name: Install WSL dependencies
+        shell: wsl-bash {0}
+        run: apt update && apt install -y make autoconf unzip zip
+
+      - name: Download source archive
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # ratchet:actions/download-artifact@v6.0.0
+        with:
+          name: otp_prebuilt
+
+      - name: Download installer
+        if: inputs.installer_name != 'false'
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # ratchet:actions/download-artifact@v6.0.0
+        with:
+          name: otp_win32_installer
+
+      - name: Download tests
+        if: inputs.installer_name != 'false'
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # ratchet:actions/download-artifact@v6.0.0
+        with:
+          name: otp_tests
+
+      - name: Install OTP
+        if: inputs.installer_name != 'false'
+        shell: cmd
+        run: |
+            echo %cd%
+            start "" /WAIT ${{ inputs.installer_name }} /S /D=%CD%\release\win32\
+            dir %cd%
+            dir %cd%\release\win32\

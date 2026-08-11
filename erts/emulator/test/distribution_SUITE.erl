@@ -172,6 +172,19 @@ init_per_group(_, Config) ->
 end_per_group(_, Config) ->
     Config.
 
+init_per_testcase(TC, Config)
+  when TC == async_dist_port_dctrlr;
+       TC == async_dist_proc_dctrlr ->
+    %% async_dist_*_dctrlr rely on filling the distribution controller's send
+    %% buffer to exercise the async controller; the Windows (WSL) large socket
+    %% buffers absorb the data, so the premise never holds.
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "async_dist needs the distribution port buffer to fill, "
+             "which the Windows (WSL) large buffers absorb"};
+        false ->
+            Config
+    end;
 init_per_testcase(_TestCase, Config) ->
     Config.
 end_per_testcase(_TestCase, Config) ->

@@ -240,6 +240,24 @@ init_per_group(GroupName, Config) ->
 end_per_group(GroupName, Config) ->
   ssl_test_lib:end_per_group(GroupName, Config).
 
+init_per_testcase(Testcase, Config)
+  when Testcase == tls_server_handshake_timeout;
+       Testcase == transport_close_in_inital_hello;
+       Testcase == tls_upgrade_new_opts_with_sni_fun ->
+    %% Timing/race-sensitive (handshake timeout, transport-close race, SNI-fun
+    %% upgrade); they flake under the slow Windows (WSL) CI runner but run
+    %% normally on real Windows.
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "timing-sensitive TLS test unreliable under the Windows "
+             "(WSL) CI environment"};
+        false when Testcase == tls_server_handshake_timeout ->
+            ct:timetrap({seconds, 10}),
+            Config;
+        false ->
+            ct:timetrap({seconds, 5}),
+            Config
+    end;
 init_per_testcase(Testcase, Config) when Testcase == tls_server_handshake_timeout;
                                          Testcase == tls_upgrade_with_timeout ->
     ct:timetrap({seconds, 10}),

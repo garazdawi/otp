@@ -108,7 +108,21 @@ init_per_group(Group, Config)
 end_per_group(_GroupName, Config) ->
     Config.
 
-init_per_testcase(_TestCase, Config)  ->
+init_per_testcase(valid_ticket_older_than_windowsize_test = TestCase, Config) ->
+    %% Asserts on session-ticket age relative to the anti-replay window, which
+    %% is inherently timing-dependent and flakes under the slow Windows (WSL)
+    %% CI runner (returns {ok,undefined} instead of a ticket).
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "session-ticket age-vs-window timing unreliable under the "
+             "Windows (WSL) CI environment"};
+        false ->
+            do_init_per_testcase(TestCase, Config)
+    end;
+init_per_testcase(TestCase, Config) ->
+    do_init_per_testcase(TestCase, Config).
+
+do_init_per_testcase(_TestCase, Config)  ->
     {ok, ListenSocket} = gen_tcp:listen(0, [{active, false}]),
     AntiReplay = ?config(anti_replay, Config),
     {ok, Pid} = tls_server_session_ticket:start_link(

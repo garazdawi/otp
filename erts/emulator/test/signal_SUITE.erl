@@ -503,21 +503,42 @@ dirty_signal_handling(Config) when is_list(Config) ->
     %% Make sure all dirty I/O schedulers are occupied with work...
     Ps = lists:map(fun (_) ->
                            spawn(fun () ->
-                                         erts_debug:dirty_io(wait, 1000)
+                                         erts_debug:dirty_io(wait, 4000)
                                  end)
                    end, lists:seq(1, erlang:system_info(dirty_io_schedulers))),
+    %% ... and wait until all of them actually execute on a dirty I/O
+    %% scheduler.
+    ok = wait_until(fun () ->
+                            lists:all(fun (Px) ->
+                                              {status, running}
+                                                  == process_info(Px, status)
+                                      end, Ps)
+                    end),
     %% P ends up in the run queue waiting for a free dirty I/O scheduler...
     P = spawn(fun () ->
-                      erts_debug:dirty_io(wait, 1000)
+                      erts_debug:dirty_io(wait, 4000)
               end),
-    receive after 300 -> ok end,
     %% current_function is added to prevent read of status from being optimized
     %% to read status directly...
-    [{status,runnable},{current_function, _}] = process_info(P, [status,current_function]),
-    receive after 1000 -> ok end,
-    [{status,running},{current_function, _}] = process_info(P, [status,current_function]),
-    lists:foreach(fun (X) -> exit_signal(X, kill) end, [P|Ps]),
-    lists:foreach(fun (X) -> false = is_process_alive(X) end, [P|Ps]),
+    ok = wait_until(fun () ->
+                            [{status, runnable}, {current_function, _}]
+                                = process_info(P, [status, current_function]),
+                            true
+                    end),
+    %% Free up a dirty I/O scheduler, by killing one of the occupying
+    %% processes, so that P starts executing dirty...
+    [FreeUp | RestPs] = Ps,
+    exit_signal(FreeUp, kill),
+    false = is_process_alive(FreeUp),
+    ok = wait_until(fun () ->
+                            [{status, running}, {current_function, _}]
+                                = process_info(P, [status, current_function]),
+                            true
+                    end),
+    %% ... and make sure exit signals are handled by P (executing dirty) and
+    %% the remaining processes occupying dirty I/O schedulers...
+    lists:foreach(fun (X) -> exit_signal(X, kill) end, [P|RestPs]),
+    lists:foreach(fun (X) -> false = is_process_alive(X) end, [P|RestPs]),
     ok.
 
 busy_dist_exit_signal(Config) when is_list(Config) ->

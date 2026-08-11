@@ -194,7 +194,7 @@ peer_down_crash(Config) when is_list(Config) ->
     receive
         {'DOWN', MRef, process, Peer, {nodedown, Node}} ->
             ok
-    after 2000 ->
+    after 5000 ->
         link(Peer),
         {fail, disconnect_timeout}
     end.

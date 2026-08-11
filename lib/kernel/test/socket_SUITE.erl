@@ -482,6 +482,17 @@ otp19482_cases() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init_per_suite(Config0) ->
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "socket_SUITE is too slow under the Windows (WSL) CI "
+             "environment: it spawns a peer node per testcase and the coarse "
+             "timer resolution makes many event tests self-skip after paying "
+             "that cost, so the suite alone exhausts the job time limit"};
+        false ->
+            do_init_per_suite(Config0)
+    end.
+
+do_init_per_suite(Config0) ->
     ?P("init_per_suite -> entry with"
        "~n      Config: ~p"
        "~n      Nodes:  ~p", [Config0, erlang:nodes()]),

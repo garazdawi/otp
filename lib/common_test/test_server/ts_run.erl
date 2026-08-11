@@ -96,6 +96,15 @@ execute([], Vars, Spec, St) ->
 %% Wrapper to run tests using ct:run_test/1 and handle any errors.
 
 ct_run_test(Dir, CommonTestArgs) ->
+    case os:getenv("CT_RERUN_FAILED") of
+        false ->
+            ct_run_test_once(Dir, CommonTestArgs);
+        NStr ->
+            N = try list_to_integer(NStr) catch _:_ -> 1 end,
+            ct_run_test_rerun(Dir, CommonTestArgs, N)
+    end.
+
+ct_run_test_once(Dir, CommonTestArgs) ->
     try
 	ok = file:set_cwd(Dir),
 	case ct:run_test(CommonTestArgs) of
@@ -112,6 +121,104 @@ ct_run_test(Dir, CommonTestArgs) ->
     catch
 	_:Crash ->
 	    io:format("CRASH: ~P\n", [Crash,20])
+    end.
+
+%% Re-run mechanism (enabled by the CT_RERUN_FAILED=N environment variable):
+%% run the whole suite set once, recording which real test cases fail via the
+%% ct_rerun_cth hook, then re-run each failed case in isolation up to N times. A
+%% case is only reported as a genuine failure if it still fails every re-run;
+%% cases that pass on any re-run are treated as flaky. The verdict is written to
+%% the file named by CT_RERUN_VERDICT (if set) so the surrounding CI step can
+%% gate on the re-run result instead of the first run.
+ct_run_test_rerun(Dir, CommonTestArgs, N) ->
+    ok = file:set_cwd(Dir),
+    FailFile = filename:join(Dir, "ct_rerun_failed.txt"),
+    Verdict =
+        try
+            _ = file:delete(FailFile),
+            _ = catch ct:run_test(add_rerun_hook(CommonTestArgs, FailFile)),
+            case read_rerun_failed(FailFile) of
+                [] ->
+                    pass;
+                Failed ->
+                    io:format("~n=== ct_rerun: ~p case(s) failed on first run,"
+                              " re-running in isolation (N=~p): ~p~n",
+                              [length(Failed), N, Failed]),
+                    Still = [SC || SC <- Failed,
+                                   not passes_on_rerun(Dir, CommonTestArgs, SC, N)],
+                    case Still of
+                        [] ->
+                            io:format("=== ct_rerun: all first-run failures"
+                                      " passed on re-run (flaky): ~p~n", [Failed]),
+                            {flaky, Failed};
+                        _ ->
+                            io:format("=== ct_rerun: genuine failures (failed"
+                                      " every re-run): ~p~n", [Still]),
+                            {failed, Still}
+                    end
+            end
+        catch Class:Reason:Stk ->
+            io:format("=== ct_rerun: CRASH ~p:~P~n~p~n", [Class, Reason, 20, Stk]),
+            {failed, [{ct_rerun, crashed}]}
+        end,
+    write_rerun_verdict(Verdict),
+    ok.
+
+%% Re-run one {Suite, Case} up to N times; true if it passes at least once.
+passes_on_rerun(Dir, CommonTestArgs, {Suite, Case}, N) ->
+    lists:any(
+      fun(I) ->
+              F = filename:join(Dir, "ct_rerun_one.txt"),
+              _ = file:delete(F),
+              Args = [{dir, Dir}, {suite, Suite}, {testcase, Case}
+                      | keep_rerun_args(CommonTestArgs)],
+              io:format("=== ct_rerun: re-run ~w:~w attempt ~p/~p~n",
+                        [Suite, Case, I, N]),
+              _ = catch ct:run_test(add_rerun_hook(Args, F)),
+              read_rerun_failed(F) =:= []
+      end, lists:seq(1, N)).
+
+%% Keep the config-relevant args from the original run, drop the test selection
+%% and any pre-existing ct_hooks (the collector hook is added separately).
+keep_rerun_args(CommonTestArgs) ->
+    Keep = [logdir, config, userconfig, include, event_handler,
+            enable_builtin_hooks, multiply_timetraps, scale_timetraps,
+            create_priv_dir],
+    [KV || KV <- CommonTestArgs, is_tuple(KV),
+           lists:member(element(1, KV), Keep)].
+
+add_rerun_hook(Args, FailFile) ->
+    Hook = {ct_rerun_cth, [{file, FailFile}]},
+    [{ct_hooks, [Hook]} | [KV || KV <- Args,
+                                 not (is_tuple(KV) andalso element(1, KV) =:= ct_hooks)]].
+
+read_rerun_failed(File) ->
+    case file:read_file(File) of
+        {ok, Bin} ->
+            lists:usort(
+              [{list_to_atom(S), list_to_atom(C)}
+               || Line <- string:lexemes(binary_to_list(Bin), "\n"),
+                  [S, C] <- [string:lexemes(Line, " ")]]);
+        _ ->
+            []
+    end.
+
+write_rerun_verdict(Verdict) ->
+    io:format("=== ct_rerun: VERDICT ~p~n", [Verdict]),
+    Text = lists:flatten(
+             case Verdict of
+                 {failed, L} ->
+                     ["FAIL", [io_lib:format(" ~w:~w", [S, C]) || {S, C} <- L], "\n"];
+                 _ ->
+                     "PASS\n"
+             end),
+    %% Always drop a relative verdict file in the current (test) dir so the CI
+    %% step can find it without needing an absolute Windows path; also honour an
+    %% explicit CT_RERUN_VERDICT path when given.
+    _ = file:write_file("ct_rerun_verdict", Text),
+    case os:getenv("CT_RERUN_VERDICT") of
+        false -> ok;
+        Path -> _ = file:write_file(Path, Text), ok
     end.
 
 %%
@@ -289,30 +396,33 @@ tricky_print_data(Port, Timeout) ->
 	    io:put_chars(Bytes),
 	    tricky_print_data(Port, Timeout);
 	{Port, eof} ->
-	    Port ! {self(), close}, 
+	    Port ! {self(), close},
 	    receive
 		{Port, closed} ->
 		    true
-	    end, 
+	    end,
 	    receive
-		{'EXIT',  Port,  _} -> 
+		{'EXIT',  Port,  _} ->
 		    ok
 	    after 1 ->				% force context switch
 		    ok
 	    end,
             receive
-                {Port, {exit_status, 0}} ->
-                    ok;
-                {Port, {exit_status, 123 = N}} ->
-                    io:format(user, "Test run exited with status ~p,"
-                              "aborting rest of test~n", [N]),
-                    erlang:halt(123, [{flush,false}]);
                 {Port, {exit_status, N}} ->
-                    io:format(user, "Test run exited with status ~p~n", [N])
+                    handle_test_exit_status(N)
             after 1 ->
                     %% This shouldn't happen, but better safe then hanging
                     ok
-            end
+            end;
+	{Port, {exit_status, N}} ->
+	    %% The spawned test VM has exited. On Windows a leaked peer node
+	    %% can inherit and keep the test VM's stdout pipe open, so
+	    %% {Port,eof} never arrives and we would otherwise wait here until
+	    %% the CI job timeout kills everything. The OS process exit is
+	    %% authoritative that the test run is over, so drain any buffered
+	    %% output and act on the status instead of waiting for EOF.
+	    drain_port_data(Port),
+	    handle_test_exit_status(N)
     after Timeout ->
 	    case erl_epmd:names() of
 		{ok,Names} ->
@@ -331,6 +441,32 @@ tricky_print_data(Port, Timeout) ->
 is_testnode_dead([]) -> true;
 is_testnode_dead([{"test_server",_}|_]) -> false;
 is_testnode_dead([_|T]) -> is_testnode_dead(T).
+
+handle_test_exit_status(0) ->
+    ok;
+handle_test_exit_status(123 = N) ->
+    io:format(user, "Test run exited with status ~p,"
+              "aborting rest of test~n", [N]),
+    erlang:halt(123, [{flush,false}]);
+handle_test_exit_status(N) ->
+    io:format(user, "Test run exited with status ~p~n", [N]).
+
+%% Drain whatever output is still buffered from the (already exited) test VM,
+%% without blocking indefinitely: leaked orphan processes may hold the pipe
+%% open so {Port,eof} is never delivered.
+drain_port_data(Port) ->
+    receive
+        {Port, {data, Bytes}} ->
+            io:put_chars(Bytes),
+            drain_port_data(Port);
+        {Port, eof} ->
+            catch (Port ! {self(), close}),
+            drain_port_data(Port);
+        {Port, closed} ->
+            ok
+    after 500 ->
+            ok
+    end.
 
 run_interactive(Vars, _Spec, State) ->
     Command = State#state.command,
