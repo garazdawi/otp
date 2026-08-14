@@ -3210,7 +3210,7 @@ BIF_RETTYPE atom_to_list_1(BIF_ALIST_1)
  
 BIF_RETTYPE list_to_atom_1(BIF_ALIST_1)
 {
-    Eterm res;
+    int aix;
     byte *buf = (byte *) erts_alloc(ERTS_ALC_T_TMP, MAX_ATOM_SZ_LIMIT);
     Sint written;
     int i = erts_unicode_list_to_buf(BIF_ARG_1, buf, MAX_ATOM_SZ_LIMIT,
@@ -3222,10 +3222,12 @@ BIF_RETTYPE list_to_atom_1(BIF_ALIST_1)
 	}
 	BIF_ERROR(BIF_P, BADARG);
     }
-    res = erts_atom_put(buf, written, ERTS_ATOM_ENC_UTF8, 1);
-    ASSERT(is_atom(res));
+    aix = erts_atom_put_index(buf, written, ERTS_ATOM_ENC_UTF8, 1);
+    if (aix == ATOM_MAX_ATOMS_ERROR)
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+    ASSERT(aix >= 0);
     erts_free(ERTS_ALC_T_TMP, (void *) buf);
-    BIF_RET(res);
+    BIF_RET(make_atom(aix));
 }
 
 /* conditionally convert a list of ascii integers to an atom */

@@ -36,6 +36,7 @@ void index_info(fmtfn_t to, void *arg, IndexTable *t)
     erts_print(to, arg, "size: %d\n",	t->size);
     erts_print(to, arg, "limit: %d\n",	t->limit);
     erts_print(to, arg, "entries: %d\n",t->entries);
+    erts_print(to, arg, "return_null_at_full: %s\n",t->return_null_at_full ? "true" : "false");
 }
 
 
@@ -58,7 +59,7 @@ index_table_sz(IndexTable *t)
 */
 IndexTable*
 erts_index_init(ErtsAlcType_t type, IndexTable* t, char* name,
-		int size, int limit, HashFunctions fun)
+                int size, int limit, bool return_null_at_full, HashFunctions fun)
 {
     /* Round up to a whole number of pages; the table only enforces its limit at
      * a page boundary, so this is the effective limit reported to the user. */
@@ -72,23 +73,31 @@ erts_index_init(ErtsAlcType_t type, IndexTable* t, char* name,
     t->entries = 0;
     t->type = type;
     t->seg_table = (IndexSlot***) erts_alloc(type, base_size);
+    t->return_null_at_full = return_null_at_full;
     return t;
 }
 
 IndexSlot*
 index_put_entry(IndexTable* t, void* tmpl)
 {
-    int ix;
-    IndexSlot* p = (IndexSlot*) hash_put(&t->htable, tmpl);
+    int ix = t->entries;
+    IndexSlot* p;
 
-    if (p->index >= 0) {
+    /* hash_put will always allocate a new object,
+       so we use hash_get when the table is full */
+    if (ix >= t->limit && t->return_null_at_full)
+        p = (IndexSlot*) hash_get(&t->htable, tmpl);
+    else
+        p = (IndexSlot*) hash_put(&t->htable, tmpl);
+
+    if (p && p->index >= 0) {
 	return p;
     }
 
-    ix = t->entries;
     if (ix >= t->size) {
 	Uint sz;
 	if (ix >= t->limit) {
+            if (t->return_null_at_full) return NULL;
 	    /* A core dump is unnecessary */
 	    erts_exit(ERTS_DUMP_EXIT, "no more index entries in %s (max=%d)\n",
 		     t->htable.name, t->limit);

@@ -226,9 +226,14 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
 Sint erts_decode_dist_ext_size(ErtsDistExternal *, int, int);
 Eterm erts_decode_dist_ext(ErtsHeapFactory*, ErtsDistExternal *, int);
 
+typedef enum {
+    ERTS_DECODE_ERROR_ATOM_TABLE_FULL,
+    ERTS_DECODE_ERROR_BADARG
+} ErtsDecodeErrorInfo;
+
 Sint erts_decode_ext_size(const byte*, Uint);
 Sint erts_decode_ext_size_ets(const byte*, Uint);
-Eterm erts_decode_ext(ErtsHeapFactory*, const byte**, Uint32 flags);
+Eterm erts_decode_ext(ErtsHeapFactory*, const byte**, Uint32 flags, ErtsDecodeErrorInfo *error_info);
 Eterm erts_decode_ext_ets(ErtsHeapFactory*, const byte*);
 
 Eterm erts_term_to_binary(Process* p, Eterm Term, int level, Uint64 flags);

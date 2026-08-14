@@ -62,8 +62,6 @@ processes that terminate as a result of this process terminating.
 `m:logger`
 """.
 
--compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
-
 %% This module is used to set some initial information
 %% in each created process. 
 %% Then a process terminates the Reason is checked and
@@ -800,7 +798,7 @@ initial_call(DictOrPid) ->
 make_dummy_args(0, Acc) ->
     Acc;
 make_dummy_args(N, Acc) ->
-    Arg = list_to_atom("Argument__" ++ integer_to_list(N)),
+    Arg = "Argument__" ++ integer_to_list(N),
     make_dummy_args(N-1, [Arg|Acc]).
 
 %% -----------------------------------------------------

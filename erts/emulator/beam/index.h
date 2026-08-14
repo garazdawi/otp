@@ -45,6 +45,7 @@ typedef struct index_table
     int size;			/* Allocated size */
     int limit;			/* Max size */
     int entries;		/* Number of entries */
+    bool return_null_at_full;	/* Return NULL instead of exit() when full */
     IndexSlot*** seg_table;	/* Mapping index -> obj */
 } IndexTable;
 
@@ -52,7 +53,7 @@ typedef struct index_table
 #define INDEX_PAGE_SIZE (1 << INDEX_PAGE_SHIFT)
 #define INDEX_PAGE_MASK ((1 << INDEX_PAGE_SHIFT)-1)
 
-IndexTable *erts_index_init(ErtsAlcType_t,IndexTable*,char*,int,int,HashFunctions);
+IndexTable *erts_index_init(ErtsAlcType_t,IndexTable*,char*,int,int,bool,HashFunctions);
 void index_info(fmtfn_t, void *, IndexTable*);
 int index_table_sz(IndexTable *);
 
@@ -72,7 +73,11 @@ ERTS_GLB_INLINE int erts_index_num_entries(IndexTable* t);
 
 ERTS_GLB_INLINE int index_put(IndexTable* t, void* tmpl)
 {
-    return index_put_entry(t, tmpl)->index;
+    IndexSlot *slot = index_put_entry(t, tmpl);
+    if (!slot) {
+        return -1;
+    }
+    return slot->index;
 }
 
 ERTS_GLB_INLINE IndexSlot*

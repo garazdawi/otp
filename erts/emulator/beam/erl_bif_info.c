@@ -5883,7 +5883,7 @@ attributes_for_module(Process* p, const BeamCodeHeader* code_hdr)
         erts_factory_proc_prealloc_init(&factory, p,
                                         code_hdr->attr_size_on_heap);
 
-        result = erts_decode_ext(&factory, &ext, 0);
+        result = erts_decode_ext(&factory, &ext, 0, NULL);
 
         if (is_value(result)) {
             erts_factory_close(&factory);
@@ -5906,7 +5906,7 @@ compilation_info_for_module(Process* p, const BeamCodeHeader* code_hdr)
         erts_factory_proc_prealloc_init(&factory, p,
                                         code_hdr->compile_size_on_heap);
 
-        result = erts_decode_ext(&factory, &ext, 0);
+        result = erts_decode_ext(&factory, &ext, 0, NULL);
 
         if (is_value(result)) {
             erts_factory_close(&factory);

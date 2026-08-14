@@ -332,6 +332,9 @@ erts_atom_put_index(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
     atom_write_lock();
     aix = index_put(&erts_atom_table, (void*) &a);
     atom_write_unlock();
+    if (aix < 0) {
+        return ATOM_MAX_ATOMS_ERROR;
+    }
     return aix;
 }
 
@@ -342,10 +345,14 @@ Eterm
 erts_atom_put(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
 {
     Sint aix = erts_atom_put_index(name, len, enc, trunc);
+
     if (aix >= 0)
 	return make_atom(aix);
-    else
-	return THE_NON_VALUE;
+
+    if (aix == ATOM_MAX_ATOMS_ERROR)
+        erts_exit(ERTS_ABORT_EXIT, "Atom table is full\n");
+
+    return THE_NON_VALUE;
 }
 
 Eterm
@@ -475,7 +482,7 @@ init_atom_table(void)
     f.meta_print = (HMPRINT_FUN) erts_print;
 
     erts_index_init(ERTS_ALC_T_ATOM_TABLE, &erts_atom_table,
-		    "atom_tab", ATOM_SIZE, erts_atom_table_size, f);
+                    "atom_tab", ATOM_SIZE, erts_atom_table_size, true, f);
 
     /* Ordinary atoms. a is a template for creating an entry in the atom table */
     for (i = 0; erl_atom_names[i] != 0; i++) {
