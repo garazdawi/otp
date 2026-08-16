@@ -83,7 +83,7 @@ Here is an example how the reserved virtual address space for literals can be
 raised to 2 GB (2048 MB):
 
 ```text
-    erl +MIscs 2048
+$ erl +MIscs 2048
 ```
 
 ## Best Practices for Using Persistent Terms
@@ -124,17 +124,35 @@ the system less responsive N times longer than deleting a single persistent
 term. Therefore, terms that are to be updated at the same time should be
 collected into a larger term, for example, a map or a tuple.
 
-## Example
+## Examples
 
 The following example shows how lock contention for ETS tables can be minimized
 by having one ETS table for each scheduler. The table identifiers for the ETS
 tables are stored as a single persistent term:
 
 ```erlang
-    %% There is one ETS table for each scheduler.
+-module(scheduler_ets).
+-export([init/0, update_counter/2]).
+
+init() ->
+    Tids = list_to_tuple(
+             [ets:new(table, [public]) ||
+                 _ <- lists:seq(1, erlang:system_info(schedulers))]),
+    persistent_term:put(?MODULE, Tids).
+
+update_counter(Key, Incr) ->
     Sid = erlang:system_info(scheduler_id),
     Tid = element(Sid, persistent_term:get(?MODULE)),
-    ets:update_counter(Tid, Key, 1).
+    ets:update_counter(Tid, Key, Incr, {Key, 0}).
+```
+
+```erlang
+1> scheduler_ets:init().
+ok
+2> scheduler_ets:update_counter(my_counter, 1).
+1
+3> scheduler_ets:update_counter(my_counter, 5).
+6
 ```
 """.
 -moduledoc(#{since => "OTP 21.2"}).
@@ -155,6 +173,17 @@ and `false` if there was no persistent term associated with the key.
 If there existed a previous persistent term associated with key `Key`, a global
 GC has been initiated when [`erase/1`](`erase/1`) returns. See
 [Description](`m:persistent_term`).
+
+## Examples
+
+```erlang
+1> persistent_term:put(my_key, hello).
+ok
+2> persistent_term:erase(my_key).
+true
+3> persistent_term:erase(my_key).
+false
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec erase(Key) -> Result when
@@ -168,6 +197,20 @@ Retrieve the keys and values for all persistent terms.
 
 The keys will be copied to the heap for the process calling `get/0`,
 but the values will not.
+
+## Examples
+
+```erlang
+1> persistent_term:put(foo, 1).
+ok
+2> persistent_term:put(bar, 2).
+ok
+3> List = persistent_term:get().
+4> {foo, 1} = lists:keyfind(foo, 1, List).
+{foo,1}
+5> {bar, 2} = lists:keyfind(bar, 1, List).
+{bar,2}
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec get() -> List when
@@ -187,6 +230,22 @@ the key `Key`.
 If the calling process holds on to the value of the persistent term and the
 persistent term is deleted in the future, the term will be copied to the
 process.
+
+## Examples
+
+```erlang
+1> persistent_term:put(my_key, #{data => [1, 2, 3]}).
+ok
+2> persistent_term:get(my_key).
+#{data => [1,2,3]}
+3> persistent_term:erase(my_key).
+true
+4> persistent_term:get(my_key).
+** exception error: bad argument
+     in function  persistent_term:get/1
+        called as persistent_term:get(my_key)
+        *** argument 1: no persistent term stored with this key
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec get(Key) -> Value when
@@ -206,6 +265,17 @@ This function returns `Default` if no term has been stored with the key `Key`.
 If the calling process holds on to the value of the persistent term and the
 persistent term is deleted in the future, the term will be copied to the
 process.
+
+## Examples
+
+```erlang
+1> persistent_term:put(my_key, hello).
+ok
+2> persistent_term:get(my_key, default).
+hello
+3> persistent_term:get(nonexistent_key, default).
+default
+```
 """.
 -doc(#{since => <<"OTP 21.3">>}).
 -spec get(Key, Default) -> Value when
@@ -224,6 +294,13 @@ The map has the following keys:
 
 - **`memory`** - The total amount of memory (measured in bytes) used by all
   persistent terms.
+
+## Examples
+
+```erlang
+1> persistent_term:info().
+#{count => ..., memory => ...}
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec info() -> Info when
@@ -243,6 +320,15 @@ If the value `Value` is equal to the value previously stored for the key,
 If there existed a previous persistent term associated with key `Key`, a global
 GC has been initiated when [`put/2`](`put/2`) returns. See
 [Description](`m:persistent_term`).
+
+## Examples
+
+```erlang
+1> persistent_term:put({my_app, config}, #{timeout => 5000, retries => 3}).
+ok
+2> persistent_term:get({my_app, config}).
+#{retries => 3,timeout => 5000}
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec put(Key, Value) -> 'ok' when
@@ -260,6 +346,19 @@ If the value `Value` is equal to the value previously stored for the key,
 
 If there existed a previous persistent term associated with key `Key`, the
 function fails with a `badarg` exception.
+
+## Examples
+
+```erlang
+1> persistent_term:put_new(my_key, first).
+ok
+2> persistent_term:put_new(my_key, second).
+** exception error: bad argument
+     in function  persistent_term:put_new/2
+        called as persistent_term:put_new(my_key,second)
+3> persistent_term:get(my_key).
+first
+```
 """.
 -doc(#{since => <<"OTP 28.4">>}).
 -spec put_new(Key, Value) -> 'ok' when

@@ -43,6 +43,39 @@ organized into arrays with the following semantics:
   inconsistencies. See `new/2`.
 - Indexes into counter arrays are one-based. A counter array of size N contains
   N counters with index from 1 to N.
+
+## Examples
+
+```erlang
+1> Ref = counters:new(3, []).
+2> counters:add(Ref, 1, 10).
+ok
+3> counters:get(Ref, 1).
+10
+4> counters:sub(Ref, 1, 3).
+ok
+5> counters:get(Ref, 1).
+7
+6> counters:put(Ref, 1, 42).
+ok
+7> counters:get(Ref, 1).
+42
+8> counters:info(Ref).
+#{size => 3, memory => ...}
+```
+
+Counters can be updated concurrently from multiple processes:
+
+```erlang
+1> Ref = counters:new(1, []).
+2> Self = self().
+3> N = 1000.
+1000
+4> Pids = [spawn(fun() -> counters:add(Ref, 1, 1), Self ! self() end) || _ <- lists:seq(1, N)].
+5> [receive Pid -> ok end || Pid <- Pids].
+6> counters:get(Ref, 1).
+1000
+```
 """.
 -moduledoc(#{since => "OTP 21.2"}).
 
@@ -91,6 +124,19 @@ Argument `Opts` is a list of the following possible options:
 
 Counters are not tied to the current process and are automatically garbage
 collected when they are no longer referenced.
+
+## Examples
+
+```erlang
+1> counters:new(5, []).
+2> counters:new(5, [write_concurrency]).
+3> counters:new(5, [atomics]).
+4> counters:new(5, [atomics, write_concurrency]).
+** exception error: bad argument
+     in function  counters:new/2
+        called as counters:new(5,[atomics,write_concurrency])
+        *** argument 2: invalid option in list
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec new(Size, Opts) -> counters_ref() when
@@ -119,7 +165,21 @@ new(Size, Options) ->
     end.
 
 
--doc "Read counter value.".
+-doc """
+Read counter value.
+
+## Examples
+
+```erlang
+1> Ref = counters:new(2, []).
+2> counters:get(Ref, 1).
+0
+3> counters:add(Ref, 1, 100).
+ok
+4> counters:get(Ref, 1).
+100
+```
+""".
 -doc(#{since => <<"OTP 21.2">>}).
 -spec get(Ref, Ix) -> integer() when
       Ref  :: counters_ref(),
@@ -140,7 +200,36 @@ get(Ref, Ix) ->
     end.
 
 
--doc "Add `Incr` to counter at index `Ix`.".
+-doc """
+Add `Incr` to counter at index `Ix`.
+
+## Examples
+
+```erlang
+1> Ref = counters:new(1, []).
+2> counters:add(Ref, 1, 5).
+ok
+3> counters:add(Ref, 1, 3).
+ok
+4> counters:get(Ref, 1).
+8
+5> counters:add(Ref, 1, -10).
+ok
+6> counters:get(Ref, 1).
+-2
+7> counters:add(Ref, 1, 1 bsl 63 - 1). %% Add max positive signed 64 bit integer.
+ok
+8> counters:get(Ref, 1).
+9223372036854775805
+9> counters:add(Ref, 1, 4). %% Add 4 to cause overflow.
+ok
+10> counters:get(Ref, 1). %% Counter wraps around at overflow.
+-9223372036854775807
+11> counters:add(Ref, 1, 1 bsl 64).
+** exception error: bad argument
+     in function  counters:add/3
+```
+""".
 -doc(#{since => <<"OTP 21.2">>}).
 -spec add(Ref, Ix, Incr) -> ok when
       Ref  :: counters_ref(),
@@ -162,7 +251,25 @@ add(Ref, Ix, Incr) ->
     end.
 
 
--doc "Subtract `Decr` from counter at index `Ix`.".
+-doc """
+Subtract `Decr` from counter at index `Ix`.
+
+## Examples
+
+```erlang
+1> Ref = counters:new(1, []).
+2> counters:put(Ref, 1, 10).
+ok
+3> counters:sub(Ref, 1, 3).
+ok
+4> counters:get(Ref, 1).
+7
+5> counters:sub(Ref, 1, 7).
+ok
+6> counters:get(Ref, 1).
+0
+```
+""".
 -doc(#{since => <<"OTP 21.2">>}).
 -spec sub(Ref, Ix, Decr) -> ok when
       Ref  :: counters_ref(),
@@ -193,8 +300,22 @@ Write `Value` to counter at index `Ix`.
 > Despite its name, the `write_concurrency` optimization does not improve `put`.
 > A call to `put` is a relatively heavy operation compared to the very
 > lightweight and scalable [`add`](`add/3`) and [`sub`](`sub/3`). The cost for a
-> `put` with `write_concurrency` is like a [`get` ](`get/2`)plus a `put` without
+> `put` with `write_concurrency` is like a [`get` ](`get/2`) plus a `put` without
 > `write_concurrency`.
+
+## Examples
+
+```erlang
+1> Ref = counters:new(1, []).
+2> counters:put(Ref, 1, 42).
+ok
+3> counters:get(Ref, 1).
+42
+4> counters:put(Ref, 1, -10).
+ok
+5> counters:get(Ref, 1).
+-10
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec put(Ref, Ix, Value) -> ok when
@@ -224,6 +345,14 @@ The map has the following keys (at least):
 
 - **`size`** - The number of counters in the array.
 - **`memory`** - Approximate memory consumption for the array in bytes.
+
+## Examples
+
+```erlang
+1> Ref = counters:new(10, []).
+2> counters:info(Ref).
+#{size => 10, memory => ...}
+```
 """.
 -doc(#{since => <<"OTP 21.2">>}).
 -spec info(Ref) -> Info when
