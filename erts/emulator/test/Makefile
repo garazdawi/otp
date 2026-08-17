@@ -117,6 +117,7 @@ MODULES= \
 	smoke_test_SUITE \
 	statistics_SUITE \
 	system_info_SUITE \
+	system_limit_SUITE \
 	system_profile_SUITE \
 	time_SUITE \
 	timer_bif_SUITE \

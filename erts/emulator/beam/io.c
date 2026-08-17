@@ -673,7 +673,7 @@ erts_open_driver(erts_driver_t* driver,	/* Pointer to driver. */
     if (ERTS_IS_P_TRACED_FL(port, F_TRACE_PORTS)) {
 	trace_port_open(port,
 			pid,
-			erts_atom_put((byte *) port->name,
+			erts_atom_put_or_die((byte *) port->name,
 				      sys_strlen(port->name),
 				      ERTS_ATOM_ENC_LATIN1,
 				      1));
@@ -2943,7 +2943,7 @@ erl_drv_init_ack(ErlDrvPort ix, ErlDrvData res) {
             break;
         case ERL_DRV_ERROR_ERRNO_INT_: {
             char *str = erl_errno_id(errno);
-            resp = erts_atom_put((byte *) str, sys_strlen(str),
+            resp = erts_atom_put_or_die((byte *) str, sys_strlen(str),
                                  ERTS_ATOM_ENC_LATIN1, 1);
             break;
         }
@@ -7246,7 +7246,7 @@ int driver_exit(ErlDrvPort ix, int err)
         return driver_failure_term(ix, am_normal, 0);
     else {
         char* err_str = erl_errno_id(err);
-        Eterm am_err = erts_atom_put((byte *) err_str, sys_strlen(err_str),
+        Eterm am_err = erts_atom_put_or_die((byte *) err_str, sys_strlen(err_str),
 				     ERTS_ATOM_ENC_LATIN1, 1);
         return driver_failure_term(ix, am_err, 0);
     }
@@ -7261,7 +7261,7 @@ int driver_failure(ErlDrvPort ix, int code)
 int driver_failure_atom(ErlDrvPort ix, char* string)
 {
     return driver_failure_term(ix,
-			       erts_atom_put((byte *) string,
+			       erts_atom_put_or_die((byte *) string,
 					     sys_strlen(string),
 					     ERTS_ATOM_ENC_LATIN1,
 					     1),
@@ -7282,7 +7282,7 @@ int driver_failure_eof(ErlDrvPort ix)
 
 ErlDrvTermData driver_mk_atom(char* string)
 {
-    Eterm am = erts_atom_put((byte *) string,
+    Eterm am = erts_atom_put_or_die((byte *) string,
 			     sys_strlen(string),
 			     ERTS_ATOM_ENC_LATIN1,
 			     1);
@@ -7558,7 +7558,7 @@ static int
 init_driver(erts_driver_t *drv, ErlDrvEntry *de, DE_Handle *handle,
             bool is_system_driver)
 {
-    drv->name_atom = erts_atom_put((byte*)de->driver_name,
+    drv->name_atom = erts_atom_put_or_die((byte*)de->driver_name,
                                    sys_strlen(de->driver_name),
                                    ERTS_ATOM_ENC_LATIN1, 1);
     drv->name = de->driver_name;

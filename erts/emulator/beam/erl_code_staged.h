@@ -202,12 +202,14 @@ ERTS_CODE_STAGED_FUNC__(init_template)(ERTS_CODE_STAGED_TEMPLATE_T__ *template)
 }
 
 static ERTS_CODE_STAGED_OBJECT_TYPE *
-ERTS_CODE_STAGED_FUNC__(upsert)(ERTS_CODE_STAGED_TEMPLATE_T__ *template)
+ERTS_CODE_STAGED_FUNC__(upsert)(ERTS_CODE_STAGED_TEMPLATE_T__ *template,
+                                int may_fail)
 {
     IndexTable * const tables = ERTS_CODE_STAGED_CONCAT_MACRO_VALUES__
                                  (ERTS_CODE_STAGED_PREFIX, _tables);
     ERTS_CODE_STAGED_ENTRY_T__ *entry;
     int requires_insertion = 0;
+    int table_full = 0;
 #ifdef DEBUG
     int retry_after_race = 0;
 #endif
@@ -246,6 +248,16 @@ ERTS_CODE_STAGED_FUNC__(upsert)(ERTS_CODE_STAGED_TEMPLATE_T__ *template)
                 /* If the staging table did not contain the entry, try to
                  * insert it under a write lock on the next pass. */
                 requires_insertion = (entry == NULL);
+            } else if (may_fail) {
+                /* Return NULL instead of aborting the node when the table
+                 * is full, so the caller can raise a catchable error. */
+                entry = (ERTS_CODE_STAGED_ENTRY_T__*)
+                    index_put_entry_may_fail(&tables[staging_ix],
+                                             &template->entry);
+                if (entry == NULL) {
+                    table_full = 1;
+                }
+                ERTS_CODE_STAGED_FUNC__(write_unlock)();
             } else {
                 entry = (ERTS_CODE_STAGED_ENTRY_T__*)
                     index_put_entry(&tables[staging_ix],
@@ -266,9 +278,9 @@ ERTS_CODE_STAGED_FUNC__(upsert)(ERTS_CODE_STAGED_TEMPLATE_T__ *template)
                 ERTS_CODE_STAGED_FUNC__(write_unlock)();
             }
         }
-    } while (entry == NULL);
+    } while (entry == NULL && !table_full);
 
-    return entry->object;
+    return entry == NULL ? NULL : entry->object;
 }
 
 static ERTS_CODE_STAGED_ENTRY_T__ *
@@ -549,6 +561,16 @@ ERTS_CODE_STAGED_FUNC__(list_size)(ErtsCodeIndex code_ix)
     IndexTable * const tables = ERTS_CODE_STAGED_CONCAT_MACRO_VALUES__
                                 (ERTS_CODE_STAGED_PREFIX, _tables);
     return erts_index_num_entries(&tables[code_ix]);
+}
+#endif
+
+#ifdef ERTS_CODE_STAGED_WANT_WOULD_FIT
+static int
+ERTS_CODE_STAGED_FUNC__(would_fit)(ErtsCodeIndex code_ix, int need)
+{
+    IndexTable * const tables = ERTS_CODE_STAGED_CONCAT_MACRO_VALUES__
+                                (ERTS_CODE_STAGED_PREFIX, _tables);
+    return erts_index_table_would_fit(&tables[code_ix], need);
 }
 #endif
 

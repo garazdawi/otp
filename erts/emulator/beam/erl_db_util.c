@@ -5821,8 +5821,10 @@ static int match_compact(ErlHeapFragment *expr, DMCErrInfo *err_info)
 		;
 	    ASSERT(j < x);
 	    erts_snprintf(buff+1, sizeof(buff) - 1, "%u", (unsigned) j);
-	    /* Yes, writing directly into terms, they ARE off heap */
-	    *p = erts_atom_put((byte *) buff, sys_strlen(buff),
+	    /* Yes, writing directly into terms, they ARE off heap.
+	       Abort rather than store THE_NON_VALUE here if the atom table
+	       is full -- there is no way to fail a compiled match program. */
+	    *p = erts_atom_put_or_die((byte *) buff, sys_strlen(buff),
 			       ERTS_ATOM_ENC_LATIN1, 1);
 	}
 	++p;

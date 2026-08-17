@@ -328,7 +328,10 @@ erts_atom_put_index(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
     a.latin1_chars = (Sint16) no_latin1_chars;
     a.u.name = (byte *) text;
     atom_write_lock();
-    aix = index_put(&erts_atom_table, (void*) &a);
+    {
+        IndexSlot *slot = index_put_entry_may_fail(&erts_atom_table, (void*) &a);
+        aix = slot ? slot->index : ATOM_MAX_LIMIT_ERROR;
+    }
     atom_write_unlock();
     return aix;
 }
@@ -344,6 +347,27 @@ erts_atom_put(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
 	return make_atom(aix);
     else
 	return THE_NON_VALUE;
+}
+
+/*
+ * Like erts_atom_put() but aborts the node if the atom cannot be created.
+ * Intended for the handful of internal call sites that have no way to
+ * propagate a failure (public driver APIs, the match-spec compiler, etc.)
+ * and would otherwise store THE_NON_VALUE into a live term should the atom
+ * table be full. This restores the pre-catchable-system_limit behaviour
+ * (a full atom table used to abort unconditionally inside index_put_entry())
+ * for exactly those paths, without reintroducing a node-kill on the
+ * user-reachable BIFs, which handle the THE_NON_VALUE return themselves.
+ */
+Eterm
+erts_atom_put_or_die(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
+{
+    Eterm res = erts_atom_put(name, len, enc, trunc);
+    if (is_non_value(res)) {
+	/* A core dump is unnecessary */
+	erts_exit(ERTS_DUMP_EXIT, "no more atoms (atom table full)\n");
+    }
+    return res;
 }
 
 Eterm
