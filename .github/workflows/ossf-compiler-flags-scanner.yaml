@@ -51,8 +51,8 @@ jobs:
         run: .github/scripts/init-pre-release.sh otp_src.tar.gz
 
       - uses: ./.github/actions/build-base-image
-        with:
-          BASE_BRANCH: master
+        # with:
+        #   BASE_BRANCH: master
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
         with:
