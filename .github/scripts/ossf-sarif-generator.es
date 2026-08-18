@@ -25,9 +25,9 @@
 
 main([CompilerFlagsJson]) ->
     io:format(standard_error,"~p",[os:env()]),
-    CFLAGS = proplists:get_value(cflags, erlang:system_info(compile_info)) ++ " " ++ os:getenv("SKIPPED_OSSF_CFLAGS"),
-    CXXFLAGS = proplists:get_value(cxxflags, erlang:system_info(compile_info)) ++ " " ++ os:getenv("SKIPPED_OSSF_CXXFLAGS"),
-    LDFLAGS = proplists:get_value(ldflags, erlang:system_info(compile_info)) ++ " " ++ os:getenv("SKIPPED_OSSF_LDFLAGS"),
+    CFLAGS = proplists:get_value(cflags, erlang:system_info(compile_info)) ++ " " ++ os:getenv("SKIPPED_OSSF_CFLAGS", ""),
+    CXXFLAGS = proplists:get_value(cxxflags, erlang:system_info(compile_info)) ++ " " ++ os:getenv("SKIPPED_OSSF_CXXFLAGS", ""),
+    LDFLAGS = proplists:get_value(ldflags, erlang:system_info(compile_info)) ++ " " ++ os:getenv("SKIPPED_OSSF_LDFLAGS", ""),
     {gnuc, {Vsn, _, _} } = erlang:system_info(c_compiler_used),
     #{ ~"options" := #{ ~"recommended" := Opts } } = json:decode(unicode:characters_to_binary(CompilerFlagsJson)),
     io:format(standard_error, ~s'CFLAGS="~ts"~nCXXFLAGS="~ts"~nLDFLAGS="~ts"~n',[CFLAGS, CXXFLAGS, LDFLAGS]),
