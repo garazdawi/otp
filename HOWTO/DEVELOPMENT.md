@@ -423,7 +423,38 @@ From the top level of Erlang/OTP you can run:
 ```
 
 This will check that the documentation is correct, that there are no
-dialyzer errors and many more things.
+dialyzer errors and many more things. Run `./otp_build check --help` for the
+list of individual checks and the `--no-*` options that turn them off, and use
+`--tests` to limit the test suite build check to the applications you touched:
+
+```bash
+./otp_build check --tests stdlib
+```
+
+Each of these checks corresponds to a [Github Actions](#github-actions) job, and
+running them locally takes minutes where a Github Actions round trip takes
+roughly half an hour. The individual checks can also be run on their own:
+
+```bash
+scripts/license-header.es ci        # license and copyright headers
+make -C erts/emulator format-check  # clang-format, JIT sources only
+(cd lib/$APPLICATION_NAME && make dialyzer)
+git diff --check                    # whitespace errors
+```
+
+*NOTE*: The license header check is `scripts/license-header.es ci`, which is
+what Github Actions runs. `reuse lint` is a different tool with a different
+scope and will report the whole repository as non-compliant. See
+[FILE-HEADERS.md](FILE-HEADERS.md).
+
+*NOTE*: `make format-check` runs whichever `clang-format` is first in your path,
+and so does the check in Github Actions. Different versions of `clang-format`
+disagree about where to break lines, so a sweep made with one version can
+produce differences that another version rejects. Format the lines you have
+changed rather than whole files, and if you do need to reformat a file, use the
+same version as the one in the [docker image](#using-docker) that Github Actions
+uses. Note also that `git clang-format` exits with a non-zero status when it
+modifies files, which silently ends an `&&` chain.
 
 ## When the build lies to you
 
@@ -598,10 +629,38 @@ the logs of the test runs. The logs are attached to the finished run as
 `test_results`. You will find more details about why a testcase failed in
 the logs.
 
+Using the [Github CLI](https://cli.github.com):
+
+```bash
+gh run list --branch $BRANCH -R $YOUR_GITHUB_USER/otp
+gh run view $RUN_ID -R $YOUR_GITHUB_USER/otp --json status,conclusion,jobs
+gh run view $RUN_ID -R $YOUR_GITHUB_USER/otp --log-failed
+gh run download $RUN_ID -R $YOUR_GITHUB_USER/otp -n test_results
+gh run rerun $RUN_ID -R $YOUR_GITHUB_USER/otp --failed
+```
+
+After downloading `test_results`, open `make_test_dir/ct_logs/index.html` in it.
+`gh run rerun --failed` re-runs only the failed jobs and reuses the build from
+the original run, which is a lot faster than pushing again.
+
+*NOTE*: `gh` picks a repository based on the git remotes, which for a fork of
+Erlang/OTP is not necessarily your own. Pass `-R $YOUR_GITHUB_USER/otp`
+explicitly or you may be looking at runs from somewhere else.
+
+Before concluding that a change is what broke a job, look at the same job on the
+run for the parent commit. Some jobs are red for reasons that have nothing to do
+with the code, such as toolchain problems on less common platforms or API
+permissions on forks, and only the failures that are new relative to the parent
+commit are yours.
+
 ## Using Docker
 
 In order to get a reproduceable environment for building and testing you can use
-[docker](https//www.docker.com). If you are not familiar with how to use it I
+[docker](https://www.docker.com). This is also the only faithful way to check a
+change to C or C++ code before pushing it: the images build with `-Werror`
+settings and compiler versions that a plain local build does not use, so code
+that builds cleanly on your machine can still fail the corresponding Github
+Actions job. If you are not familiar with how to use it I
 would recommend [reading up a bit](https://www.docker.com/get-started) and trying
 some simple examples yourself before using it to build and test Erlang/OTP.
 
