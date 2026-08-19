@@ -451,6 +451,27 @@ handle_protocol_record(#ssl_tls{type = ?APPLICATION_DATA}, StateName,
                                              StateName == wait_finished->
     Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE, application_data_before_handshake_or_intervened_in_post_handshake_auth),
     ssl_gen_statem:handle_own_alert(Alert, StateName, State);
+handle_protocol_record(#ssl_tls{type = ?APPLICATION_DATA}, StateName,
+                       #state{static_env = #static_env{role = client},
+                              handshake_env = #handshake_env{renegotiation = {false, first}}
+                             } = State) when StateName == hello;
+                                             StateName == certify;
+                                             StateName == wait_ocsp_stapling;
+                                             StateName == abbreviated;
+                                             StateName == cipher ->
+    %% Pre TLS-1.3 client guard "plain text window" for MITM injection
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE,
+                       application_data_before_handshake_completion),
+    ssl_gen_statem:handle_own_alert(Alert, StateName, State);
+handle_protocol_record(#ssl_tls{type = ?APPLICATION_DATA}, StateName,
+                       #state{static_env = #static_env{role = client}
+                             } = State) when
+      StateName == start;
+      StateName == wait_sh ->
+    %% TLS-1.3 client guard "plain text window" for MITM injection
+    Alert = ?ALERT_REC(?FATAL, ?UNEXPECTED_MESSAGE,
+                       application_data_before_handshake_completion),
+    ssl_gen_statem:handle_own_alert(Alert, StateName, State);
 handle_protocol_record(#ssl_tls{type = ?APPLICATION_DATA, fragment = Data}, StateName,
                        #state{start_or_recv_from = From,
                               socket_options = #socket_options{active = false}} = State0) when From =/= undefined ->
