@@ -804,7 +804,7 @@ validate_extensions(OtpCert, [#'Extension'{extnID = ?'id-ce-certificatePolicies'
                     ValidationState,
 		    ExistBasicCon, SelfSigned, UserState, VerifyFun) ->
     {Tree, NodeCount} = process_policy_tree(Info, SelfSigned, ValidationState),
-    validate_extensions(Cert, Rest,
+    validate_extensions(OtpCert, Rest,
 			ValidationState#path_validation_state{
                           policy_ext_present = true,
                           current_any_policy_qualifiers =
@@ -856,11 +856,10 @@ validate_extensions(OtpCert, [#'Extension'{} = Extension | Rest],
     validate_extensions(OtpCert, Rest, ValidationState, ExistBasicCon, SelfSigned,
 			UserState, VerifyFun).
 
-handle_last_cert(Cert, #path_validation_state{last_cert = true,
+handle_last_cert(OtpCert, #path_validation_state{last_cert = true,
                                               user_initial_policy_set = PolicySet,
                                               valid_policy_tree = Tree,
                                               policy_tree_node_count = NodeCount0} = ValidationState0) ->
-    OtpCert = otp_cert(Cert),
     TBSCert = OtpCert#'OTPCertificate'.tbsCertificate,
     Extensions =
         extensions_list(TBSCert#'OTPTBSCertificate'.extensions),
@@ -878,7 +877,7 @@ handle_last_cert(Cert, #path_validation_state{last_cert = true,
     %% (relying-party config, not attacker-controlled). Terminal operation
     %% with no subsequent amplification possible.
     {ValidTree, NodeCount} = policy_tree_intersection(PolicySet, Tree, NodeCount0),
-    validate_policy_tree(Cert,
+    validate_policy_tree(OtpCert,
                          ValidationState#path_validation_state{valid_policy_tree = ValidTree,
                                                                policy_tree_node_count = NodeCount});
 handle_last_cert(_, ValidationState) ->
@@ -1082,7 +1081,7 @@ handle_policy_mappings(OtpCert,
                                                   #'Extension'{extnID = ?'id-ce-policyMappings',
                                                                extnValue = PolicyMappings}}
                        = ValidationState) ->
-    case handle_policy_mappings(PolicyMappings, Cert, Tree0, NodeCount0, ValidationState) of
+    case handle_policy_mappings(PolicyMappings, OtpCert, Tree0, NodeCount0, ValidationState) of
         {tree, Tree, NodeCount} ->
             ValidationState#path_validation_state{valid_policy_tree = Tree,
                                                   policy_tree_node_count = NodeCount};
@@ -1092,11 +1091,11 @@ handle_policy_mappings(OtpCert,
 
 handle_policy_mappings([], _, Tree, NodeCount, _) ->
     {tree, Tree, NodeCount};
-handle_policy_mappings([Mappings | Rest], Cert, Tree0, NodeCount0, ValidationState) ->
-    case handle_policy_mapping(Mappings, Cert, Tree0, NodeCount0, ValidationState) of
+handle_policy_mappings([Mappings | Rest], OtpCert, Tree0, NodeCount0, ValidationState) ->
+    case handle_policy_mapping(Mappings, OtpCert, Tree0, NodeCount0, ValidationState) of
         {tree, Tree, NodeCount} ->
             assert_policy_tree_node_count(NodeCount),
-            handle_policy_mappings(Rest, Cert, Tree, NodeCount, ValidationState);
+            handle_policy_mappings(Rest, OtpCert, Tree, NodeCount, ValidationState);
         Other ->
             Other
     end.
@@ -1107,7 +1106,7 @@ handle_policy_mappings([Mappings | Rest], Cert, Tree0, NodeCount0, ValidationSta
 handle_policy_mapping(#'PolicyMappings_SEQOF'{
                          issuerDomainPolicy = IssuerPolicy,
                          subjectDomainPolicy = SubjectPolicy} = Ext,
-                      Cert, Tree0, NodeCount0,
+                      OtpCert, Tree0, NodeCount0,
                       #path_validation_state{inhibit_policy_mapping = PolicyMappingConstraint,
                                              current_any_policy_qualifiers = AnyQualifiers,
                                              verify_fun = VerifyFun,
