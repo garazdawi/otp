@@ -475,10 +475,14 @@ is a class of problem where the build succeeds but does not build, or does not
 test, what you think it does. They are all easier to recognise than to debug, so
 they are collected here.
 
-**Stale object files after a header change.** Changing an `enum` member or a
-struct layout in a widely included header does not reliably rebuild every object
-file that depends on it. Freshly built objects then disagree with stale ones
-about numeric values or offsets, which shows up as assertion or crash failures
+**Stale object files after a header change.** The header dependencies of the
+emulator are generated in one pass rather than as a side effect of each
+compilation. That pass runs when a source file is added or removed, when
+`configure` has rewritten the `Makefile`, and when the generated sources change,
+but *not* when you add an `#include` to a file that already existed. Until the
+dependencies are generated again, changes to that header do not rebuild that
+object file, and a freshly built object can disagree with a stale one about a
+struct layout or an enum value. That shows up as assertion or crash failures
 that are impossible given the source code. If a failure makes no sense when you
 read the code, suspect the build before you suspect the code: remove the object
 files in question and any pre-compiled headers (`*.gch`), or do
