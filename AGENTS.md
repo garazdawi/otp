@@ -80,9 +80,9 @@ make
 * When something stops making sense after switching branches, `git clean -Xfdq`
   and build again.
 * For debug, asan, lcnt and valgrind emulators see
-  [Types and Flavors](HOWTO/DEVELOPMENT.md#types-and-flavors). Note that an
-  unrecognized `TYPE` is silently treated as `opt`, and that a plain `make` only
-  rebuilds the default type.
+  [Types and Flavors](HOWTO/DEVELOPMENT.md#types-and-flavors). Note that a plain
+  `make` only rebuilds the default type, so a debug or asan emulator you built
+  earlier can be older than your source tree.
 
 **Before you debug a failure that makes no sense against the source, read
 [When the build lies to you](HOWTO/DEVELOPMENT.md#when-the-build-lies-to-you).**

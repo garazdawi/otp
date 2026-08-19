@@ -358,11 +358,10 @@ make emulator_test TYPE=debug
 Erlang/OTP repo using that TYPE or FLAVOR. That is `make TYPE=debug` for the example
 above.
 
-*WARNING*: A TYPE that is not one of the recognized values is silently treated
-as `opt`, so a misspelled TYPE gives you a successful build of the wrong
-emulator. Each type and flavor is also a separate binary, and a later plain
-`make` only rebuilds the default one. Before you rely on a debug assertion or on
-a measurement, check what you are actually running:
+*NOTE*: Each type and flavor is a separate binary, and a later plain `make` only
+rebuilds the default one, so the debug or asan emulator you built earlier can be
+older than your source tree without `make` saying anything. Before you rely on a
+debug assertion or on a measurement, check what you are actually running:
 
 ```bash
 bin/cerl -debug -noshell \
@@ -495,7 +494,8 @@ exercising your change. See
 is a separate binary. A plain `make` only rebuilds the default one, so your
 debug or asan emulator can be days older than your source tree while `make`
 reports success. See [Types and Flavors](#types-and-flavors) for how to check
-what you are actually running.
+which one you are running. Note that a TYPE that does not exist is rejected, so
+this is about a stale build of a real type, not a misspelled one.
 
 **Shadowed executables.** Erlang version managers put their own `erl`, `erlc`
 and `ex_doc` ahead of the ones in the source tree. When you mean to use the tree
