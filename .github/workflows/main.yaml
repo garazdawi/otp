@@ -269,13 +269,15 @@ jobs:
     runs-on: windows-2025
     needs: pack
     if: needs.pack.outputs.c-code-changes
+    outputs:
+      installer_name: ${{ steps.compile-erlang.outputs.installer_name }}
     steps:
       - uses: Vampire/setup-wsl@6a8db447be7ed35f2f499c02c6e60ff77ef11278 # v6.0.0
         with:
           distribution: Ubuntu-18.04
 
       - name: Install WSL dependencies
-        run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip
+        run: apt update && apt install -y g++-mingw-w64 gcc-mingw-w64 make autoconf unzip zip
 
       - name: Install NSIS
         shell: cmd
@@ -336,6 +338,9 @@ jobs:
           name: otp_prebuilt
 
       - name: Compile Erlang
+        id: compile-erlang
+        env:
+          WSLENV: GITHUB_OUTPUT/p
         run: |
           mkdir -p /mnt/c/opt/local64/pgm/
           cp -R wxWidgets /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}
@@ -358,12 +363,102 @@ jobs:
           ./otp_build release -a
           cp /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}/3rdparty/webview2/runtimes/win-x64/native/WebView2Loader.dll $ERL_TOP/release/win32/erts-*/bin/
           ./otp_build installer_win32
+          echo "installer_name=$(ls release/win32/otp*.exe | xargs basename)" >> $GITHUB_OUTPUT
+          make release_tests
+          zip -q -r tests.zip release/tests
 
       - name: Upload installer
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: otp_win32_installer
           path: otp/release/win32/otp*.exe
+
+      - name: Upload tests
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: otp_tests
+          path: otp/tests.zip
+
+  test-windows:
+    name: Test Erlang/OTP (Windows)
+    runs-on: windows-2025
+    needs: [pack, build-windows]
+    if: needs.pack.outputs.changes != '[]'
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    strategy:
+      matrix:
+        type: ${{ fromJson(needs.pack.outputs.changes) }}
+      fail-fast: false
+    steps:
+      ## The test suites are checked out on the Windows side, so make sure
+      ## git does not rewrite the line endings for the WSL side.
+      - name: Setup nl behaviour for wsl
+        shell: cmd
+        run: git config --global core.autocrlf input
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set timezone
+        shell: cmd
+        run: tzutil /s "W. Europe Standard Time"
+
+      - uses: Vampire/setup-wsl@6a8db447be7ed35f2f499c02c6e60ff77ef11278 # v6.0.0
+        with:
+          distribution: Ubuntu-18.04
+
+      - name: Install WSL dependencies
+        run: apt update && apt install -y make autoconf unzip zip
+
+      - name: Download installer
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: otp_win32_installer
+
+      - name: Download tests
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: otp_tests
+
+      - name: Install Erlang/OTP
+        shell: cmd
+        run: |
+          start "" /WAIT ${{ needs.build-windows.outputs.installer_name }} /S /D=%CD%\release\win32\
+
+      - name: Run tests
+        run: |
+          unzip -q tests.zip
+          export ERL_TOP="$(pwd)"
+          export MAKEFLAGS=-j$(($(nproc) + 2))
+          eval `./otp_build env_win32 x64`
+          export PATH="$(pwd)/release/win32/bin:$PATH"
+          APP="${{ matrix.type }}"
+          case "${APP}" in
+            debug)
+              echo "No debug tests on Windows"
+              ;;
+            *)
+              (cd release/tests/test_server && \
+               erl.exe -noinput -eval "ts:install()" \
+                       -eval "ts:run(${APP},[batch])" -s init stop)
+              if grep -l "^=result[ ]*failed:" \
+                 release/tests/test_server/ct_run.*/*${APP}*.logs/run*/suite.log; then
+                exit 1
+              fi
+              ;;
+          esac
+
+      - name: Package test results
+        if: ${{ !cancelled() && matrix.type != 'debug' }}
+        run: tar czf ${{ matrix.type }}_win32_test_results.tar.gz release/tests/test_server
+
+      - name: Upload test results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: ${{ !cancelled() && matrix.type != 'debug' }}
+        with:
+          name: ${{ matrix.type }}_win32_test_results
+          path: ${{ matrix.type }}_win32_test_results.tar.gz
 
   build-flavors:
     name: Build Erlang/OTP (Types and Flavors)
