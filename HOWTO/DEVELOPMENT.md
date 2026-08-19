@@ -445,6 +445,10 @@ make -C erts/emulator format-check  # clang-format, JIT sources only
 git diff --check                    # whitespace errors
 ```
 
+`make dialyzer` builds a plt in `lib/$APPLICATION_NAME/priv/plt` from the
+applications it depends on, and rebuilds it whenever any of those have been
+rebuilt. The first run after a full build therefore takes a while.
+
 *NOTE*: The license header check is `scripts/license-header.es ci`, which is
 what Github Actions runs. `reuse lint` is a different tool with a different
 scope and will report the whole repository as non-compliant. See
@@ -492,9 +496,6 @@ is a separate binary. A plain `make` only rebuilds the default one, so your
 debug or asan emulator can be days older than your source tree while `make`
 reports success. See [Types and Flavors](#types-and-flavors) for how to check
 what you are actually running.
-
-**A stale dialyzer PLT.** The PLT is not invalidated when the application beam
-files are rebuilt. If the warnings do not match the code, rebuild the PLT.
 
 **Shadowed executables.** Erlang version managers put their own `erl`, `erlc`
 and `ex_doc` ahead of the ones in the source tree. When you mean to use the tree
