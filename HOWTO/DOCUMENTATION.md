@@ -490,13 +490,17 @@ like "OTP 26.0".
 The documentation is built with warnings treated as errors, so a warning from
 [ex_doc] fails the build.
 
-There is one wrinkle that makes this easy to miss: the wrapper in
-`$ERL_TOP/make/ex_doc_wrapper` turns warnings-as-errors *off* when any
-application is missing its `.app` file, that is when the repository is not
-fully built. A `make docs` in a partially built tree therefore prints the
-warnings and succeeds, while the same change fails in
-[Github Actions](DEVELOPMENT.md#github-actions). To get the same behavior
-locally, force it on:
+There is one wrinkle worth knowing about: `$ERL_TOP/make/ex_doc_wrapper` turns
+warnings-as-errors *off* when an application that should have been built is
+missing its `.app` file, so that a `make docs` in a partially built repository
+does not fail. It says so on standard error when it does. Applications that have
+been disabled, either by their own `configure` or through
+`lib/SKIP-APPLICATIONS`, are not counted as missing.
+
+This means a `make docs` in a partially built repository prints warnings and
+succeeds where [Github Actions](DEVELOPMENT.md#github-actions) fails. To get the
+same behavior locally, either build the whole repository first, use
+`./otp_build check`, which does that for you, or force the check on:
 
 ```bash
 EX_DOC_WARNINGS_AS_ERRORS=true make docs
