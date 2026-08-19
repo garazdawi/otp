@@ -35,6 +35,25 @@
     <file>notes.xml</file>
   </header>
 
+<section><title>Public_Key 1.15.1.7.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    A certificate chain with crafted policyMappings extensions
+	    could cause exponential memory consumption during path
+	    validation, exploitable via TLS handshake. Chains exceeding a
+	    node-count cap are now rejected with {bad_cert,
+	    policy_tree_exceeded}.</p>
+          <p>
+	    Own Id: OTP-20251 Aux Id: PR-11372, GHSA-622p-qfh6-c352 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Public_Key 1.15.1.7</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>
