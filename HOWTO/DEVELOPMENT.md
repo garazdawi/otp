@@ -290,6 +290,14 @@ To update the primary bootstrap you do like this:
 ./otp_build update_primary [--no-commit]
 ```
 
+There is one situation where you have to update the primary bootstrap even
+though you are not extending the language: when you want to build Erlang/OTP
+*with* a compiler change in order to validate it. Until the bootstrap is
+updated, `make` uses the committed compiler from before your change, so the
+build succeeds without your change ever having been used. The same applies to
+[erts/preloaded/src](../erts/preloaded/src) and `update_preloaded`. Use
+`--no-commit` and drop the change again before you submit.
+
 *NOTE*: When submitting a PR to Erlang/OTP you will be asked to not include
 any commit updating preloaded or the primary bootstrap. This is because we
 cannot review the contents of binary files and thus cannot make sure they do
@@ -346,6 +354,18 @@ make emulator_test TYPE=debug
 *NOTE*: Before you run tests using a TYPE or FLAVOR you need to build the **entire**
 Erlang/OTP repo using that TYPE or FLAVOR. That is `make TYPE=debug` for the example
 above.
+
+*WARNING*: A TYPE that is not one of the recognized values is silently treated
+as `opt`, so a misspelled TYPE gives you a successful build of the wrong
+emulator. Each type and flavor is also a separate binary, and a later plain
+`make` only rebuilds the default one. Before you rely on a debug assertion or on
+a measurement, check what you are actually running:
+
+```bash
+bin/cerl -debug -noshell \
+  -eval 'io:format("~p ~p~n",[erlang:system_info(build_type),
+                              erlang:system_info(emu_flavor)]),halt().'
+```
 
 ### cerl
 
