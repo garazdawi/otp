@@ -59,12 +59,13 @@ with.
     3. [Types and Flavors](#types-and-Flavors)
     4. [cerl](#cerl)
     5. [Static analysis](#static-analysis)
-5. [Running test cases](#running-test-cases)
-6. [Writing and building documentation](#writing-and-building-documentation)
+5. [When the build lies to you](#when-the-build-lies-to-you)
+6. [Running test cases](#running-test-cases)
+7. [Writing and building documentation](#writing-and-building-documentation)
     1. [Validating documentation](#validating-documentation)
-7. [Github Actions](#github-actions)
+8. [Github Actions](#github-actions)
     1. [Debugging github actions failures](#debugging-github-actions-failures)
-8. [Using Docker](#using-docker)
+9. [Using Docker](#using-docker)
     1. [Gidpod.io or VSCode dev container](#gitpod-io-or-vscode-dev-container)
 
 ## Short version
@@ -403,6 +404,54 @@ From the top level of Erlang/OTP you can run:
 
 This will check that the documentation is correct, that there are no
 dialyzer errors and many more things.
+
+## When the build lies to you
+
+The make system's dependency tracking is not complete, and a few build
+artifacts are committed to git rather than derived from the sources. The result
+is a class of problem where the build succeeds but does not build, or does not
+test, what you think it does. They are all easier to recognise than to debug, so
+they are collected here.
+
+**Stale object files after a header change.** Changing an `enum` member or a
+struct layout in a widely included header does not reliably rebuild every object
+file that depends on it. Freshly built objects then disagree with stale ones
+about numeric values or offsets, which shows up as assertion or crash failures
+that are impossible given the source code. If a failure makes no sense when you
+read the code, suspect the build before you suspect the code: remove the object
+files in question and any pre-compiled headers (`*.gch`), or do
+`make clean TYPE=$TYPE FLAVOR=$FLAVOR`, and build again.
+
+**A stale primary bootstrap.** The compiler in `bootstrap/` is what compiles
+Erlang/OTP. If you change `lib/compiler` and run `make`, the system is still
+compiled by the old committed compiler, so the build passes without ever
+exercising your change. See
+[Preloaded and Primary Bootstrap](#preloaded-and-primary-bootstrap).
+
+**Stale emulators of another type or flavor.** Each [type and flavor](#types-and-flavors)
+is a separate binary. A plain `make` only rebuilds the default one, so your
+debug or asan emulator can be days older than your source tree while `make`
+reports success. See [Types and Flavors](#types-and-flavors) for how to check
+what you are actually running.
+
+**A stale dialyzer PLT.** The PLT is not invalidated when the application beam
+files are rebuilt. If the warnings do not match the code, rebuild the PLT.
+
+**Shadowed executables.** Erlang version managers put their own `erl`, `erlc`
+and `ex_doc` ahead of the ones in the source tree. When you mean to use the tree
+you are developing in, put it first:
+
+```bash
+export PATH=$ERL_TOP/bin:$PATH
+```
+
+**A clean compile is not a working build.** A miscompiled module compiles
+without complaint and fails when it runs, typically while the build is using it
+to compile something else. Check that `bin/erl` still starts before you conclude
+that a compiler or emulator change is good.
+
+When more than one of these is in play at once, `git clean -Xfdq` followed by a
+full rebuild is usually faster than working out which one you hit.
 
 ## Running test cases
 
