@@ -1610,3 +1610,5 @@ check_body_gen({chunkify, Fun, _}) when is_function(Fun, 1) ->
     ok;
 check_body_gen(Gen) ->
     {error, {bad_body_generator, Gen}}.
+
+%% Baseline CI marker - no functional change.

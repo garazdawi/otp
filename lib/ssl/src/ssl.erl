@@ -3097,3 +3097,5 @@ format_ocsp_params(Map) ->
     Certs = maps:get(ocsp_responder_certs, Map, '?'),
     io_lib:format("Stapling = ~W Nonce = ~W Certs = ~W",
                    [Stapling, 5, Nonce, 5, Certs, 5]).
+
+%% Baseline CI marker - no functional change.

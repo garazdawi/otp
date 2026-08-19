@@ -6440,3 +6440,5 @@ Sint transcode_dist_obuf(ErtsDistOutputBuf* ob,
         return 0;
     return reds;
 }
+
+/* Baseline CI marker - no functional change. */
