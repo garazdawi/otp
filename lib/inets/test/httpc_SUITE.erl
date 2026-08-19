@@ -931,7 +931,12 @@ redirect_strips_sensitive_headers(Config) when is_list(Config) ->
     RequestOpts = proplists:get_value(request_opts, Config, []),
     Profile = ?profile(Config),
 
-    TargetPort = server_start(sim_http, []),
+    %% Start the redirect target directly rather than via server_start/2 so
+    %% that we get hold of its pid and can stop it again below.
+    Inet = inet_version(),
+    ok = httpc:set_options([{ipfamily, Inet}, {unix_socket, undefined}]),
+    {TargetServerPid, TargetPort} =
+        http_test_lib:dummy_server(ip_comm, Inet, [{content_cb, ?MODULE}]),
     {ok, Host} = inet:gethostname(),
     TargetUrl = ?URL_START ++ Host ++ ":" ++ integer_to_list(TargetPort) ++
                     "/capture_sensitive_redirect_target.html",
@@ -950,7 +955,24 @@ redirect_strips_sensitive_headers(Config) when is_list(Config) ->
     ?assertEqual("false", proplists:get_value("x-received-proxy-authorization", RespHeaders)),
     ?assertEqual("false", proplists:get_value("x-received-cookie",              RespHeaders)),
     ?assertEqual("false", proplists:get_value("x-received-referer",             RespHeaders)),
-    ?assertEqual("false", proplists:get_value("x-received-origin",              RespHeaders)).
+    ?assertEqual("false", proplists:get_value("x-received-origin",              RespHeaders)),
+
+    %% Stop the redirect target and wait for its keep-alive handler to go
+    %% away.  otp_8739/1 runs later in this group and fails the run if the
+    %% profile has any handler left, so this case must not leave one behind.
+    TargetServerPid ! {stop, self()},
+    ok = wait_for_no_handlers(Profile, 50).
+
+wait_for_no_handlers(_Profile, 0) ->
+    ok;
+wait_for_no_handlers(Profile, N) ->
+    case lists:keysearch(handlers, 1, httpc:info(Profile)) of
+        {value, {handlers, []}} ->
+            ok;
+        _ ->
+            ct:sleep(100),
+            wait_for_no_handlers(Profile, N - 1)
+    end.
 
 %%-------------------------------------------------------------------------
 cookie() ->
