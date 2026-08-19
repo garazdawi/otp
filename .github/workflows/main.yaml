@@ -329,7 +329,11 @@ jobs:
         shell: cmd
         run: |
           cd wxWidgets\\build\\msw
-          call "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\Auxiliary\\Build\\vcvars64.bat"
+          SET VSWHERE="%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+          FOR /F "delims=" %%P IN ('%VSWHERE% -latest -property installationPath') DO (
+            SET "VCVARSALL=%%P\VC\Auxiliary\Build\vcvarsall.bat"
+          )
+          call "%VCVARSALL%" x64
           nmake TARGET_CPU=amd64 BUILD=release SHARED=0 DIR_SUFFIX_CPU= -f makefile.vc
 
       - name: Download source archive
