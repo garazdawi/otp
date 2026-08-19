@@ -61,6 +61,9 @@ with.
     5. [Static analysis](#static-analysis)
 5. [When the build lies to you](#when-the-build-lies-to-you)
 6. [Running test cases](#running-test-cases)
+    1. [Where the test logs end up](#where-the-test-logs-end-up)
+    2. [Repeating and targeting test cases](#repeating-and-targeting-test-cases)
+    3. [Testing without releasing](#testing-without-releasing)
 7. [Writing and building documentation](#writing-and-building-documentation)
     1. [Validating documentation](#validating-documentation)
 8. [Github Actions](#github-actions)
@@ -506,7 +509,84 @@ full rebuild is usually faster than working out which one you hit.
 
 ## Running test cases
 
-There is a detailed description about how to run tests in [TESTING.md](TESTING.md).
+There is a detailed description about how to run tests in [TESTING.md](TESTING.md),
+which is also where the supported way of running them is described. The rest of
+this section covers details of how the make system runs the tests. As with
+everything else in this guide, they may change without notice.
+
+### Where the test logs end up
+
+When you run `make test` in the source tree the results are written to a
+`make_test_dir` next to the application being tested:
+
+```text
+lib/$APPLICATION_NAME/make_test_dir/ct_logs/index.html
+erts/emulator/make_test_dir/ct_logs/index.html          # make emulator_test
+```
+
+`make test` prints a link to this index when it finishes, both when the tests
+pass and when they fail. The logs for an individual suite are one level further
+down, in `ct_logs/ct_run.$NODE.$TIMESTAMP/`.
+
+`make_test_dir` is generated and is ignored by git, so nothing in it should be
+edited. In particular the test specification found there is a copy; the one to
+change is in `lib/$APPLICATION_NAME/test/`.
+
+### Repeating and targeting test cases
+
+`ARGS` is read from the environment as well as from the make command line, so
+these are equivalent:
+
+```bash
+make stdlib_test ARGS="-suite lists_SUITE"
+ARGS="-suite lists_SUITE" make stdlib_test
+```
+
+The environment form is useful for targeting a single test case in an
+environment where you cannot easily change the command that is run, such as
+inside an already built container.
+
+To chase a race you can repeat the whole selection with `ct_run`'s `-repeat`
+flag. `ct_run` exits with a non-zero status if any iteration failed, so a
+successful `make` means every iteration passed:
+
+```bash
+make emulator_test ARGS="-suite signal_SUITE -case dirty_signal_handling -repeat 25"
+```
+
+Note the difference between `ERL_ARGS` and `ERL_AFLAGS` here. `ERL_ARGS` is
+passed to `ct_run` after `-erl_args` and so only reaches the node running the
+tests, whereas `ERL_FLAGS` and `ERL_AFLAGS` are picked up from the environment
+by every emulator started, including the peer nodes that the suites start
+themselves. That is how `TYPE` and `FLAVOR` reach the peers; the make system
+appends `-emu_type` and `-emu_flavor` to `ERL_AFLAGS`. It also means that a
+suite which needs to control its peers has to pass the flag on the peer's own
+command line, which takes precedence.
+
+### Testing without releasing
+
+Some applications have to be tested against a released Erlang/OTP rather than
+the source tree, because they test release handling, installation paths or code
+upgrade. Those applications set `TEST_NEEDS_RELEASE=true` in their `Makefile`:
+
+```bash
+grep -l TEST_NEEDS_RELEASE=true lib/*/Makefile
+```
+
+For them `make $APPLICATION_NAME_test` does a full release into `make_test_dir`
+first and runs the tests against that, which adds several minutes to every
+iteration.
+
+While working on a single test case you can skip that step:
+
+```bash
+make stdlib_test TEST_NEEDS_RELEASE=false ARGS="-suite lists_SUITE -case member"
+```
+
+The tests then run against the source tree instead, which is a great deal
+faster. Test cases that genuinely need a released system will fail or be skipped
+when you do this, so run them again without the override before concluding that
+a change works.
 
 ## Writing and building documentation
 
