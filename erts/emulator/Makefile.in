@@ -1586,13 +1586,39 @@ compdb:
 	clang -MJ $(TTF_DIR)/zlib.json $(COMPDB_CFLAGS) $(ZLIB_SRC) > /dev/null
 	cat $(TTF_DIR)/*.json > $(ERL_TOP)/compile_commands.json
 
-format-check:
-	clang-format --Werror --dry-run -i beam/jit/*.hpp beam/jit/*.c beam/jit/*.h \
+## Different major versions of clang-format make different line breaking
+## decisions, so formatting with one version and checking with another shows up
+## as changes to lines that were never touched. make/clang_format_vsn holds the
+## major version that Github Actions checks with; set CLANG_FORMAT to point at
+## that version if it is not the first clang-format in your path.
+CLANG_FORMAT ?= clang-format
+CLANG_FORMAT_VSN = $(shell grep -v '^//' $(ERL_TOP)/make/clang_format_vsn 2>/dev/null)
+CLANG_FORMAT_SRC = beam/jit/*.hpp beam/jit/*.c beam/jit/*.h \
             beam/jit/*.cpp beam/jit/*/*.cpp beam/jit/*/*.hpp
 
-format:
-	clang-format -i beam/jit/*.hpp beam/jit/*.c beam/jit/*.h \
-            beam/jit/*.cpp beam/jit/*/*.cpp beam/jit/*/*.hpp
+.PHONY: format format-check check-clang-format-vsn
+
+check-clang-format-vsn:
+	@vsn=`$(CLANG_FORMAT) --version 2>/dev/null | tr ' ' '\n' \
+	        | grep '^[0-9]' | head -1 | cut -d. -f1`; \
+	if test "X$$vsn" = "X"; then \
+	    echo "$(CLANG_FORMAT) not found or does not understand --version." >&2; \
+	    exit 1; \
+	elif test "X$(CLANG_FORMAT_VSN)" != "X" && \
+	     test "X$$vsn" != "X$(CLANG_FORMAT_VSN)"; then \
+	    echo "$(CLANG_FORMAT) is version $$vsn, but the sources are formatted" >&2; \
+	    echo "with clang-format $(CLANG_FORMAT_VSN) (see make/clang_format_vsn)." >&2; \
+	    echo "Using another version reformats lines you have not changed." >&2; \
+	    echo "Install clang-format $(CLANG_FORMAT_VSN) and either put it first in" >&2; \
+	    echo "your path or build with CLANG_FORMAT=clang-format-$(CLANG_FORMAT_VSN)." >&2; \
+	    exit 1; \
+	fi
+
+format-check: check-clang-format-vsn
+	$(CLANG_FORMAT) --Werror --dry-run -i $(CLANG_FORMAT_SRC)
+
+format: check-clang-format-vsn
+	$(CLANG_FORMAT) -i $(CLANG_FORMAT_SRC)
 
 ifneq ($(ERTS_SKIP_DEPEND),true)
 ifneq ($(MAKECMDGOALS),clean)

@@ -128,7 +128,9 @@ git diff --check
 
 `./otp_build check --help` lists the individual checks. See
 [Static analysis](HOWTO/DEVELOPMENT.md#static-analysis) for what each one
-corresponds to in CI, and for the `clang-format` version trap.
+corresponds to in CI. `format-check` requires the `clang-format` major version
+in `make/clang_format_vsn`; if it is not first in your path, pass
+`CLANG_FORMAT=clang-format-<vsn>`.
 
 If you added something else that CI checks, such as a shell script or a
 workflow file, run that checker locally too.

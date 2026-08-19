@@ -450,14 +450,19 @@ what Github Actions runs. `reuse lint` is a different tool with a different
 scope and will report the whole repository as non-compliant. See
 [FILE-HEADERS.md](FILE-HEADERS.md).
 
-*NOTE*: `make format-check` runs whichever `clang-format` is first in your path,
-and so does the check in Github Actions. Different versions of `clang-format`
-disagree about where to break lines, so a sweep made with one version can
-produce differences that another version rejects. Format the lines you have
-changed rather than whole files, and if you do need to reformat a file, use the
-same version as the one in the [docker image](#using-docker) that Github Actions
-uses. Note also that `git clang-format` exits with a non-zero status when it
-modifies files, which silently ends an `&&` chain.
+*NOTE*: Different major versions of `clang-format` disagree about where to break
+lines, so formatting with one version and checking with another shows up as
+changes to lines you never touched. `make format-check` and `make format`
+therefore refuse to run unless `clang-format` is the major version recorded in
+`make/clang_format_vsn`, which is the version Github Actions uses. If that
+version is not the first one in your path, point at it explicitly:
+
+```bash
+make -C erts/emulator format-check CLANG_FORMAT=clang-format-14
+```
+
+Note also that `git clang-format` exits with a non-zero status when it modifies
+files, which silently ends an `&&` chain.
 
 ## When the build lies to you
 
