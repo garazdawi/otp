@@ -1311,14 +1311,14 @@ malicious_cycle_in_peer_chain(Config) when is_list(Config) ->
 
     %% Shuffle chain so it's unordered — triggers unorded_or_extraneous
     MaliciousChain = [Peer, Root, CA2, CA1],
-    CertRecs = [#cert{der=D, otp=public_key:pkix_decode_cert(D, otp)}
-                || D <- MaliciousChain],
-
     %% Call trusted_cert_and_paths directly — this is the code path
     %% that would hang without the digraph fix
     %% Use empty trust store so no path can be validated
+    %% Note: in OTP 26 trusted_cert_and_paths/4 takes DER encoded
+    %% certificates and wraps them in #cert{} itself, unlike OTP 27
+    %% where the caller passes public_key:combined_cert().
     Result = ssl_certificate:trusted_cert_and_paths(
-               CertRecs, ets:new(foo, []), {extracted, []},
+               MaliciousChain, ets:new(foo, []), {extracted, []},
                fun(_) -> unknown_ca end),
 
     %% Must return (not hang) with unknown_ca for all paths
