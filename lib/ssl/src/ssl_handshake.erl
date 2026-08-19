@@ -1531,31 +1531,50 @@ handle_server_hello_extensions(RecordCB, Random, CipherSuite, Compression,
 						      CipherSuite, undefined,
 						      Compression, ConnectionStates0,
 						      Renegotiation, SecureRenegotation),
-    assert_max_frag_length(IsNew, Exts, ConnectionStates0),
-    StaplingState = handle_cert_status_extension(SslOpts, Exts),
-    %% If we receive an ALPN extension then this is the protocol selected,
-    %% otherwise handle the NPN extension.
-    ALPN = maps:get(alpn, Exts, undefined),
-    case decode_alpn(ALPN) of
-        %% ServerHello contains exactly one protocol: the one selected.
-        %% We also ignore the ALPN extension during renegotiation (see encode_alpn/2).
-        [Protocol] when not Renegotiation ->
-            validate_application_protocol(Protocol,
-                                          maps:get(alpn_advertised_protocols, SslOpts)),
-            {ConnectionStates, alpn, Protocol, StaplingState};
-        [_] when Renegotiation ->
-            {ConnectionStates, alpn, undefined, StaplingState};
-        undefined ->
-            NextProtocolNegotiation = maps:get(next_protocol_negotiation, Exts, undefined),
-            NextProtocolSelector = maps:get(next_protocol_selector, SslOpts, undefined),
-            Protocol = handle_next_protocol(NextProtocolNegotiation, NextProtocolSelector, Renegotiation),
-            {ConnectionStates, npn, Protocol, StaplingState};
-        {error, Reason} ->
-            throw(?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, Reason));
-        [] ->
-            throw(?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, no_protocols_in_server_hello));
-        [_|_] ->
-            throw(?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, too_many_protocols_in_server_hello))
+
+    %% RFC 6066: handle received/expected maximum fragment length
+    if IsNew ->
+            ServerMaxFragEnum = maps:get(max_frag_enum, Exts, undefined),
+            #{current_write := #{max_fragment_length := ConnMaxFragLen}} = ConnectionStates,
+            ClientMaxFragEnum = max_frag_enum(ConnMaxFragLen),
+
+            if ServerMaxFragEnum == ClientMaxFragEnum ->
+                    ok;
+               true ->
+                    throw(?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER))
+            end;
+       true ->
+            ok
+    end,
+
+    case handle_ocsp_extension(SslOpts, Exts) of
+        #alert{} = Alert ->
+            Alert;
+        OcspState ->
+            %% If we receive an ALPN extension then this is the protocol selected,
+            %% otherwise handle the NPN extension.
+            ALPN = maps:get(alpn, Exts, undefined),
+            case decode_alpn(ALPN) of
+                %% ServerHello contains exactly one protocol: the one selected.
+                %% We also ignore the ALPN extension during renegotiation (see encode_alpn/2).
+                [Protocol] when not Renegotiation ->
+                    validate_application_protocol(Protocol,
+                                                  maps:get(alpn_advertised_protocols, SslOpts)),
+                    {ConnectionStates, alpn, Protocol, OcspState};
+                [_] when Renegotiation ->
+                    {ConnectionStates, alpn, undefined, OcspState};
+                undefined ->
+                    NextProtocolNegotiation = maps:get(next_protocol_negotiation, Exts, undefined),
+                    NextProtocolSelector = maps:get(next_protocol_selector, SslOpts, undefined),
+                    Protocol = handle_next_protocol(NextProtocolNegotiation, NextProtocolSelector, Renegotiation),
+                    {ConnectionStates, npn, Protocol, OcspState};
+                {error, Reason} ->
+                    ?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, Reason);
+                [] ->
+                    ?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, no_protocols_in_server_hello);
+                [_|_] ->
+                    ?ALERT_REC(?FATAL, ?HANDSHAKE_FAILURE, too_many_protocols_in_server_hello)
+            end
     end.
 
 select_curve(Client, Server) ->
@@ -3473,36 +3492,18 @@ validate_cipher_suite(CipherSuite, ClientCipherSuites) ->
         false -> throw(?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER))
     end.
 
-
-handle_renegotiation_extension(Role, RecordCB, Version, Info, Random,
-                               NegotiatedCipherSuite,
-			       ClientCipherSuites,
-			       ConnectionStates0,
-                               Renegotiation, SecureRenegotation) ->
-    {ok, ConnectionStates} =
-        handle_renegotiation_info(Version, RecordCB, Role, Info,
-                                  ConnectionStates0,
-                                  Renegotiation, SecureRenegotation,
-                                  ClientCipherSuites),
+handle_renegotiation_extension(Role, RecordCB, Version, Info, Random, NegotiatedCipherSuite, 
+			       ClientCipherSuites, Compression,
+			       ConnectionStates0, Renegotiation, SecureRenegotation) ->
+    {ok, ConnectionStates} = handle_renegotiation_info(Version, RecordCB, Role, Info, ConnectionStates0,
+                                                       Renegotiation, SecureRenegotation,
+                                                       ClientCipherSuites),
     hello_pending_connection_states(RecordCB, Role,
                                     Version,
                                     NegotiatedCipherSuite,
                                     Random,
                                     Compression,
                                     ConnectionStates).
-
-assert_max_frag_length(true, Exts, ConnectionStates) ->
-    %% RFC 6066: handle received/expected maximum fragment length
-    ServerMaxFragEnum = maps:get(max_frag_enum, Exts, undefined),
-    ConnMaxFragLen = maps:get(max_fragment_length, ConnectionStates, undefined),
-    ClientMaxFragEnum = max_frag_enum(ConnMaxFragLen),
-    if ServerMaxFragEnum == ClientMaxFragEnum ->
-            ok;
-       true ->
-            throw(?ALERT_REC(?FATAL, ?ILLEGAL_PARAMETER))
-    end;
-assert_max_frag_length(_, _, _) ->
-    ok.
 
 validate_application_protocol(_, undefined) ->
     %% Server sent ALPN protocol not requested by client
