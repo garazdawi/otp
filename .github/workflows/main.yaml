@@ -204,9 +204,6 @@ jobs:
         run: .github/scripts/build-macos-wxwidgets.sh
 
       - name: Compile Erlang
-        id: compile-erlang
-        env:
-          WSLENV: GITHUB_OUTPUT/p
         run: |
           tar -xzf ./otp_src.tar.gz
           export PATH=$PWD/wxWidgets/release/bin:$PATH
@@ -341,6 +338,9 @@ jobs:
           name: otp_prebuilt
 
       - name: Compile Erlang
+        id: compile-erlang
+        env:
+          WSLENV: GITHUB_OUTPUT/p
         run: |
           mkdir -p /mnt/c/opt/local64/pgm/
           cp -R wxWidgets /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}
