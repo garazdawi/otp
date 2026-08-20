@@ -594,8 +594,8 @@ async(Config) when is_list(Config) ->
 
     %% Check full result false option for async request
     {ok, RequestId2} =
-        httpc:request(get, Request, [], [{sync, false},
-                                         {full_result, false}]),
+        httpc:request(get, Request, [?SSL_NO_VERIFY], [{sync, false},
+                                                       {full_result, false}], ?profile(Config)),
     Body2 =
         receive
             {http, {RequestId2, {200, BinBody2}}} ->
@@ -1804,19 +1804,32 @@ timeout_memory_leak(Config) when is_list(Config) ->
     {ok, Host} = inet:gethostname(),
     Request = {?URL_START ++ Host ++ ":" ++ integer_to_list(Port) ++ "/dummy.html", []},
     Profile = ?config(profile, Config),
+    %% The handler is torn down asynchronously after the request times out,
+    %% so poll for a short while instead of sampling the handler db once.
+    WaitForCancelRequestToFinish =
+        fun F(Handlers = [_ | _]) when is_list(Handlers) -> ct:fail({unexpected_handlers, Handlers});
+            F(Handlers) when is_list(Handlers) -> ok;
+            F(N) when is_integer(N) ->
+                Info = httpc:info(Profile),
+                ct:log("Info: ~p", [Info]),
+                {value, {handlers, Handlers}} =
+                    lists:keysearch(handlers, 1, Info),
+                case Handlers of
+                    [] ->
+                        ok;
+                    _ ->
+                        ct:sleep(1)
+                end,
+                case N of
+                    0 ->
+                        F(Handlers);
+                    _ ->
+                        F(N-1)
+                end
+        end,
     case httpc:request(get, Request, [{connect_timeout, 500}, {timeout, 1}], [{sync, true}], Profile) of
 	{error, timeout} ->
-	    %% And now we check the size of the handler db
-	    Info = httpc:info(Profile),
-	    ct:log("Info: ~p", [Info]),
-	    {value, {handlers, Handlers}} =
-		lists:keysearch(handlers, 1, Info),
-	    case Handlers of
-		[] ->
-		    ok;
-		_ ->
-		    ct:fail({unexpected_handlers, Handlers})
-	    end;
+            WaitForCancelRequestToFinish(5);
 	Unexpected ->
 	    ct:fail({unexpected, Unexpected})
     end.
