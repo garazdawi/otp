@@ -1098,7 +1098,14 @@ handshake_continue_change_verify(Config) when is_list(Config) ->
                              {verify, verify_none}
                             | ClientOpts], Config)},
                 {continue_options, [{verify, verify_peer} | ClientOpts]}]),
-    ssl_test_lib:check_client_alert(Client,  bad_certificate).
+    %% OTP 26 does not have the ssl_handshake:path_validation_alert/3 clause
+    %% for hostname_check_failed that was added on master by dfe636b274, so a
+    %% hostname mismatch still falls through to the generic HANDSHAKE_FAILURE
+    %% alert here.  The rest of the OTP 26 test suite (ssl_sni_SUITE) asserts
+    %% that same behaviour, so expect it here too rather than importing the
+    %% master behaviour, which would require porting the error-handling
+    %% change and all of its test adaptations.
+    ssl_test_lib:check_client_alert(Client,  handshake_failure).
 
 %%------------------------------------------------------------------
 handshake_hello_postpone_opts_verify() ->
