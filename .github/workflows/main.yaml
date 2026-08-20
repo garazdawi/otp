@@ -71,11 +71,12 @@ jobs:
             ALL_APPS: ${{ steps.apps.outputs.all }}
             CHANGED_APPS: ${{ steps.app-changes.outputs.changes }}
         run: |
-          if ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-build-and-check') }} || ${{ github.event_name == 'schedule' }}; then
-              echo "changes=${ALL_APPS}" >> "$GITHUB_OUTPUT"
-          else
-              echo "changes=${CHANGED_APPS}" >> "$GITHUB_OUTPUT"
-          fi
+          ## This is a maintenance branch for a frozen OTP release, where the
+          ## point of CI is to show that the whole runtime still works rather
+          ## than only the applications touched by the last commit.  Always
+          ## test every application instead of just the changed ones.
+          echo "changes=${ALL_APPS}" >> "$GITHUB_OUTPUT"
+          echo "(changed applications were: ${CHANGED_APPS})"
       - name: Check if there are any C-code changes, if not then limit CI run
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # ratchet:dorny/paths-filter@v3.0.2
         id: c-code-changes
