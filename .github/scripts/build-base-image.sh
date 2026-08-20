@@ -12,7 +12,13 @@ case "${BASE_BRANCH}" in
     master|maint)
         ;;
     *)
-        BASE_BRANCH="master"
+        ## Every branch in this repository is based on maint-26, so build a
+        ## 26 base image rather than falling back to master.  Otherwise kerl
+        ## installs the three newest releases and the test tools (proper,
+        ## jsx) get compiled by one of those, which produces BEAM files that
+        ## OTP 26 cannot read.
+        BASE_BRANCH="maint-26"
+        LATEST_ERLANG_VERSION="26"
         ;;
 esac
 
