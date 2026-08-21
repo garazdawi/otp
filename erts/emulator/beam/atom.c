@@ -235,6 +235,7 @@ erts_atom_put_index(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
     Uint tlen;
     Sint no_latin1_chars;
     Atom a;
+    IndexSlot *slot;
     int aix;
 
     ERTS_UNDEF(no_latin1_chars, -1);
@@ -329,17 +330,27 @@ erts_atom_put_index(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
     a.len = tlen;
     a.latin1_chars = (Sint16) no_latin1_chars;
     a.u.name = (byte *) text;
-    atom_write_lock();
-    aix = index_put(&erts_atom_table, (void*) &a);
-    atom_write_unlock();
-    if (aix < 0) {
+
+    /* Bail out before taking the write lock (which has to lock out every
+     * reader) when the table is already known to be full. Entries are never
+     * erased from the atom table, so this can only be conservative. */
+    if (erts_index_num_entries(&erts_atom_table) >= erts_atom_table.limit) {
         return ATOM_MAX_ATOMS_ERROR;
     }
-    return aix;
+
+    atom_write_lock();
+    slot = index_put_entry_may_fail(&erts_atom_table, (void*) &a);
+    atom_write_unlock();
+
+    /* index_put_entry_may_fail() only fails when the atom table is full. Note
+     * that we cannot return its -1 as is, as -1 is ATOM_BAD_ENCODING_ERROR. */
+    return slot ? slot->index : ATOM_MAX_ATOMS_ERROR;
 }
 
 /*
- * erts_atom_put() may fail. If it fails THE_NON_VALUE is returned!
+ * erts_atom_put() may fail. If the name is not a valid atom THE_NON_VALUE is
+ * returned. Callers that need to handle a full atom table gracefully must use
+ * erts_atom_put_index() instead, as a full table terminates the emulator here.
  */
 Eterm
 erts_atom_put(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
@@ -349,8 +360,11 @@ erts_atom_put(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
     if (aix >= 0)
 	return make_atom(aix);
 
-    if (aix == ATOM_MAX_ATOMS_ERROR)
-        erts_exit(ERTS_ABORT_EXIT, "Atom table is full\n");
+    if (aix == ATOM_MAX_ATOMS_ERROR) {
+	/* A core dump is unnecessary */
+	erts_exit(ERTS_DUMP_EXIT, "no more atoms in the atom table (max=%d)\n",
+		  erts_atom_table.limit);
+    }
 
     return THE_NON_VALUE;
 }
@@ -482,7 +496,7 @@ init_atom_table(void)
     f.meta_print = (HMPRINT_FUN) erts_print;
 
     erts_index_init(ERTS_ALC_T_ATOM_TABLE, &erts_atom_table,
-                    "atom_tab", ATOM_SIZE, erts_atom_table_size, true, f);
+                    "atom_tab", ATOM_SIZE, erts_atom_table_size, f);
 
     /* Ordinary atoms. a is a template for creating an entry in the atom table */
     for (i = 0; erl_atom_names[i] != 0; i++) {

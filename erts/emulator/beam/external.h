@@ -223,13 +223,15 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
                       Uint32 conn_id,
                       ErtsAtomCache *cache);
 
+/* Why a decode failed. Ordered so that zero-initialising yields the generic
+ * badarg reason. */
+typedef enum {
+    ERTS_DECODE_ERROR_BADARG,
+    ERTS_DECODE_ERROR_ATOM_TABLE_FULL
+} ErtsDecodeErrorInfo;
+
 Sint erts_decode_dist_ext_size(ErtsDistExternal *, int, int);
 Eterm erts_decode_dist_ext(ErtsHeapFactory*, ErtsDistExternal *, int);
-
-typedef enum {
-    ERTS_DECODE_ERROR_ATOM_TABLE_FULL,
-    ERTS_DECODE_ERROR_BADARG
-} ErtsDecodeErrorInfo;
 
 Sint erts_decode_ext_size(const byte*, Uint);
 Sint erts_decode_ext_size_ets(const byte*, Uint);

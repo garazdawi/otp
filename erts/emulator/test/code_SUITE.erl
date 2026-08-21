@@ -320,35 +320,33 @@ literal_leak(_Config) ->
 
 %% Make sure that loading a module that fills up the atom table fails gracefully.
 atom_leak(_Config) ->
+    A1 = list_to_atom(id("unique_atom_1")),
+    A2 = list_to_atom(id("unique_atom_2")),
 
-    %% This should create 2 atoms during loading of literals, which should fail
-        {ok, _, LiteralFailure} = compile:forms(
-            [{attribute,{1,2},module,test},
-             {attribute,{2,2},export,[{foo,0}]},
-             {function,{3,1},foo,0,
-             [{clause,{3,1},[],[],
-               [{tuple,1,[{atom,1,list_to_atom(id("unique_atom_1"))},
-                          {atom,1,list_to_atom(id("unique_atom_2"))}]}]}]}],
-            [binary]),
+    %% Needs 2 new atoms when the literals are loaded, which should fail.
+    LiteralFailure = atom_leak_module(foo, [{tuple,1,[{atom,1,A1},
+                                                      {atom,1,A2}]}]),
 
-    %% This should create 2 atoms during loading of atoms, which should fail
-        {ok, _, AtomFailure} = compile:forms(
-            [{attribute,{1,2},module,test},
-             {attribute,{2,2},export,[{list_to_atom(id("unique_atom_1")),0}]},
-             {function,{3,1},list_to_atom(id("unique_atom_1")),0,
-              [{clause,{3,1},[],[],
-                [{atom,1,list_to_atom(id("unique_atom_2"))}]}]}],
-            [binary]),
-    
+    %% Needs 2 new atoms when the atom chunk is loaded, which should fail.
+    AtomFailure = atom_leak_module(A1, [{atom,1,A2}]),
+
     {error, system_limit} = atom_limit(AtomFailure),
+    {error, system_limit} = atom_limit(LiteralFailure),
 
-    {error, system_limit} = atom_limit(LiteralFailure).
+    ok.
 
+%% Compiles module 'test' exporting Name/0, whose body is Body.
+atom_leak_module(Name, Body) ->
+    {ok, _, Binary} =
+        compile:forms([{attribute,{1,2},module,test},
+                       {attribute,{2,2},export,[{Name,0}]},
+                       {function,{3,1},Name,0,
+                        [{clause,{3,1},[],[],Body}]}],
+                      [binary]),
+    Binary.
 
 atom_limit(ModuleBinary) ->
-    MaxAtoms = 50_000,
-
-    {ok, Peer, Node} = ?CT_PEER(["+t", integer_to_list(MaxAtoms)]),
+    {ok, Peer, Node} = ?CT_PEER(["+t", "50000"]),
 
     try
         %% Test that loading a module that creates too many atoms fails gracefully.
@@ -357,10 +355,8 @@ atom_limit(ModuleBinary) ->
                                 Limit = erlang:system_info(atom_limit),
 
                                 %% Almost fill up the node with atoms
-                                [list_to_atom(integer_to_list(I)) ||
-                                    I <- lists:seq(Start, Limit - 2)],
-
-                                Before = erlang:system_info(atom_count),
+                                _ = [list_to_atom(integer_to_list(I)) ||
+                                        I <- lists:seq(Start, Limit - 2)],
 
                                 code:load_binary(test, "test.beam", ModuleBinary)
                         end)

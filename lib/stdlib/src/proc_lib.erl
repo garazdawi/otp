@@ -767,11 +767,11 @@ tuple (from which a pid can be created), or the process information of a process
 
 > #### Note {: .info }
 >
-> The list `Args` no longer contains the arguments, but the same number of atoms
-> as the number of arguments; the first atom is `'Argument__1'`, the second
-> `'Argument__2'`, and so on. The reason is that the argument list could waste a
-> significant amount of memory, and if the argument list contained funs, it
-> could be impossible to upgrade the code for the module.
+> The list `Args` no longer contains the arguments, but the same number of
+> placeholder strings as the number of arguments; the first is `"Argument__1"`,
+> the second `"Argument__2"`, and so on. The reason is that the argument list
+> could waste a significant amount of memory, and if the argument list contained
+> funs, it could be impossible to upgrade the code for the module.
 >
 > If the process was spawned using a fun, [`initial_call/1`](`initial_call/1`)
 > no longer returns the fun, but the module, function for the local function
@@ -785,7 +785,7 @@ tuple (from which a pid can be created), or the process information of a process
       Process :: dict_or_pid(),
       Module :: module(),
       Function :: atom(),
-      Args :: [atom()].
+      Args :: [string()].
 
 initial_call(DictOrPid) ->
     case raw_initial_call(DictOrPid) of

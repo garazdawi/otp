@@ -45,7 +45,6 @@ typedef struct index_table
     int size;			/* Allocated size */
     int limit;			/* Max size */
     int entries;		/* Number of entries */
-    bool return_null_at_full;	/* Return NULL instead of exit() when full */
     IndexSlot*** seg_table;	/* Mapping index -> obj */
 } IndexTable;
 
@@ -53,13 +52,18 @@ typedef struct index_table
 #define INDEX_PAGE_SIZE (1 << INDEX_PAGE_SHIFT)
 #define INDEX_PAGE_MASK ((1 << INDEX_PAGE_SHIFT)-1)
 
-IndexTable *erts_index_init(ErtsAlcType_t,IndexTable*,char*,int,int,bool,HashFunctions);
+IndexTable *erts_index_init(ErtsAlcType_t,IndexTable*,char*,int,int,HashFunctions);
 void index_info(fmtfn_t, void *, IndexTable*);
 int index_table_sz(IndexTable *);
 
 int index_get(IndexTable*, void*);
 
+/* Inserts an entry, terminating the emulator if the table is full. */
 IndexSlot* index_put_entry(IndexTable*, void*);
+
+/* As index_put_entry(), but returns NULL instead of terminating the emulator
+ * when the table is full. Already existing entries are still returned. */
+IndexSlot* index_put_entry_may_fail(IndexTable*, void*);
 
 /* Erase all entries with index 'ix' and higher
 */
@@ -73,11 +77,7 @@ ERTS_GLB_INLINE int erts_index_num_entries(IndexTable* t);
 
 ERTS_GLB_INLINE int index_put(IndexTable* t, void* tmpl)
 {
-    IndexSlot *slot = index_put_entry(t, tmpl);
-    if (!slot) {
-        return -1;
-    }
-    return slot->index;
+    return index_put_entry(t, tmpl)->index;
 }
 
 ERTS_GLB_INLINE IndexSlot*
@@ -92,7 +92,7 @@ ERTS_GLB_INLINE int erts_index_num_entries(IndexTable* t)
     /*
      * Do a read barrier here to allow lock free iteration
      * on tables where entries are never erased.
-     * index_put_entry() does matching write barrier.
+     * index_put_entry_may_fail() does matching write barrier.
      */
     ERTS_THR_READ_MEMORY_BARRIER;
     return ret;

@@ -124,7 +124,7 @@ void init_module_table(int limit)
 
     for (i = 0; i < ERTS_NUM_CODE_IX; i++) {
         erts_index_init(ERTS_ALC_T_MODULE_TABLE, &module_tables[i], "module_code",
-            MODULE_SIZE, module_limit, false, f);
+            MODULE_SIZE, module_limit, f);
     }
 
     for (i=0; i<ERTS_NUM_CODE_IX; i++) {

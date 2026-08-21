@@ -369,7 +369,6 @@ ERTS_CODE_STAGED_FUNC__(init)(void)
                         ERTS_CODE_STAGED_PREFIX_STRING "_staged_index",
                         ERTS_CODE_STAGED_TABLE_INITIAL_SIZE,
                         ERTS_CODE_STAGED_TABLE_LIMIT,
-                        false,
                         f);
     }
 }

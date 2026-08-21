@@ -908,6 +908,7 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
 		      ErtsAtomCache *cache)
 {
     register const byte *ep;
+    const char *hdr_error = "the header is corrupted";
 
     ASSERT(dep);
     erts_de_rlock(dep);
@@ -1098,13 +1099,13 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
 		    }
 		    CHKSIZE(len);
                     aix = erts_atom_put_index((byte *) ep,
-                                               len,
-                                               ERTS_ATOM_ENC_UTF8,
-                                               0);
+                                              len,
+                                              ERTS_ATOM_ENC_UTF8,
+                                              0);
                     if (aix < 0) {
                         if (aix == ATOM_MAX_ATOMS_ERROR)
                             goto full_atom_table;
-			goto bad_hdr;
+                        goto bad_hdr;
                     }
 		    ep += len;
                     cache->in_arr[cix] = make_atom(aix);
@@ -1138,28 +1139,18 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
     return ERTS_PREP_DIST_EXT_SUCCESS;
 
 #undef CHKSIZE
- full_atom_table: {
-        erts_dsprintf_buf_t *dsbufp = erts_create_logger_dsbuf();
-        erts_dsprintf(dsbufp,
-                      "%T failed to decode the distribution header from %T "
-                      "on distribution channel %d because of a full atom table\n",
-                      erts_this_node->sysname,
-                      edep->dep->sysname,
-                      dist_entry_channel_no(edep->dep));
-        for (ep = ext; ep < edep->data->ext_endp; ep++)
-            erts_dsprintf(dsbufp, ep != ext ? ",%b8u" : "<<%b8u", *ep);
-        erts_dsprintf(dsbufp, ">>");
-        erts_send_warning_to_logger_nogl(dsbufp);
-        goto fail;
-    }
+ full_atom_table:
+    hdr_error = "the atom table is full";
+    /* fall through */
  bad_hdr: {
 	erts_dsprintf_buf_t *dsbufp = erts_create_logger_dsbuf();
 	erts_dsprintf(dsbufp,
-		      "%T got a corrupted distribution header from %T "
-		      "on distribution channel %d\n",
+		      "%T could not decode the distribution header from %T "
+		      "on distribution channel %d: %s\n",
 		      erts_this_node->sysname,
 		      edep->dep->sysname,
-		      dist_entry_channel_no(edep->dep));
+		      dist_entry_channel_no(edep->dep),
+		      hdr_error);
 	for (ep = ext; ep < edep->data->ext_endp; ep++)
 	    erts_dsprintf(dsbufp, ep != ext ? ",%b8u" : "<<%b8u", *ep);
 	erts_dsprintf(dsbufp, ">>");
@@ -2088,14 +2079,13 @@ static BIF_RETTYPE binary_to_term_int(Process* p, Eterm bin, B2TContext *ctx)
         case B2TDecodeFail:
         case B2TBadArg:
         {
-            int reason = BADARG;
+            int reason = (ctx->error_info == ERTS_DECODE_ERROR_ATOM_TABLE_FULL)
+                ? SYSTEM_LIMIT : BADARG;
+
             BUMP_REDS(p, (initial_reds - ctx->reds) / B2T_BYTES_PER_REDUCTION);
 
 	    ASSERT(ctx->bif == BIF_TRAP_EXPORT(BIF_binary_to_term_1)
 		   || ctx->bif == BIF_TRAP_EXPORT(BIF_binary_to_term_2));
-
-            if (ctx->error_info == ERTS_DECODE_ERROR_ATOM_TABLE_FULL)
-                reason = SYSTEM_LIMIT;
 
             if (is_first_call) {
                 ERTS_BIF_PREP_ERROR(ret_val, p, reason);
@@ -3054,6 +3044,25 @@ enc_pid(ErtsAtomCacheMap *acmp, Eterm pid, byte* ep, Uint64 dflags)
     return enc_external_pid(acmp, pid, ep, dflags);
 }
 
+/* Interns an atom while decoding, recording why it failed (if anywhere to
+ * record it). Returns 0 on failure. */
+static ERTS_INLINE int
+dec_put_atom(const byte *ep, Uint len, ErtsAtomEncoding enc, Eterm *objp,
+             ErtsDecodeErrorInfo *error_info)
+{
+    int aix = erts_atom_put_index(ep, len, enc, 0);
+
+    if (aix < 0) {
+        if (aix == ATOM_MAX_ATOMS_ERROR && error_info) {
+            *error_info = ERTS_DECODE_ERROR_ATOM_TABLE_FULL;
+        }
+        return 0;
+    }
+
+    *objp = make_atom(aix);
+    return 1;
+}
+
 /* Expect an atom in plain text or cached */
 static const byte*
 dec_atom(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags, ErtsDecodeErrorInfo *error_info)
@@ -3099,15 +3108,8 @@ dec_atom(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags, Erts
 	    if (!erts_atom_get((char*)ep, len, objp, char_enc)) {
                 goto error;
 	    }
-        } else {
-            int aix = erts_atom_put_index(ep, len, char_enc, 0);
-            if (aix < 0) {
-                if (aix == ATOM_MAX_ATOMS_ERROR && error_info) {
-                    *error_info = ERTS_DECODE_ERROR_ATOM_TABLE_FULL;
-                }
-		goto error;
-            }
-            *objp = make_atom(aix);
+        } else if (!dec_put_atom(ep, len, char_enc, objp, error_info)) {
+            goto error;
         }
 	ep += len;
 	break;
@@ -4340,7 +4342,7 @@ dec_term(ErtsDistExternal *edep,
          Eterm* objp,
 	 B2TContext* ctx,
          Uint32 flags,
-        ErtsDecodeErrorInfo *error_info)
+         ErtsDecodeErrorInfo *error_info)
 {
 #define PSTACK_TYPE struct dec_term_map
     PSTACK_DECLARE(map_array, 10);
@@ -4349,7 +4351,6 @@ dec_term(ErtsDistExternal *edep,
     register Eterm* hp;        /* Please don't take the address of hp */
     Eterm* next;
     SWord reds;
-
 #ifdef DEBUG
     Eterm* dbg_resultp = ctx ? &ctx->u.dc.res : objp;
 #endif
@@ -4562,14 +4563,8 @@ dec_term_atom_common:
 		if (!erts_atom_get((char*)ep, n, objp, char_enc)) {
 		    goto error;
 		}
-	    } else {
-                int aix = erts_atom_put_index(ep, n, char_enc, 0);
-                if (aix < 0) {
-                    if (error_info)
-                        *error_info = ERTS_DECODE_ERROR_ATOM_TABLE_FULL;
-		    goto error;
-                }
-                *objp = make_atom(aix);
+	    } else if (!dec_put_atom(ep, n, char_enc, objp, error_info)) {
+		goto error;
 	    }
 	    ep += n;
 	    break;

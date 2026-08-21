@@ -47,12 +47,19 @@
         }                             \
     } while(0)
 
-#define LoadAssert(Expr)     \
-    do {                     \
-        if (!(Expr)) {       \
-            return 0;        \
-        }                    \
-    } while(0)
+#define LoadAssert(Expr) LoadAssertWError(Expr, 0)
+
+/* The parse_* helpers return 1 on success and 0 when the chunk is corrupt.
+ * Those that can also fail for a reason the loader must report verbatim
+ * return one of the negative codes below. */
+#define PARSE_FAILED_FULL_ATOM_TABLE (-1)
+
+/* Decoding a literal failed; a full atom table must be reported as such, any
+ * other failure means the literal chunk is corrupt. */
+#define LoadAssertDecoded(Value, ErrorInfo)                                 \
+    LoadAssertWError(!is_non_value(Value),                                  \
+                     (ErrorInfo) == ERTS_DECODE_ERROR_ATOM_TABLE_FULL       \
+                         ? PARSE_FAILED_FULL_ATOM_TABLE : 0)
 
 /* Quick sanity check for item counts; if the resulting array can't fit into
  * 1GB it's most likely wonky. */
@@ -246,8 +253,6 @@ static int beamreader_read_tagged(BeamReader *reader, TaggedNumber *val) {
     return 1;
 }
 
-void beam_load_report_error(int line, LoaderState* context, char *fmt,...);
-
 static int parse_atom_chunk(BeamFile *beam,
                             IFF_Chunk *chunk) {
     BeamFile_AtomTable *atoms;
@@ -298,7 +303,9 @@ static int parse_atom_chunk(BeamFile *beam,
 
         LoadAssert(beamreader_read_bytes(&reader, length, &string));
         aix = erts_atom_put_index(string, length, ERTS_ATOM_ENC_UTF8, 0);
-        LoadAssertWError(aix >= 0, aix); /* ATOM_MAX_ATOMS_ERROR */
+        LoadAssertWError(aix != ATOM_MAX_ATOMS_ERROR,
+                         PARSE_FAILED_FULL_ATOM_TABLE);
+        LoadAssert(aix >= 0);
         atoms->entries[i] = make_atom(aix);
     }
 
@@ -1446,7 +1453,7 @@ static int parse_decompressed_literals(BeamFile *beam,
             value = erts_decode_ext(&factory, &ext_data, 0, &error_info);
             erts_factory_close(&factory);
 
-            LoadAssertWError(!is_non_value(value), error_info == ERTS_DECODE_ERROR_ATOM_TABLE_FULL ? ATOM_MAX_ATOMS_ERROR : 0);
+            LoadAssertDecoded(value, error_info);
             ASSERT(size_object_litopt(value, &purge_area) > 0);
 
             heap_size += erts_used_frag_sz(factory.heap_frags);
@@ -1462,7 +1469,7 @@ static int parse_decompressed_literals(BeamFile *beam,
              *
              * (Note that erts_decode_ext_size does not include said term in
              * the decoded size) */
-            LoadAssertWError(!is_non_value(value), error_info == ERTS_DECODE_ERROR_ATOM_TABLE_FULL ? ATOM_MAX_ATOMS_ERROR : 0);
+            LoadAssertDecoded(value, error_info);
             ASSERT(size_object_litopt(value, &purge_area) == 0);
 
             fragments = NULL;
@@ -1635,6 +1642,7 @@ beamfile_read(const byte *data, size_t size, BeamFile *beam) {
     static const int NUM_CHUNKS = sizeof(chunk_iffs) / sizeof(chunk_iffs[0]);
 
     enum beamfile_read_result error;
+    int res;
 
     /* MSVC doesn't like the use of NUM_CHUNKS here */
     IFF_Chunk chunks[sizeof(chunk_iffs) / sizeof(chunk_iffs[0])];
@@ -1668,17 +1676,10 @@ beamfile_read(const byte *data, size_t size, BeamFile *beam) {
             error = BEAMFILE_READ_OBSOLETE_ATOM_TABLE;
         }
         goto error;
-    } else {
-        switch (parse_atom_chunk(beam, &chunks[UTF8_ATOM_CHUNK])) {
-        case 0:
-            error = BEAMFILE_READ_CORRUPT_ATOM_TABLE;
-            goto error;
-        case ATOM_MAX_ATOMS_ERROR:
-            error = BEAMFILE_READ_FULL_ATOM_TABLE;
-            goto error;
-        default:
-            break;
-        }
+    } else if ((res = parse_atom_chunk(beam, &chunks[UTF8_ATOM_CHUNK])) <= 0) {
+        error = (res == PARSE_FAILED_FULL_ATOM_TABLE) ?
+            BEAMFILE_READ_FULL_ATOM_TABLE : BEAMFILE_READ_CORRUPT_ATOM_TABLE;
+        goto error;
     }
 
     if (chunks[IMP_CHUNK].size == 0) {
@@ -1714,15 +1715,10 @@ beamfile_read(const byte *data, size_t size, BeamFile *beam) {
     }
 
     if (chunks[LITERAL_CHUNK].size > 0) {
-        switch (parse_literal_chunk(beam, &chunks[LITERAL_CHUNK])) {
-        case ATOM_MAX_ATOMS_ERROR:
-            error = BEAMFILE_READ_FULL_ATOM_TABLE;
+        if ((res = parse_literal_chunk(beam, &chunks[LITERAL_CHUNK])) <= 0) {
+            error = (res == PARSE_FAILED_FULL_ATOM_TABLE) ?
+                BEAMFILE_READ_FULL_ATOM_TABLE : BEAMFILE_READ_CORRUPT_LITERAL_TABLE;
             goto error;
-        case 0:
-            error = BEAMFILE_READ_CORRUPT_LITERAL_TABLE;
-            goto error;
-        default:
-            break;
         }
     }
 

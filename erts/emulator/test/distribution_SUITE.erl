@@ -38,7 +38,6 @@
 %% Tests distribution and the tcp driver.
 
 -include_lib("common_test/include/ct.hrl").
--include_lib("stdlib/include/assert.hrl").
 
 -export([all/0, suite/0, groups/0,
          init_per_suite/1, end_per_suite/1,
@@ -2549,39 +2548,36 @@ bad_dist_ext_size(Config) when is_list(Config) ->
 bad_dist_ext_full_atom_table(Config) when is_list(Config) ->
     %% Disabled "connect all" so global wont interfere...
     {ok, VictimPeer, Victim} = ?CT_PEER(["-connect_all", "false", "+t", "50000"]),
-    Offender = node(),
 
     net_kernel:monitor_nodes(true, [nodedown_reason,{node_type,all}]),
 
     try
-
         Parent = self(),
-        timer:sleep(1000),
         P = spawn(Victim,
-                    fun () ->
-                                Start = erlang:system_info(atom_count),
-                                Limit = erlang:system_info(atom_limit),
-            
-                                %% Almost fill up the node with atoms
-                                [list_to_atom(integer_to_list(I)) ||
-                                I <- lists:seq(Start, Limit - 1)],
-                                Parent ! {self(), started},
-                                receive Msg -> Msg end
-                        end),
+                  fun () ->
+                          Start = erlang:system_info(atom_count),
+                          Limit = erlang:system_info(atom_limit),
+
+                          %% Almost fill up the node with atoms
+                          _ = [list_to_atom(integer_to_list(I)) ||
+                                  I <- lists:seq(Start, Limit - 1)],
+                          Parent ! {self(), started},
+                          receive Msg -> Msg end
+                  end),
 
         receive {P, started} -> ok end,
 
-        receive M -> ct:pal("1: ~p",[M]) after 1000 -> ok end,
-
-        P ! [list_to_atom("abcdefghijklmnopqrstuvwxyz" ++ integer_to_list(I)) || I <- lists:seq(1,100)],
+        %% Decoding these atoms on the victim overflows its atom table, which
+        %% must take the connection down rather than the node.
+        P ! [list_to_atom("abcdefghijklmnopqrstuvwxyz" ++ integer_to_list(I))
+             || I <- lists:seq(1,100)],
 
         receive
             {nodedown,Victim,Flags} ->
-                ?assertEqual(connection_closed, proplists:get_value(nodedown_reason,Flags))
+                connection_closed = proplists:get_value(nodedown_reason, Flags)
         after 1000 ->
-            ct:fail(did_not_get_node_down)
+                ct:fail(did_not_get_node_down)
         end
-
     after
         net_kernel:monitor_nodes(false, []),
         peer:stop(VictimPeer)

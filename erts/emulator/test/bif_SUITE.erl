@@ -409,50 +409,33 @@ t_list_to_existing_atom(Config) when is_list(Config) ->
     UnlikelyAtom = list_to_existing_atom(UnlikelyStr),
     ok.
 
+%% Test that the atom creating BIFs raise system_limit, rather than bringing
+%% the node down, once the atom table is full.
 list_to_atom_limit(Config) when is_list(Config) ->
+    {ok, Peer, Node} = ?CT_PEER(#{ args => ["+t", "50000"] }),
 
-    MaxAtoms = 50_000,
+    Creators = [fun(I) -> list_to_atom(integer_to_list(I)) end,
+                fun(I) -> binary_to_atom(integer_to_binary(I)) end,
+                fun(I) -> binary_to_atom(integer_to_binary(I), latin1) end],
 
-    {ok, Peer, Node} = ?CT_PEER(#{ args => ["+t", integer_to_list(MaxAtoms)] }),
-
-    %% Test that list_to_atom fails with system_limit when the atom limit is reached.
-    try erpc:call(Node, fun() ->
-                                [list_to_atom(integer_to_list(I)) ||
-                                    I <- lists:seq(erlang:system_info(atom_count),
-                                                   erlang:system_info(atom_limit) + 1)]
-                        end),
-         ct:fail(call_succeeded)
-    catch
-        error:{exception, system_limit, _} ->
-            ok
+    try
+        [begin
+             Fill = fun() ->
+                            [Create(I) ||
+                                I <- lists:seq(erlang:system_info(atom_count),
+                                               erlang:system_info(atom_limit) + 1)]
+                    end,
+             try erpc:call(Node, Fill),
+                  ct:fail(call_succeeded)
+             catch
+                 error:{exception, system_limit, _} ->
+                     ok
+             end
+         end || Create <- Creators]
+    after
+        peer:stop(Peer)
     end,
-
-    %% Test that binary_to_atom fails with system_limit when the atom limit is reached.
-    try erpc:call(Node, fun() ->
-                                [binary_to_atom(integer_to_binary(I)) ||
-                                    I <- lists:seq(erlang:system_info(atom_count),
-                                                   erlang:system_info(atom_limit) + 1)]
-                        end),
-         ct:fail(call_succeeded)
-    catch
-        error:{exception, system_limit, _} ->
-            ok
-    end,
-
-    %% Test that binary_to_atom fails with system_limit when the atom limit is reached
-    %% for latin1 atoms
-    try erpc:call(Node, fun() ->
-                                [binary_to_atom(integer_to_binary(I), latin1) ||
-                                    I <- lists:seq(erlang:system_info(atom_count),
-                                                   erlang:system_info(atom_limit) + 1)]
-                        end),
-         ct:fail(call_succeeded)
-    catch
-        error:{exception, system_limit, _} ->
-            ok
-    end,
-
-    peer:stop(Peer).
+    ok.
 
 os_env(Config) when is_list(Config) ->
     EnvVar1 = "MjhgvFDrresdCghN mnjkUYg vfrD",

@@ -1992,28 +1992,34 @@ binary_to_term_trap_crash(Config) ->
      || I <- lists:seq(1,CONTEXT_REDS)],
     ok.
 
+%% Test that binary_to_term raises system_limit, rather than bringing the node
+%% down, once the atom table is full.
 binary_to_term_atom_limit(_Config) ->
+    {ok, Peer, Node} = ?CT_PEER(#{ args => ["+t", "50000"] }),
 
-    MaxAtoms = 50_000,
+    AtomExt = fun(I) ->
+                      B = integer_to_binary(I),
+                      <<131, ?SMALL_ATOM_UTF8_EXT, (byte_size(B)), B/binary>>
+              end,
 
-    {ok, Peer, Node} = ?CT_PEER(#{ args => ["+t", integer_to_list(MaxAtoms)] }),
-
-    %% Test that list_to_atom fails with system_limit when the atom limit is reached.
-    system_limit =
-        erpc:call(
-          Node,
-          fun() ->
-                  try
-                      [begin BI = integer_to_binary(I), binary_to_term(<<131,119,(byte_size(BI)), BI/binary>>) end ||
-                          I <- lists:seq(erlang:system_info(atom_count),
-                                         erlang:system_info(atom_limit) + 1)]
-                  catch
-                      error:system_limit ->
-                          system_limit
-                  end
-          end),
-
-    peer:stop(Peer).
+    try
+        system_limit =
+            erpc:call(
+              Node,
+              fun() ->
+                      try
+                          [binary_to_term(AtomExt(I)) ||
+                              I <- lists:seq(erlang:system_info(atom_count),
+                                             erlang:system_info(atom_limit) + 1)]
+                      catch
+                          error:system_limit ->
+                              system_limit
+                      end
+              end)
+    after
+        peer:stop(Peer)
+    end,
+    ok.
 
 large(Config) when is_list(Config) ->
     List = lists:flatten(lists:map(fun (_) ->
