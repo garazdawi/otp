@@ -33,6 +33,26 @@
     <file>notes.xml</file>
     </header>
 
+<section><title>Common_Test 1.26.2.4.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    <c>cth_surefire</c> could crash with a <c>function_clause</c>
+	    when a test group was skipped, and did not handle nested
+	    skipped groups correctly. Both made the hook fail instead of
+	    reporting the skipped cases.</p>
+          <p>
+	    Backported from commits <c>cccddb719e59</c> and
+	    <c>6552e962fee8</c> on the maint branch. Test-tooling fix
+	    only; no runtime application is affected.</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Common_Test 1.26.2.4</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>
