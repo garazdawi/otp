@@ -1530,7 +1530,7 @@ size_t enif_binary_to_term(ErlNifEnv *dst_env,
         erts_factory_dummy_init(&factory);
     }
 
-    *term = erts_decode_ext(&factory, &bp, flags);
+    *term = erts_decode_ext(&factory, &bp, flags, NULL);
 
     if (is_non_value(*term)) {
         return 0;

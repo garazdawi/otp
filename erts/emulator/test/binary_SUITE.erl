@@ -71,6 +71,7 @@
 	 bad_binary_to_term/1, bad_terms/1, more_bad_terms/1,
          big_binary_to_term/1,
          binary_to_term_trap_crash/1,
+         binary_to_term_atom_limit/1,
 	 otp_5484/1,otp_5933/1,
 	 ordering/1,unaligned_order/1,gc_test/1,
 	 bit_sized_binary_sizes/1,
@@ -102,7 +103,7 @@ all() ->
      bad_binary_to_term_2, safe_binary_to_term2,
      bad_binary_to_term, bad_terms, t_hash, bad_size,
      big_binary_to_term,
-     binary_to_term_trap_crash,
+     binary_to_term_trap_crash, binary_to_term_atom_limit,
      sub_bin_copy, bad_term_to_binary, t2b_system_limit,
      term_to_iovec, more_bad_terms,
      unsorted_map_in_map,
@@ -1989,6 +1990,35 @@ binary_to_term_trap_crash(Config) ->
          binary_to_term(Bin)
      end
      || I <- lists:seq(1,CONTEXT_REDS)],
+    ok.
+
+%% Test that binary_to_term raises system_limit, rather than bringing the node
+%% down, once the atom table is full.
+binary_to_term_atom_limit(_Config) ->
+    {ok, Peer, Node} = ?CT_PEER(#{ args => ["+t", "50000"] }),
+
+    AtomExt = fun(I) ->
+                      B = integer_to_binary(I),
+                      <<131, ?SMALL_ATOM_UTF8_EXT, (byte_size(B)), B/binary>>
+              end,
+
+    try
+        system_limit =
+            erpc:call(
+              Node,
+              fun() ->
+                      try
+                          [binary_to_term(AtomExt(I)) ||
+                              I <- lists:seq(erlang:system_info(atom_count),
+                                             erlang:system_info(atom_limit) + 1)]
+                      catch
+                          error:system_limit ->
+                              system_limit
+                      end
+              end)
+    after
+        peer:stop(Peer)
+    end,
     ok.
 
 large(Config) when is_list(Config) ->
