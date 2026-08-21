@@ -1145,12 +1145,12 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
  bad_hdr: {
 	erts_dsprintf_buf_t *dsbufp = erts_create_logger_dsbuf();
 	erts_dsprintf(dsbufp,
-		      "%T could not decode the distribution header from %T "
-		      "on distribution channel %d: %s\n",
+                      "%T could not decode the distribution header from %T "
+                      "on distribution channel %d: %s\n",
 		      erts_this_node->sysname,
 		      edep->dep->sysname,
-		      dist_entry_channel_no(edep->dep),
-		      hdr_error);
+                      dist_entry_channel_no(edep->dep),
+                      hdr_error);
 	for (ep = ext; ep < edep->data->ext_endp; ep++)
 	    erts_dsprintf(dsbufp, ep != ext ? ",%b8u" : "<<%b8u", *ep);
 	erts_dsprintf(dsbufp, ">>");
@@ -4563,8 +4563,8 @@ dec_term_atom_common:
 		if (!erts_atom_get((char*)ep, n, objp, char_enc)) {
 		    goto error;
 		}
-	    } else if (!dec_put_atom(ep, n, char_enc, objp, error_info)) {
-		goto error;
+            } else if (!dec_put_atom(ep, n, char_enc, objp, error_info)) {
+                goto error;
 	    }
 	    ep += n;
 	    break;

@@ -1981,7 +1981,7 @@ binary_to_atom(Process* proc, Eterm bin, Eterm enc, int must_exist)
 	    badarg:
 		erts_free_aligned_binary_bytes(temp_alloc);
 		BIF_ERROR(proc, BADARG);
-	    } else if (lix < 0) {
+            } else if (lix < 0) {
 	    system_limit:
 		erts_free_aligned_binary_bytes(temp_alloc);
 		BIF_ERROR(proc, SYSTEM_LIMIT);
@@ -2000,7 +2000,7 @@ binary_to_atom(Process* proc, Eterm bin, Eterm enc, int must_exist)
 					  0);
 	    if (uix == ATOM_BAD_ENCODING_ERROR) {
 		goto badarg;
-	    } else if (uix < 0) {
+            } else if (uix < 0) {
 		goto system_limit;
 	    }
 

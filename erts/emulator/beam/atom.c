@@ -361,9 +361,9 @@ erts_atom_put(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
 	return make_atom(aix);
 
     if (aix == ATOM_MAX_ATOMS_ERROR) {
-	/* A core dump is unnecessary */
-	erts_exit(ERTS_DUMP_EXIT, "no more atoms in the atom table (max=%d)\n",
-		  erts_atom_table.limit);
+        /* A core dump is unnecessary */
+        erts_exit(ERTS_DUMP_EXIT, "no more atoms in the atom table (max=%d)\n",
+                  erts_atom_table.limit);
     }
 
     return THE_NON_VALUE;

@@ -3225,7 +3225,7 @@ BIF_RETTYPE list_to_atom_1(BIF_ALIST_1)
     aix = erts_atom_put_index(buf, written, ERTS_ATOM_ENC_UTF8, 1);
     erts_free(ERTS_ALC_T_TMP, (void *) buf);
     if (aix == ATOM_MAX_ATOMS_ERROR)
-	BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
     ASSERT(aix >= 0);
     BIF_RET(make_atom(aix));
 }

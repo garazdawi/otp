@@ -95,7 +95,7 @@ index_put_entry_may_fail(IndexTable* t, void* tmpl)
     }
 
     if (ix >= t->size) {
-	Uint sz = INDEX_PAGE_SIZE*sizeof(IndexSlot*);
+        Uint sz = INDEX_PAGE_SIZE*sizeof(IndexSlot*);
 	t->seg_table[ix>>INDEX_PAGE_SHIFT] = erts_alloc(t->type, sz);
 	t->size += INDEX_PAGE_SIZE;
     }
@@ -118,9 +118,9 @@ index_put_entry(IndexTable* t, void* tmpl)
     IndexSlot* p = index_put_entry_may_fail(t, tmpl);
 
     if (!p) {
-	/* A core dump is unnecessary */
-	erts_exit(ERTS_DUMP_EXIT, "no more index entries in %s (max=%d)\n",
-		 t->htable.name, t->limit);
+        /* A core dump is unnecessary */
+        erts_exit(ERTS_DUMP_EXIT, "no more index entries in %s (max=%d)\n",
+                  t->htable.name, t->limit);
     }
     return p;
 }
