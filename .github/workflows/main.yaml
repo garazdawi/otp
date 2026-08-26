@@ -444,9 +444,18 @@ jobs:
               echo "No debug tests on Windows"
               ;;
             *)
+              ## The Linux test job runs with SPEC_POSTFIX=gh, which makes
+              ## test_target_script.sh prefer <app>_gh.spec over <app>.spec when
+              ## one exists.  Do the same here so that the skips recorded in the
+              ## gh specs apply on Windows too.
+              if [ -f "release/tests/${APP}_test/${APP}_gh.spec" ]; then
+                RUN_TESTS="ts:run_category(${APP},gh,[batch])"
+              else
+                RUN_TESTS="ts:run(${APP},[batch])"
+              fi
               (cd release/tests/test_server && \
                erl.exe -noinput -eval "ts:install()" \
-                       -eval "ts:run(${APP},[batch])" -s init stop)
+                       -eval "${RUN_TESTS}" -s init stop)
               if grep -l "^=result[ ]*failed:" \
                  release/tests/test_server/ct_run.*/*${APP}*.logs/run*/suite.log; then
                 exit 1
@@ -515,9 +524,14 @@ jobs:
           export MAKEFLAGS=-j$(($(nproc) + 2))
           eval `./otp_build env_win32 x64`
           export PATH="$(pwd)/release/win32/bin:$PATH"
+          if [ -f "release/tests/system_test/system_gh.spec" ]; then
+            RUN_TESTS="ts:run_category(system,gh,[batch])"
+          else
+            RUN_TESTS="ts:run(system,[batch])"
+          fi
           (cd release/tests/test_server && \
            erl.exe -noinput -eval "ts:install()" \
-                   -eval "ts:run(system,[batch])" -s init stop)
+                   -eval "${RUN_TESTS}" -s init stop)
           if grep -l "^=result[ ]*failed:" \
              release/tests/test_server/ct_run.*/*system*.logs/run*/suite.log; then
             exit 1
