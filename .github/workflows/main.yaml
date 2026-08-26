@@ -646,6 +646,12 @@ jobs:
           shopt -s nullglob
           mkdir -p make_test_dir
           for file in *_test_results/*.tar.gz; do
+            ## The Windows jobs upload <app>_win32_test_results artifacts, which
+            ## match the glob above but hold a release/tests tree rather than a
+            ## make_test_dir one.  They are handled by system-test-windows.
+            case "${file}" in
+              *_win32_test_results/*) continue ;;
+            esac
             tar xzf $file
           done
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
