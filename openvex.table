@@ -317,6 +317,15 @@
         ],
         "not_affected": "component_not_present"
       }
+    },
+    {
+      "pkg:otp/erts@14.0": "CVE-2026-42792",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@14.2.5.15.0.100",
+        "fixed": [
+          "pkg:otp/erts@14.2.5.15.0.100"
+        ]
+      }
     }
   ],
   "otp-27": [
