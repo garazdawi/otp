@@ -1,0 +1,2711 @@
+{
+  "otp-26": [
+    {
+      "pkg:otp/kernel@9.0": "CVE-2026-28810",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/kernel@9.2.4.11",
+        "fixed": [
+          "pkg:otp/kernel@9.2.4.11"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.0": "CVE-2026-28808",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.1.0.6",
+        "fixed": [
+          "pkg:otp/inets@9.1.0.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2026-23942",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.1.4.14",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.14"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2026-23943",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.1.4.14",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.14"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.0": "CVE-2026-23941",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.1.0.5",
+        "fixed": [
+          "pkg:otp/inets@9.1.0.5"
+        ]
+      }
+    },
+    {
+      "pkg:github/madler/zlib@04f42ceca40f73e2978b50e93806c2a18c1281fc": "CVE-2026-27171",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    },
+    {
+      "pkg:otp/tftp@1.1": "CVE-2026-21620",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/tftp@1.1.1.1",
+        "fixed": [
+          "pkg:otp/tftp@1.1.1.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2023-48795",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.1.1",
+        "fixed": [
+          "pkg:otp/ssh@5.1.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2025-48041",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.1.4.12",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.12"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.0": "CVE-2016-1000107",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.1.0.3",
+        "fixed": [
+          "pkg:otp/inets@9.1.0.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2025-48040",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.1.4.12",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.12"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2025-48039",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.1.4.12",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.12"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2025-48038",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.1.4.12",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.12"
+        ]
+      }
+    },
+    {
+      "pkg:github/madler/zlib@04f42ceca40f73e2978b50e93806c2a18c1281fc": "CVE-2023-45853",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/madler/zlib@04f42ceca40f73e2978b50e93806c2a18c1281fc": "CVE-2026-22184",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2023-5678",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2023-6129",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2023-6237",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-0727",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-13176",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-2511",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-4603",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-4741",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-5535",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-6119",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-9143",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2025-4575",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0",
+          "pkg:otp/erl_interface@5.4"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2025-26618",
+      "status": {
+        "affected": "Update to the next version",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2025-32433",
+      "status": {
+        "affected": "A temporary workaround involves disabling the SSH server or to prevent access via firewall rules.",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.8"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.1.1": "CVE-2025-46712",
+      "status": {
+        "affected": "Update to the next version",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.9"
+        ]
+      }
+    },
+    {
+      "pkg:otp/stdlib@5.0": "CVE-2025-4748",
+      "status": {
+        "affected": "Mitigation: Update to pkg:otp/stdlib@5.2.3.4",
+        "fixed": [
+          "pkg:otp/stdlib@5.2.3.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.0": "CVE-2025-30211",
+      "status": {
+        "affected": "Workaround: set option `parallel_login` to false. Reduce `max_sessions` option.",
+        "fixed": [
+          "pkg:otp/ssh@5.1.4.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.1": "CVE-2024-53846",
+      "status": {
+        "affected": "Update to ssl@11.1.4.6",
+        "fixed": [
+          "pkg:otp/ssl@11.1.4.6"
+        ]
+      }
+    },
+    {
+      "pkg:github/madler/zlib@04f42ceca40f73e2978b50e93806c2a18c1281fc": "CVE-2026-3381",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@14.0"
+        ],
+        "not_affected": "component_not_present"
+      }
+    },
+    {
+      "pkg:otp/erts@14.0": "CVE-2026-42792",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@100.0",
+        "fixed": [
+          "pkg:otp/erts@100.0"
+        ]
+      }
+    }
+  ],
+  "otp-27": [
+    {
+      "pkg:otp/ssl@11.2": "CVE-2026-89422",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.2.12.13",
+        "fixed": [
+          "pkg:otp/ssl@11.2.12.13"
+        ]
+      }
+    },
+    {
+      "pkg:otp/asn1@5.3": "CVE-2026-65634",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/asn1@5.3.4.3",
+        "fixed": [
+          "pkg:otp/asn1@5.3.4.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2026-68956",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.13",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.13"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@15.0": "CVE-2026-75538",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@15.2.7.13",
+        "fixed": [
+          "pkg:otp/erts@15.2.7.13"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-70399",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-74835",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-69664",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/snmp@5.16": "CVE-2026-70405",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/snmp@5.18.2.1",
+        "fixed": [
+          "pkg:otp/snmp@5.18.2.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/eldap@1.2.13": "CVE-2026-70409",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/eldap@1.2.14.2",
+        "fixed": [
+          "pkg:otp/eldap@1.2.14.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-71562",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-66835",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-73270",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-71380",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-66357",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-73812",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-74994",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-55951",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/stdlib@6.0": "CVE-2026-59696",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/stdlib@6.2.2.5",
+        "fixed": [
+          "pkg:otp/stdlib@6.2.2.5"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-73276",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.7",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.2": "CVE-2026-55952",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.2.12.10",
+        "fixed": [
+          "pkg:otp/ssl@11.2.12.10"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.2": "CVE-2026-55950",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.2.12.10",
+        "fixed": [
+          "pkg:otp/ssl@11.2.12.10"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.2": "CVE-2026-54891",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.2.12.10",
+        "fixed": [
+          "pkg:otp/ssl@11.2.12.10"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2026-54886",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.9",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.9"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.2": "CVE-2026-54887",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.2.12.10",
+        "fixed": [
+          "pkg:otp/ssl@11.2.12.10"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2026-53422",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.9",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.9"
+        ]
+      }
+    },
+    {
+      "pkg:otp/stdlib@6.1": "CVE-2026-47078",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/stdlib@6.2.2.4",
+        "fixed": [
+          "pkg:otp/stdlib@6.2.2.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@15.0": "CVE-2026-55737",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@15.2.7.11",
+        "fixed": [
+          "pkg:otp/erts@15.2.7.11"
+        ]
+      }
+    },
+    {
+      "pkg:otp/megaco@4.6": "CVE-2026-59250",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/megaco@4.7.2.2",
+        "fixed": [
+          "pkg:otp/megaco@4.7.2.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.16": "CVE-2026-59251",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.17.1.5",
+        "fixed": [
+          "pkg:otp/public_key@1.17.1.5"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.2": "CVE-2026-55953",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.2.12.11",
+        "fixed": [
+          "pkg:otp/ssl@11.2.12.11"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.2": "CVE-2026-58227",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.2.12.11",
+        "fixed": [
+          "pkg:otp/ssl@11.2.12.11"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@15.0": "CVE-2026-42792",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@15.2.7.11",
+        "fixed": [
+          "pkg:otp/erts@15.2.7.11"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@15.0": "CVE-2026-54890",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@15.2.7.11",
+        "fixed": [
+          "pkg:otp/erts@15.2.7.11"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ftp@1.2.2": "CVE-2026-48858",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ftp@1.2.3.1",
+        "fixed": [
+          "pkg:otp/ftp@1.2.3.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@15.0": "CVE-2026-49759",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@15.2.7.9",
+        "fixed": [
+          "pkg:otp/erts@15.2.7.9"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.2": "CVE-2026-48860",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.2.12.9",
+        "fixed": [
+          "pkg:otp/ssl@11.2.12.9"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erl_interface@5.5.2": "CVE-2026-49760",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erl_interface@5.5.2.1",
+        "fixed": [
+          "pkg:otp/erl_interface@5.5.2.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-48856",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.6",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2026-48855",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.8",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.8"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2026-32147",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.7",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.16": "CVE-2026-42791",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.17.1.3",
+        "fixed": [
+          "pkg:otp/public_key@1.17.1.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.16": "CVE-2026-42789",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.17.1.3",
+        "fixed": [
+          "pkg:otp/public_key@1.17.1.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.16": "CVE-2026-42790",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.17.1.3",
+        "fixed": [
+          "pkg:otp/public_key@1.17.1.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/kernel@10.0": "CVE-2026-28810",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/kernel@10.2.7.4",
+        "fixed": [
+          "pkg:otp/kernel@10.2.7.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-28808",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.4",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.16": "CVE-2026-32144",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.17.1.2",
+        "fixed": [
+          "pkg:otp/public_key@1.17.1.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.2": "CVE-2026-32144",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.2.12.7",
+        "fixed": [
+          "pkg:otp/ssl@11.2.12.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2026-23942",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.6",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2026-23943",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.6",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2026-23941",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:github/madler/zlib@04f42ceca40f73e2978b50e93806c2a18c1281fc": "CVE-2026-27171",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    },
+    {
+      "pkg:otp/tftp@1.2": "CVE-2026-21620",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/tftp@1.2.2.1",
+        "fixed": [
+          "pkg:otp/tftp@1.2.2.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2025-32433",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.10",
+        "fixed": [
+          "pkg:otp/ssh@5.2.10"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2025-48041",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.3",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.2": "CVE-2016-1000107",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.3.2.1",
+        "fixed": [
+          "pkg:otp/inets@9.3.2.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2025-48040",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.3",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2025-48039",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.3",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2025-48038",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.2.11.3",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11.3"
+        ]
+      }
+    },
+    {
+      "pkg:github/madler/zlib@04f42ceca40f73e2978b50e93806c2a18c1281fc": "CVE-2023-45853",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2023-5678",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2023-6129",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2023-6237",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-0727",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-13176",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-2511",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-4603",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-4741",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-5535",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-6119",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2024-9143",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2025-4575",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0",
+          "pkg:otp/erl_interface@5.5.2"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2025-26618",
+      "status": {
+        "affected": "Update to the next version",
+        "fixed": [
+          "pkg:otp/ssh@5.2.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2025-46712",
+      "status": {
+        "affected": "Update to ssh@5.2.11",
+        "fixed": [
+          "pkg:otp/ssh@5.2.11"
+        ]
+      }
+    },
+    {
+      "pkg:otp/stdlib@6.0": "CVE-2025-4748",
+      "status": {
+        "affected": "Mitigation: Update to pkg:otp/stdlib@6.2.2.1",
+        "fixed": [
+          "pkg:otp/stdlib@6.2.2.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.2": "CVE-2025-30211",
+      "status": {
+        "affected": "Workaround: set option `parallel_login` to false. Reduce `max_sessions` option.",
+        "fixed": [
+          "pkg:otp/ssh@5.2.9"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.2": "CVE-2024-53846",
+      "status": {
+        "affected": "Update to ssl@11.2.5",
+        "fixed": [
+          "pkg:otp/ssl@11.2.5"
+        ]
+      }
+    },
+    {
+      "pkg:github/madler/zlib@04f42ceca40f73e2978b50e93806c2a18c1281fc": "CVE-2026-22184",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/madler/zlib@04f42ceca40f73e2978b50e93806c2a18c1281fc": "CVE-2026-3381",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@15.0"
+        ],
+        "not_affected": "component_not_present"
+      }
+    }
+  ],
+  "otp-28": [
+    {
+      "pkg:otp/ssl@11.3": "CVE-2026-89422",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.6.0.6",
+        "fixed": [
+          "pkg:otp/ssl@11.6.0.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/asn1@5.4": "CVE-2026-65634",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/asn1@5.4.3.1",
+        "fixed": [
+          "pkg:otp/asn1@5.4.3.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2026-68956",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.5.2.6",
+        "fixed": [
+          "pkg:otp/ssh@5.5.2.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@16.0": "CVE-2026-75538",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@16.4.0.6",
+        "fixed": [
+          "pkg:otp/erts@16.4.0.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-70399",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-74835",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-69664",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/snmp@5.19": "CVE-2026-70405",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/snmp@5.20.2.2",
+        "fixed": [
+          "pkg:otp/snmp@5.20.2.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/eldap@1.2.15": "CVE-2026-70409",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/eldap@1.2.16.1",
+        "fixed": [
+          "pkg:otp/eldap@1.2.16.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-71562",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-66835",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-73270",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-71380",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-66357",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-73812",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-74994",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-55951",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/stdlib@7.0": "CVE-2026-59696",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/stdlib@7.3.0.2",
+        "fixed": [
+          "pkg:otp/stdlib@7.3.0.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-73276",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.3",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.3": "CVE-2026-55952",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.6.0.3",
+        "fixed": [
+          "pkg:otp/ssl@11.6.0.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.3": "CVE-2026-55950",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.6.0.3",
+        "fixed": [
+          "pkg:otp/ssl@11.6.0.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.3": "CVE-2026-54891",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.6.0.3",
+        "fixed": [
+          "pkg:otp/ssl@11.6.0.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2026-54886",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.5.2.2",
+        "fixed": [
+          "pkg:otp/ssh@5.5.2.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.3": "CVE-2026-54887",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.6.0.3",
+        "fixed": [
+          "pkg:otp/ssl@11.6.0.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2026-53422",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.5.2.2",
+        "fixed": [
+          "pkg:otp/ssh@5.5.2.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/stdlib@7.0": "CVE-2026-47078",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/stdlib@7.3.0.1",
+        "fixed": [
+          "pkg:otp/stdlib@7.3.0.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@16.0": "CVE-2026-55737",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@16.4.0.4",
+        "fixed": [
+          "pkg:otp/erts@16.4.0.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/megaco@4.8": "CVE-2026-59250",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/megaco@4.8.3.1",
+        "fixed": [
+          "pkg:otp/megaco@4.8.3.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.18": "CVE-2026-59251",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.20.3.4",
+        "fixed": [
+          "pkg:otp/public_key@1.20.3.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.3": "CVE-2026-55953",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.6.0.4",
+        "fixed": [
+          "pkg:otp/ssl@11.6.0.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.3": "CVE-2026-58227",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.6.0.4",
+        "fixed": [
+          "pkg:otp/ssl@11.6.0.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@16.0": "CVE-2026-42792",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@16.4.0.4",
+        "fixed": [
+          "pkg:otp/erts@16.4.0.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@16.0": "CVE-2026-54890",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@16.4.0.4",
+        "fixed": [
+          "pkg:otp/erts@16.4.0.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ftp@1.2.4": "CVE-2026-48858",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ftp@1.2.4.1",
+        "fixed": [
+          "pkg:otp/ftp@1.2.4.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@16.0": "CVE-2026-49759",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@16.4.0.2",
+        "fixed": [
+          "pkg:otp/erts@16.4.0.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.3": "CVE-2026-48860",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.6.0.2",
+        "fixed": [
+          "pkg:otp/ssl@11.6.0.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erl_interface@5.6": "CVE-2026-49760",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erl_interface@5.7.0.1",
+        "fixed": [
+          "pkg:otp/erl_interface@5.7.0.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-48856",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2.2",
+        "fixed": [
+          "pkg:otp/inets@9.6.2.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2026-48855",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.5.2.1",
+        "fixed": [
+          "pkg:otp/ssh@5.5.2.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2026-32147",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.5.2",
+        "fixed": [
+          "pkg:otp/ssh@5.5.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.18": "CVE-2026-42791",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.20.3.1",
+        "fixed": [
+          "pkg:otp/public_key@1.20.3.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.18": "CVE-2026-42789",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.20.3.1",
+        "fixed": [
+          "pkg:otp/public_key@1.20.3.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.18": "CVE-2026-42790",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.20.3.1",
+        "fixed": [
+          "pkg:otp/public_key@1.20.3.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/kernel@10.3": "CVE-2026-28810",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/kernel@10.6.2",
+        "fixed": [
+          "pkg:otp/kernel@10.6.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-28808",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.2",
+        "fixed": [
+          "pkg:otp/inets@9.6.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.18": "CVE-2026-32144",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.20.3",
+        "fixed": [
+          "pkg:otp/public_key@1.20.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.3": "CVE-2026-32144",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.5.4",
+        "fixed": [
+          "pkg:otp/ssl@11.5.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2026-23942",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.5.1",
+        "fixed": [
+          "pkg:otp/ssh@5.5.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2026-23943",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.5.1",
+        "fixed": [
+          "pkg:otp/ssh@5.5.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2026-23941",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.6.1",
+        "fixed": [
+          "pkg:otp/inets@9.6.1"
+        ]
+      }
+    },
+    {
+      "pkg:github//KhronosGroup/OpenGL-Refpages@dc585039bbd426829e3433002023a93f9bedd0c2": "CVE-2024-58249",
+      "status": {
+        "apps": [
+          "pkg:otp/wx@2.5"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/madler/zlib@1a8db63788c34a50e39e273d39b7e1033208aea2": "CVE-2026-27171",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    },
+    {
+      "pkg:otp/tftp@1.2.3": "CVE-2026-21620",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/tftp@1.2.4",
+        "fixed": [
+          "pkg:otp/tftp@1.2.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@16.0": "CVE-2025-58050",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@16.0.3",
+        "fixed": [
+          "pkg:otp/erts@16.0.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2025-48041",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.3.3",
+        "fixed": [
+          "pkg:otp/ssh@5.3.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.4": "CVE-2016-1000107",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.4.1",
+        "fixed": [
+          "pkg:otp/inets@9.4.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2025-48040",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.3.3",
+        "fixed": [
+          "pkg:otp/ssh@5.3.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2025-48039",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.3.3",
+        "fixed": [
+          "pkg:otp/ssh@5.3.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@5.3": "CVE-2025-48038",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@5.3.3",
+        "fixed": [
+          "pkg:otp/ssh@5.3.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/stdlib@7.0": "CVE-2025-4748",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/stdlib@7.0.1",
+        "fixed": [
+          "pkg:otp/stdlib@7.0.1"
+        ]
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@2dce7761b1831fd3f82a9c2bd5476259d945da4d": "OSV-2025-300",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/madler/zlib@1a8db63788c34a50e39e273d39b7e1033208aea2": "CVE-2023-45853",
+      "status": { "not_affected": "vulnerable_code_not_present" }
+    },
+    {
+      "pkg:github/openssl/openssl@01d5e2318405362b4de5e670c90d9b40a351d053": "CVE-2025-4575",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@2dce7761b1831fd3f82a9c2bd5476259d945da4d": "CVE-2025-58050",
+      "status": "under_investigation"
+    },
+    {
+      "pkg:github/wxWidgets/wxWidgets@dc585039bbd426829e3433002023a93f9bedd0c2": "CVE-2024-58249",
+      "status": {
+        "apps": [
+          "pkg:otp/wx@2.5"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@636dfadc70ce26f2473870570bfd9ec352806b1d": "CVE-2016-2183",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@636dfadc70ce26f2473870570bfd9ec352806b1d": "CVE-2025-9230",
+      "status": { "not_affected": "vulnerable_code_not_present" }
+    },
+    {
+      "pkg:github/openssl/openssl@636dfadc70ce26f2473870570bfd9ec352806b1d": "CVE-2025-9231",
+      "status": { "not_affected": "vulnerable_code_not_present" }
+    },
+    {
+      "pkg:github/openssl/openssl@636dfadc70ce26f2473870570bfd9ec352806b1d": "CVE-2025-9232",
+      "status": { "not_affected": "vulnerable_code_not_present" }
+    },
+    {
+      "pkg:github/madler/zlib@1a8db63788c34a50e39e273d39b7e1033208aea2": "CVE-2026-22184",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-11187",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-15467",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-15468",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-15469",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-66199",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-68160",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-69418",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-69419",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-69420",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2025-69421",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2026-22795",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@7b371d80d959ec9ab4139d09d78e83c090de9779": "CVE-2026-22796",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-2673",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "OSV-2026-343",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-28386",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-28387",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-28388",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-28389",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-28390",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-31789",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-31790",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-34180",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-34181",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-34182",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-34183",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-35188",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-42764",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-42765",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-42766",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-42767",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-42768",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-42769",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-42770",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-45445",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-45446",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-45447",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-7383",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-9076",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-54876",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-14456",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-75803",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-63076",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-63075",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-63074",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-63073",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-63072",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-54874",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-14457",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/openssl/openssl@c9a9e5b10105ad850b6e4d1122c645c67767c341": "CVE-2026-18798",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0",
+          "pkg:otp/erl_interface@5.6"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github.com/madler/zlib@da607da739fa6047df13e66a2af6b8bec7c2a498": "CVE-2026-85091",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-86145",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89161",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89160",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89158",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89157",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89156",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@16.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    }
+  ],
+  "otp-29": [
+    {
+      "pkg:otp/ssl@11.7": "CVE-2026-89422",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.7.7",
+        "fixed": [
+          "pkg:otp/ssl@11.7.7"
+        ]
+      }
+    },
+    {
+      "pkg:otp/asn1@5.5": "CVE-2026-65634",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/asn1@5.5.2",
+        "fixed": [
+          "pkg:otp/asn1@5.5.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@6.0": "CVE-2026-68956",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@6.0.6",
+        "fixed": [
+          "pkg:otp/ssh@6.0.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@17.0": "CVE-2026-75538",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@17.0.6",
+        "fixed": [
+          "pkg:otp/erts@17.0.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-70399",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-74835",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-69664",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/snmp@5.20.3": "CVE-2026-70405",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/snmp@5.20.5",
+        "fixed": [
+          "pkg:otp/snmp@5.20.5"
+        ]
+      }
+    },
+    {
+      "pkg:otp/eldap@1.3": "CVE-2026-70409",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/eldap@1.3.1",
+        "fixed": [
+          "pkg:otp/eldap@1.3.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-71562",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-66835",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-73270",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-71380",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-66357",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-73812",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-74994",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-55951",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/stdlib@8.0": "CVE-2026-59696",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/stdlib@8.0.4",
+        "fixed": [
+          "pkg:otp/stdlib@8.0.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-73276",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.2",
+        "fixed": [
+          "pkg:otp/inets@9.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.7": "CVE-2026-55952",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.7.3",
+        "fixed": [
+          "pkg:otp/ssl@11.7.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.7": "CVE-2026-55950",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.7.3",
+        "fixed": [
+          "pkg:otp/ssl@11.7.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.7": "CVE-2026-54891",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.7.3",
+        "fixed": [
+          "pkg:otp/ssl@11.7.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@6.0": "CVE-2026-54886",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@6.0.2",
+        "fixed": [
+          "pkg:otp/ssh@6.0.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.7": "CVE-2026-54887",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.7.3",
+        "fixed": [
+          "pkg:otp/ssl@11.7.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@6.0": "CVE-2026-53422",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@6.0.2",
+        "fixed": [
+          "pkg:otp/ssh@6.0.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/stdlib@8.0": "CVE-2026-47078",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/stdlib@8.0.3",
+        "fixed": [
+          "pkg:otp/stdlib@8.0.3"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@17.0": "CVE-2026-55737",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@17.0.4",
+        "fixed": [
+          "pkg:otp/erts@17.0.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/megaco@4.9": "CVE-2026-59250",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/megaco@4.9.1",
+        "fixed": [
+          "pkg:otp/megaco@4.9.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.21": "CVE-2026-59251",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.21.4",
+        "fixed": [
+          "pkg:otp/public_key@1.21.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.7": "CVE-2026-55953",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.7.4",
+        "fixed": [
+          "pkg:otp/ssl@11.7.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.7": "CVE-2026-58227",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.7.4",
+        "fixed": [
+          "pkg:otp/ssl@11.7.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@17.0": "CVE-2026-42792",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@17.0.4",
+        "fixed": [
+          "pkg:otp/erts@17.0.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@17.0": "CVE-2026-54890",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@17.0.4",
+        "fixed": [
+          "pkg:otp/erts@17.0.4"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ftp@1.2.5": "CVE-2026-48858",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ftp@1.2.6",
+        "fixed": [
+          "pkg:otp/ftp@1.2.6"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@6.0": "CVE-2026-48859",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@6.0.1",
+        "fixed": [
+          "pkg:otp/ssh@6.0.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erts@17.0": "CVE-2026-49759",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erts@17.0.2",
+        "fixed": [
+          "pkg:otp/erts@17.0.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssl@11.7": "CVE-2026-48860",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssl@11.7.2",
+        "fixed": [
+          "pkg:otp/ssl@11.7.2"
+        ]
+      }
+    },
+    {
+      "pkg:otp/erl_interface@5.8": "CVE-2026-49760",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/erl_interface@5.8.1",
+        "fixed": [
+          "pkg:otp/erl_interface@5.8.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/inets@9.7": "CVE-2026-48856",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/inets@9.7.1",
+        "fixed": [
+          "pkg:otp/inets@9.7.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/ssh@6.0": "CVE-2026-48855",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/ssh@6.0.1",
+        "fixed": [
+          "pkg:otp/ssh@6.0.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.21": "CVE-2026-42791",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.21.1",
+        "fixed": [
+          "pkg:otp/public_key@1.21.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.21": "CVE-2026-42789",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.21.1",
+        "fixed": [
+          "pkg:otp/public_key@1.21.1"
+        ]
+      }
+    },
+    {
+      "pkg:otp/public_key@1.21": "CVE-2026-42790",
+      "status": {
+        "affected": "Update to any of the following versions: pkg:otp/public_key@1.21.1",
+        "fixed": [
+          "pkg:otp/public_key@1.21.1"
+        ]
+      }
+    },
+    {
+      "pkg:github//KhronosGroup/OpenGL-Refpages@dc585039bbd426829e3433002023a93f9bedd0c2": "CVE-2024-58249",
+      "status": { "not_affected": "vulnerable_code_not_present" }
+    },
+    {
+      "pkg:github/madler/zlib@1a8db63788c34a50e39e273d39b7e1033208aea2": "CVE-2026-27171",
+      "status": { "not_affected": "vulnerable_code_not_in_execute_path" }
+    },
+    {
+      "pkg:github/madler/zlib@1a8db63788c34a50e39e273d39b7e1033208aea2": "CVE-2023-45853",
+      "status": { "not_affected": "vulnerable_code_not_present" }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "OSV-2026-343",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@17.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/madler/zlib@da607da739fa6047df13e66a2af6b8bec7c2a498": "CVE-2026-85091",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@17.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-86145",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@17.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89161",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@17.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89160",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@17.0"
+        ],
+        "not_affected": "vulnerable_code_not_present"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89158",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@17.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89157",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@17.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89156",
+      "status": {
+        "apps": [
+          "pkg:otp/erts@17.0"
+        ],
+        "not_affected": "vulnerable_code_not_in_execute_path"
+      }
+    }
+  ],
+  "otp-30": [
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "OSV-2026-343",
+      "status": { "not_affected": "vulnerable_code_not_present" }
+    },
+    {
+      "pkg:github/madler/zlib@1a8db63788c34a50e39e273d39b7e1033208aea2": "CVE-2026-85091",
+      "status": { "not_affected": "vulnerable_code_not_present" }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89161",
+      "status": { "not_affected": "vulnerable_code_not_in_execute_path" }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89160",
+      "status": { "not_affected": "vulnerable_code_not_present" }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89158",
+      "status": { "not_affected": "vulnerable_code_not_in_execute_path" }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89157",
+      "status": { "not_affected": "vulnerable_code_not_in_execute_path" }
+    },
+    {
+      "pkg:github/PCRE2Project/pcre2@f454e231fe5006dd7ff8f4693fd2b8eb94333429": "CVE-2026-89156",
+      "status": { "not_affected": "vulnerable_code_not_in_execute_path" }
+    }
+  ]
+}
