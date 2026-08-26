@@ -31,6 +31,24 @@
   </header>
   <p>This document describes the changes made to the ERTS application.</p>
 
+<section><title>Erts 14.2.5.15.0.100</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Mitigated a denial of service attack in epmd. Thanks to Ryan
+	    Moore for finding and responsibly disclosing this
+	    vulnerability to the Erlang/OTP project. *** POTENTIAL
+	    INCOMPATIBILITY ***</p>
+          <p>
+	    Own Id: OTP-20136 Aux Id: CVE-2026-42792, PR-11386 </p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
 <section><title>Erts 14.2.5.15</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>
