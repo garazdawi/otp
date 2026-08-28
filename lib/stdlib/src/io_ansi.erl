@@ -138,33 +138,33 @@ that should handle it. `io_ansi:fwrite/4` works across nodes and will use the
 -doc "The format string that can be passed to `format/3` and `fwrite/4`".
 -type format() :: [string() | vts()].
 
--type color_atom() :: black | blue | cyan | green | magenta | red | white | yellow |
-                      light_black | light_blue | light_cyan | light_green |
-                      light_magenta | light_red | light_white | light_yellow.
+-type color_atom() :: black | red | green | yellow | blue | magenta | cyan | white |
+                      light_black | light_red | light_green | light_yellow |
+                      light_blue | light_magenta | light_cyan | light_white.
 
 -doc "Virtual terminal sequences that control the foreground (aka text) color.".
 -type foreground_color() :: color_atom() |
                             {color, 0..255} | {color, R :: 0..255, G :: 0..255, B :: 0..255} |
                             default_color.
 -doc "Virtual terminal sequences that control the background color.".
--type background_color() :: black_background | blue_background | cyan_background |
-                            green_background | magenta_background | red_background |
-                            white_background | yellow_background | default_background |
-                            light_black_background | light_blue_background |
-                            light_cyan_background | light_green_background |
-                            light_magenta_background | light_red_background |
-                            light_white_background | light_yellow_background |
+-type background_color() :: black_background | red_background | green_background |
+                            yellow_background | blue_background | magenta_background |
+                            cyan_background | white_background | default_background |
+                            light_black_background | light_red_background |
+                            light_green_background | light_yellow_background |
+                            light_blue_background | light_magenta_background |
+                            light_cyan_background | light_white_background |
                             {background, 0..255} |
                             {background, R :: 0..255, G :: 0..255, B :: 0..255}.
 
 -doc "Virtual terminal sequences that control underline color.".
--type underline_color() :: black_underline | blue_underline | cyan_underline |
-                           green_underline | magenta_underline | red_underline |
-                           white_underline | yellow_underline | default_underline |
-                           light_black_underline | light_blue_underline |
-                           light_cyan_underline | light_green_underline |
-                           light_magenta_underline | light_red_underline |
-                           light_white_underline | light_yellow_underline |
+-type underline_color() :: black_underline | red_underline | green_underline |
+                           yellow_underline | blue_underline | magenta_underline |
+                           cyan_underline | white_underline | default_underline |
+                           light_black_underline | light_red_underline |
+                           light_green_underline | light_yellow_underline |
+                           light_blue_underline | light_magenta_underline |
+                           light_cyan_underline | light_white_underline |
                            {underline_color, 0..255} |
                            {underline_color, R :: 0..255, G :: 0..255, B :: 0..255}.
 
@@ -194,8 +194,12 @@ that should handle it. `io_ansi:fwrite/4` works across nodes and will use the
 -type text_formatting() :: color() | style() | hyperlink().
 -doc "Virtual terminal sequences that can erase or overwrite text.".
 -type text_modification() :: clear | erase_display |
-                             insert_character | delete_character | erase_character |
-                             insert_line | delete_line | erase_line.
+                             {insert_character, Chars :: non_neg_integer()} |
+                             {erase_character, Chars :: non_neg_integer()} |
+                             delete_character | {delete_character, Chars :: non_neg_integer()} |
+                             insert_line | {insert_line, Lines :: non_neg_integer()} |
+                             delete_line | {delete_line, Lines :: non_neg_integer()} |
+                             erase_line.
 -doc "Virtual terminal sequences that works on text.".
 -type text() :: text_formatting() | text_modification() |
                 alternate_character_set_mode | alternate_character_set_mode_off.
@@ -207,11 +211,16 @@ that should handle it. `io_ansi:fwrite/4` works across nodes and will use the
         {cursor_down | cursor_backward | cursor_forward | cursor_up, N :: non_neg_integer()} |
         cursor_home | reverse_index | cursor_save | cursor_restore |
         cursor_show | cursor_hide |
-        cursor_next_line | cursor_previous_line | cursor_horizontal_absolute |
-        cursor_vertical_absolute | cursor_horizontal_vertical | cursor_report_position.
+        cursor_next_line | cursor_previous_line |
+        {cursor_horizontal_absolute, Column :: non_neg_integer()} |
+        {cursor_vertical_absolute, Line :: non_neg_integer()} |
+        {cursor_horizontal_vertical, Line :: non_neg_integer(), Column :: non_neg_integer()} |
+        cursor_report_position.
 -doc "Virtual terminal sequences that controls the screen.".
 -type window() :: alternate_screen | alternate_screen_off |
-                  scroll_forward | scroll_backward | scroll_change_region.
+                  scroll_forward | {scroll_forward, N :: non_neg_integer()} |
+                  scroll_backward | {scroll_backward, N :: non_neg_integer()} |
+                  {scroll_change_region, Top :: non_neg_integer(), Bottom :: non_neg_integer()}.
 -doc "Virtual terminal sequences that works with tabs.".
 -type tab() :: tab | tab_backward | tab_set | tab_clear | tab_clear_all.
 -doc "Virtual terminal sequences for cursor input.".
@@ -502,7 +511,9 @@ Example:
 
 -doc """
 Change foreground (aka text) color to index color. `Index` 0-15 are equivalent to
-the named colors in `t:foreground_color/0` in the order that they are listed.
+the named colors in `t:color_atom/0` in the order that they are listed.
+
+You can also use `atom_color_to_index/1` to convert a color atom to its corresponding index (0-15).
 
 Example:
 ```erlang
@@ -640,6 +651,8 @@ Example:
 -doc """
 Change background color to index color. `Index` 0-15 are equivilant to
 the named colors in `t:background_color/0` in the order that they are listed.
+
+You can also use `atom_color_to_index/1` to convert a color atom to its corresponding index (0-15).
 
 Example:
 ```erlang
@@ -2096,9 +2109,9 @@ URL.
 Example:
 ```erlang
 1> io_ansi:hyperlink_start("https://erlang.org").
-<<"\e]8;https://erlang.org;\e\\">>
+<<"\e]8;;https://erlang.org\e\\">>
 2> io_ansi:format([{hyperlink_start, "file://tmp/debug.log"},"debug log",hyperlink_reset]).
-~"\e]8;file://tmp/debug.log;\e\\debug log\e]8;;\e\\\e(B\e[m"
+~"\e]8;;file://tmp/debug.log\e\\debug log\e]8;;\e\\\e(B\e[m"
 ```
 
 See [Hyperlinks (a.k.a. HTML-like anchors) in terminal emulators](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda)
@@ -2351,8 +2364,7 @@ format(Format, Data) ->
     format(Format, Data, []).
 
 -doc """
-Returns a character list that represents `Data` formatted in accordance with
-`Format`.
+Returns a utf-8 binary that represents `Data` formatted in accordance with `Format`.
 
 This function works just as `io_lib:bformat/2`, where `Data` is a list of strings
 as well as atoms and tuples representing virtual terminal sequences as part of the
@@ -2777,6 +2789,10 @@ default_mappings() ->
        alternate_character_set_mode => {"smacs", "\e(0" },
        alternate_character_set_mode_off => {"rmacs", "\e(B" },
 
+       hyperlink =>
+            [{undefined, fun(Url, Text) -> [hyperlink(Url, []), Text, hyperlink_reset()] end},
+             {undefined, fun(Url, Params, Text) -> [hyperlink(Url, Params), Text, hyperlink_reset()] end}],
+
        hyperlink_start =>
             [{undefined, fun(Url) -> hyperlink(Url, []) end},
              {undefined, fun(Url, Params) -> hyperlink(Url, Params) end}],
@@ -2787,7 +2803,7 @@ default_mappings() ->
 
 hyperlink(URL, Params) ->
     StringParams = lists:join($:, [[K, "=", V] || {K, V} <- Params]),
-    io_lib:format("\e]8;~s;~s\e\\",[URL, StringParams]).
+    io_lib:format("\e]8;~s;~s\e\\",[StringParams, URL]).
 
 s(Int) when is_integer(Int) ->
     integer_to_list(Int).
