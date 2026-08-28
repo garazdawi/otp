@@ -2787,7 +2787,7 @@ default_mappings() ->
 
 hyperlink(URL, Params) ->
     StringParams = lists:join($:, [[K, "=", V] || {K, V} <- Params]),
-    io_lib:format("\e]8;~s;~s\e\\",[URL, StringParams]).
+    io_lib:format("\e]8;~s;~s\e\\",[StringParams, URL]).
 
 s(Int) when is_integer(Int) ->
     integer_to_list(Int).
