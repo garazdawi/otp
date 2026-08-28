@@ -322,6 +322,7 @@ valid_functions() ->
      forward_line,         %% Move forward one line
      forward_word,         %% Move forward one word
      help,                 %% Open up a pager with help for function or module closest to the cursor
+     help_full,            %% Make the pager opened by help fullscreen
      history_down,         %% Move to the next item in the history
      history_up,           %% Move to the previous item in the history
      %%jcl_menu,

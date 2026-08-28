@@ -77,7 +77,7 @@
 
 -export([get_until/2]).
 
--export([test_invalid_keymap/1, test_valid_keymap/1]).
+-export([test_invalid_keymap/1, test_valid_keymap/1, test_default_keymap/1]).
 %% Exports for custom shell history module
 -export([load/0, add/1]).
 %% For custom prompt testing
@@ -149,6 +149,7 @@ groups() ->
       [{group,tty_unicode},
        {group,tty_latin1},
        test_invalid_keymap, test_valid_keymap,
+       test_default_keymap,
        shell_suspend,
        shell_full_queue,
        external_editor,
@@ -1515,6 +1516,7 @@ shell_ignore_pager_commands(Config) ->
                 ok
             end
     end.
+
 test_valid_keymap(Config) when is_list(Config) ->
     DataDir = proplists:get_value(data_dir,Config),
     Term = shell_test_lib:setup_tty([{args, ["-config", DataDir ++ "valid_keymap.config"]} | Config]),
@@ -1527,6 +1529,28 @@ test_valid_keymap(Config) when is_list(Config) ->
         shell_test_lib:check_content(Term, ">$"),
         shell_test_lib:send_tty(Term, "1.\n"),
         shell_test_lib:send_tty(Term, "C-b"),
+        shell_test_lib:check_content(Term, "2>\\s1.$"),
+        ok
+    after
+        shell_test_lib:stop_tty(Term),
+        ok
+    end.
+
+%% Test that we can parse and validate the default keymap, and that it works as expected.
+test_default_keymap(Config) ->
+    PrivDir = proplists:get_value(priv_dir,Config),
+    file:write_file(filename:join(PrivDir, "default_keymap.config"), io_lib:format("[{stdlib, [{shell_keymap,~p}]}].",
+                       [edlin_key:get_key_map()])),
+    Term = shell_test_lib:setup_tty([{args, ["-config", PrivDir ++ "default_keymap.config"]} | Config]),
+    shell_test_lib:set_tty_prompt(Term, Config),
+    try
+        shell_test_lib:check_not_in_content(Term, "Invalid key"),
+        shell_test_lib:check_not_in_content(Term, "Invalid function"),
+        shell_test_lib:send_tty(Term, "asdf"),
+        shell_test_lib:send_tty(Term, "C-u"),
+        shell_test_lib:check_content(Term, ">$"),
+        shell_test_lib:send_tty(Term, "1.\n"),
+        shell_test_lib:send_tty(Term, "C-p"),
         shell_test_lib:check_content(Term, "2>\\s1.$"),
         ok
     after
