@@ -1250,18 +1250,20 @@ normalize_pct_encoded_fragment(_Config) ->
             "//example.com/#%E5%90%88%E6%B0%97%E9%81%93", [return_map])).
 
 normalize_pct_encoded_negative(_Config) ->
-    {error,{invalid,{host,{invalid_utf8,<<0,0,0,246>>}}}} =
-        uri_string:percent_decode(
-          uri_string:normalize(#{host => "%00%00%00%F6",path => []}, [return_map])),
-    {error,invalid_utf8,<<47,47,0,0,0,246>>} =
-        uri_string:percent_decode(
-          uri_string:normalize(#{host => "%00%00%00%F6",path => []}, [])),
-    {error,{invalid,{host,{invalid_utf8,<<0,0,0,246>>}}}} =
-        uri_string:percent_decode(
-          uri_string:normalize("//%00%00%00%F6", [return_map])),
-    {error,invalid_utf8,<<47,47,0,0,0,246>>} =
-        uri_string:percent_decode(
-          uri_string:normalize("//%00%00%00%F6", [])).
+    [
+     {error,{invalid,{host,{invalid_utf8,<<0,0,0,246>>}}}} =
+         uri_string:percent_decode(
+           uri_string:normalize(#{host => C("%00%00%00%F6"),path => []}, [return_map])),
+     {error,invalid_utf8,<<47,47,0,0,0,246>>} =
+         uri_string:percent_decode(
+           uri_string:normalize(#{host => C("%00%00%00%F6"),path => []}, [])),
+     {error,{invalid,{host,{invalid_utf8,<<0,0,0,246>>}}}} =
+         uri_string:percent_decode(
+           uri_string:normalize(C("//%00%00%00%F6"), [return_map])),
+     {error,invalid_utf8,<<47,47,0,0,0,246>>} =
+         uri_string:percent_decode(
+           uri_string:normalize(C("//%00%00%00%F6"), []))
+     || C <- [fun(X) -> X end, fun(X) -> unicode:characters_to_binary(X) end]].
 
 interop_query_utf8(_Config) ->
     Q = uri_string:compose_query([{"foo bar","1"}, {"合", "2"}]),
