@@ -1997,17 +1997,19 @@ decode(<<>>, Acc) ->
 
 -spec raw_decode(list()|binary()) -> list() | binary() | error().
 raw_decode(Cs) ->
-    raw_decode(Cs, <<>>).
-%%
-raw_decode(L, Acc) when is_list(L) ->
     try
-        B0 = unicode:characters_to_binary(L),
-        B1 = raw_decode(B0, Acc),
-        unicode:characters_to_list(B1)
+        B0 = unicode:characters_to_binary(Cs),
+        B1 = raw_decode(B0, <<>>),
+        if is_list(Cs) ->
+                unicode:characters_to_list(B1);
+           is_binary(Cs) ->
+                B1
+        end
     catch
         throw:{error, Atom, RestData} ->
             {error, Atom, RestData}
-    end;
+    end.
+
 raw_decode(<<$%,C0,C1,Cs/binary>>, Acc) ->
     case is_hex_digit(C0) andalso is_hex_digit(C1) of
         true ->
