@@ -1488,13 +1488,13 @@ scan_sigil_suffix(Cs, St, Line, Col, Toks, Wcs) when is_list(Wcs) ->
             Type = sigil_suffix,
             Ncol = incr_column(Col, length(Nwcs)),
             Suffix = lists:reverse(Nwcs),
-            try list_to_atom(Suffix) of
-                A when is_atom(A) ->
+            %% sigil suffixes are not allowed to be > 255 characters
+            if length(Suffix) < 256 ->
                     Anno = anno(Line, Col, St, ?STR(Type, St, Suffix)),
                     Tok = {Type,Anno,Suffix},
                     scan_string_concat(
-                      Ncs, St, Line, Ncol, [Tok|Toks], Suffix)
-            catch _ : _ ->
+                      Ncs, St, Line, Ncol, [Tok|Toks], Suffix);
+                true ->
                     scan_error({illegal,Type}, Line, Col, Line, Ncol, Ncs)
             end
     end.
