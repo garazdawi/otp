@@ -1223,10 +1223,10 @@ normalize_pct_encoded_userinfo(_Config) ->
     #{scheme := "foo", userinfo := "合:気", host := "道"} =
         uri_string:percent_decode(
           uri_string:normalize("foo://%E5%90%88:%E6%B0%97@%E9%81%93", [return_map])),
-    {error,invalid_uri,"@"} =
-        uri_string:normalize("//%E5%90%88@%E6%B0%97%E9%81%93@", [return_map]),
-    {error,invalid_uri,"@"} =
-        uri_string:normalize("foo://%E5%90%88@%E6%B0%97%E9%81%93@", [return_map]).
+     {error,invalid_uri,"@"} =
+         uri_string:normalize("//%E5%90%88@%E6%B0%97%E9%81%93@", [return_map]),
+     {error,invalid_uri,"@"} =
+         uri_string:normalize("foo://%E5%90%88@%E6%B0%97%E9%81%93@", [return_map]).
 
 normalize_pct_encoded_query(_Config) ->
     #{scheme := "foo", host := "example.com", path := "/",
