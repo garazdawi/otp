@@ -1428,6 +1428,9 @@ sigil_string(Config) when is_list(Config) ->
     [sigil_string_ok(Sigil, LR, "\\e", "\\e") ||
         Sigil <- ['S', 'B', 'Å', 'ÖB'], LR <- LRs],
 
+    sigil_string_ok(
+      's', "||" ++ lists:duplicate(255, $a), "abc", "abc"),
+
     sigil_string_error(
       '',  "$$", "\\e",   1, {illegal,string}, 1),
     sigil_string_error(
@@ -1446,6 +1449,10 @@ sigil_string(Config) when is_list(Config) ->
       'b', "<>", "\\x{0", 3, {illegal,character}, 7),
     sigil_string_error(
       's', "||", "\\x{x", 3, {illegal,character}, 6),
+    sigil_string_error(
+      's', "||Ω", "abc", 7, {illegal,character}, 8),
+    sigil_string_error(
+      's', "||" ++ lists:duplicate(256, $a), "abc", 7, {illegal,sigil_suffix}, 263),
 
     ok.
 
