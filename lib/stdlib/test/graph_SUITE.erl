@@ -80,6 +80,19 @@ opts(Config) when is_list(Config) ->
     catch
         error: {bad_edge,{v4,v1}} -> ok
     end,
+
+    try build_graph([acyclic | cyclic], Template) of
+        _ -> error(should_badarg)
+    catch
+        error:badarg -> ok
+    end,
+
+    try build_graph(acyclic, Template) of
+        _ -> error(should_badarg)
+    catch
+        error:badarg -> ok
+    end,
+
     ok.
 
 

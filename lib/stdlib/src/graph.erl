@@ -225,7 +225,7 @@ If an unrecognized option is specified or `Options` is not a proper list, a
 """.
 -doc(#{ since => ~"OTP 29.0"}).
 -spec new([graph_type()]) -> graph().
-new(Options) when is_list(Options) ->
+new(Options) ->
     new_1(Options, #graph{}).
 
 new_1([cyclic|Opts], G) ->
