@@ -31,7 +31,7 @@
          otp_8562/1, otp_8665/1, otp_8911/1, otp_10302/1, otp_10820/1,
          otp_11728/1, encoding/1, extends/1,  function_macro/1,
 	 test_error/1, test_warning/1, otp_14285/1,
-	 test_if/1,source_name/1,otp_16978/1,otp_16824/1,scan_file/1,file_macro/1,
+         test_if/1,source_name/1,erl_parse_tokens/1,otp_16824/1,scan_file/1,file_macro/1,
          deterministic_include/1, nondeterministic_include/1,
          gh_8268/1,
          moduledoc_include/1,
@@ -79,7 +79,7 @@ all() ->
      overload_mac, otp_8388, otp_8470, otp_8562,
      otp_8665, otp_8911, otp_10302, otp_10820, otp_11728,
      encoding, extends, function_macro, test_error, test_warning,
-     otp_14285, test_if, source_name, otp_16978, otp_16824, scan_file, file_macro,
+     otp_14285, test_if, source_name, erl_parse_tokens, otp_16824, scan_file, file_macro,
      deterministic_include, nondeterministic_include,
      gh_8268,
      moduledoc_include,
@@ -1881,12 +1881,16 @@ source_name_1(File, Expected) ->
     Res = epp:parse_file(File, [{source_name, Expected}]),
     {ok, [{attribute,_,file,{Expected,_}} | _Forms]} = Res.
 
-otp_16978(Config) when is_list(Config) ->
+erl_parse_tokens(Config) when is_list(Config) ->
     %% A test of erl_parse:tokens().
     P = <<"t() -> ?a.">>,
     Vs = [#{},
           #{k => 1,[[a],[{}]] => "str"},
-          #{#{} => [{#{x=>#{3=>$3}}},{3.14,#{}}]}],
+          #{#{} => [{#{x=>#{3=>$3}}},{3.14,#{}}]},
+          fun a:b/1,
+          <<"">>,
+          <<1:1>>,
+          ~"åäö"],
     Ts = [{erl_parse_tokens,
            P,
            [{d,{a,V}}],

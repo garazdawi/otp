@@ -1023,6 +1023,14 @@ processed (see section [Error Information](#module-error-information)).
                        | af_maybe()
                        | af_maybe_else().
 
+-type abstract_term() :: af_literal()
+                       | af_tuple(abstract_term())
+                       | af_nil()
+                       | af_cons(abstract_term())
+                       | af_bin(abstract_term())
+                       | af_remote_fun_literal()
+                       | af_map_creation(abstract_term()).
+
 -type af_record_update(T) :: {'record',
                               anno(),
                               abstract_expr(),
@@ -1092,6 +1100,8 @@ processed (see section [Error Information](#module-error-information)).
 
 -type af_local_fun() ::
         {'fun', anno(), {'function', function_name(), arity()}}.
+
+-type af_remote_fun_literal() :: {'fun', anno(), {'function', af_atom(), af_atom(), af_integer()}}.
 
 -type af_remote_fun() ::
         {'fun', anno(), {'function', module(), function_name(), arity()}}
@@ -2131,18 +2141,17 @@ tokens(Abs) ->
     tokens(Abs, []).
 
 -doc """
-Generates a list of tokens representing the abstract form `AbsTerm` of an
-expression. Optionally, `MoreTokens` is appended.
+Generates a list of tokens representing the abstract form `AbsTerm` of a
+term. Optionally, `MoreTokens` is appended.
 """.
 -spec tokens(AbsTerm, MoreTokens) -> Tokens when
-      AbsTerm :: abstract_expr(),
+      AbsTerm :: abstract_term(),
       MoreTokens :: [token()],
       Tokens :: [token()].
 tokens({char,A,C}, More) -> [{char,A,C}|More];
 tokens({integer,A,N}, More) -> [{integer,A,N}|More];
 tokens({float,A,F}, More) -> [{float,A,F}|More];
 tokens({atom,Aa,A}, More) -> [{atom,Aa,A}|More];
-tokens({var,A,V}, More) -> [{var,A,V}|More];
 tokens({string,A,S}, More) -> [{string,A,S}|More];
 tokens({nil,A}, More) -> [{'[',A},{']',A}|More];
 tokens({cons,A,Head,Tail}, More) ->
@@ -2156,7 +2165,12 @@ tokens({map,A,[]}, More) ->
 tokens({map,A,[P|Ps]}, More) ->
     [{'#',A},{'{',A}|tokens(P, tokens_tuple(Ps, ?anno(P), More))];
 tokens({map_field_assoc,A,K,V}, More) ->
-    tokens(K, [{'=>',A}|tokens(V, More)]).
+    tokens(K, [{'=>',A}|tokens(V, More)]);
+tokens({bin,A,[]}, More) -> [{'<<',A},{'>>',A}|More];
+tokens({bin,A,[E|Es]}, More) ->
+    [{'<<',A}|tokens_bin_element(E, tokens_bin(Es, ?anno(E), More))];
+tokens({'fun',A,{function,M,F,Ar}}, More) ->
+    [{'fun',A}|tokens(M, [{':',A}|tokens(F, [{'/',A}|tokens(Ar, More)])])].
 
 tokens_tail({cons,A,Head,Tail}, More) ->
     [{',',A}|tokens(Head, tokens_tail(Tail, More))];
@@ -2170,6 +2184,25 @@ tokens_tuple([E|Es], Anno, More) ->
     [{',',Anno}|tokens(E, tokens_tuple(Es, ?anno(E), More))];
 tokens_tuple([], Anno, More) ->
     [{'}',Anno}|More].
+
+tokens_bin([E|Es], Anno, More) ->
+    [{',',Anno}|tokens_bin_element(E, tokens_bin(Es, ?anno(E), More))];
+tokens_bin([], Anno, More) -> [{'>>',Anno}|More].
+
+tokens_bin_element({bin_element,A,Val,Size,Types}, More) ->
+    tokens(Val, bin_size(A, Size, bin_types(A, Types, More))).
+
+bin_size(_A, default, More) -> More;
+bin_size(A, Size, More) -> [{':',A}|tokens(Size, More)].
+
+bin_types(_A, default, More) -> More;
+bin_types(A, Ts, More) -> [{'/',A}|bin_types_1(A, Ts, More)].
+
+bin_types_1(A, [T], More) -> bin_type(A, T, More);
+bin_types_1(A, [T|Ts], More) -> bin_type(A, T, [{'-',A}|bin_types_1(A, Ts, More)]).
+
+bin_type(A, {Type,Unit}, More) -> [{atom,A,Type},{':',A},{integer,A,Unit}|More];
+bin_type(A, Type, More) -> [{atom,A,Type}|More].
 
 %% Give the relative precedences of operators.
 
