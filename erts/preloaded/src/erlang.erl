@@ -7497,6 +7497,9 @@ Returns either `{module, Module}`, or `{error, Reason}` if loading fails.
 - **`badfile`** - The object code in `Binary` has an incorrect format _or_ the
   object code contains code for another module than `Module`.
 
+- **`system_limit`** - The object code could not be loaded because the system has
+  reached its limit, for example, the atom table is full.
+
 - **`not_purged`** - `Binary` contains a module that cannot be loaded because
   old code for this module already exists.
 
@@ -7516,7 +7519,7 @@ Returns either `{module, Module}`, or `{error, Reason}` if loading fails.
 -spec load_module(Module, Binary) -> {module, Module} | {error, Reason} when
       Module :: module(),
       Binary :: binary(),
-      Reason :: badfile | not_purged | on_load
+      Reason :: badfile | not_purged | on_load | system_limit
               | {features_not_allowed, [atom()]}.
 load_module(Mod, Code) ->
     try

@@ -58,7 +58,12 @@ int index_table_sz(IndexTable *);
 
 int index_get(IndexTable*, void*);
 
+/* Inserts an entry, terminating the emulator if the table is full. */
 IndexSlot* index_put_entry(IndexTable*, void*);
+
+/* As index_put_entry(), but returns NULL instead of terminating the emulator
+ * when the table is full. Already existing entries are still returned. */
+IndexSlot* index_put_entry_may_fail(IndexTable*, void*);
 
 /* Erase all entries with index 'ix' and higher
 */
@@ -87,7 +92,7 @@ ERTS_GLB_INLINE int erts_index_num_entries(IndexTable* t)
     /*
      * Do a read barrier here to allow lock free iteration
      * on tables where entries are never erased.
-     * index_put_entry() does matching write barrier.
+     * index_put_entry_may_fail() does matching write barrier.
      */
     ERTS_THR_READ_MEMORY_BARRIER;
     return ret;

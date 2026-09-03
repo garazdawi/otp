@@ -26,6 +26,7 @@
          versions/1,new_binary_types/1,
          bad_beam_file/1,
          literal_leak/1,
+         atom_leak/1,
          call_purged_fun_code_gone/1,
          call_purged_fun_code_reload/1,
          call_purged_fun_code_there/1,
@@ -53,7 +54,7 @@ suite() -> [{ct_hooks,[ts_install_cth]}].
 
 all() ->
     [versions, new_binary_types,
-     bad_beam_file, literal_leak,
+     bad_beam_file, literal_leak, atom_leak,
      call_purged_fun_code_gone,
      call_purged_fun_code_reload, call_purged_fun_code_there,
      call_purged_fun_code_altered,
@@ -316,6 +317,52 @@ literal_leak(_Config) ->
              _ = erlang:garbage_collect()
          end || _ <- lists:seq(1, N)],
     ok.
+
+%% Make sure that loading a module that fills up the atom table fails gracefully.
+atom_leak(_Config) ->
+    A1 = list_to_atom(id("unique_atom_1")),
+    A2 = list_to_atom(id("unique_atom_2")),
+
+    %% Needs 2 new atoms when the literals are loaded, which should fail.
+    LiteralFailure = atom_leak_module(foo, [{tuple,1,[{atom,1,A1},
+                                                      {atom,1,A2}]}]),
+
+    %% Needs 2 new atoms when the atom chunk is loaded, which should fail.
+    AtomFailure = atom_leak_module(A1, [{atom,1,A2}]),
+
+    {error, system_limit} = atom_limit(AtomFailure),
+    {error, system_limit} = atom_limit(LiteralFailure),
+
+    ok.
+
+%% Compiles module 'test' exporting Name/0, whose body is Body.
+atom_leak_module(Name, Body) ->
+    {ok, _, Binary} =
+        compile:forms([{attribute,{1,2},module,test},
+                       {attribute,{2,2},export,[{Name,0}]},
+                       {function,{3,1},Name,0,
+                        [{clause,{3,1},[],[],Body}]}],
+                      [binary]),
+    Binary.
+
+atom_limit(ModuleBinary) ->
+    {ok, Peer, Node} = ?CT_PEER(["+t", "50000"]),
+
+    try
+        %% Test that loading a module that creates too many atoms fails gracefully.
+        erpc:call(Node, fun() ->
+                                Start = erlang:system_info(atom_count),
+                                Limit = erlang:system_info(atom_limit),
+
+                                %% Almost fill up the node with atoms
+                                _ = [list_to_atom(integer_to_list(I)) ||
+                                        I <- lists:seq(Start, Limit - 2)],
+
+                                code:load_binary(test, "test.beam", ModuleBinary)
+                        end)
+    after
+        peer:stop(Peer)
+    end.
 
 call_purged_fun_code_gone(Config) when is_list(Config) ->
     run_sys_proc_test(fun call_purged_fun_code_gone_test/1, Config).

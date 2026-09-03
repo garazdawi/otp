@@ -30,7 +30,7 @@
 
 -export([display/1, display_huge/0, display_string/1,
 	 erl_bif_types/1,guard_bifs_in_erl_bif_types/1,
-	 shadow_comments/1,list_to_utf8_atom/1,
+         shadow_comments/1,list_to_utf8_atom/1,list_to_atom_limit/1,
 	 specs/1,improper_bif_stubs/1,
 	 t_list_to_existing_atom/1,os_env/1,otp_7526/1,
 	 t_binary_to_atom/1,t_binary_to_existing_atom/1,
@@ -57,7 +57,7 @@ suite() ->
 all() -> 
     [erl_bif_types, guard_bifs_in_erl_bif_types, shadow_comments,
      specs, improper_bif_stubs,
-     t_list_to_existing_atom, os_env, otp_7526,
+     t_list_to_existing_atom, list_to_atom_limit, os_env, otp_7526,
      display, display_string, list_to_utf8_atom,
      t_atom_to_binary, t_binary_to_atom, t_binary_to_existing_atom,
      erl_crash_dump_bytes, min_max, erlang_halt, halt_flush_timeout,
@@ -407,6 +407,34 @@ t_list_to_existing_atom(Config) when is_list(Config) ->
     %% the next line.
     UnlikelyAtom = list_to_atom(id(UnlikelyStr)),
     UnlikelyAtom = list_to_existing_atom(UnlikelyStr),
+    ok.
+
+%% Test that the atom creating BIFs raise system_limit, rather than bringing
+%% the node down, once the atom table is full.
+list_to_atom_limit(Config) when is_list(Config) ->
+    {ok, Peer, Node} = ?CT_PEER(#{ args => ["+t", "50000"] }),
+
+    Creators = [fun(I) -> list_to_atom(integer_to_list(I)) end,
+                fun(I) -> binary_to_atom(integer_to_binary(I)) end,
+                fun(I) -> binary_to_atom(integer_to_binary(I), latin1) end],
+
+    try
+        [begin
+             Fill = fun() ->
+                            [Create(I) ||
+                                I <- lists:seq(erlang:system_info(atom_count),
+                                               erlang:system_info(atom_limit) + 1)]
+                    end,
+             try erpc:call(Node, Fill),
+                  ct:fail(call_succeeded)
+             catch
+                 error:{exception, system_limit, _} ->
+                     ok
+             end
+         end || Create <- Creators]
+    after
+        peer:stop(Peer)
+    end,
     ok.
 
 os_env(Config) when is_list(Config) ->
