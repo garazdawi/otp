@@ -59,6 +59,8 @@ MODULES= \
 	ct_telnet \
 	ct_util \
 	ct_cover \
+	ct_cover_to_html \
+	ct_cover_to_lcov \
 	ct_doctest \
 	ct_testspec \
 	ct_event \
@@ -77,6 +79,7 @@ MODULES= \
 	cte_track\
 	cth_log_redirect\
 	cth_surefire \
+	cth_coverage \
 	ct_netconfc \
 	ct_conn_log_h \
 	cth_conn_log \
@@ -179,5 +182,6 @@ release_docs_spec: docs
 $(EBIN)/cth_log_redirect.beam: $(EBIN)/ct_hooks.beam
 $(EBIN)/cth_conn_log.beam: $(EBIN)/ct_hooks.beam
 $(EBIN)/cth_surefire.beam: $(EBIN)/ct_hooks.beam
+$(EBIN)/cth_coverage.beam: $(EBIN)/ct_hooks.beam
 
 include $(ERL_TOP)/make/dep.mk

@@ -34,6 +34,11 @@ on:
         required: true
         type: boolean
         description: "Bypasses checks of github.repository being 'erlang/otp'. Used for testing in forks"
+      coverage:
+        required: false
+        type: boolean
+        default: false
+        description: "Build the otp image with native per-line coverage instrumentation (OTP_LINE_COVERAGE=yes)"
     outputs:
       changes:
         description: "changed apps"
@@ -120,7 +125,11 @@ jobs:
             echo "value=false" >> $GITHUB_OUTPUT
           fi
 
+      ## The two pre-built cache steps are skipped for coverage builds: a
+      ## coverage build must neither reuse uninstrumented pre-built beams nor
+      ## re-save instrumented beams into the caches used by the normal CI.
       - name: Cache pre-built src
+        if: ${{ !inputs.coverage }}
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # ratchet:actions/cache@v5.0.3
         with:
             path: otp_src.tar.gz
@@ -129,6 +138,7 @@ jobs:
                 prebuilt-src-${{ github.base_ref }}-${{ github.event.pull_request.base.sha }}
 
       - name: Cache pre-built binaries
+        if: ${{ !inputs.coverage }}
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # ratchet:actions/cache@v5.0.3
         with:
             path: otp_cache.tar.gz
@@ -182,8 +192,14 @@ jobs:
           path: .github/otp.tar.gz
 
       - name: Build image
+        env:
+          COVERAGE: ${{ inputs.coverage }}
         run: |
-          docker build --tag otp \
+          COVERAGE_ARGS=()
+          if [ "$COVERAGE" = "true" ]; then
+            COVERAGE_ARGS=(--build-arg OTP_LINE_COVERAGE=yes)
+          fi
+          docker build --tag otp "${COVERAGE_ARGS[@]}" \
             --build-arg MAKEFLAGS=-j$(($(nproc) + 2)) \
             --file ".github/dockerfiles/Dockerfile.64-bit" \
             .github/

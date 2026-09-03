@@ -98,6 +98,21 @@ CONFIGURE_CXXFLAGS = @CXXFLAGS@
 DEBUG_CFLAGS = @DEBUG_CFLAGS@
 DEBUG_CXXFLAGS = @DEBUG_CXXFLAGS@
 
+# Flags a gcc-configured coverage build carries that the clang (clangcov)
+# build must drop: GCC-only warnings (-Wtrampolines), the blanket -Werror
+# (the specific -Werror=<name> flags are kept), and UBSan
+# (-fsanitize=signed-integer-overflow), whose runtime is not linked into a
+# coverage build. Applied to CONFIGURE_/DEBUG_ flags so the bundled
+# libraries (zstd, zlib) that compile with $(CONFIGURE_CFLAGS) build too;
+# the emulator's own objects filter the same set in TYPE_FLAGS below.
+CLANGCOV_FILTER_OUT = -Werror -Wtrampolines -fsanitize=signed-integer-overflow
+ifeq ($(TYPE),clangcov)
+CONFIGURE_CFLAGS := $(filter-out $(CLANGCOV_FILTER_OUT),$(CONFIGURE_CFLAGS))
+CONFIGURE_CXXFLAGS := $(filter-out $(CLANGCOV_FILTER_OUT),$(CONFIGURE_CXXFLAGS))
+DEBUG_CFLAGS := $(filter-out $(CLANGCOV_FILTER_OUT),$(DEBUG_CFLAGS))
+DEBUG_CXXFLAGS := $(filter-out $(CLANGCOV_FILTER_OUT),$(DEBUG_CXXFLAGS))
+endif
+
 #
 # Run this make file with TYPE set to the type of emulator you want.
 # Different versions of the emulator for different uses. The default
@@ -158,6 +173,23 @@ endif
 ENABLE_ALLOC_TYPE_VARS += debug
 else
 
+ifeq ($(TYPE),clangcov)
+TYPEMARKER = .clangcov
+# Clang source-based coverage. Unlike gcov (which forces -O0), this stays
+# optimized, so the JIT emitter (C++) and the rest of the emulator are
+# covered under real optimization. -fprofile-instr-generate/-fcoverage-mapping
+# instrument at compile time; the LLVM profile runtime is pulled in at link
+# via -fprofile-instr-generate (LDFLAGS below). Coverage flags live in
+# TYPE_FLAGS, which feeds both CFLAGS and (via CFLAGS) CXXFLAGS.
+# clangcov always compiles with clang; drop GCC-only flags that a
+# gcc-configured @CFLAGS@ may carry (e.g. a hardening -Wtrampolines) and
+# the blanket -Werror that would make clang's "unknown warning option"
+# fatal. Specific -Werror=<name> flags are kept (clang supports them).
+TYPE_FLAGS = $(filter-out $(CLANGCOV_FILTER_OUT),@CFLAGS@) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
+TYPE_CXXFLAGS = $(filter-out $(CLANGCOV_FILTER_OUT),@CXXFLAGS@)
+LDFLAGS += -fprofile-instr-generate
+else
+
 ifeq ($(TYPE),valgrind)
 TYPEMARKER = .valgrind
 TYPE_FLAGS = @DEBUG_CFLAGS@ -DVALGRIND -DNO_JUMP_TABLE @NO_MAYBE_UNINITIALIZED@
@@ -208,6 +240,7 @@ override TYPE=opt
 TYPEMARKER =
 TYPE_FLAGS = @CFLAGS@
 TYPE_CXXFLAGS = @CXXFLAGS@
+endif
 endif
 endif
 endif

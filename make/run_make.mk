@@ -33,7 +33,7 @@ include $(ERL_TOP)/make/target.mk
 
 .PHONY: valgrind asan test
 
-opt debug valgrind asan gcov gprof lcnt frmptr icount:
+opt debug valgrind asan gcov clangcov gprof lcnt frmptr icount:
 	$(make_verbose)$(MAKE) -f $(TARGET)/Makefile TYPE=$@
 
 emu jit:

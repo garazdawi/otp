@@ -1,0 +1,285 @@
+# %CopyrightBegin%
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright Ericsson AB 2026. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# %CopyrightEnd%
+
+##
+## Scheduled (and manually dispatched) per-testcase line-coverage run.
+##
+## Builds Erlang/OTP with native line instrumentation
+## (OTP_LINE_COVERAGE=yes, i.e. +line_coverage +force_line_counters),
+## runs the test suites with the cth_coverage CT hook enabled, and
+## aggregates the per-testcase coverdata from all test jobs into a
+## single LCOV tracefile (coverage.info) uploaded as the
+## otp-coverage-lcov artifact.
+##
+## A separate 'native' job additionally builds the clangcov emulator
+## (clang source-based coverage), exercises it with a workload that dumps
+## the emulator's own C and JIT-emitter coverage (erts_debug:coverage/1),
+## and uploads it as the otp-coverage-native-lcov artifact.
+##
+## The normal push/pull request CI is unaffected: all coverage plumbing
+## in the reusable workflows and in the build-base-image action is
+## behind default-false inputs.
+##
+
+name: Coverage of Erlang/OTP
+
+on:
+  workflow_dispatch:
+  schedule:
+      ## Weekly, Sundays at 03:00 UTC
+      - cron: 0 3 * * 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    uses: ./.github/workflows/reusable-setup.yaml
+
+  pack:
+    name: Build Erlang/OTP (64-bit, line coverage)
+    needs: setup
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/reusable-pack.yaml
+    with:
+      base_branch:          ${{ needs.setup.outputs.base_branch }}
+      ## Always do a full build: the coverage image must not reuse any
+      ## uninstrumented pre-built beams, and we want the full app list
+      ## in the 'changes' output so that all test suites are run.
+      ## (The expression form keeps the value typed as a string.)
+      full_build_and_check: ${{ 'true' }}
+      bypass_erlang_repo:   false
+      coverage:             true
+
+  test:
+    name: Test Erlang/OTP (coverage)
+    needs: pack
+    if: needs.pack.outputs.changes != '[]'
+    permissions:
+      contents: read
+      actions:  write
+    uses: ./.github/workflows/reusable-test.yaml
+    with:
+      changes:     ${{ needs.pack.outputs.changes }}
+      base_branch: ${{ needs.pack.outputs.base_branch }}
+      coverage:    true
+
+  aggregate:
+    name: Aggregate coverage (LCOV + HTML + attribution)
+    runs-on: ubuntu-latest
+    ## Run even if some test jobs failed so that whatever coverage was
+    ## collected still ends up in the artifact.
+    if: ${{ !cancelled() && needs.pack.result == 'success' }}
+    needs:
+      - pack
+      - test
+    permissions:
+      contents: read    # actions/checkout + ./.github/actions/build-base-image
+      actions:  write   # actions/download-artifact + actions/upload-artifact
+      id-token: write   # Codecov OIDC (tokenless upload for public repos)
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+      ## Re-create the otp image (from this run's otp_prebuilt artifact)
+      ## so that ct_cover_to_lcov from this source tree can be used.
+      - uses: ./.github/actions/build-base-image
+        with:
+            BASE_BRANCH: ${{ needs.pack.outputs.base_branch }}
+            COVERAGE: true
+      - name: Download test results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # ratchet:actions/download-artifact@v6.0.0
+        with:
+          pattern: "*_test_results"
+          path: test_results
+      - name: Aggregate coverage
+        run: |
+          set -x
+          mkdir -p coverage/results
+          ## Each test job tars its make_test_dir; the cth_coverage output
+          ## (per-testcase *.coverdata + coverage.manifest) is in
+          ## make_test_dir/coverage. Unpack only that part of each tarball.
+          shopt -s nullglob
+          for tarball in test_results/*/*.tar.gz; do
+            name=$(basename "$tarball" .tar.gz)
+            mkdir -p "coverage/results/$name"
+            tar -xzf "$tarball" -C "coverage/results/$name" make_test_dir/coverage ||
+              echo "No coverage data in $tarball"
+          done
+          cat > coverage/aggregate.escript <<'ESCRIPT'
+          #!/usr/bin/env escript
+          %% -*- erlang -*-
+          %%! -pa /buildroot/otp/lib/common_test/ebin
+
+          %% Merge every *.coverdata file (per-testcase native line coverage
+          %% written by cth_coverage) found under Root into one LCOV
+          %% tracefile. The per-node coverage.manifest files are concatenated
+          %% into one manifest so that instrumented-but-unexecuted lines are
+          %% emitted with count 0 (ct_cover_to_lcov unions duplicate module
+          %% entries).
+          main([OutFile, Root]) ->
+              CoverData = filelib:wildcard(filename:join(Root, "**/*.coverdata")),
+              Manifests = filelib:wildcard(filename:join(Root, "**/coverage.manifest")),
+              io:format("Aggregating ~w coverdata files and ~w manifests~n",
+                        [length(CoverData), length(Manifests)]),
+              case CoverData of
+                  [] ->
+                      io:format(standard_error,
+                                "error: no .coverdata files found under ~ts~n",
+                                [Root]),
+                      halt(1);
+                  _ ->
+                      ok
+              end,
+              Opts =
+                  case Manifests of
+                      [] ->
+                          [];
+                      _ ->
+                          Manifest =
+                              lists:append(
+                                [begin
+                                     {ok, Bin} = file:read_file(F),
+                                     binary_to_term(Bin)
+                                 end || F <- Manifests]),
+                          MergedFile = filename:join(Root, "merged.manifest"),
+                          ok = file:write_file(MergedFile, term_to_binary(Manifest)),
+                          [{manifest, MergedFile}]
+                  end,
+              ok = case ct_cover_to_lcov:convert(CoverData, OutFile, Opts) of
+                       ok ->
+                           ok;
+                       {error, LReason} ->
+                           io:format(standard_error,
+                                     "ct_cover_to_lcov failed: ~tp~n", [LReason]),
+                           halt(1)
+                   end,
+              %% Same inputs, but keeping the per-testcase dimension: an
+              %% interactive report of which testcases cover each line.
+              AttribDir = filename:join(filename:dirname(OutFile), "attrib"),
+              %% A hot line (e.g. in lists) is reached by huge numbers of
+              %% testcases across apps; list at most 5 as examples (the true
+              %% count is still shown) to keep the whole-tree report small.
+              case ct_cover_to_html:convert(
+                     CoverData, AttribDir,
+                     [{title, "Erlang/OTP coverage attribution"},
+                      {max_tests_per_line, 5} | Opts]) of
+                  ok ->
+                      io:format("Wrote attribution report to ~ts~n", [AttribDir]);
+                  {error, HReason} ->
+                      io:format(standard_error,
+                                "ct_cover_to_html failed: ~tp~n", [HReason]),
+                      halt(1)
+              end.
+          ESCRIPT
+          docker run -v "$PWD/coverage:/cov" otp \
+            "escript /cov/aggregate.escript /cov/coverage.info /cov/results"
+          ls -l coverage/coverage.info coverage/attrib/index.html
+          ## Render a browsable HTML report from the LCOV tracefile. genhtml
+          ## runs inside the image because the SF: paths in coverage.info are
+          ## the in-container source paths (/buildroot/otp/lib/*/src/*.erl);
+          ## --prefix trims that lead from the displayed tree. lcov is installed
+          ## on demand so the shared base image is left untouched.
+          docker run -v "$PWD/coverage:/cov" otp \
+            "(command -v genhtml >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq lcov)) && genhtml /cov/coverage.info --output-directory /cov/html --prefix /buildroot/otp --title 'Erlang/OTP line coverage' --legend --quiet --ignore-errors source"
+          ls -l coverage/html/index.html
+      - name: Upload LCOV tracefile
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp-coverage-lcov
+          path: coverage/coverage.info
+      ## Feed the same LCOV tracefile to Codecov for dashboards, trends and
+      ## PR checks. Never fail the coverage leg on a Codecov hiccup or a
+      ## missing token; the artifacts are the source of truth. Needs the
+      ## CODECOV_TOKEN secret (or the Codecov app, tokenless via OIDC) set
+      ## on the repository for the upload to be accepted.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # ratchet:codecov/codecov-action@v5
+        continue-on-error: true
+        with:
+          files: coverage/coverage.info
+          disable_search: true
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp-coverage-html
+          path: coverage/html
+      - name: Upload per-testcase attribution report
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp-coverage-attribution
+          path: coverage/attrib
+
+  native:
+    name: Native C/JIT coverage (clangcov)
+    runs-on: ubuntu-latest
+    ## Independent of the BEAM coverage test/aggregate jobs, so a clang
+    ## build issue here cannot affect them.
+    needs: pack
+    if: ${{ !cancelled() && needs.pack.result == 'success' }}
+    permissions:
+      contents: read   # actions/checkout + ./.github/actions/build-base-image
+      actions:  write  # actions/upload-artifact
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-base-image
+        with:
+            BASE_BRANCH: ${{ needs.pack.outputs.base_branch }}
+            COVERAGE: true
+      - name: Build clangcov emulator, exercise it, convert to LCOV
+        run: |
+          set -x
+          mkdir -p native
+          ## Build the clang source-based coverage emulator (clangcov) with
+          ## clang (only lib_src + the emulator are needed to run
+          ## -emu_type clangcov), run a workload on it that broadly
+          ## exercises the runtime and the JIT emitter (clangcov_probe.escript
+          ## dumps the native C + JIT coverage via erts_debug:coverage/1), and
+          ## convert the resulting .profraw to an LCOV tracefile with llvm-cov.
+          ## A direct workload is used rather than `make <app>_test`: apps that
+          ## release before testing cannot select -emu_type clangcov from a
+          ## release that does not contain that emulator.
+          docker run -v "$PWD/native:/native" otp "
+            sudo apt-get update -qq && sudo apt-get install -y -qq clang llvm &&
+            ( cd /buildroot/otp/erts/lib_src && make clangcov CC=clang CXX=clang++ ) &&
+            ( cd /buildroot/otp/erts/emulator && make clangcov CC=clang CXX=clang++ ) &&
+            cd /buildroot/otp &&
+            ERL_AFLAGS='-emu_type clangcov' ./bin/escript make/clangcov_probe.escript /buildroot/otp/native_cov &&
+            ./make/native_cov_to_lcov.sh /buildroot/otp/native_cov /buildroot/otp/bin /native/native.info
+          "
+          ## Fail honestly if no native coverage was produced.
+          test -f native/native.info
+          ls -l native/native.info
+      - name: Upload native C/JIT LCOV
+        if: ${{ hashFiles('native/native.info') != '' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp-coverage-native-lcov
+          path: native/native.info

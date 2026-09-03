@@ -132,6 +132,8 @@ typedef struct driver_data {
 #define ERL_BUILD_TYPE_MARKER ".debug"
 #elif defined(VALGRIND)
 #define ERL_BUILD_TYPE_MARKER ".valgrind"
+#elif defined(ERTS_CLANG_COVERAGE)
+#define ERL_BUILD_TYPE_MARKER ".clangcov"
 #else /* opt */
 #define ERL_BUILD_TYPE_MARKER
 #endif

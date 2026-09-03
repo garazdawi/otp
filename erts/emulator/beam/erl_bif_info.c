@@ -2803,6 +2803,9 @@ BIF_RETTYPE system_info_1(BIF_ALIST_1)
 #elif defined(ERTS_GCOV)
 	ERTS_DECL_AM(gcov);
 	BIF_RET(AM_gcov);
+#elif defined(ERTS_CLANG_COVERAGE)
+	ERTS_DECL_AM(clangcov);
+	BIF_RET(AM_clangcov);
 #elif defined(VALGRIND)
 	ERTS_DECL_AM(valgrind);
 	BIF_RET(AM_valgrind);

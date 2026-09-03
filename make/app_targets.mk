@@ -30,6 +30,38 @@ test:
 	  $(ERL_TOP)/make/test_target_script.sh $(ERL_TOP)
 endif
 
+# Turn the coverage collected by `make test COVERAGE=yes` into reports:
+# the per-testcase BEAM line coverage into an LCOV tracefile + interactive
+# attribution report, and, if the tests ran on a clangcov emulator, the
+# native C/JIT coverage into an LCOV tracefile (see HOWTO/DEVELOPMENT.md).
+COVERAGE_DIR ?= make_test_dir/coverage
+.PHONY: coverage_report
+coverage_report:
+	@had=no; \
+	if [ -f "$(COVERAGE_DIR)/coverage.manifest" ]; then \
+	  $(ERL_TOP)/bin/escript $(ERL_TOP)/lib/common_test/ebin/ct_cover_to_lcov.beam \
+	    --manifest "$(COVERAGE_DIR)/coverage.manifest" \
+	    "$(COVERAGE_DIR)/coverage.info" "$(COVERAGE_DIR)" && \
+	  $(ERL_TOP)/bin/escript $(ERL_TOP)/lib/common_test/ebin/ct_cover_to_html.beam \
+	    --manifest "$(COVERAGE_DIR)/coverage.manifest" --max-per-line 5 \
+	    "$(COVERAGE_DIR)/html" "$(COVERAGE_DIR)"; \
+	  echo "BEAM line LCOV:      $(COVERAGE_DIR)/coverage.info"; \
+	  echo "Attribution report:  $(COVERAGE_DIR)/html/index.html"; \
+	  had=yes; \
+	fi; \
+	if [ -d "$(COVERAGE_DIR)/native" ]; then \
+	  $(ERL_TOP)/make/native_cov_to_lcov.sh "$(COVERAGE_DIR)/native" \
+	    "$(ERL_TOP)/bin/$(TARGET)/beam.clangcov.jit" \
+	    "$(COVERAGE_DIR)/native.info"; \
+	  if [ -f "$(COVERAGE_DIR)/native.info" ]; then \
+	    echo "Native C/JIT LCOV:   $(COVERAGE_DIR)/native.info"; had=yes; \
+	  fi; \
+	fi; \
+	if [ "$$had" = no ]; then \
+	  echo "No coverage data in $(COVERAGE_DIR). Run 'make test COVERAGE=yes' first."; \
+	  exit 1; \
+	fi
+
 docs: $(filter src java_src, $(SUB_DIRECTORIES))
 
 info:
