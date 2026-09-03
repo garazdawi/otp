@@ -651,7 +651,8 @@ atom runtime
 atom safe
 atom save_calls
 atom sbct
-atom scheduler 
+atom sched_inline_handoffs
+atom scheduler
 atom scheduler_id
 atom scheduler_wall_time
 atom scheduler_wall_time_all

@@ -65,7 +65,10 @@
 	 reader_groups/1,
          otp_16446/1,
          simultaneously_change_schedulers_online/1,
-         simultaneously_change_schedulers_online_with_exits/1]).
+         simultaneously_change_schedulers_online_with_exits/1,
+         inline_handoff/1,
+         inline_handoff_gen_server/1,
+         inline_handoff_liveness/1]).
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -85,7 +88,10 @@ all() ->
      reader_groups,
      otp_16446,
      simultaneously_change_schedulers_online,
-     simultaneously_change_schedulers_online_with_exits].
+     simultaneously_change_schedulers_online_with_exits,
+     inline_handoff,
+     inline_handoff_gen_server,
+     inline_handoff_liveness].
 
 groups() -> 
     [{scheduler_bind, [],
@@ -2048,6 +2054,148 @@ simultaneously_change_schedulers_online_with_exits(Config) when is_list(Config) 
                   PMs),
     erlang:system_flag(schedulers_online, SchedOnline),
     ok.
+
+inline_handoff(Config) when is_list(Config) ->
+    %% The statistics counter must exist and be well-formed.
+    {Arms, Picks} = erlang:statistics(sched_inline_handoffs),
+    true = is_integer(Arms) andalso Arms >= 0,
+    true = is_integer(Picks) andalso Picks >= 0,
+
+    %% +sih false: inline handoff disabled; the counter must never move.
+    none = classify_handoff(inline_handoff_count("+sih false")),
+
+    %% +sih migrate: a woken process is migrated to the waker's run
+    %% queue and armed, but never picked inline (no reduction donation).
+    armed_only = classify_handoff(inline_handoff_count("+sih migrate")),
+
+    %% +sih true (and the default, no flag): a woken process is both
+    %% armed and picked inline on the waker's donated time slice.
+    armed_and_picked = classify_handoff(inline_handoff_count("+sih true")),
+    armed_and_picked = classify_handoff(inline_handoff_count("")),
+
+    ok.
+
+inline_handoff_gen_server(Config) when is_list(Config) ->
+    %% gen_server:call exercises two hint sites a plain message send does
+    %% not: the monitor set up before the request, and the alias/altact
+    %% reply. Under +sih it must both arm and pick inline; with the
+    %% feature off the counter must never move.
+    armed_and_picked =
+        classify_handoff(
+          inline_handoff_on_node("+sih true", fun inline_handoff_gs_calls/0)),
+    none =
+        classify_handoff(
+          inline_handoff_on_node("+sih false", fun inline_handoff_gs_calls/0)),
+    ok.
+
+inline_handoff_liveness(Config) when is_list(Config) ->
+    %% Many synchronous request/reply pairs on a single scheduler, which
+    %% maximises queue-jumping and the anti-starvation demotion. Every
+    %% reply must come back correct and in order -- catching a misrouted
+    %% wakeup or an armed-but-never-picked process (which would hang).
+    ok = inline_handoff_on_node("+sih true +S 1:1",
+                                fun () -> inline_handoff_pairs(50, 2000) end).
+
+%% Classify an {Arms, Picks} measurement (an unexpected combination,
+%% e.g. picks without arms, fails the function clause as it should).
+classify_handoff({0, 0}) -> none;
+classify_handoff({Arms, 0}) when Arms > 0 -> armed_only;
+classify_handoff({Arms, Picks}) when Arms > 0, Picks > 0 -> armed_and_picked.
+
+inline_handoff_count(Args) ->
+    inline_handoff_on_node(Args, fun () -> inline_handoff_pingpong(50000) end).
+
+%% Run Fun on a fresh peer node booted with the given +sih Args (ERL_FLAGS
+%% cleared so the parent's own flags do not leak in), returning Fun's result.
+inline_handoff_on_node(Args, Fun) ->
+    {ok, Peer, Node} = ?CT_PEER(#{args => string:lexemes(Args, " "),
+                                  env => [{"ERL_FLAGS", false}]}),
+    [Res] = mcall(Node, [Fun]),
+    peer:stop(Peer),
+    Res.
+
+%% Run a tight synchronous ping-pong (send + blocking receive on both
+%% sides), which is the canonical pattern that inline handoff targets,
+%% and return the {Arms, Picks} consumed by it.
+inline_handoff_pingpong(N) ->
+    Self = self(),
+    Resp = spawn_link(fun () -> inline_handoff_responder(Self) end),
+    {A0, P0} = erlang:statistics(sched_inline_handoffs),
+    inline_handoff_loop(Resp, N),
+    {A1, P1} = erlang:statistics(sched_inline_handoffs),
+    unlink(Resp),
+    exit(Resp, kill),
+    {A1 - A0, P1 - P0}.
+
+inline_handoff_responder(Driver) ->
+    receive
+        {Driver, M} ->
+            Driver ! {self(), M},
+            inline_handoff_responder(Driver)
+    end.
+
+inline_handoff_loop(_Resp, 0) ->
+    ok;
+inline_handoff_loop(Resp, N) ->
+    Resp ! {self(), N},
+    receive
+        {Resp, N} -> ok
+    end,
+    inline_handoff_loop(Resp, N - 1).
+
+%% Drive N gen_server:calls against a minimal "fake" gen_server -- a plain
+%% process that answers '$gen_call' via gen_server:reply/2 -- and return
+%% the {Arms, Picks} consumed. This is enough to exercise the monitor and
+%% alias-reply hint sites without a callback module.
+inline_handoff_gs_calls() ->
+    Server = spawn_link(fun inline_handoff_fake_server/0),
+    {A0, P0} = erlang:statistics(sched_inline_handoffs),
+    _ = [pong = gen_server:call(Server, ping) || _ <- lists:seq(1, 50000)],
+    {A1, P1} = erlang:statistics(sched_inline_handoffs),
+    unlink(Server),
+    exit(Server, kill),
+    {A1 - A0, P1 - P0}.
+
+inline_handoff_fake_server() ->
+    receive
+        {'$gen_call', From, ping} ->
+            gen_server:reply(From, pong),
+            inline_handoff_fake_server()
+    end.
+
+%% Spawn Pairs independent driver/responder pairs, each doing Iters
+%% synchronous round-trips with unique tags; returns ok only if every
+%% pair verifies all of its replies and finishes.
+inline_handoff_pairs(Pairs, Iters) ->
+    Parent = self(),
+    Drivers = [spawn_link(fun () -> inline_handoff_pair(Parent, K, Iters) end)
+               || K <- lists:seq(1, Pairs)],
+    inline_handoff_await(Drivers).
+
+inline_handoff_pair(Parent, K, Iters) ->
+    Self = self(),
+    Resp = spawn_link(fun () -> inline_handoff_responder(Self) end),
+    ok = inline_handoff_verify_loop(Resp, K, Iters),
+    unlink(Resp),
+    exit(Resp, kill),
+    Parent ! {done, Self}.
+
+inline_handoff_verify_loop(_Resp, _K, 0) ->
+    ok;
+inline_handoff_verify_loop(Resp, K, N) ->
+    Msg = {K, N},
+    Resp ! {self(), Msg},
+    receive
+        {Resp, Msg} -> inline_handoff_verify_loop(Resp, K, N - 1)
+    after 60000 -> error({inline_handoff_timeout, K, N})
+    end.
+
+inline_handoff_await([]) ->
+    ok;
+inline_handoff_await(Drivers) ->
+    receive
+        {done, Pid} -> inline_handoff_await(Drivers -- [Pid])
+    end.
 
 
 %%
