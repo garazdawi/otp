@@ -2142,12 +2142,23 @@ spec_init(Config) when is_list(Config) ->
     {ok, Pid4} =
 	start_link(spec_init_default_timeout, [{ok, my_server}, []]),
     ok = gen_server:call(Pid4, started_p),
-    ok = gen_server:call(Pid4, stop),
+    ok = gen_server:call(my_server, stop),
     receive 
 	{'EXIT', Pid4, stopped} ->
  	    ok
     after 5000 ->
 	    ct:fail(gen_server_did_not_die)
+    end,
+
+    {ok, Pid41} =
+        start_link(spec_init_default_timeout, [ok, []]),
+    ok = gen_server:call(Pid41, started_p),
+    ok = gen_server:call(Pid41, stop),
+    receive 
+        {'EXIT', Pid41, stopped} ->
+ 	    ok
+    after 5000 ->
+            ct:fail(gen_server_did_not_die)
     end,
 
     %% Before the OTP-10130 fix this failed because a timeout message
@@ -3169,7 +3180,13 @@ spec_init_default_timeout({ok, Name}, Options) ->
     register(Name, self()),
     proc_lib:init_ack({ok, self()}),
     %% Supervised init can occur here  ...
-    gen_server:enter_loop(?MODULE, Options, {}, {local, Name}).
+    gen_server:enter_loop(?MODULE, Options, {}, {local, Name});
+spec_init_default_timeout(ok, Options) ->
+    process_flag(trap_exit, true),
+    proc_lib:init_ack({ok, self()}),
+    %% Supervised init can occur here  ...
+    gen_server:enter_loop(?MODULE, Options, {}, self()).
+
 
 %% OTP-10130, A bug was introduced where global scope was not matched when
 %% enter_loop/4 was called (no timeout).

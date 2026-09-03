@@ -2149,6 +2149,9 @@ enter_loop(Mod, Options, State, ServerName = {Scope, _})
 enter_loop(Mod, Options, State, ServerName = {via, _, _})
   when is_atom(Mod), is_list(Options) ->
     enter_loop(Mod, Options, State, ServerName, infinity);
+enter_loop(Mod, Options, State, ServerName)
+  when is_atom(Mod), is_list(Options), is_pid(ServerName) ->
+    enter_loop(Mod, Options, State, ServerName, infinity);
 %%
 enter_loop(Mod, Options, State, Action)
   when is_atom(Mod), is_list(Options) ->
