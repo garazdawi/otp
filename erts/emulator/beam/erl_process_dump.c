@@ -28,6 +28,7 @@
 #include "erl_vm.h"
 #include "global.h"
 #include "erl_process.h"
+#include "erl_gc.h"
 #include "error.h"
 #include "bif.h"
 #include "erl_db.h"
@@ -129,7 +130,14 @@ Uint erts_process_memory(Process *p, int include_sigs_in_transit)
         erts_monitor_list_foreach(ERTS_P_LT_MONITORS(p),
                                   monitor_size, (void *) &size);
     }
-    size += (p->heap_sz + p->mbuf_sz) * sizeof(Eterm);
+    if (p->flags & F_COMPRESSED) {
+        /* Heap is compressed and freed; count the compressed footprint
+         * instead of the (stale) uncompressed heap geometry. */
+        size += erts_compressed_process_heap_size(p);
+        size += p->mbuf_sz * sizeof(Eterm);
+    } else {
+        size += (p->heap_sz + p->mbuf_sz) * sizeof(Eterm);
+    }
     if (p->abandoned_heap)
         size += (p->hend - p->heap) * sizeof(Eterm);
     if (p->old_hend && p->old_heap)
