@@ -67,3 +67,19 @@ ifeq ($(TARGET),)
 $(error Neither TARGET nor OVERRIDE_TARGET can be determined!)
 else
 endif
+
+# Ensure that the make variable TYPE is one that is actually built
+#
+# The makefiles that build C code treat any TYPE they do not recognize as opt,
+# so without this check a misspelled TYPE quietly produces a successful build of
+# a different emulator than the one that was asked for. An empty TYPE means opt.
+
+ERTS_BUILD_TYPES = opt debug lcnt valgrind asan gcov gprof frmptr icount
+
+ifneq ($(TYPE),)
+ifeq ($(filter $(TYPE),$(ERTS_BUILD_TYPES)),)
+$(error Unknown TYPE "$(TYPE)". Valid types are: $(ERTS_BUILD_TYPES))
+else
+endif
+else
+endif

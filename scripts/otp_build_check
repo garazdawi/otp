@@ -210,7 +210,7 @@ $ERL_TOP/bin/cerl -eval "erlang:halt()" || {
 }
 
 [ $format_check = no ] || {
-    clang-format --help 2>&1 >/dev/null || {
+    ${CLANG_FORMAT:-clang-format} --help 2>&1 >/dev/null || {
         fail "clang-format not installed. Use --no-format-check option to skip."
     }
 

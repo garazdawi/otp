@@ -485,6 +485,44 @@ functions are released with an Erlang/OTP release, this placeholder
 will get replaced with the actual OTP version, leading to something
 like "OTP 26.0".
 
+## Common documentation build failures
+
+The documentation is built with warnings treated as errors, so a warning from
+[ex_doc] fails the build.
+
+There is one wrinkle worth knowing about: `$ERL_TOP/make/ex_doc_wrapper` turns
+warnings-as-errors *off* when an application that should have been built is
+missing its `.app` file, so that a `make docs` in a partially built repository
+does not fail. It says so on standard error when it does. Applications that have
+been disabled, either by their own `configure` or through
+`lib/SKIP-APPLICATIONS`, are not counted as missing.
+
+This means a `make docs` in a partially built repository prints warnings and
+succeeds where [Github Actions](DEVELOPMENT.md#github-actions) fails. To get the
+same behavior locally, either build the whole repository first, use
+`./otp_build check`, which does that for you, or force the check on:
+
+```bash
+EX_DOC_WARNINGS_AS_ERRORS=true make docs
+```
+
+Two kinds of warning come up often enough to be worth knowing about in advance:
+
+* **Links to files that are not part of the documentation.** A Markdown link to
+  a file that [ex_doc] does not publish, such as a design note or a file
+  belonging to another application, is reported as referring to a file that does
+  not exist. Refer to such files with inline code instead of a link.
+
+* **Autolinked code spans.** A code span such as `` `m:lists` `` or
+  `` `lists:reverse/1` `` is turned into a link. If the target is not part of
+  the published documentation the link cannot be resolved and a warning is
+  emitted. If the reference is intentional, add it to `skip_code_autolink_to`
+  in the application's `doc/docs.exs`.
+
+The documentation job in Github Actions finishes long before the build and test
+jobs do, so when you are only fixing documentation you can push and look at that
+job alone.
+
 [Markdown]: https://en.wikipedia.org/wiki/Markdown
 [mermaid diagrams]: https://mermaid.js.org/
 [Markdown flavor]: https://en.wikipedia.org/wiki/Markdown#Rise_and_divergence
