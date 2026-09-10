@@ -34,11 +34,12 @@
 -define(privdir, proplists:get_value(priv_dir, Conf)).
 -endif.
 
--export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
-	 init_per_group/2,end_per_group/2, 
+-export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1,
+         init_per_group/2,end_per_group/2,
 	 normal/1, error/1, cmp/1, cmp_literals/1, strip/1, strip_add_chunks/1, otp_6711/1,
          building/1, md5/1, encrypted_abstr/1, encrypted_abstr_file/1,
-         missing_debug_info_backend/1, literals/1
+         missing_debug_info_backend/1, literals/1,
+         file_io_minimal/1
         ]).
 -export([test_makedep_abstract_code/1]).
 
@@ -48,11 +49,11 @@ suite() ->
     [{ct_hooks,[ts_install_cth]},
      {timetrap,{minutes,2}}].
 
-all() -> 
+all() ->
     [error, normal, cmp, cmp_literals, strip, strip_add_chunks, otp_6711,
      building, md5, encrypted_abstr, encrypted_abstr_file,
      missing_debug_info_backend, test_makedep_abstract_code,
-     literals
+     literals, file_io_minimal
     ].
 
 groups() -> 
@@ -916,6 +917,57 @@ do_literals(Conf, Options) ->
     ok = file:delete(BeamFile),
 
     ok.
+
+%% beam_lib used to open each BEAM twice and read it via a 256 KB
+%% file:read/2 loop. Both paths now use a single file:read_file/1.
+file_io_minimal(Conf) when is_list(Conf) ->
+    PrivDir = ?privdir,
+    Simple = filename:join(PrivDir, "simple"),
+    Source = Simple ++ ".erl",
+    BeamFile = Simple ++ ".beam",
+    simple_file(Source),
+    {ok,_} = compile:file(Source, [{outdir,PrivDir},debug_info]),
+    BeamFile2 = filename:join(PrivDir, "simple_copy.beam"),
+    copy_file(BeamFile, BeamFile2),
+    try
+        {1, 0, 0} = trace_file_io(
+                      fun() -> {ok, simple, _} = beam_lib:all_chunks(BeamFile) end),
+        {2, 0, 0} = trace_file_io(
+                      fun() -> ok = beam_lib:cmp(BeamFile, BeamFile2) end)
+    after
+        ok = file:delete(BeamFile2),
+        ok = file:delete(Source),
+        ok = file:delete(BeamFile)
+    end,
+    ok.
+
+%% Returns {ReadFiles, Opens, Reads} counted while Fun runs.
+trace_file_io(Fun) ->
+    Parent = self(),
+    Worker = spawn_link(fun() ->
+                                receive go -> ok end,
+                                Parent ! {self(), Fun()}
+                        end),
+    1 = erlang:trace(Worker, true, [call]),
+    [_ = erlang:trace_pattern({file, F, A}, true, [global])
+     || {F, A} <- [{read_file, 1}, {open, 2}, {read, 2}]],
+    Worker ! go,
+    receive {Worker, _} -> ok after 10000 -> ct:fail(timeout) end,
+    [_ = erlang:trace_pattern({file, F, A}, false, [global])
+     || {F, A} <- [{read_file, 1}, {open, 2}, {read, 2}]],
+    drain_trace(Worker, 0, 0, 0).
+
+drain_trace(Worker, RF, O, R) ->
+    receive
+        {trace, Worker, call, {file, read_file, _}} ->
+            drain_trace(Worker, RF+1, O, R);
+        {trace, Worker, call, {file, open, _}} ->
+            drain_trace(Worker, RF, O+1, R);
+        {trace, Worker, call, {file, read, _}} ->
+            drain_trace(Worker, RF, O, R+1)
+    after 0 ->
+        {RF, O, R}
+    end.
 
 compare_chunks(File1, File2, ChunkIds) ->
     {ok, {_, Chunks1}} = beam_lib:chunks(File1, ChunkIds),

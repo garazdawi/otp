@@ -1249,6 +1249,8 @@ convert_type(raw, Arg, _Opt, _Eos) ->
 %% Handle actual types
 convert_type(string, Arg, _Opt, _Eos) ->
     Arg;
+convert_type({string, []}, Arg, Opt, Eos) ->
+    throw({Eos#eos.commands, Opt, Arg, <<"is not one of the choices">>});
 convert_type({string, Choices}, Arg, Opt, Eos) when is_list(Choices), is_list(hd(Choices)) ->
     lists:member(Arg, Choices) orelse
         throw({Eos#eos.commands, Opt, Arg, <<"is not one of the choices">>}),

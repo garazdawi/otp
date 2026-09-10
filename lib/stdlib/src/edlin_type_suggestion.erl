@@ -129,13 +129,13 @@ type_traverser(_, {remote_type,_,[{_,_,Mod},{_,_,Name}, Params]}=T, Visited, Lev
 type_traverser(Mod, {user_type,_,Name,Params}=T, Visited, 1=Level, FT) ->
     case maps:is_key(strip_anno(T), Visited) of
         false ->
-            case get({?MODULE, type_traverser_intermediate_result, strip_anno(T), 1}) of
+            case get({?MODULE, type_traverser_intermediate_result, Mod, strip_anno(T), 1}) of
                 undefined ->
                     Res = case lookup_type(Mod, Name, length(Params), FT) of
                               hidden -> {type, Mod, Name, [type_traverser(Mod, P, Visited#{ strip_anno(T) => true }, Level, FT) || P <- Params]};
                               Type -> {user_type, Mod, Name, [type_traverser(Mod, P, Visited#{ strip_anno(T) => true }, Level, FT) || P <- Params], type_traverser(Mod, Type, Visited#{ strip_anno(T) => true }, Level, FT)}
                           end,
-                    put({?MODULE, type_traverser_intermediate_result, strip_anno(T), 1}, Res),
+                    put({?MODULE, type_traverser_intermediate_result, Mod, strip_anno(T), 1}, Res),
                     Res;
                 Res -> Res
             end;
@@ -159,13 +159,13 @@ type_traverser(_, {remote_type,_,[{_,_,Mod},{_,_,Name}, Params]}=T, Visited, 1=L
 type_traverser(Mod, {user_type,_,Name,Params}=T, Visited, Level, FT) ->
     case maps:is_key(strip_anno(T), Visited) of
         false ->
-            case get({?MODULE, type_traverser_intermediate_result, strip_anno(T), Level}) of
+            case get({?MODULE, type_traverser_intermediate_result, Mod, strip_anno(T), Level}) of
                 undefined ->
                     Res = case lookup_type(Mod, Name, length(Params), FT) of
                               hidden -> {type, Mod, Name, [type_traverser(Mod, P, Visited#{ strip_anno(T) => true }, Level, FT) || P <- Params]};
                               Type -> type_traverser(Mod, Type, Visited#{ strip_anno(T) => true }, Level, FT)
                           end,
-                    put({?MODULE, type_traverser_intermediate_result, strip_anno(T), Level}, Res),
+                    put({?MODULE, type_traverser_intermediate_result, Mod, strip_anno(T), Level}, Res),
                     Res;
                 Res -> Res
             end;
@@ -199,13 +199,13 @@ type_traverser(_, {type, _, term, _}, _, _, _) ->
 type_traverser(_, {type, _, Name, Params}=T, Visited, Level, FT) ->
     case maps:is_key(strip_anno(T), Visited) of
         false ->
-            case get({?MODULE, type_traverser_intermediate_result, strip_anno(T), 1}) of
+            case get({?MODULE, type_traverser_intermediate_result, strip_anno(T), Level}) of
                 undefined ->
                     Res = case lookup_type(erlang, Name, length(Params), FT) of
                               hidden -> {type, Name, [type_traverser(erlang, P, Visited#{ strip_anno(T) => true }, Level, FT) || P <- Params]};
                               Type -> type_traverser(erlang, Type, Visited#{ strip_anno(T) => true}, Level, FT)
                           end,
-                    put({?MODULE, type_traverser_intermediate_result, strip_anno(T), 1}, Res),
+                    put({?MODULE, type_traverser_intermediate_result, strip_anno(T), Level}, Res),
                     Res;
                 Res -> Res
             end;

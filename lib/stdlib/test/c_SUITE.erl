@@ -25,7 +25,7 @@
 -export([c_1/1, c_2/1, c_3/1, c_4/1, nc_1/1, nc_2/1, nc_3/1, nc_4/1,
 	 c_default_outdir_1/1, c_default_outdir_2/1,
          nc_default_outdir_1/1, nc_default_outdir_2/1,
-         ls/1, memory/1]).
+         ls/1, memory/1, c_no_options_in_compile_info/1]).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -33,11 +33,11 @@
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
-all() -> 
+all() ->
     [c_1, c_2, c_3, c_4, nc_1, nc_2, nc_3, nc_4,
      c_default_outdir_1, c_default_outdir_2,
      nc_default_outdir_1, nc_default_outdir_2,
-     ls, memory].
+     ls, memory, c_no_options_in_compile_info].
 
 groups() -> 
     [].
@@ -218,3 +218,28 @@ mget(K, L) ->
 %% Help function for c_SUITE:memory/1
 test_v(V) when is_integer(V) ->
     V.
+
+%% c:c/1 must preserve `source' when compile_info has no `options' entry.
+c_no_options_in_compile_info(Config) when is_list(Config) ->
+    SrcFile = filename:join(proplists:get_value(data_dir, Config), "m.erl"),
+    BeamDir = filename:join(proplists:get_value(priv_dir, Config),
+                            "c_no_options_beam"),
+    ok = filelib:ensure_path(BeamDir),
+    {ok, m, BeamBin0} = compile:file(SrcFile, [binary, return_errors]),
+    {ok, m, Chunks0} = beam_lib:all_chunks(BeamBin0),
+    {value, {"CInf", CInfBin0}, Rest} = lists:keytake("CInf", 1, Chunks0),
+    CompileInfo = lists:keydelete(options, 1, binary_to_term(CInfBin0)),
+    {ok, BeamBin} = beam_lib:build_module(
+                      [{"CInf", term_to_binary(CompileInfo)} | Rest]),
+    BeamFile = filename:join(BeamDir, "m.beam"),
+    ok = file:write_file(BeamFile, BeamBin),
+    _ = code:purge(m), _ = code:delete(m), _ = code:purge(m),
+    true = code:add_patha(BeamDir),
+    try
+        BeamFile = code:which(m),
+        {ok, m} = c:c(m)
+    after
+        true = code:del_path(BeamDir),
+        _ = code:purge(m), _ = code:delete(m)
+    end,
+    ok.

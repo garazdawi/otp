@@ -259,9 +259,10 @@ insert_node({Load,Node},[{L,N}|Tail]) when Load =< L ->
     [{Load,Node} | T];
 insert_node(Ln,[H|T]) ->
     [H | insert_node(Ln,T)];
-insert_node(X,[]) ->          % Can't happen
-    error_logger:error_msg("Pool_master: Bad node list X=~w\n", [X]),
-    exit(crash).
+insert_node(_X,[]) ->
+    %% Stale load report from a node already removed by {nodedown,_};
+    %% drop it rather than crashing pool_master.
+    [].
 
 pure_insert({Load,Node},[]) ->
     [{Load,Node}];

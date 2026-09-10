@@ -24,13 +24,13 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("kernel/include/file.hrl").
 
--export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
-	 init_per_group/2,end_per_group/2, test/1]).
+-export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1,
+         init_per_group/2,end_per_group/2, test/1, large_event/1]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
-all() -> 
-    [test].
+all() ->
+    [test, large_event].
 
 groups() -> 
     [].
@@ -93,6 +93,32 @@ test(Config) when is_list(Config) ->
     X = if Index == 3 -> 1; true -> Index + 1 end,
     {ok, X} = read_index_file(Log1).
 
+
+large_event(Config) when is_list(Config) ->
+    {ok, Pid} = gen_event:start_link(),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    Log = filename:join(PrivDir, "log_large"),
+    ok = file:make_dir(Log),
+    Args = log_mf_h:init(Log, 1 bsl 20, 3),
+    gen_event:add_handler(Pid, log_mf_h, Args),
+
+    Big = binary:copy(<<$A>>, 70000),
+    Events = [Big, before_marker, {tuple, with, "data"}, after_marker, sync_end],
+    [gen_event:notify(Pid, E) || E <- Events],
+    gen_event:sync_notify(Pid, sync_done),
+
+    gen_event:delete_handler(Pid, log_mf_h, []),
+    gen_event:stop(Pid),
+
+    {ok, Bin} = file:read_file(filename:join(Log, "1")),
+    [Big, before_marker, {tuple, with, "data"}, after_marker, sync_end, sync_done] =
+        [E || {_, E} <- decode_records(Bin)].
+
+decode_records(<<>>) -> [];
+decode_records(<<0:16, Size:32, Rec:Size/binary, Rest/binary>>) ->
+    [binary_to_term(Rec) | decode_records(Rest)];
+decode_records(<<Size:16, Rec:Size/binary, Rest/binary>>) when Size > 0 ->
+    [binary_to_term(Rec) | decode_records(Rest)].
 
 generate(Pid, Bytes) when Bytes > 32 ->
     gen_event:notify(Pid, make_list(32, [])),

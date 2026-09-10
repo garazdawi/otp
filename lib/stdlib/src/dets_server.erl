@@ -38,7 +38,8 @@
         code_change/3]).
 
 %% record for not yet handled reqeusts to open or close files
--record(pending, {tab, ref, pid, from, reqtype, clients}). % [{From,Args}]
+-record(pending, {tab, ref, pid, from, reqtype, clients,
+                  worker_mref}). % [{From,Args}]
 
 %% state for the dets server
 -record(state, {store, parent, pending}). % [pending()]
@@ -160,11 +161,13 @@ handle_cast(_Msg, State) ->
 %%          {stop, Reason, State}            (terminate/2 is called)
 %%----------------------------------------------------------------------
 handle_info({pending_reply, {Ref, Result0}}, State) ->
-    {value, #pending{tab = Tab, pid = Pid, from = {FromPid,_Tag}=From, 
-                     reqtype = ReqT, clients = Clients}} =
+    {value, #pending{tab = Tab, pid = Pid, from = {FromPid,_Tag}=From,
+                     reqtype = ReqT, clients = Clients,
+                     worker_mref = WorkerMRef}} =
         lists:keysearch(Ref, #pending.ref, State#state.pending),
+    _ = erlang:demonitor(WorkerMRef, [flush]),
     Store = State#state.store,
-    Result = 
+    Result =
 	case {Result0, ReqT} of
 	    {ok, add_user} ->
 		do_link(Store, FromPid),
@@ -191,6 +194,25 @@ handle_info({pending_reply, {Ref, Result0}}, State) ->
     NP = lists:keydelete(Pid, #pending.pid, State#state.pending),
     State1 = State#state{pending = NP},
     request(Clients, State1);
+handle_info({'DOWN', MRef, process, _, Reason}, State) ->
+    case lists:keysearch(MRef, #pending.worker_mref, State#state.pending) of
+        {value, #pending{pid = Pid, from = From, reqtype = ReqT,
+                         tab = Tab, clients = Clients}} ->
+            case ReqT of
+                internal_open ->
+                    %% Undo the rows do_internal_open/3 inserted.
+                    true = ets:delete(?REGISTRY, Tab),
+                    true = ets:delete(?OWNERS, Pid);
+                _ ->
+                    ok
+            end,
+            gen_server:reply(From, {error, {dets_worker_died, Reason}}),
+            NP = lists:keydelete(MRef, #pending.worker_mref,
+                                 State#state.pending),
+            request(Clients, State#state{pending = NP});
+        false ->
+            {noreply, State}
+    end;
 handle_info({'EXIT', Pid, _Reason}, State) ->
     Store = State#state.store,
     case pid2name_1(Pid) of
@@ -388,11 +410,11 @@ do_unlink(Store, Pid) ->
 
 pending_call(Tab, Pid, Ref, {FromPid, _Tag}=From, Args, ReqT, State) ->
     Server = self(),
-    F = fun() -> 
-                Res = case ReqT of 
-                          add_user -> 
+    F = fun() ->
+                Res = case ReqT of
+                          add_user ->
                               dets:add_user(Pid, Tab, Args);
-                          internal_open -> 
+                          internal_open ->
                               dets:internal_open(Pid, Ref, Args);
                           internal_close ->
                               dets:internal_close(Pid);
@@ -401,9 +423,11 @@ pending_call(Tab, Pid, Ref, {FromPid, _Tag}=From, Args, ReqT, State) ->
                       end,
                 Server ! {pending_reply, {Ref, Res}}
         end,
-    _ = spawn(F),
+    %% Monitor so a worker crash before {pending_reply,_} doesn't
+    %% leave the #pending{} entry — and every queued client — stuck.
+    {_, WorkerMRef} = spawn_monitor(F),
     PD = #pending{tab = Tab, ref = Ref, pid = Pid, reqtype = ReqT,
-                  from = From, clients = []},
+                  from = From, clients = [], worker_mref = WorkerMRef},
     P = [PD | State#state.pending],
     {pending, State#state{pending = P}}.
 
