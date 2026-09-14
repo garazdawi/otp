@@ -70,9 +70,11 @@ void BeamAssemblerCommon::lateInit() {
 }
 
 BeamAssemblerCommon::~BeamAssemblerCommon() {
+#if !defined(ASMJIT_NO_LOGGING) || ASMJIT_NO_LOGGING == 0
     if (logger.file()) {
         fclose(logger.file());
     }
+#endif
 }
 
 void *BeamAssemblerCommon::getBaseAddress() {
@@ -153,9 +155,11 @@ void BeamAssemblerCommon::handleError(Error err,
                                       BaseEmitter *origin) {
     comment(message);
 
+#if !defined(ASMJIT_NO_LOGGING) || ASMJIT_NO_LOGGING == 0
     if (logger.file() != NULL) {
         fflush(logger.file());
     }
+#endif
 
     ASSERT(0 && "Failed to encode instruction");
 }
@@ -209,9 +213,11 @@ void BeamAssemblerCommon::setLogger(const std::string &log) {
 }
 
 void BeamAssemblerCommon::setLogger(FILE *log) {
+    #if !defined(ASMJIT_NO_LOGGING) || ASMJIT_NO_LOGGING == 0
     logger.set_file(log);
     logger.set_indentation(FormatIndentationGroup::kCode, 4);
     code.set_logger(&logger);
+    #endif
 }
 
 void BeamModuleAssembler::codegen(JitAllocator *allocator,
@@ -280,6 +286,7 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *_ga,
           ga(_ga) {
     rawLabels.resize(num_labels + 1);
 
+    #if !defined(ASMJIT_NO_LOGGING) || ASMJIT_NO_LOGGING == 0
     if (logger.file() && beam) {
         /* Dig out all named labels from the BEAM-file and sort them on the
          * label id. */
@@ -347,7 +354,9 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *_ga,
             std::string lblName = "label_" + std::to_string(i);
             rawLabels[i] = a.new_named_label(lblName.data());
         }
-    } else {
+    } else
+    #endif
+    {
         /* No output is requested, go with unnamed labels */
         for (int i = 1; i < num_labels; i++) {
             rawLabels[i] = a.new_label();

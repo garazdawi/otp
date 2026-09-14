@@ -77,7 +77,9 @@ class BeamAssemblerCommon : public ErrorHandler {
 
 protected:
     CodeHolder code;
+#if !defined(ASMJIT_NO_LOGGING) || ASMJIT_NO_LOGGING == 0
     FileLogger logger;
+#endif
     Section *rodata;
 
     static bool hasCpuFeature(uint32_t featureId);
@@ -92,18 +94,22 @@ protected:
                  void **writable_ptr);
 
     void comment(const char *format) {
+#if !defined(ASMJIT_NO_LOGGING) || ASMJIT_NO_LOGGING == 0
         if (logger.file()) {
             assembler.commentf("# %s", format);
         }
+#endif
     }
 
     template<typename... Ts>
     void comment(const char *format, Ts... args) {
+#if !defined(ASMJIT_NO_LOGGING) || ASMJIT_NO_LOGGING == 0
         if (logger.file()) {
             char buff[1024];
             erts_snprintf(buff, sizeof(buff), format, args...);
             assembler.commentf("# %s", buff);
         }
+#endif
     }
 
     void *getCode(Label label);

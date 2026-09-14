@@ -33,12 +33,14 @@ extern "C"
 }
 
 void BeamModuleAssembler::ubif_comment(const ArgWord &Bif) {
+#if !defined(ASMJIT_NO_LOGGING) || ASMJIT_NO_LOGGING == 0
     if (logger.file()) {
         ErtsCodeMFA *mfa = ubif2mfa((void *)Bif.get());
         if (mfa) {
             comment("UBIF: %T/%d", mfa->function, mfa->arity);
         }
     }
+#endif
 }
 
 /* ARG2 = argument vector, ARG4 (!) = bif function pointer
@@ -603,9 +605,11 @@ void BeamModuleAssembler::emit_call_light_bif(const ArgWord &Bif,
     mov_arg(ARG8, Bif);
     a.adr(ARG3, entry);
 
+    #if !defined(ASMJIT_NO_LOGGING) || ASMJIT_NO_LOGGING == 0
     if (logger.file()) {
         comment("BIF: %T:%T/%d", e->module, e->function, e->arity);
     }
+    #endif
     fragment_call(ga->get_call_light_bif_shared());
 }
 
