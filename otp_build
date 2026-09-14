@@ -320,6 +320,11 @@ run_configure ()
 	CONFIG_FLAGS="$CONFIG_FLAGS --no-recursion"
     }
 
+    if [ $1 = "-m" ] || [ $1 = "--minimal" ]; then
+        shift
+        CONFIG_FLAGS="$CONFIG_FLAGS --disable-jit --disable-kernel-poll --disable-sctp --disable-erts-alloc --disable-zstd --disable-esock"
+    fi
+
     echo "$cdir/configure $CONFIG_FLAGS" ${1+"$@"}
     (cd "$cdir" && $config_eval ./configure $CONFIG_FLAGS ${1+"$@"}) || exit 1
 }
