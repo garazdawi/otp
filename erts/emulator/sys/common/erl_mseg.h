@@ -34,7 +34,7 @@
  * alloc_util needs to be prepared before we can do
  * that.
  */
-#ifdef ERTS_HAVE_GENUINE_OS_MMAP
+#if defined(ERTS_HAVE_GENUINE_OS_MMAP) && !defined(ERTS_ALLOC_UTIL_DISABLED)
 #  define HAVE_ERTS_MSEG 1
 #  define ERTS_HAVE_MSEG_SUPER_ALIGNED 1
 #else

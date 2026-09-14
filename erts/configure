@@ -696,8 +696,10 @@ BITS64
 LIBSCTP
 SYSTEMD_DAEMON_LIBS
 SOCKET_LIBS
+ESOCK_ENABLE
 Z_LIB
 LIBZSTD
+ZSTD_ENABLE
 TERMCAP_LIB
 THR_DEFS
 THR_LIBS
@@ -747,6 +749,7 @@ SYSTEM_VSN
 OTP_RELEASE
 USE_VM_PROBES
 ENCRYPTED_CRASH_DUMPS
+ALLOC_UTIL_ENABLE
 ENABLE_ALLOC_TYPE_VARS
 LN_S
 PERL
@@ -854,6 +857,7 @@ enable_dirty_schedulers_test
 enable_smp_require_native_atomics
 with_termcap
 enable_lock_checking
+enable_alloc_util
 enable_encrypted_crash_dumps
 enable_lock_counter
 enable_kernel_poll
@@ -883,6 +887,7 @@ enable_ppc_lwsync_instruction
 with_threadnames
 enable_use_embedded_3pp_alternatives
 enable_builtin_ryu
+enable_zstd
 enable_builtin_zstd
 enable_builtin_zlib
 enable_esock
@@ -1582,6 +1587,7 @@ Optional Features:
                           disable the SMP requirement of a native atomic
                           implementation
   --enable-lock-checking  enable lock checking
+  --disable-alloc-util    disable erts built-in allocation framework
   --enable-encrypted-crash-dumps
                           enable encrypted crash dumps
   --enable-lock-counter   enable lock counters
@@ -1654,6 +1660,7 @@ Optional Features:
   --enable-builtin-ryu    use our own built-in ryu for float to short string
                           (default)
   --disable-builtin-ryu   use C++17 as an alternative for built-in ryu
+  --disable-zstd          Do not include zstd in build
   --enable-builtin-zstd   force use of our own built-in zstd
   --disable-builtin-zstd  try to find a static libzstd on the system to use
                           (default)
@@ -7300,6 +7307,26 @@ else case e in #(
   e) enable_lock_check=no ;;
 esac
 fi
+
+
+ALLOC_UTIL_ENABLE=true
+# Check whether --enable-alloc-util was given.
+if test ${enable_alloc_util+y}
+then :
+  enableval=$enable_alloc_util;  case "$enableval" in
+        no) ALLOC_UTIL_ENABLE=false ;;
+        *)  ALLOC_UTIL_ENABLE=true ;;
+      esac
+fi
+
+
+if test "$ALLOC_UTIL_ENABLE" = "false"
+then :
+
+printf "%s\n" "#define ERTS_DISABLE_ALLOC_UTIL 1" >>confdefs.h
+
+fi
+
 
 
 # Check whether --enable-encrypted-crash-dumps was given.
@@ -16801,6 +16828,27 @@ fi
 
 
 
+
+ZSTD_ENABLE=true
+# Check whether --enable-zstd was given.
+if test ${enable_zstd+y}
+then :
+  enableval=$enable_zstd;  case "$enableval" in
+        no) ZSTD_ENABLE=false;;
+        *) ZSTD_ENABLE=true;;
+    esac
+fi
+
+
+if test "$ZSTD_ENABLE" = "false"
+then :
+
+printf "%s\n" "#define ERTS_DISABLE_ZSTD 1" >>confdefs.h
+
+fi
+
+
+
 # Check whether --enable-builtin-zstd was given.
 if test ${enable_builtin_zstd+y}
 then :
@@ -17063,6 +17111,8 @@ esac
 fi
 
 
+ESOCK_ENABLE=false
+
 if test "x$enable_esock" = "xyes"
 then :
 
@@ -17100,8 +17150,11 @@ then :
 
 fi
 
+        ESOCK_ENABLE=true
 
 fi
+
+
 
 
 # Check whether --enable-esock_use_rcvsndtimeo was given.

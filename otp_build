@@ -322,11 +322,13 @@ run_configure ()
 
     if [ $1 = "-m" ] || [ $1 = "--minimal" ]; then
         shift
-        CONFIG_FLAGS="$CONFIG_FLAGS --disable-jit --disable-kernel-poll --disable-sctp --disable-erts-alloc --disable-zstd --disable-esock"
+        CONFIG_FLAGS="$CONFIG_FLAGS --disable-jit --disable-kernel-poll --disable-sctp --disable-alloc-util --disable-zstd --disable-esock --disable-builtin-ryu"
+        CFLAGS="-Oz -g $CFLAGS"
+        LDFLAGS="-Oz -g $LDFLAGS"
     fi
 
-    echo "$cdir/configure $CONFIG_FLAGS" ${1+"$@"}
-    (cd "$cdir" && $config_eval ./configure $CONFIG_FLAGS ${1+"$@"}) || exit 1
+    echo "$cdir/configure CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" $CONFIG_FLAGS" ${1+"$@"}
+    (cd "$cdir" && $config_eval ./configure CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" $CONFIG_FLAGS ${1+"$@"}) || exit 1
 }
 
 env_to_config_flags ()

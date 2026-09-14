@@ -172,6 +172,18 @@ AS_HELP_STRING([--enable-lock-checking], [enable lock checking]),
 ],
   enable_lock_check=no)
 
+ALLOC_UTIL_ENABLE=true
+AC_ARG_ENABLE(alloc-util,
+    AS_HELP_STRING([--disable-alloc-util], [disable erts built-in allocation framework]),
+    [ case "$enableval" in
+        no) ALLOC_UTIL_ENABLE=false ;;
+        *)  ALLOC_UTIL_ENABLE=true ;;
+      esac ])
+
+AS_IF([test "$ALLOC_UTIL_ENABLE" = "false"], [AC_DEFINE(ERTS_DISABLE_ALLOC_UTIL, [1], [Disable ERTS allocation util framework])], [])
+
+AC_SUBST(ALLOC_UTIL_ENABLE)
+
 AC_ARG_ENABLE(encrypted-crash-dumps,
 AS_HELP_STRING([--enable-encrypted-crash-dumps], [enable encrypted crash dumps]),
 [ case "$enableval" in
@@ -1311,6 +1323,20 @@ dnl -------------
 dnl zstd
 dnl -------------
 
+
+ZSTD_ENABLE=true
+AC_ARG_ENABLE(zstd,
+    AS_HELP_STRING([--disable-zstd],
+                   [Do not include zstd in build]),
+    [ case "$enableval" in
+        no) ZSTD_ENABLE=false;;
+        *) ZSTD_ENABLE=true;;
+    esac ])
+
+AS_IF([test "$ZSTD_ENABLE" = "false"], [AC_DEFINE(ERTS_DISABLE_ZSTD, [1], [Disable ZSTD])], [])
+
+AC_SUBST(ZSTD_ENABLE)
+
 AC_ARG_ENABLE(builtin-zstd,
 AS_HELP_STRING([--enable-builtin-zstd],
                [force use of our own built-in zstd])
@@ -1442,11 +1468,16 @@ AS_HELP_STRING([--disable-esock], [disable builtin socket (as a nif) support]),
   esac
 ],enable_esock=yes)
 
+ESOCK_ENABLE=false
+
 AS_IF([test "x$enable_esock" = "xyes"],
       [
         AC_DEFINE(ESOCK_ENABLE, [1], [Enable esock])
         AC_CHECK_FUNCS([localtime_r strftime getprotoent setprotoent endprotoent])
+        ESOCK_ENABLE=true
       ])
+
+AC_SUBST(ESOCK_ENABLE)
 
 dnl *** ESOCK_USE_RCVSNDTIMEO ***
 

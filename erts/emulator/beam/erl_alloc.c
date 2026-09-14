@@ -664,6 +664,7 @@ erts_alloc_init(int *argc, char **argv, ErtsAllocInitOpts *eaiop)
     erts_sys_alloc_init();
     erts_init_utils_mem();
 
+#if !defined(ERTS_DISABLE_ALLOC_UTIL)
     set_default_sl_alloc_opts(&init.sl_alloc);
     set_default_std_alloc_opts(&init.std_alloc);
     set_default_ll_alloc_opts(&init.ll_alloc);
@@ -842,9 +843,12 @@ erts_alloc_init(int *argc, char **argv, ErtsAllocInitOpts *eaiop)
 
     init_aireq_alloc();
 
+#endif
+
 #ifdef DEBUG
     extra_block_size += install_debug_functions();
 #endif
+
     adjust_fix_alloc_sizes(extra_block_size);
 }
 
@@ -1978,6 +1982,7 @@ erts_alloc_handle_delayed_dealloc(ErtsThrAllocData *thr_alloc_data,
 				  ErtsThrPrgrVal *thr_prgr_p,
 				  int *more_work)
 {
+    #ifndef ERTS_DISABLE_ALLOC_UTIL
     int aix;
     ASSERT(thr_alloc_data);
     for (aix = ERTS_ALC_A_MIN; aix <= ERTS_ALC_A_MAX; aix++) {
@@ -1990,11 +1995,13 @@ erts_alloc_handle_delayed_dealloc(ErtsThrAllocData *thr_alloc_data,
 					    more_work);
 	}
     }
+    #endif
 }
 
 erts_aint32_t
 erts_alloc_fix_alloc_shrink(int ix, erts_aint32_t flgs)
 {
+#ifndef ERTS_DISABLE_ALLOC_UTIL
     ErtsAllocatorThrSpec_t *tspec;
     tspec = &erts_allctr_thr_spec[ERTS_ALC_A_FIXED_SIZE];
     if (erts_allctrs_info[ERTS_ALC_A_FIXED_SIZE].thr_spec && tspec->enabled)
@@ -2002,6 +2009,7 @@ erts_alloc_fix_alloc_shrink(int ix, erts_aint32_t flgs)
     if (ix == 0 && erts_allctrs_info[ERTS_ALC_A_FIXED_SIZE].extra)
 	return erts_alcu_fix_alloc_shrink(
 	    erts_allctrs_info[ERTS_ALC_A_FIXED_SIZE].extra, flgs);
+#endif
     return 0;
 }
 
@@ -2014,6 +2022,7 @@ no_verify(Allctr_t *allctr)
 erts_alloc_verify_func_t
 erts_alloc_get_verify_unused_temp_alloc(Allctr_t **allctr)
 {
+    #ifndef ERTS_DISABLE_ALLOC_UTIL
     if (erts_allctrs_info[ERTS_ALC_A_TEMPORARY].alloc_util
 	&& erts_allctrs_info[ERTS_ALC_A_TEMPORARY].thr_spec) {
 	ErtsAllocatorThrSpec_t *tspec;
@@ -2025,6 +2034,7 @@ erts_alloc_get_verify_unused_temp_alloc(Allctr_t **allctr)
 	    return erts_alcu_verify_unused;
 	}
     }
+    #endif
 
     *allctr = NULL;
     return no_verify;
@@ -2189,6 +2199,8 @@ add_fix_values(UWord *ap, UWord *up, ErtsAlcUFixInfo_t *fi, ErtsAlcType_t type)
 Eterm
 erts_memory(fmtfn_t *print_to_p, void *print_to_arg, void *proc, Eterm earg)
 {
+
+#ifndef ERTS_DISABLE_ALLOC_UTIL
 /*
  * NOTE! When updating this function, make sure to also update
  *       erlang:memory/[0,1] in $ERL_TOP/erts/preloaded/src/erlang.erl
@@ -2568,6 +2580,10 @@ erts_memory(fmtfn_t *print_to_p, void *print_to_arg, void *proc, Eterm earg)
     return res;
 
 #undef ERTS_MEM_NEED_ALL_ALCU
+
+#else
+    return am_undefined;
+#endif
 }
 
 struct aa_values {
@@ -2822,6 +2838,7 @@ erts_alloc_util_allocators(void *proc)
 void
 erts_allocator_info(fmtfn_t to, void *arg)
 {
+    #ifndef ERTS_DISABLE_ALLOC_UTIL
     ErtsAlcType_t a;
 
     ERTS_LC_ASSERT(erts_thr_progress_is_blocking());
@@ -2893,15 +2910,22 @@ erts_allocator_info(fmtfn_t to, void *arg)
 #endif
 
     erts_print(to, arg, "=allocator:alloc_util\n");
+    #ifndef ERTS_DISABLE_ALLOC_UTIL
     erts_alcu_au_info_options(&to, arg, NULL, NULL);
+    #endif
 
     erts_print(to, arg, "=allocator:instr\n");
 
+    #endif
 }
 
 Eterm
 erts_allocator_options(void *proc)
 {
+#ifdef ERTS_DISABLE_ALLOC_UTIL
+    BIF_RET(am_notsup);
+#else
+
 #if HAVE_ERTS_MSEG
     int use_mseg = 0;
 #endif
@@ -3068,6 +3092,7 @@ erts_allocator_options(void *proc)
     HRelease((Process *) proc, endp, hp);
 
     return res;
+#endif
 }
 
 void *erts_alloc_permanent_aligned(ErtsAlcType_t type,
@@ -3119,6 +3144,7 @@ reply_alloc_info(void *vair)
 # endif
 #endif
     int i;
+    #ifndef ERTS_DISABLE_ALLOC_UTIL
     Eterm (*info_func)(Allctr_t *,
 		       int,
 		       int,
@@ -3128,6 +3154,7 @@ reply_alloc_info(void *vair)
 		       Uint *) = (air->only_sz
 				  ? erts_alcu_sz_info
 				  : erts_alcu_info);
+    #endif
 
     rp_locks = air->req_sched == tix ? ERTS_PROC_LOCK_MAIN : 0;
 
@@ -3144,6 +3171,7 @@ reply_alloc_info(void *vair)
 	    *szp += erts_iref_storage_heap_size(&air->iref);
 
 	ai_list = NIL;
+        #ifndef ERTS_DISABLE_ALLOC_UTIL
 	for (i = 0; air->allocs[i] != ERTS_ALC_A_INVALID; i++);
 	for (i--; i >= 0; i--) {
 	    int ai = air->allocs[i];
@@ -3214,7 +3242,8 @@ reply_alloc_info(void *vair)
 		    break;
 		}
 		case ERTS_ALC_INFO_A_ALLOC_UTIL:
-		    alloc_atom = erts_bld_atom(hpp, szp, "alloc_util");
+                    alloc_atom = erts_bld_atom(hpp, szp, "alloc_util");
+#ifndef ERTS_DISABLE_ALLOC_UTIL
 		    ainfo = (air->only_sz
 			     ? NIL
 			     : erts_alcu_au_info_options(NULL, NULL,
@@ -3223,7 +3252,10 @@ reply_alloc_info(void *vair)
 					   alloc_atom,
 					   make_small(0),
 					   ainfo);
-		    break;
+#else
+                    ainfo = am_undefined;
+#endif
+                    break;
                 case ERTS_ALC_INFO_A_ERTS_MMAP:
                     alloc_atom = erts_bld_atom(hpp, szp, "erts_mmap");
 #if HAVE_ERTS_MMAP
@@ -3331,6 +3363,8 @@ reply_alloc_info(void *vair)
 				 ai_list);
 
 	}
+
+        #endif
 	if (hpp)
 	    break;
 
@@ -3511,6 +3545,7 @@ badarg:
 
 UWord erts_alc_test(UWord op, UWord a1, UWord a2, UWord a3)
 {
+#ifndef ERTS_DISABLE_ALLOC_UTIL
     switch (op >> 8) {
     case 0x0:	return erts_alcu_test(op,  a1, a2);
     case 0x1:	return erts_gfalc_test(op, a1, a2);
@@ -3725,6 +3760,8 @@ UWord erts_alc_test(UWord op, UWord a1, UWord a2, UWord a3)
     default:
 	break;
     }
+
+#endif
 
     ASSERT(0);
     return ~((UWord) 0);

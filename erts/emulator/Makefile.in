@@ -405,6 +405,7 @@ LIBS += $(RYU_LIBRARY)
 endif
 endif
 
+ifeq (@ZSTD_ENABLE@, yes)
 ifdef LIBZSTD
 # Use system libzstd
 LIBS += $(LIBZSTD)
@@ -418,6 +419,7 @@ LIBS    += -L$(ZSTD_DIR) -lzstd
 else
 # Build on darwin fails if -l$(ZSTD_LIB) is used
 LIBS    += $(ZSTD_LIB)
+endif
 endif
 endif
 
@@ -553,7 +555,10 @@ include pcre/pcre.mk
 ifeq ($(ERTS_USE_BUILTIN_RYU),yes)
 include ryu/ryu.mk
 endif
+
+ifeq (@ZSTD_ENABLE@, true)
 include zstd/zstd.mk
+endif
 
 $(ERTS_LIB):
 	$(V_at)cd $(ERTS_LIB_DIR) && $(MAKE) $(TYPE)
@@ -801,10 +806,14 @@ endif
 # This list must be consistent with PRE_LOADED_MODULES in
 # erts/preloaded/src/Makefile.
 
+ifeq (@ESOCK_ENABLE@, true)
 ESOCK_PRELOAD_BEAM = \
 	$(ERL_TOP)/erts/preloaded/ebin/socket_registry.beam \
 	$(ERL_TOP)/erts/preloaded/ebin/prim_socket.beam \
-	$(ERL_TOP)/erts/preloaded/ebin/prim_net.beam
+	$(ERL_TOP)/erts/preloaded/ebin/prim_net.beam \
+	$(ERL_TOP)/erts/preloaded/ebin/atomics.beam \
+	$(ERL_TOP)/erts/preloaded/ebin/counters.beam
+endif
 
 PRELOAD_BEAM =	$(ERL_TOP)/erts/preloaded/ebin/erts_code_purger.beam \
 		$(ERL_TOP)/erts/preloaded/ebin/erl_init.beam \
@@ -823,8 +832,6 @@ PRELOAD_BEAM =	$(ERL_TOP)/erts/preloaded/ebin/erts_code_purger.beam \
 		$(ERL_TOP)/erts/preloaded/ebin/erts_literal_area_collector.beam \
 		$(ERL_TOP)/erts/preloaded/ebin/erts_trace_cleaner.beam \
 		$(ERL_TOP)/erts/preloaded/ebin/erts_dirty_process_signal_handler.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/atomics.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/counters.beam \
 		$(ERL_TOP)/erts/preloaded/ebin/persistent_term.beam
 
 ifeq ($(TARGET),win32)
@@ -1170,10 +1177,15 @@ ESOCK_RUN_OBJS = \
 	$(OBJDIR)/socket_tarray.o \
 	$(OBJDIR)/socket_util.o
 
-RUN_OBJS += \
-	$(OBJDIR)/erl_alloc.o \
+ifeq (@ALLOC_UTIL_ENABLE@, true)
+ALLOC_RUN_OBJS = \
 	$(OBJDIR)/erl_alloc_util.o	$(OBJDIR)/erl_goodfit_alloc.o \
 	$(OBJDIR)/erl_bestfit_alloc.o	$(OBJDIR)/erl_afit_alloc.o \
+	$(OBJDIR)/erl_ao_firstfit_alloc.o
+endif
+
+RUN_OBJS += $(OBJDIR)/erl_alloc.o \
+	$(ALLOC_RUN_OBJS) \
 	$(OBJDIR)/erl_init.o \
 	$(OBJDIR)/erl_atom_table.o	$(OBJDIR)/erl_bif_table.o \
 	$(OBJDIR)/erl_bif_ddll.o  	$(OBJDIR)/erl_bif_guard.o \
@@ -1213,7 +1225,7 @@ RUN_OBJS += \
 	$(OBJDIR)/erl_bif_re.o		$(OBJDIR)/erl_unicode.o \
 	$(OBJDIR)/packet_parser.o	$(OBJDIR)/safe_hash.o \
 	$(OBJDIR)/erl_zlib.o		$(OBJDIR)/erl_nif.o \
-	$(OBJDIR)/erl_bif_binary.o      $(OBJDIR)/erl_ao_firstfit_alloc.o \
+	$(OBJDIR)/erl_bif_binary.o      \
 	$(OBJDIR)/erl_thr_queue.o	$(OBJDIR)/erl_sched_spec_pre_alloc.o \
 	$(OBJDIR)/erl_ptab.o		$(OBJDIR)/erl_map.o \
 	$(OBJDIR)/erl_msacc.o		$(OBJDIR)/erl_lock_flags.o \
@@ -1360,7 +1372,11 @@ else
 ifeq ($(FLAVOR),jit)
 EMU_LD=$(CXX)
 else
+ifeq (@ERTS_USE_BUILTIN_RYU@,no)
+EMU_LD=$(CXX)
+else
 EMU_LD=$(CC)
+endif
 endif
 $(BINDIR)/$(FLAVOR_EXECUTABLE): $(INIT_OBJS) $(OBJS) $(DEPLIBS)
 	$(ld_verbose) $(EMU_LD) -o $@ \
@@ -1497,7 +1513,10 @@ $(TARGET)/gen_git_version.mk:
 # rebuild.
 	$(V_at)if utils/gen_git_version $@; then touch beam/erl_bif_info.c; fi
 
-DEPEND_DEPS=jit src drv nif sys target zlib zstd
+DEPEND_DEPS=jit src drv nif sys target zlib
+ifeq (@ZSTD_ENABLE@, yes)
+DEPEND_DEPS += zstd
+endif
 ifeq ($(ERTS_USE_BUILTIN_RYU),yes)
 DEPEND_DEPS += ryu
 endif

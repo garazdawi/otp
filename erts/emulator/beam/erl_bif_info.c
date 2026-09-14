@@ -5726,14 +5726,22 @@ gather_histograms_helper(Process * c_p, Eterm arg_tuple,
 
 BIF_RETTYPE erts_internal_gather_alloc_histograms_1(BIF_ALIST_1)
 {
+#ifndef ERTS_DISABLE_ALLOC_UTIL
     return gather_histograms_helper(BIF_P, BIF_ARG_1,
                                     erts_alcu_gather_alloc_histograms);
+#else
+    BIF_ERROR(BIF_P, BADARG);
+#endif
 }
 
 BIF_RETTYPE erts_internal_gather_carrier_info_1(BIF_ALIST_1)
 {
+#ifndef ERTS_DISABLE_ALLOC_UTIL
     return gather_histograms_helper(BIF_P, BIF_ARG_1,
                                     erts_alcu_gather_carrier_info);
+#else
+    BIF_ERROR(BIF_P, ENOTSUP);
+#endif
 }
 
 

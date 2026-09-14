@@ -2624,7 +2624,10 @@ handle_yield(ErtsAuxWorkData *awdp, erts_aint32_t aux_work, int waiting)
     /* Various yielding operations... */
 
     yield |= erts_handle_yielded_ets_all_request(awdp);
+
+#ifndef ERTS_DISABLE_ALLOC_UTIL
     yield |= erts_handle_yielded_alcu_blockscan(awdp);
+#endif
 
     /*
      * Other yielding operations...
@@ -5962,7 +5965,10 @@ init_aux_work_data(ErtsAuxWorkData *awdp, ErtsSchedulerData *esdp,
 	for (i = 0; i < erts_no_aux_work_threads; i++)
 	    awdp->delayed_wakeup.sched2jix[i] = -1;
     }
+    
+#ifndef ERTS_DISABLE_ALLOC_UTIL
     erts_alcu_blockscan_init(awdp);
+#endif
     awdp->debug.wait_completed.flags = 0;
     awdp->debug.wait_completed.callback = NULL;
     awdp->debug.wait_completed.arg = NULL;

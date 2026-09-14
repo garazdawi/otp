@@ -34,6 +34,9 @@
 #include "sys.h"
 #include "erl_nif.h"
 #include "config.h"
+
+#ifndef ERTS_DISABLE_ZSTD
+
 #define ZSTD_STATIC_LINKING_ONLY
 
 #ifdef ERTS_USE_BUILTIN_ZSTD
@@ -1114,5 +1117,62 @@ static ErlNifFunc nif_funcs[] = {
 
         {"get_frame_header_nif", 1, get_frame_header_nif, 0}
 };
+
+#else /* ERTS_DISABLE_ZSTD */
+
+static ERL_NIF_TERM zstd_not_supported(
+    ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+        return enif_raise_exception(env, enif_make_atom(env, "zstd_not_supported"));
+}
+
+static int load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM arg) {
+    return 0;
+}
+
+static void unload(ErlNifEnv *env, void *priv_data) {
+    (void)priv_data;
+    (void)env;
+}
+
+static int upgrade(ErlNifEnv* caller_env, void** priv_data,
+    void** old_priv_data, ERL_NIF_TERM load_info) {
+    return 0;
+}
+
+static ErlNifFunc nif_funcs[] = {
+        {"init_compress_nif", 0, zstd_not_supported, 0},
+        {"init_decompress_nif", 0, zstd_not_supported, 0},
+
+        {"load_compress_dictionary_nif", 2, zstd_not_supported},
+        {"ref_compress_dictionary_nif", 2, zstd_not_supported, 0},
+        {"set_compress_parameter_nif", 3, zstd_not_supported, 0},
+        {"get_compress_parameter_nif", 2, zstd_not_supported, 0},
+        {"set_pledged_src_size_nif", 2, zstd_not_supported, 0},
+
+        {"load_decompress_dictionary_nif", 2, zstd_not_supported},
+        {"ref_decompress_dictionary_nif", 2, zstd_not_supported, 0},
+        {"set_decompress_parameter_nif", 3, zstd_not_supported, 0},
+        {"get_decompress_parameter_nif", 2, zstd_not_supported, 0},
+
+        {"compress_stream_nif", 3, zstd_not_supported, 0},
+        {"decompress_stream_nif", 3, zstd_not_supported, 0},
+
+        {"compress_reset_nif", 1, zstd_not_supported, 0},
+        {"decompress_reset_nif", 1, zstd_not_supported, 0},
+
+        {"compress_close_nif", 1, zstd_not_supported, 0},
+        {"decompress_close_nif", 1, zstd_not_supported, 0},
+
+        {"create_cdict_nif", 2, zstd_not_supported},
+        {"create_ddict_nif", 1, zstd_not_supported},
+        {"getDictId_fromCDict_nif", 1, zstd_not_supported, 0},
+        {"getDictId_fromDDict_nif", 1, zstd_not_supported, 0},
+        {"getDictId_fromDict_nif", 1, zstd_not_supported, 0},
+        {"getDictId_fromFrame_nif", 1, zstd_not_supported, 0},
+
+        {"get_frame_header_nif", 1, zstd_not_supported, 0}
+};
+
+#endif
 
 ERL_NIF_INIT(zstd, nif_funcs, load, NULL, upgrade, unload)

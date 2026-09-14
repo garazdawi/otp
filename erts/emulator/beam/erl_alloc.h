@@ -245,6 +245,8 @@ void *erts_alloc_permanent_aligned(ErtsAlcType_t type,
 
 #if ERTS_ALC_DO_INLINE || defined(ERTS_ALC_INTERNAL__)
 
+#ifndef ERTS_DISABLE_ALLOC_UTIL
+
 ERTS_ALC_INLINE
 void *erts_alloc(ErtsAlcType_t type, Uint size)
 {
@@ -315,6 +317,43 @@ void *erts_realloc_fnf(ErtsAlcType_t type, void *ptr, Uint size)
     ERTS_MSACC_POP_STATE_X();
     return res;
 }
+
+#else /* !ERTS_DISABLE_ALLOC_UTIL */
+
+ERTS_ALC_INLINE
+void *erts_alloc(ErtsAlcType_t type, Uint size) {
+    void *p = malloc(size);
+    if (!p  && size != 0) {
+        erts_alloc_n_enomem(ERTS_ALC_T2N(type), size);
+    }
+    return p;
+}
+
+ERTS_ALC_INLINE
+void *erts_realloc(ErtsAlcType_t type, void *ptr, Uint size) {
+    void *p = realloc(ptr, size);
+    if (!p  && size != 0) {
+        erts_realloc_n_enomem(ERTS_ALC_T2N(type), ptr, size);
+    }
+    return p;
+}
+
+ERTS_ALC_INLINE
+void erts_free(ErtsAlcType_t type, void *ptr) {
+    free(ptr);
+}
+
+ERTS_ALC_INLINE
+void *erts_alloc_fnf(ErtsAlcType_t type, Uint size) {
+        return malloc(size);
+}
+
+ERTS_ALC_INLINE
+void *erts_realloc_fnf(ErtsAlcType_t type, void *ptr, Uint size) {
+        return realloc(ptr, size);
+}
+
+#endif
 
 ERTS_ALC_INLINE
 ErtsThrAllocData *erts_get_thr_alloc_data(void)
