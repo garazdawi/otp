@@ -173,7 +173,8 @@ metadata map. If `key1` does not exist, print nothing.
 {key1, ["key1=",key1], []}
 ```
 
-Strings in the template are printed literally.
+Non-empty [printable](`io_lib:printable/1`) strings in the template are
+printed literally.
 
 The default value for the `template` configuration parameter depends on the
 value of the `single_line` and `legacy_header` configuration parameters as
@@ -327,10 +328,7 @@ format(#{level:=Level,msg:=Msg0,meta:=Meta},Config0)
                     true ->
                         %% Trim leading and trailing whitespaces, and replace
                         %% newlines with ", "
-                        T = lists:reverse(
-                              trim(
-                                lists:reverse(
-                                  trim(MsgStr0,false)),true)),
+                        T = string:trim(MsgStr0,both, "\t\s\r\n"),
                         re:replace(T,",?\r?\n\s*",", ",
                                    [{return,list},global,unicode]);
                     _false ->
@@ -352,25 +350,6 @@ linearize_template(Data,[StrOrKey|Format]) ->
     [StrOrKey|linearize_template(Data,Format)];
 linearize_template(_Data,[]) ->
     [].
-
-trim([H|T],Rev) when H==$\s; H==$\r; H==$\n ->
-    trim(T,Rev);
-trim([H|T],false) when is_list(H) ->
-    case trim(H,false) of
-        [] ->
-            trim(T,false);
-        TrimmedH ->
-            [TrimmedH|T]
-    end;
-trim([H|T],true) when is_list(H) ->
-    case trim(lists:reverse(H),true) of
-        [] ->
-            trim(T,true);
-        TrimmedH ->
-            [lists:reverse(TrimmedH)|T]
-    end;
-trim(String,_) ->
-    String.
 
 do_format(Level,Data,[level|Format],Config) ->
     [to_string(level,Level,Config)|do_format(Level,Data,Format,Config)];
@@ -405,25 +384,27 @@ to_string(_,Value,Config) ->
     to_string(Value,Config).
 
 to_string(X,_) when is_atom(X) ->
-    atom_to_list(X);
+    atom_to_binary(X);
 to_string(X,_) when is_integer(X) ->
-    integer_to_list(X);
+    integer_to_binary(X);
 to_string(X,_) when is_pid(X) ->
     pid_to_list(X);
 to_string(X,_) when is_reference(X) ->
     ref_to_list(X);
-to_string(X,Config) when is_list(X) ->
-    case printable_list(lists:flatten(X)) of
+to_string(X,Config) when is_list(X); is_binary(X) ->
+    case printable(X) of
         true -> X;
-        _ -> io_lib:format(p(Config),[X])
+        _ -> io_lib:bformat(p(Config),[X])
     end;
 to_string(X,Config) ->
-    io_lib:format(p(Config),[X]).
+    io_lib:bformat(p(Config),[X]).
 
-printable_list([]) ->
+printable([]) ->
     false;
-printable_list(X) ->
-    io_lib:printable_list(X).
+printable(<<>>) ->
+    false;
+printable(X) ->
+    io_lib:printable(X).
 
 format_msg({string,Chardata},Meta,Config) ->
     format_msg({"~ts",[Chardata]},Meta,Config);
@@ -479,7 +460,7 @@ format_msg({Format0,Args},Depth,Opts,Single) ->
     try
         Format1 = io_lib:scan_format(Format0, Args),
         Format = reformat(Format1, Depth, Single),
-        io_lib:build_text(Format,Opts)
+        io_lib:build_binary(Format,Opts)
     catch C:R:S ->
             P = p(Single),
             FormatError = "FORMAT ERROR: "++P++" - "++P,
@@ -530,23 +511,28 @@ truncate(B,Msg,A,Size) ->
                     [] ->
                         case Msg of
                             [] ->
-                                {get_last(B),lists:flatten(B)};
+                                {get_last(B),unicode:characters_to_binary(B)};
                             _ ->
-                                {get_last(Msg),lists:flatten([B,Msg])}
+                                {get_last(Msg),unicode:characters_to_binary([B,Msg])}
                         end;
                     _ ->
-                        {get_last(A),lists:flatten(String)}
+                        {get_last(A),unicode:characters_to_binary(String)}
                 end,
             case Last of
                 $\n->
-                    lists:sublist(FlatString,1,Size-4)++"...\n";
+                    [string:slice(FlatString,0,Size-4), "...\n"];
                 _ ->
-                    lists:sublist(FlatString,1,Size-3)++"..."
+                    [string:slice(FlatString,0,Size-3), "..."]
             end;
        true ->
             String
     end.
 
+get_last(B) when is_binary(B) ->
+    case byte_size(B) of
+        0 -> error;
+        Size -> binary:at(B,Size-1)
+    end;
 get_last(L) ->
     get_first(lists:reverse(L)).
 
@@ -580,7 +566,7 @@ timestamp_to_datetimemicro(SysTime,Config) when is_integer(SysTime) ->
     {Date,Time,Micro,UtcStr}.
 
 format_mfa({M,F,A},_) when is_atom(M), is_atom(F), is_integer(A) ->
-    io_lib:fwrite("~tw:~tw/~w", [M, F, A]);
+    io_lib:bfwrite("~tw:~tw/~w", [M, F, A]);
 format_mfa({M,F,A},Config) when is_atom(M), is_atom(F), is_list(A) ->
     format_mfa({M,F,length(A)},Config);
 format_mfa(MFA,Config) ->
@@ -593,7 +579,7 @@ maybe_add_legacy_header(Level,
     {{Y,Mo,D},{H,Mi,S},Micro,UtcStr} =
         timestamp_to_datetimemicro(Timestamp,Config),
     Header =
-        io_lib:format("=~ts==== ~w-~s-~4w::~2..0w:~2..0w:~2..0w.~6..0w ~s===",
+        io_lib:bformat("=~ts==== ~w-~s-~4w::~2..0w:~2..0w:~2..0w.~6..0w ~s===",
                       [Title,D,month(Mo),Y,H,Mi,S,Micro,UtcStr]),
     Meta#{?MODULE=>MyMeta#{header=>Header}};
 maybe_add_legacy_header(_,Meta,_) ->
