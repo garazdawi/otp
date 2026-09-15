@@ -912,4 +912,4 @@ log(Log,#{formatter:={M,C}}) ->
 
 check_log() ->
     {S,C} = erase(log),
-    {string:lexemes(S,"\n"),C}.
+    {string:lexemes(unicode:characters_to_list(S),"\n"),C}.
