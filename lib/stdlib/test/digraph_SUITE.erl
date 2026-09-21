@@ -32,7 +32,7 @@
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
 	 init_per_group/2,end_per_group/2]).
 
--export([opts/1, degree/1, path/1, cycle/1, vertices/1,
+-export([opts/1, degree/1, path/1, long_path/1, cycle/1, vertices/1,
 	 edges/1, data/1, otp_3522/1, otp_3630/1, otp_8066/1, vertex_names/1]).
 
 -export([spawn_graph/2]).
@@ -41,8 +41,8 @@
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
-all() -> 
-    [opts, degree, path, cycle, {group, misc},
+all() ->
+    [opts, degree, path, long_path, cycle, {group, misc},
      {group, tickets}, vertex_names].
 
 groups() -> 
@@ -141,6 +141,38 @@ path(Config) when is_list(Config) ->
     [] = check(digraph:vertices(G), [x1,x4,Vi,x7]),
     digraph:delete(G),
     ok.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Regression for O(V^2) visited-set check in one_path/8. Trace
+%% lists:member/2 work; with the bug it is ~N^2/2, with the fix 0.
+long_path(Config) when is_list(Config) ->
+    N = 5000,
+    G = digraph:new(),
+    _ = [digraph:add_vertex(G, V) || V <- lists:seq(1, N)],
+    _ = [digraph:add_edge(G, V, V + 1) || V <- lists:seq(1, N - 1)],
+    Self = self(),
+    Tracer = spawn_link(fun() -> trace_member_loop(Self, 0) end),
+    1 = erlang:trace(self(), true, [call, {tracer, Tracer}]),
+    _ = erlang:trace_pattern({lists, member, 2}, true, [global]),
+    Path = digraph:get_path(G, 1, N),
+    _ = erlang:trace_pattern({lists, member, 2}, false, [global]),
+    erlang:trace(self(), false, [call]),
+    N = length(Path),
+    1 = hd(Path),
+    N = lists:last(Path),
+    Tracer ! get,
+    receive {work, Work} -> true = Work =< 10 * N end,
+    digraph:delete(G),
+    ok.
+
+trace_member_loop(Owner, Work) ->
+    receive
+        {trace, _, call, {lists, member, [_, L]}} when is_list(L) ->
+            trace_member_loop(Owner, Work + length(L));
+        get ->
+            Owner ! {work, Work}
+    end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 

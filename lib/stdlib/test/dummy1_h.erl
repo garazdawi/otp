@@ -32,6 +32,8 @@ init({_, error}) -> % swap from non-existing handler.
     non_existing;
 init({swap, {ok, OldState}}) ->
     {ok, OldState};
+init({hibernate_swap, {ok, OldState}}) ->
+    {ok, OldState, hibernate};
 init([Parent]) ->
     {ok, Parent}.  %% We will send special responses for every handled event.
 

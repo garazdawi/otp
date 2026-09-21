@@ -112,6 +112,25 @@ export ERL_TOP=`pwd`
 Make sure that you have read the [Contributing to Erlang/OTP](../CONTRIBUTING.md)
 guide if you intend to make a contribution to Erlang/OTP.
 
+### Erlang version on PATH
+
+Building Erlang/OTP itself sets up the PATH correctly via the committed
+bootstrap, so a plain `make` works even when the Erlang on your shell
+PATH is older than the in-tree source. Tests and documentation builds,
+however, need a recent Erlang on PATH:
+
+* Documentation builds need a full Erlang/OTP-%OTP-VSN% system, as
+  described in [INSTALL.md](INSTALL.md#building-documentation).
+* If the system Erlang on PATH is older than the previous major
+  release, some test targets that recompile fixtures with an external
+  `erlc` can fail with `function ...undefined` errors against
+  recent-language-feature uses in the source tree. Prepend
+  `$ERL_TOP/bin` (after a build) or a recent installation to PATH:
+
+  ```bash
+  export PATH=$ERL_TOP/bin:$PATH
+  ```
+
 ### Faster builds
 
 Both `configure` and `make` take advantage of running in parallel if told to,
@@ -210,6 +229,18 @@ make stdlib_test ARGS="-suite lists_SUITE -case member"
 
 See [ct_run](https://www.erlang.org/doc/man/ct_run.html#) for a list of all options
 that you can pass to ARGS.
+
+Several applications (`stdlib`, `kernel`, `ssl`, `sasl`, `common_test`, …)
+set `TEST_NEEDS_RELEASE=true` in their `Makefile`, so each invocation of
+`make <app>_test` releases Erlang/OTP into a temporary directory before
+running. For iterative test runs against the in-tree build, override it:
+
+```bash
+make stdlib_test ARGS="-suite lists_SUITE -case member" TEST_NEEDS_RELEASE=false
+```
+
+This skips the release step and runs the tests against `bin/` from the
+working tree.
 
 Most of the above targets also works for a "phony" target called `emulator` that
 represents erts and all its tools. So you can do this:

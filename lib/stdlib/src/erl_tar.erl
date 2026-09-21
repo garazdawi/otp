@@ -2014,11 +2014,7 @@ parse_pax_time(Bin) when is_binary(Bin) ->
                     [SecondsStr] ->
                         binary_to_integer(SecondsStr)*?BILLION
                 end,
-    %% truncate to microseconds
-    Micro = TotalNano div 1000,
-    Mega = Micro div 1000000000000,
-    Secs = Micro div 1000000 - (Mega*1000000),
-    Secs.
+    TotalNano div ?BILLION.
 
 %% Given a regular file reader, reads the whole file and
 %% parses all extended attributes it contains.

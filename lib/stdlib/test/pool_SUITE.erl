@@ -23,14 +23,14 @@
 
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1,
 	 init_per_group/2,end_per_group/2]).
--export([basic/1, link_race/1, echo/1]).
+-export([basic/1, link_race/1, stale_load_nodedown_race/1, echo/1]).
 
 -include_lib("common_test/include/ct.hrl").
 
 suite() -> [{ct_hooks,[{ts_install_cth,[{nodenames, 1}]}]}].
 
 all() ->
-    [basic, link_race].
+    [basic, link_race, stale_load_nodedown_race].
 
 groups() ->
     [].
@@ -69,6 +69,15 @@ link_race(Config) ->
 
     rpc:call(Node, pool, pspawn_link, [erlang, is_atom, [?MODULE]]),
 
+    peer:stop(Peer),
+    ok.
+
+stale_load_nodedown_race(Config) ->
+    {ok, Peer, Node, _PoolNode} = init_pool(?FUNCTION_NAME, basic, Config),
+    Master = rpc:call(Node, global, whereis_name, [pool_master]),
+    true = is_pid(Master),
+    Master ! {'no_such_pool_node@nowhere.invalid', load, 9999999},
+    Node = rpc:call(Node, pool, get_node, []),
     peer:stop(Peer),
     ok.
 

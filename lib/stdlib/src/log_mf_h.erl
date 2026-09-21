@@ -159,6 +159,7 @@ handle_event(Event, State) ->
 	true -> 
 	    Bin = term_to_binary(tag_event(Event)),
 	    Size = byte_size(Bin),
+            Header = encode_header(Size),
 	    NewState =
 		if
 		    CurB + Size < MaxB -> State;
@@ -168,14 +169,13 @@ handle_event(Event, State) ->
 			{ok, NewFd} = file_open(Dir, NewF),
 			State#state{cur_fd = NewFd, curF = NewF, curB = 0}
 		end,
-	    [Hi,Lo] = put_int16(Size),
-            case file:write(NewState#state.cur_fd, [Hi, Lo, Bin]) of
+            case file:write(NewState#state.cur_fd, [Header, Bin]) of
                 ok ->
                     ok;
                 {error, Reason} ->
                     exit({file_exit, Reason})
             end,
-	    {ok, NewState#state{curB = NewState#state.curB + Size + 2}};
+            {ok, NewState#state{curB = NewState#state.curB + Size + byte_size(Header)}};
 	_ ->
 	    {ok, State}
     end.
@@ -220,8 +220,13 @@ file_open(Dir, FileNo) ->
 	    exit(file_open)
     end.
 
-put_int16(I) ->
-    [((I band 16#ff00) bsr 8),I band 16#ff].
+%% Small events keep the legacy 16-bit length prefix; larger events use
+%% a sentinel (16-bit zero, never produced by term_to_binary/1 itself)
+%% followed by a 32-bit length, so old log files remain readable.
+encode_header(Size) when Size < 16#10000 ->
+    <<Size:16>>;
+encode_header(Size) when Size =< 16#FFFFFFFF ->
+    <<0:16, Size:32>>.
 
 tag_event(Event) ->
     {erlang:localtime(), Event}.

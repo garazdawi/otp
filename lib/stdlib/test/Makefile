@@ -48,14 +48,17 @@ MODULES= \
 	dummy_via \
 	edlin_expand_SUITE \
 	edlin_context_SUITE \
+	edlin_SUITE \
 	epp_SUITE \
 	erl_anno_SUITE \
 	erl_eval_SUITE \
 	erl_expand_records_SUITE \
+	erl_features_SUITE \
 	erl_internal_SUITE \
 	erl_lint_SUITE \
 	erl_pp_SUITE \
 	erl_scan_SUITE \
+	erl_error_SUITE \
 	error_info_lib \
 	error_logger_h_SUITE \
 	escript_SUITE \
@@ -80,6 +83,7 @@ MODULES= \
 	lists_SUITE \
 	lists_property_test_SUITE \
 	log_mf_h_SUITE \
+	man_docs_SUITE \
 	math_SUITE \
 	ms_transform_SUITE \
 	peer_SUITE \

@@ -224,11 +224,15 @@ basename_1(Config) when is_list(Config) ->
     "foo" = filename:basename(["usr/", "foo"]),
     "foo" = filename:basename(["usr/"|foo]),
     "foo" = filename:basename(["usr/foo/"]),
+    "foo" = filename:basename("foo//"),
+    "foo" = filename:basename("/usr/foo//"),
     case os:type() of
         {win32, _} ->
             "foo" = filename:basename(["usr\\foo\\"]),
             "foo" = filename:basename("A:\\usr\\foo"),
-            "foo" = filename:basename("A:foo");
+            "foo" = filename:basename("A:foo"),
+            "foo" = filename:basename("foo\\\\"),
+            "foo" = filename:basename("foo\\/");
         _ ->
             "strange\\but\\true" =
                 filename:basename("strange\\but\\true")
@@ -245,10 +249,11 @@ basename_2(Config) when is_list(Config) ->
     "foo.erl" = filename:basename("/usr.hrl/foo.erl", ".hrl"),
     "foo" = filename:basename("/usr.hrl/foo", ".hrl"),
     "foo" = filename:basename("usr/foo/", ".erl"),
-    "foo.erl" = filename:basename("usr/foo.erl/", ".erl"),
-    "foo.erl" = filename:basename("usr/foo.erl/", '.erl'),
+    "foo" = filename:basename("usr/foo.erl/", ".erl"),
+    "foo" = filename:basename("usr/foo.erl/", '.erl'),
+    "foo" = filename:basename("foo.erl/", ".erl"),
     "foo" = filename:basename(["/usr",'/','f','oo'], ".erl"),
-    "foo.erl" = filename:basename(["usr/foo.e",'rl/'], ".erl"),
+    "foo" = filename:basename(["usr/foo.e",'rl/'], ".erl"),
     case os:type() of
         {win32, _} ->
             "foo" = filename:basename("A:foo", ".erl"),
@@ -621,6 +626,8 @@ basename_bin_1(Config) when is_list(Config) ->
     <<"foo">> = filename:basename(<<"foo">>),
     <<"foo">> = filename:basename(<<"/usr/foo">>),
     <<"foo.erl">> = filename:basename(<<"A:usr/foo.erl">>),
+    <<"foo">> = filename:basename(<<"foo//">>),
+    <<"foo">> = filename:basename(<<"/usr/foo//">>),
     case os:type() of
         {win32, _} ->
             <<"foo">> = filename:basename(<<"A:\\usr\\foo">>),
@@ -637,7 +644,8 @@ basename_bin_2(Config) when is_list(Config) ->
     <<"foo.erl">> = filename:basename(<<"/usr.hrl/foo.erl">>, <<".hrl">>),
     <<"foo">> = filename:basename(<<"/usr.hrl/foo">>, <<".hrl">>),
     <<"foo">> = filename:basename(<<"usr/foo/">>, <<".erl">>),
-    <<"foo.erl">> = filename:basename(<<"usr/foo.erl/">>, <<".erl">>),
+    <<"foo">> = filename:basename(<<"usr/foo.erl/">>, <<".erl">>),
+    <<"foo">> = filename:basename(<<"foo.erl/">>, <<".erl">>),
     case os:type() of
         {win32, _} ->
             <<"foo">> = filename:basename(<<"A:foo">>, <<".erl">>),

@@ -29,6 +29,7 @@
          end_per_testcase/2]).
 -export([start/1, add_handler/1, add_sup_handler/1,
 	 delete_handler/1, swap_handler/1, swap_sup_handler/1,
+         swap_handler_hibernate/1,
 	 notify/1, sync_notify/1, call/1, info/1, hibernate/1, auto_hibernate/1,
 	 call_format_status/1, call_format_status_anon/1,
          error_format_status/1, get_state/1, replace_state/1,
@@ -54,7 +55,8 @@ all() ->
 groups() ->
     [{test_all, [],
       [add_handler, add_sup_handler, delete_handler,
-       swap_handler, swap_sup_handler, notify, sync_notify,
+       swap_handler, swap_sup_handler, swap_handler_hibernate,
+       notify, sync_notify,
        call, info]},
      {undef_callbacks, [],
       [undef_init, undef_handle_call, undef_handle_event, undef_handle_info,
@@ -596,6 +598,17 @@ swap_sup_handler(Config) when is_list(Config) ->
 	    ct:fail({no,{gen_event_EXIT, {dummy1_h,4}, normal}})
     end,
 
+    ok = gen_event:stop(my_dummy_handler),
+    ok.
+
+swap_handler_hibernate(Config) when is_list(Config) ->
+    {ok,Pid} = gen_event:start({local, my_dummy_handler}),
+    ok = gen_event:add_handler(my_dummy_handler, dummy_h, [self()]),
+    [dummy_h] = gen_event:which_handlers(my_dummy_handler),
+    ok = gen_event:notify(my_dummy_handler,
+                          {swap_event, dummy1_h, hibernate_swap}),
+    is_in_erlang_hibernate(Pid),
+    [dummy1_h] = gen_event:which_handlers(my_dummy_handler),
     ok = gen_event:stop(my_dummy_handler),
     ok.
 

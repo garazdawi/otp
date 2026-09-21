@@ -32,6 +32,7 @@
 -export([base64_encode/1, base64_encode_to_string/1, base64_encode_modes/1,
 	 base64_decode/1, base64_decode_to_string/1, base64_decode_modes/1,
 	 base64_otp_5635/1, base64_otp_6279/1, big/1, illegal/1,
+         out_of_range_list_char/1,
 	 mime_decode/1, mime_decode_modes/1,
 	 mime_decode_to_string/1, mime_decode_to_string_modes/1,
          roundtrip_1/1, roundtrip_2/1, roundtrip_3/1, roundtrip_4/1, doctests/1]).
@@ -48,6 +49,7 @@ all() ->
     [base64_encode, base64_encode_to_string, base64_encode_modes,
      base64_decode, base64_decode_to_string, base64_decode_modes,
      base64_otp_5635, base64_otp_6279, big, illegal,
+     out_of_range_list_char,
      mime_decode, mime_decode_modes,
      mime_decode_to_string, mime_decode_to_string_modes, doctests,
      {group, roundtrip}].
@@ -253,6 +255,22 @@ illegal(Config) when is_list(Config) ->
     ?assertError(_, base64:decode([19,20,21,22])),
     ?assertError(_, base64:decode_to_string(<<19:8,20:8,21:8,22:8>>)),
     ?assertError(_, base64:decode_to_string([19,20,21,22])),
+    ok.
+%%-------------------------------------------------------------------------
+%% Non-byte integers in list inputs (e.g. $A+256) used to index past the
+%% standard alphabet into the urlsafe section of the lookup tuple and
+%% silently misdecode instead of crashing.
+out_of_range_list_char(Config) when is_list(Config) ->
+    BadInputs = [[$A + 256, $B, $C, $D],
+                 [-1, $B, $C, $D],
+                 [$A, $B, $C, 16#10ffff]],
+    [?assertError(_, F(In, Opts))
+     || In <- BadInputs,
+        Opts <- [#{mode => standard}, #{mode => urlsafe}],
+        F <- [fun base64:decode/2,
+              fun base64:decode_to_string/2,
+              fun base64:mime_decode/2,
+              fun base64:mime_decode_to_string/2]],
     ok.
 %%-------------------------------------------------------------------------
 %% mime_decode and mime_decode_to_string have different implementations

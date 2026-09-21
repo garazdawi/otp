@@ -33,7 +33,7 @@
          roundtrip_metadata/1, apply_file_info_opts/1,
          incompatible_options/1, table_absolute_names/1,
          streamed_extract/1, symlink_parent_dir/1,
-         streamed_extract/1, max_size/1]).
+         streamed_extract/1, max_size/1, pax_mtime/1]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -50,7 +50,7 @@ all() ->
      sparse,init,leading_slash,dotdot,roundtrip_metadata,
      apply_file_info_opts,incompatible_options, table_absolute_names,
      streamed_extract, symlink_parent_dir,
-     max_size].
+     max_size, pax_mtime].
 
 groups() -> 
     [].
@@ -950,6 +950,25 @@ do_read_other_implementations([File|Rest], DataDir) ->
     {ok, _} = erl_tar:table(Full),
     {ok, _} = erl_tar:extract(Full, [memory]),
     do_read_other_implementations(Rest, DataDir).
+
+%% pax_mtime.tar holds lorem_ipsum.txt with PAX mtime 1486071509.217172.
+pax_mtime(Config) when is_list(Config) ->
+    DataDir = proplists:get_value(data_dir, Config),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    Full = filename:join(DataDir, "pax_mtime.tar"),
+    Mtime = 1486071509,
+
+    {ok, [{"lorem_ipsum.txt", regular, _, Mtime, _, _, _}]} =
+        erl_tar:table(Full, [verbose]),
+
+    ExtractDir = filename:join(PrivDir, "pax_mtime"),
+    ok = file:make_dir(ExtractDir),
+    ok = erl_tar:extract(Full, [{cwd, ExtractDir}]),
+    {ok, #file_info{mtime=Mtime}} =
+        file:read_file_info(filename:join(ExtractDir, "lorem_ipsum.txt"),
+                            [{time, posix}]),
+
+    verify_ports(Config).
 
 %% test block padding with compressed tar from bsdtar or tape
 bsdtgz(Config) when is_list(Config) ->

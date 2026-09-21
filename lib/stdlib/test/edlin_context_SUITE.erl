@@ -23,12 +23,12 @@
 -include_lib("common_test/include/ct.hrl").
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1]).
 
--export([get_context/1]).
+-export([get_context/1, quoted_in_parens/1]).
 
 suite() ->
     [{timetrap,{minutes,1}}].
 all() ->
-    [get_context].
+    [get_context, quoted_in_parens].
 groups() ->
     [].
 init_per_suite(Config) ->
@@ -165,7 +165,7 @@ get_context(_Config) ->
     {error,_} = edlin_context:get_context(lists:reverse("<abc}")),
     {term} = edlin_context:get_context(lists:reverse("(abc>")),
     {term} = edlin_context:get_context(lists:reverse("\"\\\"\"")), %% odd quotes "\""
-    {error, _} = edlin_context:get_context(lists:reverse("{\"\", $\"}")), %% odd quotes
+    {term,[],{tuple,"{\"\", $\"}"}} = edlin_context:get_context(lists:reverse("{\"\", $\"}")), %% odd quotes
     {term} = edlin_context:get_context(lists:reverse("receive X -> ")),
     %% read operator and argument order validity
     {error,_} = edlin_context:get_context(lists:reverse("foo bar")), %% TODO what should be returned here, illegal
@@ -196,4 +196,13 @@ get_context(_Config) ->
     {term} = edlin_context:get_context(lists:reverse("Foo/")),
     {fun_, "user_defined", "a"} = edlin_context:get_context(lists:reverse("a/")),
     {term} = edlin_context:get_context(lists:reverse("Foo(")),
+    ok.
+
+quoted_in_parens(_Config) ->
+    {term, [], {call, "f(\"ab\")"}} =
+        edlin_context:get_context(lists:reverse("f(\"ab\")")),
+    {term, [], {call, "f('ab')"}} =
+        edlin_context:get_context(lists:reverse("f('ab')")),
+    {term, [], {call, "f(\"abc\")"}} =
+        edlin_context:get_context(lists:reverse("f(\"abc\")")),
     ok.

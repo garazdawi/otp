@@ -40,7 +40,7 @@
          native_records/1, cover_fread/1,
          format_w_empty_map/1, format_w_limited/1,
          write_record_maps_order/1, write_record_latin1_encoding/1,
-         indentation_tab/1, badarg/1]).
+         indentation_tab/1, fwrite_bin_newline_indent/1, badarg/1]).
 
 -export([pretty/2, trf/3, rfd/2]).
 
@@ -81,7 +81,7 @@ all() ->
      format_w_empty_map, format_w_limited,
      write_record_maps_order, write_record_latin1_encoding,
      indentation_tab, badarg,
-     cover_fread].
+     cover_fread, fwrite_bin_newline_indent].
 
 %% Error cases for output.
 error_1(Config) when is_list(Config) ->
@@ -3610,3 +3610,9 @@ fread_float_not_accepted(Format, [C|Cs], Prefix) ->
 fread_float_not_accepted(_, [], _) ->
     ok.
 
+fwrite_bin_newline_indent(_Config) ->
+    T = [aaaa,bbbb,cccc,dddd,eeee,ffff,gggg,hhhh,iiii,jjjj,
+         kkkk,llll,mmmm,nnnn,oooo,pppp,qqqq,rrrr,ssss,tttt],
+    Expected = iolist_to_binary(io_lib:format("a\nb~p", [T])),
+    Expected = io_lib_format:fwrite_bin("a\nb~p", [T]),
+    ok.

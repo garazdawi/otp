@@ -614,17 +614,30 @@ pp_arguments(PF, As, I, Enc, CL) ->
             A = list_to_atom(lists:duplicate(Ll, $a)),
             {S0, _} = PF([A | T], I+1, CL),
             S = unicode:characters_to_list(S0, Enc),
-            brackets_to_parens([$[,L,string:slice(S, 1+Ll)], Enc);
-        _ -> 
+            case brackets_to_parens([$[,L,string:slice(S, 1+Ll)], Enc) of
+                {ok, Out} -> Out;
+                error ->
+                    {Fallback, _} = PF(As, I+1, CL),
+                    Fallback
+            end;
+        _ ->
             {S, _CL1} = PF(As, I+1, CL),
-            brackets_to_parens(S, Enc)
+            case brackets_to_parens(S, Enc) of
+                {ok, Out} -> Out;
+                error -> S
+            end
     end.
 
+%% A user-supplied format_fun may return any chardata, not just the
+%% `[...]'-wrapped output produced by io_lib:print/4. Return `error' so
+%% the caller can fall back to the raw output.
 brackets_to_parens(S, Enc) ->
     B = unicode:characters_to_binary(S, Enc),
     Sz = byte_size(B) - 2,
-    <<$[,R:Sz/binary,$]>> = B,
-    [$(,R,$)].
+    case B of
+        <<$[,R:Sz/binary,$]>> -> {ok, [$(,R,$)]};
+        _ -> error
+    end.
 
 printable_list(latin1, As) ->
     io_lib:printable_latin1_list(As);

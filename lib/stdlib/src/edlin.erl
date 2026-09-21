@@ -299,7 +299,7 @@ edit([], P, L, EditState, Rs) ->
     {more_chars,{line,P,L,EditState},reverse(Rs)};
 edit(eof, _, {_,{Bef,Aft0},LA} = L, _, Rs) ->
     Aft1 = case LA of
-        [Last|_] -> Last;
+        [_|_] -> lists:last(LA);
         _ -> Aft0
     end,
     {done,L,[],reverse(Rs, [{move_combo,-cp_len(Bef), length(LA), cp_len(Aft1)}])};
@@ -344,6 +344,8 @@ edit(Buf, P, {LB, {Bef,Aft}, LA}=MultiLine, {ShellMode1, EscapePrefix}, Rs0) ->
                             edit(Cs2, P, MultiLine1, {blink,N}, Rs);
                         {redraw, {_LB1, {_Bef1, _Aft1}, _LA1}=MultiLine1, Rs} ->
                             edit(Cs2, P, MultiLine1, {NextMode, none}, redraw(P, MultiLine1, Rs));
+                        {{_LB1, {_Bef1, _Aft1}, _LA1}=MultiLine1, Rs, search} ->
+                            {search, Cs2, {line, P, MultiLine1, {NextMode, none}}, reverse(Rs)};
                         {{_LB1, {_Bef1, _Aft1}, _LA1}=MultiLine1,Rs} ->
                             edit(Cs2, P, MultiLine1, {NextMode, none}, Rs)
                     end
