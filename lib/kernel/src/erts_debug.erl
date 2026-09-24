@@ -36,7 +36,7 @@
 
 %%% BIFs
 
--export([breakpoint/2, disassemble/1, dist_ext_to_term/2,
+-export([breakpoint/2, coverage/1, disassemble/1, dist_ext_to_term/2,
          flat_size/1, get_internal_state/1, instructions/0,
          interpreter_size/0,
          map_info/1, same/2, set_internal_state/2,
@@ -106,6 +106,14 @@ copy_shared(Term) ->
       CopyLiterals :: true | false.
 
 copy_shared(_, _) ->
+    erlang:nif_error(undef).
+
+%% Reset or dump gcov coverage counters for the emulator itself.
+%% Returns 'not_supported' unless the emulator is a gcov build.
+-spec coverage(reset | {dump, Dir}) -> ok | not_supported when
+      Dir :: file:name_all().
+
+coverage(_) ->
     erlang:nif_error(undef).
 
 -spec get_internal_state(W) -> term() when

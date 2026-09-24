@@ -50,6 +50,19 @@
 # define HEXF "%08bpX"
 #endif
 
+#ifdef ERTS_GCOV
+/* Provided by libgcov, but not declared in any header. */
+extern void __gcov_dump(void);
+extern void __gcov_reset(void);
+#endif
+
+#ifdef ERTS_CLANG_COVERAGE
+/* Provided by the clang/LLVM profile runtime (compiler-rt). */
+extern void __llvm_profile_reset_counters(void);
+extern int __llvm_profile_write_file(void);
+extern void __llvm_profile_set_filename(const char *);
+#endif
+
 void dbg_bt(Process* p, Eterm* sp);
 void dbg_where(ErtsCodePtr addr, Eterm x0, Eterm* reg);
 
@@ -530,6 +543,107 @@ erts_debug_interpreter_size_0(BIF_ALIST_0)
     return erts_make_integer(high - low, BIF_P);
 #else
     return make_small(0);
+#endif
+}
+
+/*
+ * Reset or dump native coverage counters for the emulator itself.
+ *
+ * Supported in gcov builds (libgcov) and in clang source-based coverage
+ * builds (the LLVM profile runtime); in all other builds the atom
+ * 'not_supported' is returned.
+ */
+BIF_RETTYPE
+erts_debug_coverage_1(BIF_ALIST_1)
+{
+#if defined(ERTS_GCOV)
+    if (BIF_ARG_1 == am_reset) {
+        /*
+         * The libgcov counter manipulation functions are not thread
+         * safe, so we block the system while using them.
+         */
+        erts_proc_unlock(BIF_P, ERTS_PROC_LOCK_MAIN);
+        erts_thr_progress_block();
+        __gcov_reset();
+        erts_thr_progress_unblock();
+        erts_proc_lock(BIF_P, ERTS_PROC_LOCK_MAIN);
+        BIF_RET(am_ok);
+    }
+    else if (is_tuple_arity(BIF_ARG_1, 2)) {
+        Eterm *tp = tuple_val(BIF_ARG_1);
+        char *path;
+
+        if (tp[1] != am_dump) {
+            BIF_ERROR(BIF_P, BADARG);
+        }
+        path = erts_convert_filename_to_native(tp[2], NULL, 0,
+                                               ERTS_ALC_T_TMP, 0, 0, NULL);
+        if (path == NULL) {
+            BIF_ERROR(BIF_P, BADARG);
+        }
+        erts_proc_unlock(BIF_P, ERTS_PROC_LOCK_MAIN);
+        erts_thr_progress_block();
+        /*
+         * libgcov reads the real environment of the process, so we
+         * must use setenv() here; os:putenv() only updates the
+         * emulated environment kept by ERTS.
+         */
+        setenv("GCOV_PREFIX", path, 1);
+        setenv("GCOV_PREFIX_STRIP", "100", 1);
+        __gcov_dump();
+        erts_thr_progress_unblock();
+        erts_proc_lock(BIF_P, ERTS_PROC_LOCK_MAIN);
+        erts_free(ERTS_ALC_T_TMP, path);
+        BIF_RET(am_ok);
+    }
+    BIF_ERROR(BIF_P, BADARG);
+#elif defined(ERTS_CLANG_COVERAGE)
+    if (BIF_ARG_1 == am_reset) {
+        /* Match the gcov path: block the system while touching counters. */
+        erts_proc_unlock(BIF_P, ERTS_PROC_LOCK_MAIN);
+        erts_thr_progress_block();
+        __llvm_profile_reset_counters();
+        erts_thr_progress_unblock();
+        erts_proc_lock(BIF_P, ERTS_PROC_LOCK_MAIN);
+        BIF_RET(am_ok);
+    }
+    else if (is_tuple_arity(BIF_ARG_1, 2)) {
+        Eterm *tp = tuple_val(BIF_ARG_1);
+        char *path, *file;
+        size_t plen;
+        static const char suffix[] = "/erl_%p.profraw";
+
+        if (tp[1] != am_dump) {
+            BIF_ERROR(BIF_P, BADARG);
+        }
+        path = erts_convert_filename_to_native(tp[2], NULL, 0,
+                                               ERTS_ALC_T_TMP, 0, 0, NULL);
+        if (path == NULL) {
+            BIF_ERROR(BIF_P, BADARG);
+        }
+        /*
+         * __llvm_profile_write_file() writes to the currently configured
+         * filename; direct it into the requested directory. The literal
+         * "%p" is expanded by the profile runtime to the OS pid, so
+         * concurrently dumping peer nodes do not clobber each other.
+         */
+        plen = sys_strlen(path);
+        file = erts_alloc(ERTS_ALC_T_TMP, plen + sizeof(suffix));
+        sys_memcpy(file, path, plen);
+        sys_memcpy(file + plen, suffix, sizeof(suffix));
+        erts_proc_unlock(BIF_P, ERTS_PROC_LOCK_MAIN);
+        erts_thr_progress_block();
+        __llvm_profile_set_filename(file);
+        (void) __llvm_profile_write_file();
+        erts_thr_progress_unblock();
+        erts_proc_lock(BIF_P, ERTS_PROC_LOCK_MAIN);
+        erts_free(ERTS_ALC_T_TMP, file);
+        erts_free(ERTS_ALC_T_TMP, path);
+        BIF_RET(am_ok);
+    }
+    BIF_ERROR(BIF_P, BADARG);
+#else
+    BIF_RET(am_not_supported);
 #endif
 }
 

@@ -859,3 +859,9 @@ bif records:is_exported/1
 bif records:create/4
 bif records:update/4
 bif records:get_definition/2
+
+#
+# Coverage support for the emulator itself (gcov builds).
+#
+
+bif erts_debug:coverage/1

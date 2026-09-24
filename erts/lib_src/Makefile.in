@@ -65,6 +65,14 @@ CFLAGS=@DEBUG_CFLAGS@ -DGCOV -fprofile-arcs -ftest-coverage -O0
 TYPE_SUFFIX=.gcov
 PRE_LD=
 else
+ifeq ($(TYPE),clangcov)
+# Built with clang: drop GCC-only flags a gcc-configured @CFLAGS@ may
+# carry (-Wtrampolines), the blanket -Werror (keeps -Werror=<name>), and
+# UBSan (-fsanitize=..., whose runtime is not linked into a coverage build).
+CFLAGS:=$(filter-out -Werror -Wtrampolines -fsanitize=signed-integer-overflow,$(CFLAGS)) -DERTS_CLANG_COVERAGE -fprofile-instr-generate -fcoverage-mapping
+TYPE_SUFFIX=.clangcov
+PRE_LD=
+else
 ifeq ($(TYPE),valgrind)
 CFLAGS=@DEBUG_CFLAGS@ -DVALGRIND
 TYPE_SUFFIX=.valgrind
@@ -105,6 +113,7 @@ OMIT_FP=true
 endif
 TYPE_SUFFIX=
 PRE_LD=
+endif
 endif
 endif
 endif

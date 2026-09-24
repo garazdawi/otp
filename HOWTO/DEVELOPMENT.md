@@ -408,6 +408,68 @@ dialyzer errors and many more things.
 
 There is a detailed description about how to run tests in [TESTING.md](TESTING.md).
 
+### Test coverage
+
+Erlang/OTP can collect native, per-testcase line coverage: for every test case,
+exactly which lines of the system under test it executed. Coverage is captured
+by the `cth_coverage` Common Test hook and can be turned into an LCOV tracefile
+or an interactive HTML report that shows which test cases cover each line.
+
+Coverage requires the JIT (`code:coverage_support()` must return `true`).
+
+**1. Build the system under test with instrumentation.** Only the system under
+test is instrumented, not the test suites:
+
+```bash
+# from $ERL_TOP -- instruments all of lib/*/src
+make OTP_LINE_COVERAGE=yes
+```
+
+`OTP_LINE_COVERAGE=yes` adds `+line_coverage +force_line_counters`. Only
+recompiled modules are instrumented, so if the tree is already built either do a
+clean build or instrument just the application you are interested in:
+
+```bash
+(cd lib/stdlib && make clean && make OTP_LINE_COVERAGE=yes)
+```
+
+Do **not** `export` `OTP_LINE_COVERAGE`; passing it only to the build above keeps
+the test suites themselves uninstrumented.
+
+**2. Run the tests with coverage.** `COVERAGE=yes` installs the `cth_coverage`
+hook and writes one coverdata file per test case:
+
+```bash
+make stdlib_test COVERAGE=yes
+# or, from within an application:  (cd lib/stdlib && make test COVERAGE=yes)
+```
+
+The coverdata, plus a `coverage.manifest` listing all instrumented lines, is
+written to `lib/stdlib/make_test_dir/coverage` (override with `CT_COVERAGE_DIR`).
+
+**3. Generate the reports:**
+
+```bash
+(cd lib/stdlib && make coverage_report)
+```
+
+This writes, under `make_test_dir/coverage`:
+
+* `coverage.info` -- an LCOV tracefile. Feed it to `genhtml`, to a coverage
+  service such as Codecov, or to the VS Code
+  [Coverage Gutters](https://marketplace.visualstudio.com/items?itemName=ryanluker.vscode-coverage-gutters)
+  extension for inline gutter highlighting.
+* `html/index.html` -- the per-testcase **attribution** report: click any
+  covered line to see which test cases executed it, or type a test-case name to
+  highlight the lines it covers.
+
+**Whole-tree coverage in CI.** The `Coverage of Erlang/OTP` GitHub Actions
+workflow (`.github/workflows/coverage.yaml`, run weekly or via
+`workflow_dispatch`) builds all of Erlang/OTP instrumented, runs every
+application's tests under `cth_coverage`, and uploads the `otp-coverage-lcov`,
+`otp-coverage-html` and `otp-coverage-attribution` artifacts. When a
+`CODECOV_TOKEN` secret is configured it also pushes the tracefile to Codecov.
+
 ## Writing and building documentation
 
 Most of the Erlang/OTP documentation is written using markdown, either directly

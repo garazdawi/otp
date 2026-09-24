@@ -26,6 +26,12 @@ ENV MAKEFLAGS=$MAKEFLAGS \
     ERL_TOP=/buildroot/otp \
     PATH="/Erlang ∅⊤℞/bin":/buildroot/otp/bin:$PATH
 
+## When set to "yes" (via --build-arg), the whole OTP is compiled with
+## +line_coverage +force_line_counters so cth_coverage can collect native
+## per-line coverage. Empty by default -> normal, uninstrumented build.
+ARG OTP_LINE_COVERAGE=
+ENV OTP_LINE_COVERAGE=$OTP_LINE_COVERAGE
+
 ARG ARCHIVE=./otp.tar.gz
 COPY $ARCHIVE /buildroot/otp.tar.gz
 RUN cd /buildroot && tar -xzf ./otp.tar.gz

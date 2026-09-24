@@ -48,7 +48,7 @@ CROSS_COMPILING = @CROSS_COMPILING@
 # ----------------------------------------------------
 DEFAULT_TARGETS =  opt debug release release_docs clean docs
 
-TYPES = opt debug lcnt valgrind asan gcov
+TYPES = opt debug lcnt valgrind asan gcov clangcov
 DEFAULT_TYPES = @DEFAULT_TYPES@
 FLAVORS = @FLAVORS@
 PRIMARY_FLAVOR= @PRIMARY_FLAVOR@
@@ -106,6 +106,16 @@ ifdef PRIMARY_BOOTSTRAP
   ERL_COMPILE_FLAGS += +slim
 else
   ERL_COMPILE_FLAGS += +debug_info +warn_missing_doc_function +warn_missing_doc_callback +warn_missing_spec_documented
+endif
+# Native per-line coverage instrumentation for a coverage build (idea #78).
+# Off by default; enable with `make OTP_LINE_COVERAGE=yes`. +force_line_counters
+# makes modules line-counted from load (no runtime coverage mode needed), which
+# cth_coverage and code:get_coverage/reset_coverage rely on. Not applied to the
+# bootstrap compiler.
+ifndef PRIMARY_BOOTSTRAP
+ifeq ($(OTP_LINE_COVERAGE),yes)
+  ERL_COMPILE_FLAGS += +line_coverage +force_line_counters
+endif
 endif
 ifeq ($(ERL_DETERMINISTIC),yes)
   ERL_COMPILE_FLAGS += +deterministic
