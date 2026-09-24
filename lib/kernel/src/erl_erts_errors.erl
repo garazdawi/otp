@@ -447,6 +447,10 @@ format_erlang_error(halt, [_Status,Options], Cause) ->
         none ->
             [bad_status]
     end;
+format_erlang_error(hibernate, [Pid], _) ->
+    [must_be_local_pid(Pid)];
+format_erlang_error(hibernate, [Pid,Options], _) ->
+    [must_be_local_pid(Pid),must_be_list(Options, bad_option)];
 format_erlang_error(hibernate, [M,F,A], _) ->
     must_be_mf_args(M, F, A);
 format_erlang_error(hd, [_], _) ->

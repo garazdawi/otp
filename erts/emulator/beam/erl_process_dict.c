@@ -308,7 +308,6 @@ Eterm erts_dictionary_copy(ErtsHeapFactory *hfact, ProcDict *pd, Uint reserve_si
     return res;
 }
 
-
 /*
 ** BIF interface
 */

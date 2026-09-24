@@ -171,6 +171,16 @@ void erts_init_gc(void);
 int erts_garbage_collect_nobump(struct process*, Uint, Eterm*, int, int);
 void erts_garbage_collect(struct process*, Uint, Eterm*, int);
 void erts_garbage_collect_hibernate(struct process* p);
+/* Compressed hibernation (idea #1, step 3). The process must already be
+ * hibernated (single minimal heap block, F_HIBERNATED set). */
+void erts_compress_hibernated(struct process* p);
+void erts_decompress_hibernated(struct process* p);
+/* Copy the compressed-process dictionary into hpp without decompressing the
+ * heap. Returns the dictionary term ([{Key,Val},...]) or THE_NON_VALUE if the
+ * process has no compressed dictionary image. */
+Eterm erts_compressed_dictionary_copy(struct process *p, ErtsHeapFactory *hfact,
+                                      Uint reserve_size);
+Uint erts_compressed_process_heap_size(struct process *p);
 Eterm erts_gc_after_bif_call_lhf(struct process* p, ErlHeapFragment *live_hf_end,
 				 Eterm result, Eterm* regs, Uint arity);
 Eterm erts_gc_after_bif_call(struct process* p, Eterm result, Eterm* regs, Uint arity);
