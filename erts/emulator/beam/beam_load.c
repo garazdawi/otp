@@ -150,6 +150,9 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
         BeamLoadError0(stp, PLEASE_RECOMPILE);
     case BEAMFILE_READ_CORRUPT_ATOM_TABLE:
         BeamLoadError0(stp, "corrupt atom table");
+    case BEAMFILE_READ_FULL_ATOM_TABLE:
+        retval = am_system_limit;
+        BeamLoadError0(stp, "full atom table");
     case BEAMFILE_READ_MISSING_CODE_CHUNK:
         BeamLoadError0(stp, "missing code chunk");
     case BEAMFILE_READ_CORRUPT_CODE_CHUNK:

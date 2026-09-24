@@ -99,10 +99,10 @@ static int is_external_string(Eterm obj, Uint* lenp);
 static byte* enc_atom(ErtsAtomCacheMap *, Eterm, byte*, Uint64);
 static byte* enc_pid(ErtsAtomCacheMap *, Eterm, byte*, Uint64);
 struct B2TContext_t;
-static const byte* dec_term(ErtsDistExternal*, ErtsHeapFactory*, const byte*, Eterm*, struct B2TContext_t*, Uint32 flags);
-static const byte* dec_atom(ErtsDistExternal *, const byte*, Eterm*, Uint32 flags);
-static const byte* dec_sysname(ErtsDistExternal *, const byte*, Eterm*, Uint32 flags);
-static const byte* dec_pid(ErtsDistExternal *, ErtsHeapFactory*, const byte*, Eterm*, byte tag, Uint32 flags);
+static const byte* dec_term(ErtsDistExternal*, ErtsHeapFactory*, const byte*, Eterm*, struct B2TContext_t*, Uint32 flags, ErtsDecodeErrorInfo *error_info);
+static const byte* dec_atom(ErtsDistExternal *, const byte*, Eterm*, Uint32 flags, ErtsDecodeErrorInfo *error_info);
+static const byte* dec_sysname(ErtsDistExternal *, const byte*, Eterm*, Uint32 flags, ErtsDecodeErrorInfo *error_info);
+static const byte* dec_pid(ErtsDistExternal *, ErtsHeapFactory*, const byte*, Eterm*, byte tag, Uint32 flags, ErtsDecodeErrorInfo *error_info);
 static Sint decoded_size(const byte *ep, const byte* endp, int internal_tags, struct B2TContext_t*);
 static BIF_RETTYPE term_to_binary_trap_1(BIF_ALIST_1);
 
@@ -908,6 +908,7 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
 		      ErtsAtomCache *cache)
 {
     register const byte *ep;
+    const char *hdr_error = "the header is corrupted";
 
     ASSERT(dep);
     erts_de_rlock(dep);
@@ -1080,6 +1081,7 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
 		    edep->attab.atom[tix] = atom;
 		}
 		else {
+                    int aix;
 		    /* new cached atom */
 		    cix += (int) get_int8(ep);
 		    if (cix >= ERTS_ATOM_CACHE_SIZE)
@@ -1096,15 +1098,18 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
 			ep++;
 		    }
 		    CHKSIZE(len);
-		    atom = erts_atom_put((byte *) ep,
-					 len,
-                                         ERTS_ATOM_ENC_UTF8,
-					 0);
-		    if (is_non_value(atom))
-			goto bad_hdr;
+                    aix = erts_atom_put_index((byte *) ep,
+                                              len,
+                                              ERTS_ATOM_ENC_UTF8,
+                                              0);
+                    if (aix < 0) {
+                        if (aix == ATOM_MAX_ATOMS_ERROR)
+                            goto full_atom_table;
+                        goto bad_hdr;
+                    }
 		    ep += len;
-		    cache->in_arr[cix] = atom;
-		    edep->attab.atom[tix] = atom;
+                    cache->in_arr[cix] = make_atom(aix);
+                    edep->attab.atom[tix] = make_atom(aix);
 		}
 		flgs >>= 4;
 		got_flgs--;
@@ -1134,15 +1139,18 @@ erts_prepare_dist_ext(ErtsDistExternal *edep,
     return ERTS_PREP_DIST_EXT_SUCCESS;
 
 #undef CHKSIZE
-
+ full_atom_table:
+    hdr_error = "the atom table is full";
+    /* fall through */
  bad_hdr: {
 	erts_dsprintf_buf_t *dsbufp = erts_create_logger_dsbuf();
 	erts_dsprintf(dsbufp,
-		      "%T got a corrupted distribution header from %T "
-		      "on distribution channel %d\n",
+                      "%T could not decode the distribution header from %T "
+                      "on distribution channel %d: %s\n",
 		      erts_this_node->sysname,
 		      edep->dep->sysname,
-		      dist_entry_channel_no(edep->dep));
+                      dist_entry_channel_no(edep->dep),
+                      hdr_error);
 	for (ep = ext; ep < edep->data->ext_endp; ep++)
 	    erts_dsprintf(dsbufp, ep != ext ? ",%b8u" : "<<%b8u", *ep);
 	erts_dsprintf(dsbufp, ">>");
@@ -1293,7 +1301,7 @@ erts_decode_dist_ext(ErtsHeapFactory* factory,
 	    goto error;
 	ep++;
     }
-    ep = dec_term(edep, factory, ep, &obj, NULL, 0);
+    ep = dec_term(edep, factory, ep, &obj, NULL, 0, NULL);
     if (!ep)
 	goto error;
 
@@ -1310,16 +1318,17 @@ erts_decode_dist_ext(ErtsHeapFactory* factory,
     return THE_NON_VALUE;
 }
 
-Eterm erts_decode_ext(ErtsHeapFactory* factory, const byte **ext, Uint32 flags)
+Eterm erts_decode_ext(ErtsHeapFactory* factory, const byte **ext, Uint32 flags, ErtsDecodeErrorInfo *error_info)
 {
     Eterm obj;
     const byte *ep = *ext;
+    if (error_info) *error_info = ERTS_DECODE_ERROR_BADARG;
     if (*ep++ != VERSION_MAGIC) {
         erts_factory_undo(factory);
 	return THE_NON_VALUE;
     }
     ASSERT(!(flags & ~ERTS_DIST_EXT_BTT_SAFE));
-    ep = dec_term(NULL, factory, ep, &obj, NULL, flags);
+    ep = dec_term(NULL, factory, ep, &obj, NULL, flags, error_info);
     if (!ep) {
 	return THE_NON_VALUE;
     }
@@ -1330,7 +1339,7 @@ Eterm erts_decode_ext(ErtsHeapFactory* factory, const byte **ext, Uint32 flags)
 Eterm erts_decode_ext_ets(ErtsHeapFactory* factory, const byte *ext)
 {
     Eterm obj;
-    ext = dec_term(NULL, factory, ext, &obj, NULL, ERTS_DIST_EXT_INTERNAL_NC);
+    ext = dec_term(NULL, factory, ext, &obj, NULL, ERTS_DIST_EXT_INTERNAL_NC, NULL);
     ASSERT(ext);
     return obj;
 }
@@ -1700,6 +1709,7 @@ typedef struct B2TContext_t {
     SWord reds;
     Uint used_bytes; /* In: boolean, Out: bytes */
     Eterm trap_bin;  /* THE_NON_VALUE if not exported */
+    ErtsDecodeErrorInfo error_info;
     Export *bif;
     Eterm arg[2];
     enum B2TState state;
@@ -1830,7 +1840,7 @@ binary2term_create(ErtsDistExternal *edep, ErtsBinary2TermState *state,
 {
     Eterm res;
 
-    if (!dec_term(edep, factory, state->extp, &res, NULL, 0))
+    if (!dec_term(edep, factory, state->extp, &res, NULL, 0, NULL))
 	res = THE_NON_VALUE;
     if (state->exttmp) {
 	state->exttmp = 0;
@@ -1960,6 +1970,7 @@ static BIF_RETTYPE binary_to_term_int(Process* p, Eterm bin, B2TContext *ctx)
         is_first_call = 1;
 	ctx->state = B2TPrepare;
         ctx->aligned_alloc = NULL;
+        ctx->error_info = ERTS_DECODE_ERROR_BADARG;
     } else {
         ASSERT(is_value(ctx->trap_bin));
         ASSERT(ctx->state != B2TPrepare);
@@ -2062,30 +2073,34 @@ static BIF_RETTYPE binary_to_term_int(Process* p, Eterm bin, B2TContext *ctx)
         case B2TDecodeTuple:
         case B2TDecodeString:
         case B2TDecodeBinary: {
-            dec_term(NULL, NULL, NULL, NULL, ctx, 0);
+            dec_term(NULL, NULL, NULL, NULL, ctx, 0, &ctx->error_info);
             break;
 	}
         case B2TDecodeFail:
         case B2TBadArg:
+        {
+            int reason = (ctx->error_info == ERTS_DECODE_ERROR_ATOM_TABLE_FULL)
+                ? SYSTEM_LIMIT : BADARG;
+
             BUMP_REDS(p, (initial_reds - ctx->reds) / B2T_BYTES_PER_REDUCTION);
 
 	    ASSERT(ctx->bif == BIF_TRAP_EXPORT(BIF_binary_to_term_1)
 		   || ctx->bif == BIF_TRAP_EXPORT(BIF_binary_to_term_2));
 
-	    if (is_first_call)
-		ERTS_BIF_PREP_ERROR(ret_val, p, BADARG);
-	    else {
+            if (is_first_call) {
+                ERTS_BIF_PREP_ERROR(ret_val, p, reason);
+            } else {
                 erts_set_gc_state(p, 1);
 		if (is_non_value(ctx->arg[1]))
-		    ERTS_BIF_PREP_ERROR_TRAPPED1(ret_val, p, BADARG, ctx->bif,
+                    ERTS_BIF_PREP_ERROR_TRAPPED1(ret_val, p, reason, ctx->bif,
 						 ctx->arg[0]);
 		else
-		    ERTS_BIF_PREP_ERROR_TRAPPED2(ret_val, p, BADARG, ctx->bif,
+                    ERTS_BIF_PREP_ERROR_TRAPPED2(ret_val, p, reason, ctx->bif,
 						 ctx->arg[0], ctx->arg[1]);
 	    }
             b2t_destroy_context(ctx);
 	    return ret_val;
-
+        }
         case B2TDone:
             if (ctx->used_bytes) {
                 Eterm *hp;
@@ -3029,9 +3044,28 @@ enc_pid(ErtsAtomCacheMap *acmp, Eterm pid, byte* ep, Uint64 dflags)
     return enc_external_pid(acmp, pid, ep, dflags);
 }
 
+/* Interns an atom while decoding, recording why it failed (if anywhere to
+ * record it). Returns 0 on failure. */
+static ERTS_INLINE int
+dec_put_atom(const byte *ep, Uint len, ErtsAtomEncoding enc, Eterm *objp,
+             ErtsDecodeErrorInfo *error_info)
+{
+    int aix = erts_atom_put_index(ep, len, enc, 0);
+
+    if (aix < 0) {
+        if (aix == ATOM_MAX_ATOMS_ERROR && error_info) {
+            *error_info = ERTS_DECODE_ERROR_ATOM_TABLE_FULL;
+        }
+        return 0;
+    }
+
+    *objp = make_atom(aix);
+    return 1;
+}
+
 /* Expect an atom in plain text or cached */
 static const byte*
-dec_atom(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags)
+dec_atom(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags, ErtsDecodeErrorInfo *error_info)
 {
     Uint len;
     int n;
@@ -3074,11 +3108,8 @@ dec_atom(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags)
 	    if (!erts_atom_get((char*)ep, len, objp, char_enc)) {
                 goto error;
 	    }
-        } else {
-	    Eterm atom = erts_atom_put(ep, len, char_enc, 0);
-	    if (is_non_value(atom))
-		goto error;
-            *objp = atom;
+        } else if (!dec_put_atom(ep, len, char_enc, objp, error_info)) {
+            goto error;
         }
 	ep += len;
 	break;
@@ -3107,9 +3138,9 @@ dec_atom(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags)
 }
 
 static const byte*
-dec_sysname(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags)
+dec_sysname(ErtsDistExternal *edep, const byte* ep, Eterm* objp, Uint32 flags, ErtsDecodeErrorInfo *error_info)
 {
-    const byte* ret_ep = dec_atom(edep, ep, objp, flags);
+    const byte* ret_ep = dec_atom(edep, ep, objp, flags, error_info);
 
     if (!ret_ep && (flags & ERTS_DIST_EXT_INTERNAL_NC)) {
         if (*ep == NIL_EXT) {
@@ -3139,7 +3170,7 @@ static ERTS_INLINE ErlNode* dec_get_node(Eterm sysname, Uint32 creation, Eterm b
 
 static const byte*
 dec_pid(ErtsDistExternal *edep, ErtsHeapFactory* factory, const byte* ep,
-        Eterm* objp, byte tag, Uint32 flags)
+        Eterm* objp, byte tag, Uint32 flags, ErtsDecodeErrorInfo *error_info)
 {
     Eterm sysname;
     Uint data;
@@ -3150,7 +3181,7 @@ dec_pid(ErtsDistExternal *edep, ErtsHeapFactory* factory, const byte* ep,
     *objp = NIL;		/* In case we fail, don't leave a hole in the heap */
 
     /* eat first atom */
-    if ((ep = dec_sysname(edep, ep, &sysname, flags)) == NULL)
+    if ((ep = dec_sysname(edep, ep, &sysname, flags, error_info)) == NULL)
 	return NULL;
     num = get_uint32(ep);
     ep += 4;
@@ -4310,7 +4341,8 @@ dec_term(ErtsDistExternal *edep,
 	 const byte* ep,
          Eterm* objp,
 	 B2TContext* ctx,
-         Uint32 flags)
+         Uint32 flags,
+         ErtsDecodeErrorInfo *error_info)
 {
 #define PSTACK_TYPE struct dec_term_map
     PSTACK_DECLARE(map_array, 10);
@@ -4531,11 +4563,8 @@ dec_term_atom_common:
 		if (!erts_atom_get((char*)ep, n, objp, char_enc)) {
 		    goto error;
 		}
-	    } else {
-		Eterm atom = erts_atom_put(ep, n, char_enc, 0);
-		if (is_non_value(atom))
-		    goto error;
-	        *objp = atom;
+            } else if (!dec_put_atom(ep, n, char_enc, objp, error_info)) {
+                goto error;
 	    }
 	    ep += n;
 	    break;
@@ -4676,7 +4705,7 @@ dec_term_atom_common:
         case PID_EXT:
         case NEW_PID_EXT:
 	    factory->hp = hp;
-	    ep = dec_pid(edep, factory, ep, objp, ep[-1], flags);
+            ep = dec_pid(edep, factory, ep, objp, ep[-1], flags, error_info);
 	    hp = factory->hp;
 	    if (ep == NULL) {
 		goto error;
@@ -4692,7 +4721,7 @@ dec_term_atom_common:
 		Uint32 cre;
                 byte tag = ep[-1];
 
-		if ((ep = dec_sysname(edep, ep, &sysname, flags)) == NULL) {
+                if ((ep = dec_sysname(edep, ep, &sysname, flags, error_info)) == NULL) {
 		    goto error;
 		}
 		if (tag == V4_PORT_EXT) {
@@ -4752,7 +4781,7 @@ dec_term_atom_common:
 
 		ref_words = 1;
 
-		if ((ep = dec_sysname(edep, ep, &sysname, flags)) == NULL)
+                if ((ep = dec_sysname(edep, ep, &sysname, flags, error_info)) == NULL)
 		    goto error;
 		if ((r0 = get_int32(ep)) >= MAX_REFERENCE )
 		    goto error;
@@ -4769,7 +4798,7 @@ dec_term_atom_common:
 		ref_words = get_int16(ep);
 		ep += 2;
 
-		if ((ep = dec_sysname(edep, ep, &sysname, flags)) == NULL)
+                if ((ep = dec_sysname(edep, ep, &sysname, flags, error_info)) == NULL)
 		    goto error;
 
 		cre = get_int8(ep);
@@ -4787,7 +4816,7 @@ dec_term_atom_common:
 		ref_words = get_int16(ep);
 		ep += 2;
 
-		if ((ep = dec_sysname(edep, ep, &sysname, flags)) == NULL)
+                if ((ep = dec_sysname(edep, ep, &sysname, flags, error_info)) == NULL)
 		    goto error;
 
 		cre = get_int32(ep);
@@ -5011,14 +5040,14 @@ dec_term_atom_common:
                 Eterm temp;
                 Sint arity;
 
-                if ((ep = dec_atom(edep, ep, &mod, flags)) == NULL) {
+                if ((ep = dec_atom(edep, ep, &mod, flags, error_info)) == NULL) {
                     goto error;
                 }
-                if ((ep = dec_atom(edep, ep, &name, flags)) == NULL) {
+                if ((ep = dec_atom(edep, ep, &name, flags, error_info)) == NULL) {
                     goto error;
                 }
                 factory->hp = hp;
-                ep = dec_term(edep, factory, ep, &temp, NULL, flags);
+                ep = dec_term(edep, factory, ep, &temp, NULL, flags, error_info);
                 if (ep == NULL) {
                     goto error;
                 }
@@ -5128,12 +5157,12 @@ dec_term_atom_common:
                 hp += ERL_FUN_SIZE + num_free;
 
 		/* Module */
-		if ((ep = dec_atom(edep, ep, &module, flags)) == NULL) {
+                if ((ep = dec_atom(edep, ep, &module, flags, error_info)) == NULL) {
 		    goto error;
 		}
 		factory->hp = hp;
 		/* Index */
-		if ((ep = dec_term(edep, factory, ep, &temp, NULL, flags)) == NULL) {
+                if ((ep = dec_term(edep, factory, ep, &temp, NULL, flags, error_info)) == NULL) {
 		    goto error;
 		}
 		if (!is_small(temp)) {
@@ -5142,7 +5171,7 @@ dec_term_atom_common:
 		old_index = unsigned_val(temp);
 
 		/* Uniq */
-		if ((ep = dec_term(edep, factory, ep, &temp, NULL, flags)) == NULL) {
+                if ((ep = dec_term(edep, factory, ep, &temp, NULL, flags, error_info)) == NULL) {
 		    goto error;
 		}
 		if (!is_small(temp)) {
@@ -5152,7 +5181,7 @@ dec_term_atom_common:
 
                 /* Creator pid, discarded */
                 if ((ep = dec_term(edep, factory, ep, &temp, NULL,
-                                   flags)) == NULL) {
+                                   flags, error_info)) == NULL) {
                     goto error;
                 }
                 if (!is_pid(temp)) {
@@ -5298,11 +5327,11 @@ dec_term_atom_common:
                 ep++;
 
                 /* Module */
-                if ((ep = dec_atom(edep, ep, &defp->module, flags)) == NULL) {
+                if ((ep = dec_atom(edep, ep, &defp->module, flags, error_info)) == NULL) {
                     goto error;
                 }
                 /* Name */
-                if ((ep = dec_atom(edep, ep, &defp->name, flags)) == NULL) {
+                if ((ep = dec_atom(edep, ep, &defp->name, flags, error_info)) == NULL) {
                     goto error;
                 }
 
@@ -5312,7 +5341,7 @@ dec_term_atom_common:
                 for (int i = 0; i < num_fields; i++) {
                     Eterm key;
 
-                    if ((ep = dec_atom(edep, ep, &key, flags)) == NULL) {
+                    if ((ep = dec_atom(edep, ep, &key, flags, error_info)) == NULL) {
                         erts_free(ERTS_ALC_T_TMP, fields);
                         goto error;
                     }
@@ -6591,7 +6620,7 @@ transcode_decode_ctl_msg(ErtsTranscodeDecodeState *state,
     state->hp = hp = erts_alloc(ERTS_ALC_T_TMP, hsz*sizeof(Eterm));
     erts_factory_tmp_init(&state->factory, hp, hsz, ERTS_ALC_T_TMP);
             
-    ptr = dec_term(NULL, &state->factory, buf_start, &ctl_msg, NULL, 0);
+    ptr = dec_term(NULL, &state->factory, buf_start, &ctl_msg, NULL, 0, NULL);
     ASSERT(ptr); (void)ptr;
     ASSERT(is_tuple(ctl_msg));
 

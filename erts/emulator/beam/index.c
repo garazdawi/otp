@@ -58,7 +58,7 @@ index_table_sz(IndexTable *t)
 */
 IndexTable*
 erts_index_init(ErtsAlcType_t type, IndexTable* t, char* name,
-		int size, int limit, HashFunctions fun)
+                int size, int limit, HashFunctions fun)
 {
     /* Round up to a whole number of pages; the table only enforces its limit at
      * a page boundary, so this is the effective limit reported to the user. */
@@ -76,24 +76,26 @@ erts_index_init(ErtsAlcType_t type, IndexTable* t, char* name,
 }
 
 IndexSlot*
-index_put_entry(IndexTable* t, void* tmpl)
+index_put_entry_may_fail(IndexTable* t, void* tmpl)
 {
-    int ix;
-    IndexSlot* p = (IndexSlot*) hash_put(&t->htable, tmpl);
+    int ix = t->entries;
+    IndexSlot* p;
+
+    if (ix >= t->limit) {
+        /* The table is full. hash_put() would allocate a new object, so we
+           use hash_get() in order to only find already existing entries. */
+        p = (IndexSlot*) hash_get(&t->htable, tmpl);
+        return (p && p->index >= 0) ? p : NULL;
+    }
+
+    p = (IndexSlot*) hash_put(&t->htable, tmpl);
 
     if (p->index >= 0) {
 	return p;
     }
 
-    ix = t->entries;
     if (ix >= t->size) {
-	Uint sz;
-	if (ix >= t->limit) {
-	    /* A core dump is unnecessary */
-	    erts_exit(ERTS_DUMP_EXIT, "no more index entries in %s (max=%d)\n",
-		     t->htable.name, t->limit);
-	}
-	sz = INDEX_PAGE_SIZE*sizeof(IndexSlot*);
+        Uint sz = INDEX_PAGE_SIZE*sizeof(IndexSlot*);
 	t->seg_table[ix>>INDEX_PAGE_SHIFT] = erts_alloc(t->type, sz);
 	t->size += INDEX_PAGE_SIZE;
     }
@@ -107,6 +109,19 @@ index_put_entry(IndexTable* t, void* tmpl)
     ERTS_THR_WRITE_MEMORY_BARRIER;
     t->entries++;
 
+    return p;
+}
+
+IndexSlot*
+index_put_entry(IndexTable* t, void* tmpl)
+{
+    IndexSlot* p = index_put_entry_may_fail(t, tmpl);
+
+    if (!p) {
+        /* A core dump is unnecessary */
+        erts_exit(ERTS_DUMP_EXIT, "no more index entries in %s (max=%d)\n",
+                  t->htable.name, t->limit);
+    }
     return p;
 }
 

@@ -33,6 +33,7 @@
 #define MIN_ATOM_TABLE_SIZE 8192
 #define ATOM_BAD_ENCODING_ERROR -1
 #define ATOM_MAX_CHARS_ERROR -2
+#define ATOM_MAX_ATOMS_ERROR -3
 
 #ifndef ARCH_32
 /* Internal atom cache needs MAX_ATOM_TABLE_SIZE to be less than an

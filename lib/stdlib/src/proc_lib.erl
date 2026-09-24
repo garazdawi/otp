@@ -62,6 +62,10 @@ processes that terminate as a result of this process terminating.
 `m:logger`
 """.
 
+%% make_dummy_args/2 below only ever creates atoms of the form
+%% 'Argument__<Arity>'. As the arity of a function is bounded by 255, and the
+%% most common arities are pre-created literals, this cannot exhaust the atom
+%% table.
 -compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}}]).
 
 %% This module is used to set some initial information
@@ -800,8 +804,22 @@ initial_call(DictOrPid) ->
 make_dummy_args(0, Acc) ->
     Acc;
 make_dummy_args(N, Acc) ->
-    Arg = list_to_atom("Argument__" ++ integer_to_list(N)),
-    make_dummy_args(N-1, [Arg|Acc]).
+    make_dummy_args(N-1, [dummy_arg(N)|Acc]).
+
+%% Pre-created literals for the common arities, so that a crash report does not
+%% have to create any atoms. Higher arities fall back to creating the atom, but
+%% as the arity is bounded by 255 so is the number of atoms created here.
+dummy_arg(1) -> 'Argument__1';
+dummy_arg(2) -> 'Argument__2';
+dummy_arg(3) -> 'Argument__3';
+dummy_arg(4) -> 'Argument__4';
+dummy_arg(5) -> 'Argument__5';
+dummy_arg(6) -> 'Argument__6';
+dummy_arg(7) -> 'Argument__7';
+dummy_arg(8) -> 'Argument__8';
+dummy_arg(9) -> 'Argument__9';
+dummy_arg(10) -> 'Argument__10';
+dummy_arg(N) -> list_to_atom("Argument__" ++ integer_to_list(N)).
 
 %% -----------------------------------------------------
 %% Translate the '$initial_call' to some useful information.

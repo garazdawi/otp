@@ -66,6 +66,7 @@
          bad_dist_ext_connection_id/1,
          bad_dist_ext_size/1,
          bad_dist_ext_spawn_request_arg_list/1,
+         bad_dist_ext_full_atom_table/1,
 	 start_epmd_false/1, no_epmd/1, epmd_module/1,
          bad_dist_fragments/1,
          exit_dist_fragments/1,
@@ -136,7 +137,7 @@ groups() ->
       [bad_dist_structure, bad_dist_fragments]},
      {bad_dist_ext, [],
       [bad_dist_ext_receive, bad_dist_ext_process_info,
-       bad_dist_ext_size,
+       bad_dist_ext_size, bad_dist_ext_full_atom_table,
        bad_dist_ext_control, bad_dist_ext_connection_id,
        bad_dist_ext_spawn_request_arg_list]},
      {message_latency, [],
@@ -2542,6 +2543,45 @@ bad_dist_ext_size(Config) when is_list(Config) ->
     verify_no_down(Offender, Victim),
     peer_stop(OffenderPeer, Offender),
     peer_stop(VictimPeer, Victim).
+
+%% Connection should be dropped when atom table is full
+bad_dist_ext_full_atom_table(Config) when is_list(Config) ->
+    %% Disabled "connect all" so global wont interfere...
+    {ok, VictimPeer, Victim} = ?CT_PEER(["-connect_all", "false", "+t", "50000"]),
+
+    net_kernel:monitor_nodes(true, [nodedown_reason,{node_type,all}]),
+
+    try
+        Parent = self(),
+        P = spawn(Victim,
+                  fun () ->
+                          Start = erlang:system_info(atom_count),
+                          Limit = erlang:system_info(atom_limit),
+
+                          %% Almost fill up the node with atoms
+                          _ = [list_to_atom(integer_to_list(I)) ||
+                                  I <- lists:seq(Start, Limit - 1)],
+                          Parent ! {self(), started},
+                          receive Msg -> Msg end
+                  end),
+
+        receive {P, started} -> ok end,
+
+        %% Decoding these atoms on the victim overflows its atom table, which
+        %% must take the connection down rather than the node.
+        P ! [list_to_atom("abcdefghijklmnopqrstuvwxyz" ++ integer_to_list(I))
+             || I <- lists:seq(1,100)],
+
+        receive
+            {nodedown,Victim,Flags} ->
+                connection_closed = proplists:get_value(nodedown_reason, Flags)
+        after 1000 ->
+                ct:fail(did_not_get_node_down)
+        end
+    after
+        net_kernel:monitor_nodes(false, []),
+        peer:stop(VictimPeer)
+    end.
 
 bad_dist_ext_spawn_request_arg_list(Config) when is_list(Config) ->
     {ok, OffenderPeer, Offender} = ?CT_PEER(["-connect_all", "false"]),

@@ -343,6 +343,9 @@ common reasons.
   was called.
 
 - **`sticky_directory`** - The object code resides in a sticky directory.
+
+- **`system_limit`** - The object code could not be loaded because the system has
+  reached its limit, for example, the atom table is full.
 """.
 
 -compile([{nowarn_possibly_unsafe_function, {erlang, list_to_atom, 1}},
@@ -460,7 +463,8 @@ common reasons.
                         | 'nofile'
                         | 'not_purged'
                         | 'on_load_failure'
-                        | 'sticky_directory'.
+                        | 'sticky_directory'
+                        | 'system_limit'.
 -type load_ret() :: {'error', What :: load_error_rsn()}
                   | {'module', Module :: module()}.
 -type loaded_ret_atoms() :: 'cover_compiled' | 'preloaded'.
