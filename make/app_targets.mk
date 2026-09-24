@@ -50,12 +50,25 @@ DIA_PLT      = $(DIA_PLT_DIR)/$(APPLICATION).plt
 DIA_ANALYSIS = $(basename $(DIA_PLT)).dialyzer_analysis
 DIA_RUNTIME_DEPS = $(shell erl -noinput -eval '{ok, [{_, _, Keys}]} = file:consult(filelib:wildcard("ebin/*.app")), Deps = [hd(string:split(Deps, "-")) || Deps <- proplists:get_value(runtime_dependencies, Keys)], io:format("~ts",[lists:join(" ", Deps)]), init:stop().')
 
+## The plt is built from the beam files of the applications below, so it has to
+## be rebuilt when any of them change. Without this the plt is built once and
+## then never invalidated again, and dialyzer keeps analysing against whatever
+## the applications happened to look like when the plt was first created.
+## Applications that are not built yet contribute nothing here; the plt is built
+## from whatever is there when it is first needed.
+DIA_PLT_APP_LIST = $(sort $(DIA_PLT_APPS) $(DIA_RUNTIME_DEPS) $(DIA_DEFAULT_PLT_APPS))
+DIA_PLT_DEPS = $(wildcard $(ERL_TOP)/erts/preloaded/ebin/*.beam) \
+               $(wildcard $(foreach DIA_APP, $(DIA_PLT_APP_LIST), \
+                                    $(ERL_TOP)/lib/$(DIA_APP)/ebin/*.beam))
+
 dialyzer_plt: $(DIA_PLT)
 
 $(DIA_PLT_DIR):
 	@mkdir -p $@
 
-$(DIA_PLT): $(DIA_PLT_DIR)
+## $(DIA_PLT_DIR) is order only; the directory's timestamp changes when the plt
+## is written into it and must not by itself trigger a rebuild.
+$(DIA_PLT): $(DIA_PLT_DEPS) | $(DIA_PLT_DIR)
 	@echo "Building $(APPLICATION) plt file"
 	$(V_at)dialyzer --build_plt \
                   --output_plt $@ \

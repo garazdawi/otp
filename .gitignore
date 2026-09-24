@@ -13,6 +13,9 @@ TAGS
 # IntelliJ IDEA
 .idea
 
+# Crash dumps, written to whatever directory the emulator was started in.
+erl_crash.dump
+
 autom4te.cache
 configure.result.*
 *.beam
