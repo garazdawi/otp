@@ -73,9 +73,6 @@
 	 spec_init_action/2,
 	 cast_fast_messup/0]).
 
-%% Internal test specific exports
--export([multicall_srv_ctrlr/2, multicall_suspender/2]).
-
 %% The gen_server behaviour
 -export([init/1, handle_call/3, handle_cast/2, handle_continue/2,
 	 handle_info/2, code_change/3, terminate/2, format_status/2]).
@@ -138,6 +135,8 @@ init_per_suite(Config) ->
     DataDir = ?config(data_dir, Config),
     Server = filename:join(DataDir, "format_status_server.erl"),
     {ok, format_status_server} = compile:file(Server),
+    MultiCallServer = filename:join(DataDir, "multi_call_server.erl"),
+    {ok, multi_call_server} = compile:file(MultiCallServer),
     Config.
 
 end_per_suite(_Config) ->
@@ -1862,14 +1861,15 @@ multicall_remote_old_test(Config, OldN, Name) ->
                         end, lists:seq(1, 4)),
         OldNodes = lists:map(fun ({_, N}) -> N end, PNs),
         %% Recompile on one old node and load this on all old nodes...
-        SrcFile = filename:rootname(code:which(?MODULE)) ++ ".erl",
-        {ok, ?MODULE, BeamCode} = erpc:call(hd(OldNodes), compile, file, [SrcFile, [binary]]),
-        LoadResult = lists:duplicate(length(OldNodes), {ok, {module, ?MODULE}}),
-        LoadResult = erpc:multicall(OldNodes, code, load_binary, [?MODULE, SrcFile, BeamCode]),
+        SrcFile = filename:rootname(filename:join(?config(data_dir, Config),
+         "multi_call_server")) ++ ".erl",
+        {ok, multi_call_server, BeamCode} = erpc:call(hd(OldNodes), compile, noenv_file, [SrcFile, [binary]]),
+        LoadResult = lists:duplicate(length(OldNodes), {ok, {module, multi_call_server}}),
+        LoadResult = erpc:multicall(OldNodes, code, load_binary, [multi_call_server, SrcFile, BeamCode]),
         multicall_remote_test(PNs, Name)
     catch
-        throw:Res ->
-            Res
+        throw:{skipped, _} = Skipped ->
+            Skipped
     end.
 
 multicall_remote_test([{Peer1, Node1},
@@ -1884,8 +1884,8 @@ multicall_remote_test([{Peer1, Node1},
 
     SrvList =
         lists:map(fun (Node) ->
-                          Ctrl = spawn_link(Node, ?MODULE,
-                                            multicall_srv_ctrlr,
+                          Ctrl = spawn_link(Node, multi_call_server,
+                                            start,
                                             [Tester, Name]),
                           receive
                               {Ctrl, _Srv} = Procs ->
@@ -1937,7 +1937,7 @@ multicall_remote_test([{Peer1, Node1},
     peer:stop(Peer3),
 
     {Ctrl4, Srv4} = maps:get(Node4, SrvMap),
-    Spndr = spawn_link(Node4, ?MODULE, multicall_suspender, [Tester, Srv4]),
+    Spndr = spawn_link(Node4, multi_call_server, multicall_suspender, [Tester, Srv4]),
 
     Res3 = {[{Node1, delayed}, {ThisNode, delayed}],
             [Node2, Node3, Node4]},
@@ -1961,19 +1961,6 @@ multicall_remote_test([{Peer1, Node1},
     peer:stop(Peer4),
 
     ok.
-
-multicall_srv_ctrlr(Tester, Name) ->
-    {ok, Srv} = gen_server:start_link({local, Name},
-                                      gen_server_SUITE, [], []),
-    Tester ! {self(), Srv},
-    receive after infinity -> ok end.
-
-multicall_suspender(Tester, Suspendee) ->
-    true = erlang:suspend_process(Suspendee),
-    receive
-        {Tester, resume_it} ->
-            erlang:resume_process(Suspendee)
-    end.
 
 multicall_recv_opt_success(Config) when is_list(Config) ->
     multicall_recv_opt_test(success).
@@ -2002,8 +1989,8 @@ multicall_recv_opt_test(Type) ->
 
     SrvList =
         lists:map(fun (Node) ->
-                          Ctrl = spawn_link(Node, ?MODULE,
-                                            multicall_srv_ctrlr,
+                          Ctrl = spawn_link(Node, multi_call_server,
+                                            start,
                                             [Tester, Name]),
                           receive
                               {Ctrl, _Srv} = Procs ->

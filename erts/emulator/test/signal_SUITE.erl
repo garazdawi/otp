@@ -501,25 +501,57 @@ dirty_signal_handling(Config) when is_list(Config) ->
     %%
     %% Make sure signals are handled regardless of whether a process is
     %% executing dirty or is scheduled for dirty execution...
+    
+    PerSchedulerDelay = 200,
 
     %% Make sure all dirty I/O schedulers are occupied with work...
-    Ps = lists:map(fun (_) ->
+    Ps = lists:map(fun (I) ->
                            spawn(fun () ->
-                                         erts_debug:dirty_io(wait, 1000)
+                                         erts_debug:dirty_io(wait, 2000 + I * PerSchedulerDelay)
                                  end)
                    end, lists:seq(1, erlang:system_info(dirty_io_schedulers))),
+    %% ... and wait until all of them actually execute on a dirty I/O scheduler.
+    ok = wait_until(fun () ->
+                            lists:all(fun (Px) ->
+                                case process_info(Px, status) of
+                                    {status, running} ->
+                                        true;
+                                    _Else ->
+                                        false
+                                    end
+                                end, Ps)
+                    end),
+
     %% P ends up in the run queue waiting for a free dirty I/O scheduler...
     P = spawn(fun () ->
-                      erts_debug:dirty_io(wait, 1000)
+                      erts_debug:dirty_io(wait, 4000)
               end),
-    receive after 300 -> ok end,
-    %% current_function is added to prevent read of status from being optimized
-    %% to read status directly...
-    [{status,runnable},{current_function, _}] = process_info(P, [status,current_function]),
-    receive after 1000 -> ok end,
-    [{status,running},{current_function, _}] = process_info(P, [status,current_function]),
+    ok = wait_until(fun () ->
+                            {status, runnable} == process_info(P, status)
+                    end),
+
+     %% current_function is added to prevent read of status from being optimized
+     %% to read status directly...
+    [{status, runnable}, {current_function, _}] = process_info(P, [status, current_function]),
+
+    %% Wait for the first process to finish executing on a dirty I/O scheduler...
+    Ref = erlang:monitor(process, hd(Ps)),
+    receive 
+        {'DOWN', Ref, process, _, _} -> ok
+    end,
+
+    [{status, running}, {current_function, _}] = process_info(P, [status, current_function]),
+
+    %% ... and make sure exit signals are handled by P (executing dirty) and
+    %% the remaining processes occupying dirty I/O schedulers...
     lists:foreach(fun (X) -> exit_signal(X, kill) end, [P|Ps]),
     lists:foreach(fun (X) -> false = is_process_alive(X) end, [P|Ps]),
+
+    %% We sleep until all the dirty_io workers have finished executing, to avoid them
+    %% effecting other testcases.
+
+    timer:sleep(2000 + erlang:system_info(dirty_io_schedulers) * PerSchedulerDelay),
+
     ok.
 
 busy_dist_exit_signal(Config) when is_list(Config) ->
