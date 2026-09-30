@@ -314,8 +314,10 @@ erlang_client_auto_ticket(Config, ExtraOpts, OpenSSLOpts, Resumption) ->
                                                 verify_active_session_resumption,
                                                 [false, no_reply]}},
                                          {from, self()},  {options, ClientOpts}]),
-    %% Wait for session ticket
-    ct:sleep(100),
+    %% Wait until the session ticket from the first connection has actually
+    %% been received and stored before attempting resumption. This is
+    %% deterministic even for the extra HRR round-trip, unlike a fixed sleep.
+    ssl_test_lib:wait_for_session_ticket_store(1),
 
     %% Close previous connection as s_server can only handle one at a time
     ssl_test_lib:close(Client0),
