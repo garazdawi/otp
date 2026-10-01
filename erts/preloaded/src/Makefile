@@ -37,9 +37,9 @@ ERL_FILES= $(ERTS_ERL_MODULES:%=%.erl)
 BEAM_FILES= $(ERTS_BEAM_MODULES:%=%.S)
 STUBS_FILES= $(ERTS_BEAM_MODULES:%=%.erl)
 
-TARGET_FILES = $(MODULES:%=$(EBIN)/%.$(EMULATOR)) \
+TARGET_FILES = $(ERTS_MODULES:%=$(EBIN)/%.$(EMULATOR)) \
     $(APP_TARGET)
-STATIC_TARGET_FILES = $(MODULES:%=$(STATIC_EBIN)/%.$(EMULATOR))
+STATIC_TARGET_FILES = $(ERTS_MODULES:%=$(STATIC_EBIN)/%.$(EMULATOR))
 
 APP_FILE= erts.app
 APP_SRC= $(APP_FILE).src
@@ -72,7 +72,7 @@ endif
 debug opt: $(TARGET_FILES)
 
 $(EBIN):
-	$(V_at)mkdir "$@"
+	$(V_at)mkdir -p "$@"
 
 $(TARGET_FILES): | $(EBIN)
 
@@ -80,7 +80,8 @@ clean:
 	rm -rf $(EBIN)
 
 copy:
-	cp $(EBIN)/$(foreach $beam, $(PRE_LOADED_MODULES), $beam.beam) $(STATIC_EBIN)
+	rm -f $(STATIC_EBIN)/*.beam
+	cp $(foreach beam, $(PRE_LOADED_MODULES),$(EBIN)/$(beam).beam) $(STATIC_EBIN)
 	$(V_ERL) -noshell -eval "[begin {ok, Bin} = file:read_file(File), {ok, {_, Stripped}} = beam_lib:strip(Bin), ok = file:write_file(File, zlib:gunzip(Stripped)) end || File <- filelib:wildcard(\"$(STATIC_EBIN)/*.beam\")]." -s init stop
 
 $(APP_TARGET): $(APP_SRC) $(ERL_TOP)/erts/vsn.mk
