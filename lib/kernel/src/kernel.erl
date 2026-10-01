@@ -159,6 +159,7 @@ config_change(Changed, New, Removed) ->
          inet_parse,
          inet_udp,
          net_kernel,
+         prim_inet,
          rand,
          rpc] ++ [win32reg || element(1, os:type()) == win32]).
 
