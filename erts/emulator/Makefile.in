@@ -801,31 +801,9 @@ endif
 # This list must be consistent with PRE_LOADED_MODULES in
 # erts/preloaded/src/Makefile.
 
-ESOCK_PRELOAD_BEAM = \
-	$(ERL_TOP)/erts/preloaded/ebin/socket_registry.beam \
-	$(ERL_TOP)/erts/preloaded/ebin/prim_socket.beam \
-	$(ERL_TOP)/erts/preloaded/ebin/prim_net.beam
+include ../../../preloaded/src/modules.mk
 
-PRELOAD_BEAM =	$(ERL_TOP)/erts/preloaded/ebin/erts_code_purger.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/erl_init.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/init.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/prim_buffer.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/prim_eval.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/prim_inet.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/prim_file.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/zlib.beam \
-		$(ESOCK_PRELOAD_BEAM) \
-		$(ERL_TOP)/erts/preloaded/ebin/prim_zip.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/erl_prim_loader.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/erlang.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/erts_internal.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/erl_tracer.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/erts_literal_area_collector.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/erts_trace_cleaner.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/erts_dirty_process_signal_handler.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/atomics.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/counters.beam \
-		$(ERL_TOP)/erts/preloaded/ebin/persistent_term.beam
+PRELOAD_BEAM = $(foreach $beam, $PRE_LOADED_MODULES, $(ERL_TOP/erts/preloaded/ebin/$beam))
 
 ifeq ($(TARGET),win32)
 # On windows the preloaded objects are in a resource object.

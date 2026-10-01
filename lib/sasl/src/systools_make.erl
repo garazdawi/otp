@@ -41,6 +41,7 @@
 		append/1, foldl/3,  member/2, foreach/2]).
 
 -include("systools.hrl").
+-include("preloaded.hrl").
 
 -include_lib("kernel/include/file.hrl").
 
@@ -49,8 +50,6 @@
 -compile([{nowarn_possibly_unsafe_function, {erlang, binary_to_term, 1}},
           {nowarn_possibly_unsafe_function, {file, consult, 1}},
           {inline,[{badarg,2}]}]).
-
--define(ESOCK_MODS, [prim_net,prim_socket,socket_registry]).
 
 %%-----------------------------------------------------------------
 %% Create a boot script from a release file.
@@ -238,10 +237,11 @@ do_make_hybrid_boot(TmpVsn, OldBoot, NewBoot, Args) ->
 
 %% For each app, compile a regexp that can be used for finding its path
 get_regexp_path() ->
+    {ok,ErtsMP} = re:compile("erts-[0-9\.]+",[unicode]),
     {ok,KernelMP} = re:compile("kernel-[0-9\.]+",[unicode]),
     {ok,StdlibMP} = re:compile("stdlib-[0-9\.]+",[unicode]),
     {ok,SaslMP} = re:compile("sasl-[0-9\.]+",[unicode]),
-    [KernelMP,StdlibMP,SaslMP].
+    [ErtsMP,KernelMP,StdlibMP,SaslMP].
 
 replace_module_load(Old,New,[MP|MatchPaths]) ->
     replace_module_load(do_replace_module_load(Old,New,MP),New,MatchPaths);
@@ -1573,13 +1573,7 @@ mandatory_modules() ->
 %% This is the modules that are preloaded into the Erlang system.
 
 preloaded() ->
-    lists:sort(
-      ?ESOCK_MODS ++
-          [atomics,counters,erl_init,erl_prim_loader,erl_tracer,erlang,
-           erts_code_purger,erts_dirty_process_signal_handler,
-           erts_internal,erts_literal_area_collector,erts_trace_cleaner,
-           init,persistent_term,prim_buffer,prim_eval,prim_file,
-           prim_inet,prim_zip,zlib]).
+    lists:sort(?ERTS_MODULES).
 
 %%______________________________________________________________________
 %% This is the erts binaries that should *not* be part of a systool:make_tar package

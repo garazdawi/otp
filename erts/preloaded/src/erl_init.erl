@@ -34,18 +34,8 @@
       BootArgs :: [binary()].
 start(Mod, BootArgs) ->
     %% Load the static nifs
-    zlib:on_load(),
-    erl_tracer:on_load(),
     prim_buffer:on_load(),
     prim_file:on_load(),
-    %% prim_socket:on_load(), prim_net:on_load(),
-    if_loaded(
-      prim_socket,
-      fun () ->
-              prim_socket:on_load(),
-              prim_net:on_load(),
-              ok
-      end),
     %% Proceed to the specified boot module
     run(Mod, boot, BootArgs).
 
@@ -57,7 +47,6 @@ restart() ->
               prim_socket:init(),
               ok
       end).
-
 
 run(M, F, A) ->
     case erlang:function_exported(M, F, 1) of

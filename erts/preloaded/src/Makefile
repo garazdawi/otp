@@ -18,15 +18,9 @@
 # limitations under the License.
 #
 # %CopyrightEnd%
-# 
-# Note, this makefile is not called during normal build process, it should
-# be used when the preloaded modules actually are to be updated (i.e. the 
-# beam files are to be recompiled, which is normally not done). 
-# The beam files are placed in the current directory and should be copied 
-# to the ../ebin directory by using the copy target.
 
 include $(ERL_TOP)/make/target.mk
-EBIN=../../ebin
+EBIN=$(ERL_TOP)/lib/erts/ebin
 include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
 STATIC_EBIN=../ebin
@@ -34,53 +28,24 @@ STATIC_EBIN=../ebin
 include $(ERL_TOP)/erts/vsn.mk
 include $(ERL_TOP)/lib/kernel/vsn.mk
 
-PRE_LOADED_ERL_ESOCK_MODULES = \
-	socket_registry \
-	prim_socket \
-	prim_net
-
-PRE_LOADED_ERL_MODULES = \
-	erl_prim_loader \
-	init \
-	prim_buffer \
-	prim_file \
-	prim_inet \
-	$(PRE_LOADED_ERL_ESOCK_MODULES) \
-	zlib \
-	prim_zip \
-	erl_init \
-	erts_code_purger \
-	erlang \
-	erts_internal \
-	erl_tracer \
-	erts_literal_area_collector \
-	erts_trace_cleaner \
-	erts_dirty_process_signal_handler \
-	atomics \
-	counters \
-        persistent_term
-
-PRE_LOADED_BEAM_MODULES = \
-	prim_eval
-
-PRE_LOADED_MODULES = $(PRE_LOADED_ERL_MODULES) $(PRE_LOADED_BEAM_MODULES)
-
 RELSYSDIR = $(RELEASE_PATH)/lib/erts-$(VSN)
 # not $(RELEASE_PATH)/erts-$(VSN)/preloaded
 
-ERL_FILES= $(PRE_LOADED_ERL_MODULES:%=%.erl)
-BEAM_FILES= $(PRE_LOADED_BEAM_MODULES:%=%.S)
-STUBS_FILES= $(PRE_LOADED_BEAM_MODULES:%=%.erl)
+include modules.mk
 
-TARGET_FILES = $(PRE_LOADED_MODULES:%=$(EBIN)/%.$(EMULATOR)) \
+ERL_FILES= $(ERTS_ERL_MODULES:%=%.erl)
+BEAM_FILES= $(ERTS_BEAM_MODULES:%=%.S)
+STUBS_FILES= $(ERTS_BEAM_MODULES:%=%.erl)
+
+TARGET_FILES = $(MODULES:%=$(EBIN)/%.$(EMULATOR)) \
     $(APP_TARGET)
-STATIC_TARGET_FILES = $(PRE_LOADED_MODULES:%=$(STATIC_EBIN)/%.$(EMULATOR))
+STATIC_TARGET_FILES = $(MODULES:%=$(STATIC_EBIN)/%.$(EMULATOR))
 
 APP_FILE= erts.app
 APP_SRC= $(APP_FILE).src
 APP_TARGET= $(EBIN)/$(APP_FILE)
-APP_ESOCK_MODS= prim_net, prim_socket, socket_registry,
-
+COMMA=,
+APP_ESOCK_MODS= $(foreach $mod, $(ESOCK_ERL_MODULES), $mod$(COMMA))
 
 KERNEL_SRC=$(ERL_TOP)/lib/kernel/src
 KERNEL_INCLUDE=$(ERL_TOP)/lib/kernel/include
@@ -115,7 +80,7 @@ clean:
 	rm -rf $(EBIN)
 
 copy:
-	cp $(EBIN)/*.beam $(STATIC_EBIN)
+	cp $(EBIN)/$(foreach $beam, $(PRE_LOADED_MODULES), $beam.beam) $(STATIC_EBIN)
 	$(V_ERL) -noshell -eval "[begin {ok, Bin} = file:read_file(File), {ok, {_, Stripped}} = beam_lib:strip(Bin), ok = file:write_file(File, zlib:gunzip(Stripped)) end || File <- filelib:wildcard(\"$(STATIC_EBIN)/*.beam\")]." -s init stop
 
 $(APP_TARGET): $(APP_SRC) $(ERL_TOP)/erts/vsn.mk
