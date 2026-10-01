@@ -22,6 +22,8 @@
 include $(ERL_TOP)/make/target.mk
 include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
+include $(ERL_TOP)/erts/preloaded/src/modules.mk
+
 # ----------------------------------------------------
 # Application version
 # ----------------------------------------------------
@@ -45,7 +47,7 @@ MODULES= alarm_handler sasl sasl_report \
 
 HRL_FILES= 
 
-INTERNAL_HRL_FILES= systools.hrl
+INTERNAL_HRL_FILES= systools.hrl preloaded.hrl
 
 ERL_FILES= $(MODULES:%=%.erl)
 
@@ -88,6 +90,12 @@ $(APP_TARGET): $(APP_SRC) ../vsn.mk
 
 $(APPUP_TARGET): $(APPUP_SRC) ../vsn.mk
 	$(vsn_verbose)sed -e 's;%VSN%;$(VSN);' $< > $@
+
+systools_make.erl: preloaded.hrl
+
+COMMA:=,
+preloaded.hrl: $(ERL_TOP)/erts/preloaded/src/modules.mk
+	$(V_at)echo "-define(ERTS_MODULES, lists:usort([$(foreach mod,$(ERTS_MODULES),$mod$(COMMA)) erlang]))." > $@
 
 # ----------------------------------------------------
 # Release Target
