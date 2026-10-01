@@ -138,8 +138,28 @@ The `erl_prim_loader` module interprets the following command-line flags:
 debug(#prim_state{debug = Deb}, Term) ->
     case Deb of
         false -> ok;
-        true  -> erlang:display(Term)
+        true  -> erlang:display(trunc_term(Term))
     end.
+
+-define(TRUNC_LIMIT, 100).
+
+trunc_term(Term) when is_list(Term) ->
+    trunc_list(Term, 0);
+trunc_term(Term) when is_tuple(Term) ->
+    list_to_tuple(trunc_list(tuple_to_list(Term), 0));
+trunc_term(Term) when is_binary(Term), byte_size(Term) > ?TRUNC_LIMIT ->
+    <<(binary:part(Term, 0, ?TRUNC_LIMIT))/binary, "...">>;
+trunc_term(Term) when is_map(Term) ->
+    maps:from_list(trunc_list(maps:to_list(Term), 0));
+trunc_term(Term) ->
+    Term.
+
+trunc_list([], _) ->
+    [];
+trunc_list([H|_T], N) when N > ?TRUNC_LIMIT ->
+    [trunc_term(H), "..."];
+trunc_list([H|T], N) ->
+    [trunc_term(H)|trunc_list(T, N+1)].
 
 %%% --------------------------------------------------------
 %%% Interface Functions. 

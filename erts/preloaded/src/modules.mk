@@ -33,24 +33,20 @@ PRE_LOADED_MODULES = \
 	erts_dirty_process_signal_handler
 
 ESOCK_ERL_MODULES = \
-       socket_registry \
-       prim_socket \
-       prim_net
+	socket_registry \
+	prim_socket \
+	prim_net
 
 ERTS_ERL_MODULES = \
-       $(PRE_LOADED_MODULES) \
-       $(ESOCK_ERL_MODULES) \
-       erl_prim_loader \
-       init \
-       prim_buffer \
-       prim_file \
-       erl_init \
-       erts_code_purger \
-       erlang \
-       erts_internal \
-       erts_literal_area_collector \
-       erts_trace_cleaner \
-       erts_dirty_process_signal_handler
+	$(PRE_LOADED_MODULES) \
+	$(ESOCK_ERL_MODULES) \
+	atomics \
+	counters \
+	prim_inet \
+	zlib \
+	prim_zip \
+	erl_tracer \
+	persistent_term
 
 ERTS_BEAM_MODULES = erl_eval
 
