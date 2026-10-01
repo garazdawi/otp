@@ -801,20 +801,21 @@ endif
 # This list must be consistent with PRE_LOADED_MODULES in
 # erts/preloaded/src/Makefile.
 
-include ../../../preloaded/src/modules.mk
+include ../preloaded/src/modules.mk
 
-PRELOAD_BEAM = $(foreach $beam, $PRE_LOADED_MODULES, $(ERL_TOP/erts/preloaded/ebin/$beam))
+PRELOAD_BEAM = $(foreach beam, $(PRE_LOADED_MODULES), $(ERL_TOP)/erts/preloaded/ebin/$(beam).beam)
 
 ifeq ($(TARGET),win32)
 # On windows the preloaded objects are in a resource object.
 PRELOAD_OBJ = $(OBJDIR)/beams.$(RES_EXT)
 PRELOAD_SRC = $(TTF_DIR)/beams.rc
-$(PRELOAD_SRC): $(PRELOAD_BEAM) utils/make_preload
+$(PRELOAD_SRC): $(PRELOAD_BEAM) utils/make_preload ../preloaded/src/modules.mk
 	$(gen_verbose)LANG=C $(PERL) utils/make_preload $(MAKE_PRELOAD_EXTRA) -rc $(PRELOAD_BEAM) > $@
 else
 PRELOAD_OBJ = $(OBJDIR)/preload.o
 PRELOAD_SRC = $(TTF_DIR)/preload.c
-$(PRELOAD_SRC): $(PRELOAD_BEAM) utils/make_preload
+$(PRELOAD_SRC): $(PRELOAD_BEAM) utils/make_preload ../preloaded/src/modules.mk
+	echo "PRELOAD_BEAM: $(PRELOAD_BEAM)"
 	$(gen_verbose)LANG=C $(PERL) utils/make_preload -old $(PRELOAD_BEAM) > $@
 endif
 
