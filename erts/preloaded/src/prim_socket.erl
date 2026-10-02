@@ -135,6 +135,7 @@ on_load() ->
     on_load(?ESOCK_ON_LOAD_EXTRA_DEFAULTS).
 
 on_load(Extra) when is_map(Extra) ->
+    socket_registry:module_info(),
     %% This is spawned as a system process to prevent init:restart/0 from
     %% killing it.
     Pid = erts_internal:spawn_system_process(?REGISTRY, start, []),

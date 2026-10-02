@@ -365,6 +365,7 @@ on_load() ->
       Extra :: map().
 
 on_load(Extra) ->
+    prim_socket:module_info(),
     %% This will fail if the user has disabled esock support, making all NIFs
     %% fall back to their Erlang implementation which throws `notsup`.
     LoadRes = erlang:load_nif(atom_to_list(net), Extra),
