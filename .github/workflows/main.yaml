@@ -825,12 +825,16 @@ jobs:
       - name: Create pre-build and doc archives
         run: .github/scripts/create-artifacts.sh artifacts ${{ steps.tag.outputs.tag }}
 
+      - name: Download vex file
+        run:
+            curl -L https://raw.githubusercontent.com/${{ github.repository }}/refs/heads/lukas/otp26/openvex/otp-26.openvex.json -o artifacts/otp-${{ steps.tag.outputs.vsn }}.openvex.json
+
       ## Create hash files
       - name: Create pre-build and doc archives
         run: |
           shopt -s nullglob
           cd artifacts
-          FILES=$(ls {*.tar.gz,*.txt,*.exe})
+          FILES=$(ls {*.tar.gz,*.txt,*.exe,*.openvex.json})
           md5sum $FILES > MD5.txt
           sha256sum $FILES > SHA256.txt
 
@@ -842,6 +846,7 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.txt
             artifacts/*.exe
+            artifacts/*.openvex.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
