@@ -762,6 +762,9 @@ primary_bootstrap:
 
 primary_bootstrap_build: primary_bootstrap_mkdirs primary_bootstrap_compiler \
   primary_bootstrap_stdlib
+	$(make_verbose)cd erts/preloaded/src && $(MAKE) ERLC_FLAGS='-pa $(BOOTSTRAP_COMPILER)/ebin $(DETERMINISM_FLAG)' \
+		BOOTSTRAP_TOP=$(BOOTSTRAP_TOP) BOOTSTRAP=1 \
+		opt
 	$(make_verbose)cd lib && $(MAKE) ERLC_FLAGS='-pa $(BOOTSTRAP_COMPILER)/ebin $(DETERMINISM_FLAG)' \
 		BOOTSTRAP_TOP=$(BOOTSTRAP_TOP) PRIMARY_BOOTSTRAP=1 \
 		BOOTSTRAP="kernel stdlib compiler" opt

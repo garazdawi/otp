@@ -159,7 +159,7 @@
                 erl_epmd,
                 inet_db,
                 pg]},
-  {applications, []},
+  {applications, [erts]},
   {env, [{logger_level, notice},
          {logger_sasl_compatible, false},
          {net_tickintensity, 4},

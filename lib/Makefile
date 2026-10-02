@@ -49,7 +49,7 @@ ifdef BUILD_ALL
 # We use whildcard */ to figure out if there are any other applications
 # in here.
   EXPECTED_APPLICATIONS := $(ERTS_APPLICATIONS) $(ERLANG_APPLICATIONS) \
-	autom4te.cache
+	autom4te.cache erts
   EXTRA_APPLICATIONS += $(filter-out $(EXPECTED_APPLICATIONS),\
 				$(subst /,,$(wildcard */)))
 endif

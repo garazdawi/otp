@@ -23,6 +23,7 @@ erts/preloaded/src/deps/
 !/bootstrap/lib/compiler/ebin/*.beam
 !/bootstrap/lib/kernel/ebin/*.beam
 !/bootstrap/lib/stdlib/ebin/*.beam
+!/bootstrap/lib/erts/ebin/*.beam
 !/erts/preloaded/ebin/*.beam
 !/lib/*/test/*_SUITE_data/*.beam
 

@@ -94,8 +94,8 @@ $(APPUP_TARGET): $(APPUP_SRC) ../vsn.mk
 systools_make.erl: preloaded.hrl
 
 COMMA:=,
-preloaded.hrl: $(ERL_TOP)/erts/preloaded/src/modules.mk
-	$(V_at)echo "-define(ERTS_MODULES, lists:usort([$(foreach mod,$(ERTS_MODULES),$mod$(COMMA)) erlang]))." > $@
+preloaded.hrl: $(ERL_TOP)/erts/preloaded/src/modules.mk Makefile
+	$(V_at)echo "-define(PRELOADED_MODULES, lists:usort([$(foreach mod,$(PRE_LOADED_MODULES),$(mod)$(COMMA)) erlang]))." > $@
 
 # ----------------------------------------------------
 # Release Target

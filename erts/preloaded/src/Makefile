@@ -19,8 +19,13 @@
 #
 # %CopyrightEnd%
 
-include $(ERL_TOP)/make/target.mk
+ifdef BOOTSTRAP
+EBIN=$(BOOTSTRAP_TOP)/lib/erts/ebin
+else
 EBIN=$(ERL_TOP)/lib/erts/ebin
+endif
+
+include $(ERL_TOP)/make/target.mk
 include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
 STATIC_EBIN=../ebin
@@ -44,8 +49,12 @@ STATIC_TARGET_FILES = $(ERTS_MODULES:%=$(STATIC_EBIN)/%.$(EMULATOR))
 APP_FILE= erts.app
 APP_SRC= $(APP_FILE).src
 APP_TARGET= $(EBIN)/$(APP_FILE)
+
 COMMA=,
-APP_ESOCK_MODS= $(foreach $mod, $(ESOCK_ERL_MODULES), $mod$(COMMA))
+APP_MODS_W_COMMA= $(foreach mod, $(ERTS_ERL_MODULES), $(mod) $(COMMA))
+APP_MODULES= $(wordlist 2, $(words $(APP_MODS_W_COMMA)), ignore_me $(APP_MODS_W_COMMA))
+PRE_LOADED_W_COMMA= $(foreach mod, $(PRE_LOADED_MODULES), $(mod) $(COMMA))
+APP_PRE_LOADED_MODULES= $(wordlist 2, $(words $(PRE_LOADED_W_COMMA)), ignore_me $(PRE_LOADED_W_COMMA))
 
 KERNEL_SRC=$(ERL_TOP)/lib/kernel/src
 KERNEL_INCLUDE=$(ERL_TOP)/lib/kernel/include
@@ -84,8 +93,12 @@ copy:
 	cp $(foreach beam, $(PRE_LOADED_MODULES),$(EBIN)/$(beam).beam) $(STATIC_EBIN)
 	$(V_ERL) -noshell -eval "[begin {ok, Bin} = file:read_file(File), {ok, {_, Stripped}} = beam_lib:strip(Bin), ok = file:write_file(File, zlib:gunzip(Stripped)) end || File <- filelib:wildcard(\"$(STATIC_EBIN)/*.beam\")]." -s init stop
 
-$(APP_TARGET): $(APP_SRC) $(ERL_TOP)/erts/vsn.mk
-	$(vsn_verbose)sed -e 's;%VSN%;$(VSN);' -e 's;%ESOCK_MODS%;$(APP_ESOCK_MODS);' $< > $@
+$(APP_TARGET): $(APP_SRC) $(ERL_TOP)/erts/vsn.mk Makefile | $(EBIN)
+	$(vsn_verbose)sed \
+		-e 's;%VSN%;$(VSN);' \
+		-e 's;%MODULES%;$(APP_MODULES);' \
+		-e 's;%PRE_LOADED_MODULES%;$(APP_PRE_LOADED_MODULES);' \
+		$< > $@
 
 #
 # Combine a BEAM assembly script file a stub Erlang file into a BEAM file.

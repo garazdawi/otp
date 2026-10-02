@@ -578,6 +578,7 @@ split_app_incl([], Apps, Incls) ->
 %% Read all the application files specified in the release descriptor
 
 collect_applications(Release, Path) ->
+    Erts = Release#release.erts_vsn,
     Appls = Release#release.applications,
     Incls = Release#release.incl_apps,
     X = foldl(fun({Name,Vsn,Type}, {Ok, Errs}) ->
@@ -593,7 +594,7 @@ collect_applications(Release, Path) ->
 			  {error, What} ->
 			      {Ok, [{error_reading, {Name, What}} | Errs]}
 		      end
-	      end, {[],[]}, Appls),
+	      end, {[],[]}, [{erts, Erts, permanent} | Appls]),
     case X of
 	{A, []} ->
 	    {ok, reverse(A)};
@@ -1209,17 +1210,14 @@ add_subdirs([Dir|Dirs]) ->
 generate_script(Output, Release, Appls, Flags) ->
     PathFlag = path_flag(Flags),
     Variables = get_variables(Flags),
-    Preloaded = preloaded(),
-    Mandatory = mandatory_modules(),
+    Preloaded = preloaded(Appls),
+    Mandatory = mandatory_modules(Appls),
     Script = {script, {Release#release.name,Release#release.vsn},
-	      [{preLoaded, Preloaded},
-	       {progress, preloaded},
-	       {path, create_mandatory_path(Appls, PathFlag, Variables)},
+	      [{path, create_mandatory_path(Appls, PathFlag, Variables)},
 	       {primLoad, Mandatory},
 	       {kernel_load_completed},
 	       {progress, kernel_load_completed}] ++
-	      load_appl_mods(Appls, Mandatory ++ Preloaded,
-			     PathFlag, Variables) ++
+	      load_appl_mods(Appls, Mandatory ++ Preloaded, PathFlag, Variables) ++
 	      [{path, create_path(Appls, PathFlag, Variables)}] ++
 		  create_kernel_procs(Appls) ++
 		  create_load_appls(Appls) ++
@@ -1538,15 +1536,14 @@ behave([H|T]) ->
 behave([]) ->
     [].
 
+%% Modules that are almost always needed. Listing them here
+%% helps the init module to load them faster. The kernel supervisor
+%% also loads some modules based on which mode the system is running in.
+%% 
+%% Think hard before adding modules here as it will increase the boot time of the system.
 mandatory_modules() ->
     [error_handler,				%Truly mandatory.
 
-     %% Modules that are almost always needed. Listing them here
-     %% helps the init module to load them faster. The kernel supervisor
-     %% also loads some modules based on which mode the system is running in.
-     %% 
-     %% Think hard before adding modules here as it will increase the boot time of the system.
-     %%
      %% Keep this list sorted.
      application,
      application_controller,
@@ -1569,11 +1566,36 @@ mandatory_modules() ->
      supervisor
     ].
 
+mandatory_modules(Appls) ->
+    mandatory_modules(Appls, []).
+
+mandatory_modules([{{AppName, _},A}|T], Acc)
+      when AppName =:= kernel; AppName =:= stdlib ->
+    mandatory_modules(T, Acc ++ proplists:get_value(mandatory, A#application.env, []));
+mandatory_modules([_|T], Acc) ->
+    mandatory_modules(T, Acc);
+mandatory_modules([], []) ->
+    mandatory_modules();
+mandatory_modules([], Acc) ->
+    Acc.
+
 %%______________________________________________________________________
 %% This is the modules that are preloaded into the Erlang system.
 
 preloaded() ->
-    lists:sort(?ERTS_MODULES).
+    ?PRELOADED_MODULES.
+
+preloaded(Appls) ->
+    preloaded(Appls, []).
+
+preloaded([{{AppName, _},A}|T], Acc) when AppName =:= erts ->
+    preloaded(T, Acc ++ proplists:get_value(preloaded, A#application.env, []));
+preloaded([_|T], Acc) ->
+    preloaded(T, Acc);
+preloaded([], []) ->
+    preloaded();
+preloaded([], Acc) ->
+    Acc.
 
 %%______________________________________________________________________
 %% This is the erts binaries that should *not* be part of a systool:make_tar package
