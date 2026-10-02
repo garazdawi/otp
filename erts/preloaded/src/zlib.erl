@@ -80,7 +80,7 @@ Typical `Reason`s:
          compress/1,uncompress/1,zip/1,unzip/1,
          gzip/1,gunzip/1]).
 
--export([on_load/0]).
+-on_load(on_load/0).
 
 -removed([{inflateChunk, 1, "use zlib:safeInflate/2 instead"},
           {inflateChunk, 2, "use zlib:safeInflate/2 instead"},

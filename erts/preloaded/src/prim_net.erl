@@ -23,8 +23,6 @@
 -module(prim_net).
 -moduledoc false.
 
--compile(no_native).
-
 %% Administrative and "global" utility functions
 -export([
 	 on_load/0, on_load/1,
@@ -50,6 +48,8 @@
         ]).
 
 -export([p_get/1]).
+
+-on_load(on_load/0).
 
 -export_type([
               getifaddrs_args/0,

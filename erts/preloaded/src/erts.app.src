@@ -22,29 +22,10 @@
 {application, erts, [
 	{description, "ERTS  CXC 138 10"},
 	{vsn, "%VSN%"},
-	{modules, [
-		%% preloaded
-		erlang,
-		erl_prim_loader,
-		erts_internal,
-		init,
-		erl_init,
-		erts_code_purger,
-                erts_trace_cleaner,
-		prim_buffer,
-		prim_eval,
-		prim_file,
-		prim_inet,
-		prim_zip,
-                atomics,
-                counters,
-                persistent_term,
-		%ESOCK_MODS%
-		zlib
-	    ]},
+	{modules, [%MODULES%]},
 	{registered, []},
 	{applications, []},
-	{env, []},
+	{env, [{preloaded, [%PRE_LOADED_MODULES%]}]},
 	{runtime_dependencies, ["stdlib-4.1", "kernel-9.0", "sasl-3.3"]}
     ]}.
 

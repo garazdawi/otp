@@ -199,6 +199,8 @@ static ERL_NIF_TERM trace(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 
 -export([enabled/3, trace/5, on_load/0]).
 
+-on_load(on_load/0).
+
 -nifs([enabled/3, trace/5]).
 
 -doc "The process or port that the trace belongs to.".
