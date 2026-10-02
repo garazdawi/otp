@@ -830,7 +830,7 @@ jobs:
         run: |
           shopt -s nullglob
           cd artifacts
-          FILES=$(ls {*.tar.gz,*.txt,*.exe})
+          FILES=$(ls {*.tar.gz,*.txt,*.exe,*.openvex.json})
           md5sum $FILES > MD5.txt
           sha256sum $FILES > SHA256.txt
 
@@ -842,6 +842,7 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.txt
             artifacts/*.exe
+            artifacts/*.openvex.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
