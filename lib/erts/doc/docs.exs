@@ -86,7 +86,7 @@
       "references/start_cmd.md",
       "references/start_erl_cmd.md",
       "references/werl_cmd.md"
-    ] ++ Path.wildcard("../emulator/internal_doc/*.md"),
+    ] ++ Path.wildcard("../../../erts/emulator/internal_doc/*.md"),
   skip_code_autolink_to: [
     "dist_util:net_ticker_spawn_options/0",
     "dist_util:handshake_we_started/1",

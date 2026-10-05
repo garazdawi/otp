@@ -39,7 +39,6 @@ all: $(if $(FLAVOR),$(FLAVOR),$(PRIMARY_FLAVOR))
 
 .PHONY: docs
 docs:
-	$(V_at)( cd doc && $(MAKE) $@ )
 
 .PHONY: debug opt lcnt clean test
 $(TYPES) clean:

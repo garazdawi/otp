@@ -47,11 +47,8 @@ apps =
   |> Enum.reject(fn app -> skipped_apps_from_file |> MapSet.member?(app) end)
 
 redirects =
-  Enum.map(apps, fn
-    "erts" -> {"erts", "../erts/doc/html/index"}
-    app -> {app, "../lib/#{app}/doc/html/index"}
-  end) ++
-    Enum.map(system_guides, fn guide -> {guide, "../system/doc/html/#{guide}"} end)
+  Enum.map(apps, & {&1, "../lib/#{&1}/doc/html/index"} ) ++
+    Enum.map(system_guides, & {&1, "../system/doc/html/#{&1}"} )
 
 [
   application: :index,
@@ -64,7 +61,7 @@ redirects =
       "../general_info/scheduled_for_removal.md",
       "../general_info/upcoming_incompatibilities.md"
     ] ++
-      (system_guides |> Enum.map(fn guide -> "system/#{guide}.md" end)) ++
+      (system_guides |> Enum.map(&("system/#{&1}.md")) ) ++
       Path.wildcard("{core,database,oam,interfaces,tools,testing,documentation}/*.md"),
   main: "readme",
   api_reference: false,
