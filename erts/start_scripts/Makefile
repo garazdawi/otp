@@ -32,9 +32,9 @@ include $(ERL_TOP)/make/$(TARGET)/otp.mk
 SS_ROOT = $(ERL_TOP)/erts/start_scripts
 SS_TMP = $(SS_ROOT)/tmp
 LIBPATH= $(ERL_TOP)/lib
-SCRIPT_PATH = -I$(LIBPATH)/kernel/ebin -I$(LIBPATH)/stdlib/ebin -I$(LIBPATH)/sasl/ebin
+SCRIPT_PATH = -I$(LIBPATH)/erts/ebin -I$(LIBPATH)/kernel/ebin -I$(LIBPATH)/stdlib/ebin -I$(LIBPATH)/sasl/ebin
 BOOTSTRAP_LIBPATH=$(BOOTSTRAP_TOP)/lib
-BOOTSTRAP_SCRIPT_PATH = -I$(BOOTSTRAP_LIBPATH)/kernel/ebin -I$(BOOTSTRAP_LIBPATH)/stdlib/ebin
+BOOTSTRAP_SCRIPT_PATH = -I$(LIBPATH)/erts/ebin -I$(BOOTSTRAP_LIBPATH)/kernel/ebin -I$(BOOTSTRAP_LIBPATH)/stdlib/ebin
 
 INSTALL_SCRIPTS = \
 	$(SS_ROOT)/start_clean.script \
