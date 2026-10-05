@@ -1281,10 +1281,6 @@ do_installer_win32 ()
     (cd $installer_dir; $MAKE MAKE="$MAKE" TARGET=$TARGET TESTROOT=$1 release) || exit 1
 }
 
-strip ()
-{
-    erl -noshell -eval "[begin {ok, Bin} = file:read_file(File), {ok, {_, Stripped}} = beam_lib:strip(Bin), ok = file:write_file(File, zlib:gunzip(Stripped)) end || File <- filelib:wildcard(\"$1/*.beam\")]." -s init stop
-}
 
 do_copy_primary_bootstrap ()
 {
@@ -1312,25 +1308,21 @@ do_copy_primary_bootstrap ()
     # erts
     test -d $bootstrap/lib/erts/ebin || mkdir -p  $bootstrap/lib/erts/ebin
     cp -f $lib_src/erts/ebin/*.beam $bootstrap/lib/erts/ebin
-    strip $bootstrap/lib/erts/ebin/
 
     # kernel
     test -d $bootstrap/lib/kernel/ebin || mkdir -p  $bootstrap/lib/kernel/ebin
     test -d $bootstrap/lib/kernel/include || mkdir -p  $bootstrap/lib/kernel/include
     cp -f $lib_src/kernel/ebin/*.beam $bootstrap/lib/kernel/ebin
-    strip $bootstrap/lib/kernel/ebin/
     cp -f $lib_src/kernel/include/*.hrl $bootstrap/lib/kernel/include
 
     # stdlib
     test -d $bootstrap/lib/stdlib/ebin || mkdir -p  $bootstrap/lib/stdlib/ebin
     test -d $bootstrap/lib/stdlib/include || mkdir -p  $bootstrap/lib/stdlib/include
     cp -f $lib_src/stdlib/ebin/*.beam $bootstrap/lib/stdlib/ebin
-    strip $bootstrap/lib/stdlib/ebin/
     cp -f $lib_src/stdlib/include/*.hrl $bootstrap/lib/stdlib/include
 
     # compiler
     test -d $bootstrap/lib/compiler/ebin || mkdir -p  $bootstrap/lib/compiler/ebin
-    strip $bootstrap/lib/compiler/ebin/
     cp -f $lib_src/compiler/ebin/*.beam $bootstrap/lib/compiler/ebin
 
     # bootstrap bin
