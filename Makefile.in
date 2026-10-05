@@ -493,7 +493,7 @@ ifneq ($(CROSS_COMPILING),yes)
 erts: bootstrap_setup
 endif
 erts:
-	$(make_verbose)cd erts/preloaded/src && \
+	$(make_verbose)cd lib/erts && \
 	  ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
 		$(MAKE) opt ERL_COMPILE_WARNINGS_AS_ERRORS=yes
 
@@ -532,11 +532,6 @@ $(APPS_BUILD):
 ##
 deprecations: all
 	$(ERL_TOP)/lib/stdlib/scripts/update_deprecations update $(ERL_TOP)
-
-preloaded:
-	$(make_verbose)cd erts/preloaded/src && \
-	ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
-		$(MAKE) opt BUILD_ALL=true	
 
 compdb:
 	(cd erts/emulator && ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) compdb)
@@ -762,12 +757,9 @@ primary_bootstrap:
 
 primary_bootstrap_build: primary_bootstrap_mkdirs primary_bootstrap_compiler \
   primary_bootstrap_stdlib
-	$(make_verbose)cd erts/preloaded/src && $(MAKE) ERLC_FLAGS='-pa $(BOOTSTRAP_COMPILER)/ebin $(DETERMINISM_FLAG)' \
-		BOOTSTRAP_TOP=$(BOOTSTRAP_TOP) BOOTSTRAP=1 \
-		opt
 	$(make_verbose)cd lib && $(MAKE) ERLC_FLAGS='-pa $(BOOTSTRAP_COMPILER)/ebin $(DETERMINISM_FLAG)' \
 		BOOTSTRAP_TOP=$(BOOTSTRAP_TOP) PRIMARY_BOOTSTRAP=1 \
-		BOOTSTRAP="kernel stdlib compiler" opt
+		BOOTSTRAP="erts kernel stdlib compiler" opt
 
 primary_bootstrap_compiler: 
 	$(make_verbose)cd lib/compiler && $(MAKE) \
