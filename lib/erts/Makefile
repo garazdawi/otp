@@ -29,7 +29,6 @@ include $(ERL_TOP)/make/$(TARGET)/otp.mk
 SUB_DIRECTORIES = src doc
 
 include ../../erts/vsn.mk
-VSN = $(ERTS_VSN)
 
 SPECIAL_TARGETS = 
 
