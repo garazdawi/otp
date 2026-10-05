@@ -52,7 +52,6 @@ BEAM_FILES= $(ERTS_BEAM_MODULES:%=%.S)
 STUBS_FILES= $(ERTS_BEAM_MODULES:%=%.erl)
 
 TARGET_FILES = $(ERTS_MODULES:%=$(EBIN)/%.$(EMULATOR)) $(APP_TARGET)
-STATIC_TARGET_FILES = $(ERTS_MODULES:%=$(STATIC_EBIN)/%.$(EMULATOR))
 
 APP_FILE= erts.app
 APP_SRC= $(APP_FILE).src
@@ -93,14 +92,20 @@ $(TARGET_FILES): | $(EBIN)
 clean:
 	rm -rf $(EBIN)
 
+## We special case the .beam files that are preloaded in the emulator.
+## They are compiled without the +slim option and then stripped so that we
+## get the line chunk for debugging.
+
+ifdef BOOTSTRAP
+.SECONDEXPANSION:
+$(PRE_LOADED_MODULES:%=$(EBIN)/%.$(EMULATOR)): $(ESRC)/$$(notdir $$(basename $$@)).erl | $(STATIC_EBIN)
+	$(V_ERLC) $(filter-out +slim, $(ERL_COMPILE_FLAGS)) -o$(EBIN) $<
+	$(V_ERL) -noshell -eval "{ok, Bin} = file:read_file(\"$@\"), {ok, {_, Stripped}} = beam_lib:strip(Bin), ok = file:write_file(\"$@\", zlib:gunzip(Stripped))." -s init stop
+endif
+
 # ----------------------------------------------------
 # Special Build Targets
 # ----------------------------------------------------
-
-copy:
-	rm -f $(foreach beam, $(PRE_LOADED_MODULES),$(STATIC_EBIN)/$(beam).beam)
-	cp $(foreach beam, $(PRE_LOADED_MODULES),$(EBIN)/$(beam).beam) $(STATIC_EBIN)
-	$(V_ERL) -noshell -eval "[begin {ok, Bin} = file:read_file(File), {ok, {_, Stripped}} = beam_lib:strip(Bin), ok = file:write_file(File, zlib:gunzip(Stripped)) end || File <- filelib:wildcard(\"$(STATIC_EBIN)/*.beam\")]." -s init stop
 
 $(APP_TARGET): $(APP_SRC) $(ERL_TOP)/erts/vsn.mk Makefile modules.mk | $(EBIN)
 	$(vsn_verbose)sed \

@@ -24,7 +24,7 @@
 {application, kernel,
  [
   {description, "ERTS  CXC 138 10"},
-  {vsn, "11.0.3"},
+  {vsn, "11.0.4"},
   {modules, [application,
 	     application_controller,
 	     application_master,
@@ -159,17 +159,41 @@
                 erl_epmd,
                 inet_db,
                 pg]},
-  {applications, [erts]},
+  {applications, []},
   {env, [{logger_level, notice},
          {logger_sasl_compatible, false},
          {net_tickintensity, 4},
          {net_ticktime, 60},
          {prevent_overlapping_partitions, true},
          {shell_docs_ansi,auto},
-         {shell_history_drop,[]}
+         {shell_history_drop,[]},
+
+         %% A list of modules that are always used by the kernel application
+         %% when starting up.
+         %% See systools_make:mandatory_modules/0 for details on what these are used for
+         {mandatory, [error_handler, %% Truly mandatory
+
+                      %% Keep this list sorted.
+                      application,
+                      application_controller,
+                      application_master,
+                      gen,
+                      gen_server, %% used by supervisor
+                      heart, %% Part of all start scripts
+                      kernel,
+                      logger, %% started very early in kernel
+                      logger_config,
+                      logger_olp,
+                      logger_proxy,
+                      logger_server,
+                      logger_simple_h,
+                      os, %% used by heart and logger
+                      proc_lib,
+                      supervisor %% used by kernel
+                ]}
         ]},
   {mod, {kernel, []}},
-  {runtime_dependencies, ["erts-17.0", "stdlib-8.0",
+  {runtime_dependencies, ["erts-@OTP-20406@", "stdlib-8.0",
                           "sasl-3.0", "crypto-5.8"]}
   ]
 }.
