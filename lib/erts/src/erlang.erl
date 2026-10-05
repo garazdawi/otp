@@ -10517,7 +10517,7 @@ the `CpuTopology` type to change.
          (wordsize | {wordsize, internal} | {wordsize, external}) -> 4 | 8;
          (async_dist) -> boolean();
          (halt_flush_timeout) -> non_neg_integer() | infinity.
--doc {file,"../../doc/src/erlang_system_info.md"}.
+-doc {file,"../doc/src/erlang_system_info.md"}.
 system_info(_Item) ->
     erlang:nif_error(undefined).
 
@@ -12315,7 +12315,7 @@ port_info(Port) ->
       Port :: port() | atom(),
       RegisteredName :: atom().
 
--doc {file, "../../doc/src/erlang_port_info.md"}.
+-doc {file, "../doc/src/erlang_port_info.md"}.
 port_info(Port, Item) ->
     case case erts_internal:port_info(Port, Item) of
 	     Ref when erlang:is_reference(Ref) -> receive {Ref, Res} -> Res end;
