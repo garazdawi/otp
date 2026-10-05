@@ -815,13 +815,13 @@ KERNEL_PRELOAD    = erl_init init erl_prim_loader prim_inet prim_file zlib prim_
 KERNEL_PRELOAD_BEAMS=$(KERNEL_PRELOAD:%=$(BOOTSTRAP_TOP)/lib/kernel/ebin/%.beam)
 
 start_scripts:
-	@cd erts/start_scripts \
+	$(gen_verbose)cd erts/start_scripts \
 	     && ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" $(MAKE) script
 
 # Creates "erl" and "erlc" scripts in bin/erl which uses the libraries in lib
 local_setup:
-	@rm -f bin/erl bin/erlc bin/cerl
-	@cd erts && \
+	$(V_at)rm -f bin/erl bin/erlc bin/cerl
+	$(gen_verbose)cd erts && \
 		ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
 		$(MAKE) local_setup
 
