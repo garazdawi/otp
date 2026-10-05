@@ -158,14 +158,7 @@ add_source_app_vsns([{App, Vsn, _IReqs} | AI], AppVsnsTab) ->
 read_source_app_info([], _SourceDir) ->
     [];
 read_source_app_info([App | Apps], SourceDir) ->
-    AppFile = case App of
-		  "erts" ->
-		      filename:join([SourceDir, "erts", "ebin",
-				     "erts.app"]);
-		  _ ->
-		      filename:join([SourceDir, "lib", App, "ebin",
-				     App ++ ".app"])
-	      end,
+    AppFile = filename:join([SourceDir, "lib", App, "ebin", App ++ ".app"]),
     AppAtom = list_to_atom(App),
     case consult_file(AppFile) of
 	[{application, AppAtom, InfoList}] ->
