@@ -35,7 +35,6 @@ STATIC_EBIN=../../../bootstrap/lib/erts/ebin
 # ----------------------------------------------------
 include $(ERL_TOP)/erts/vsn.mk
 include $(ERL_TOP)/lib/kernel/vsn.mk
-VSN=$(ERTS_VSN)
 
 # ----------------------------------------------------
 # Release directory specification
@@ -121,7 +120,9 @@ prim_eval.abstr: prim_eval.erl
 $(EBIN)/prim_eval.beam: prim_eval.S prim_eval.abstr
 	$(gen_verbose)
 	$(V_at)$(ERLC) $(ERL_COMPILE_FLAGS) -o$(dir $@) $<
+ifndef BOOTSTRAP
 	$(V_at)$(ESCRIPT) add_abstract_code $@ prim_eval.abstr || (rm $@; exit 1)
+endif
 
 
 # ----------------------------------------------------
