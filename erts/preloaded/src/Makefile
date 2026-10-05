@@ -93,7 +93,7 @@ copy:
 	cp $(foreach beam, $(PRE_LOADED_MODULES),$(EBIN)/$(beam).beam) $(STATIC_EBIN)
 	$(V_ERL) -noshell -eval "[begin {ok, Bin} = file:read_file(File), {ok, {_, Stripped}} = beam_lib:strip(Bin), ok = file:write_file(File, zlib:gunzip(Stripped)) end || File <- filelib:wildcard(\"$(STATIC_EBIN)/*.beam\")]." -s init stop
 
-$(APP_TARGET): $(APP_SRC) $(ERL_TOP)/erts/vsn.mk Makefile | $(EBIN)
+$(APP_TARGET): $(APP_SRC) $(ERL_TOP)/erts/vsn.mk Makefile modules.mk | $(EBIN)
 	$(vsn_verbose)sed \
 		-e 's;%VSN%;$(VSN);' \
 		-e 's;%MODULES%;$(APP_MODULES);' \
