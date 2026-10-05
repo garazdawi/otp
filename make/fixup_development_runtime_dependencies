@@ -51,7 +51,7 @@ print "Fixing up development runtime dependencies\n";
 #
 # Determine versions of all applications in the source tree...
 #
-foreach my $vsn_mk (<lib/*/vsn.mk>, <erts/vsn.mk>) {
+foreach my $vsn_mk (<lib/*/vsn.mk>) {
     my $app_dir = dirname($vsn_mk);
     my $app = basename($app_dir);
 
