@@ -24,7 +24,7 @@ include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
 
 # These have to be built first
-ERTS_APPLICATIONS = stdlib sasl kernel compiler
+CORE_APPLICATIONS = erts stdlib sasl kernel compiler
 
 # Then these have to be build
 ifdef TINY_BUILD
@@ -48,8 +48,8 @@ ifdef BUILD_ALL
 
 # We use whildcard */ to figure out if there are any other applications
 # in here.
-  EXPECTED_APPLICATIONS := $(ERTS_APPLICATIONS) $(ERLANG_APPLICATIONS) \
-	autom4te.cache erts
+  EXPECTED_APPLICATIONS := $(CORE_APPLICATIONS) $(ERLANG_APPLICATIONS) \
+	autom4te.cache
   EXTRA_APPLICATIONS += $(filter-out $(EXPECTED_APPLICATIONS),\
 				$(subst /,,$(wildcard */)))
 endif
@@ -60,7 +60,7 @@ else
   ifdef BOOTSTRAP
     SUB_DIRECTORIES = $(BOOTSTRAP)
   else # Not bootstrap build
-    SUB_DIRECTORIES = $(ERTS_APPLICATIONS) \
+    SUB_DIRECTORIES = $(CORE_APPLICATIONS) \
 		      $(ERLANG_APPLICATIONS) \
 		      $(EXTRA_APPLICATIONS)
   endif

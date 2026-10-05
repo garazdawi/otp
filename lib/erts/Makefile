@@ -1,9 +1,9 @@
-# 
+#
 # %CopyrightBegin%
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright Ericsson AB 2008-2025. All Rights Reserved.
+# Copyright Ericsson AB 2026. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,10 +18,27 @@
 # limitations under the License.
 #
 # %CopyrightEnd%
-# 
+#
 include $(ERL_TOP)/make/target.mk
+include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
-SUB_DIRECTORIES = src
+#
+# Macros
+#
 
+SUB_DIRECTORIES = src doc
+
+include ../../erts/vsn.mk
+VSN = $(ERTS_VSN)
+
+SPECIAL_TARGETS = 
+
+#
+# Default Subdir Targets
+#
 include $(ERL_TOP)/make/otp_subdir.mk
 
+DIA_PLT_APPS=
+TEST_NEEDS_RELEASE=true
+
+include $(ERL_TOP)/make/app_targets.mk

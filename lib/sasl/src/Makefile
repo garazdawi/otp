@@ -22,7 +22,7 @@
 include $(ERL_TOP)/make/target.mk
 include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
-include $(ERL_TOP)/erts/preloaded/src/modules.mk
+include ../../erts/src/modules.mk
 
 # ----------------------------------------------------
 # Application version
@@ -68,7 +68,6 @@ TARGET_FILES= $(MODULES:%=$(EBIN)/%.$(EMULATOR)) $(APP_TARGET) $(APPUP_TARGET)
 
 ERL_COMPILE_FLAGS += -I../../stdlib/include -Werror +nowarn_deprecated_catch
 
-
 # ----------------------------------------------------
 # Targets
 # ----------------------------------------------------
@@ -94,7 +93,7 @@ $(APPUP_TARGET): $(APPUP_SRC) ../vsn.mk
 systools_make.erl: preloaded.hrl
 
 COMMA:=,
-preloaded.hrl: $(ERL_TOP)/erts/preloaded/src/modules.mk Makefile
+preloaded.hrl: ../../erts/src/modules.mk Makefile
 	$(V_at)echo "-define(PRELOADED_MODULES, lists:usort([$(foreach mod,$(PRE_LOADED_MODULES),$(mod)$(COMMA)) erlang]))." > $@
 
 # ----------------------------------------------------

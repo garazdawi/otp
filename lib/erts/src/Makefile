@@ -28,13 +28,23 @@ endif
 include $(ERL_TOP)/make/target.mk
 include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
-STATIC_EBIN=../ebin
+STATIC_EBIN=../../erts/preloaded/ebin
 
+# ----------------------------------------------------
+# Application version
+# ----------------------------------------------------
 include $(ERL_TOP)/erts/vsn.mk
 include $(ERL_TOP)/lib/kernel/vsn.mk
+VSN=$(ERTS_VSN)
 
+# ----------------------------------------------------
+# Release directory specification
+# ----------------------------------------------------
 RELSYSDIR = $(RELEASE_PATH)/lib/erts-$(VSN)
-# not $(RELEASE_PATH)/erts-$(VSN)/preloaded
+
+# ----------------------------------------------------
+# Target Specs
+# ----------------------------------------------------
 
 include modules.mk
 
@@ -42,8 +52,7 @@ ERL_FILES= $(ERTS_ERL_MODULES:%=%.erl)
 BEAM_FILES= $(ERTS_BEAM_MODULES:%=%.S)
 STUBS_FILES= $(ERTS_BEAM_MODULES:%=%.erl)
 
-TARGET_FILES = $(ERTS_MODULES:%=$(EBIN)/%.$(EMULATOR)) \
-    $(APP_TARGET)
+TARGET_FILES = $(ERTS_MODULES:%=$(EBIN)/%.$(EMULATOR)) $(APP_TARGET)
 STATIC_TARGET_FILES = $(ERTS_MODULES:%=$(STATIC_EBIN)/%.$(EMULATOR))
 
 APP_FILE= erts.app
@@ -56,9 +65,12 @@ APP_MODULES= $(wordlist 2, $(words $(APP_MODS_W_COMMA)), ignore_me $(APP_MODS_W_
 PRE_LOADED_W_COMMA= $(foreach mod, $(PRE_LOADED_MODULES), $(mod) $(COMMA))
 APP_PRE_LOADED_MODULES= $(wordlist 2, $(words $(PRE_LOADED_W_COMMA)), ignore_me $(PRE_LOADED_W_COMMA))
 
+# ----------------------------------------------------
+# FLAGS
+# ----------------------------------------------------
+
 KERNEL_SRC=$(ERL_TOP)/lib/kernel/src
 KERNEL_INCLUDE=$(ERL_TOP)/lib/kernel/include
-STDLIB_INCLUDE=$(ERL_TOP)/lib/stdlib/include
 
 ERL_COMPILE_FLAGS += -I$(KERNEL_SRC) -I$(KERNEL_INCLUDE) +nowarn_deprecated_catch
 
@@ -66,19 +78,13 @@ ifeq ($(ERL_DETERMINISTIC),yes)
 	ERL_COMPILE_FLAGS += +deterministic
 endif
 
-DIA_PLT      = erts-preloaded.plt
-DIA_ANALYSIS = $(basename $(DIA_PLT)).dialyzer_analysis
-ifeq ($(DIAW_EH),true)
-DIA_WARNINGS += -Werror_handling
-endif
-ifeq ($(DIAW_US),true)
-DIA_WARNINGS += -Wunderspecs
-endif
-ifeq ($(DIAW_UR),true)
-DIA_WARNINGS += -Wunmatched_returns
-endif
+# ----------------------------------------------------
+# Targets
+# ----------------------------------------------------
 
 debug opt: $(TARGET_FILES)
+
+docs:
 
 $(EBIN):
 	$(V_at)mkdir -p "$@"
@@ -87,6 +93,10 @@ $(TARGET_FILES): | $(EBIN)
 
 clean:
 	rm -rf $(EBIN)
+
+# ----------------------------------------------------
+# Special Build Targets
+# ----------------------------------------------------
 
 copy:
 	rm -f $(STATIC_EBIN)/*.beam
@@ -114,6 +124,9 @@ $(EBIN)/prim_eval.beam: prim_eval.S prim_eval.abstr
 	$(V_at)$(ESCRIPT) add_abstract_code $@ prim_eval.abstr || (rm $@; exit 1)
 
 
+# ----------------------------------------------------
+# Release Target
+# ----------------------------------------------------
 include $(ERL_TOP)/make/otp_release_targets.mk
 
 release_spec: $(TARGET_FILES)
@@ -124,33 +137,7 @@ release_spec: $(TARGET_FILES)
 
 release_docs_spec:
 
-
-list_preloaded:
-	@echo $(PRE_LOADED_MODULES)
-
-dclean:
-	rm -f $(DIA_PLT)
-	rm -f $(DIA_ANALYSIS)
-
-dialyzer_plt: $(DIA_PLT)
-
-$(DIA_PLT): $(ERL_FILES)
-	@echo "Building ($(basename $(DIA_PLT))) plt file"
-	@dialyzer --build_plt \
-                  --output_plt $@ \
-                  -r ../ebin \
-                     ../../../lib/kernel/ebin \
-                     ../../../lib/stdlib/ebin \
-                     ../../../lib/crypto/ebin \
-                     ../../../lib/compiler/ebin \
-                  --output $(DIA_ANALYSIS) \
-                  --verbose
-
-dialyzer: $(DIA_PLT)
-	@echo "Running dialyzer on $(basename $(DIA_PLT))"
-	@dialyzer --plt $< \
-                  ../ebin \
-                  $(DIA_WARNINGS) \
-                  --verbose
-DEP_REL_TOP=../../../lib/
+# ----------------------------------------------------
+# Dependencies
+# ----------------------------------------------------
 include $(ERL_TOP)/make/dep.mk

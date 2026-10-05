@@ -25,10 +25,8 @@ include $(ERL_TOP)/make/$(TARGET)/otp.mk
 # ----------------------------------------------------
 # Application version
 # ----------------------------------------------------
-include ../vsn.mk
+include ../../../erts/vsn.mk
 APPLICATION = erts
-INDEX_DIR = ../../../doc
-RELSYSDIR = $(RELEASE_PATH)/$(APPLICATION)-$(VSN)
 EPUB=false
 
 assets:

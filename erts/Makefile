@@ -30,7 +30,6 @@ include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
 # Other erts dirs than the emulator dir...
 ERTSDIRS = etc epmd lib_src
-XINSTDIRS = preloaded
 ifeq ($(NO_START_SCRIPTS),)
 ERTSDIRS += start_scripts
 endif
@@ -49,7 +48,6 @@ $(TYPES) clean:
 			( cd $$d && $(MAKE) $@ ) || exit $$?; \
 		fi ; \
 	done
-	(cd preloaded/src && $(MAKE) $(ERL_TOP)/lib/erts/ebin/erts.app)
 
 
 .PHONY: test
@@ -157,7 +155,7 @@ ifeq ($(TYPE),)
 else
 	( cd emulator && $(MAKE) release TYPE=$(TYPE) ) || exit $$?;
 endif
-	$(V_at)for d in $(ERTSDIRS) $(XINSTDIRS); do \
+	$(V_at)for d in $(ERTSDIRS); do \
 		if test -d $$d; then \
 			( cd $$d && $(MAKE) $@ ) || exit $$? ; \
 		fi ; \
