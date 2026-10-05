@@ -21,7 +21,7 @@
 
 {application, compiler,
  [{description, "ERTS  CXC 138 10"},
-  {vsn, "10.0.4"},
+  {vsn, "10.0.6"},
   {modules, [
 	     beam_a,
 	     beam_asm,
@@ -86,5 +86,5 @@
   {registered, []},
   {applications, [kernel, stdlib]},
   {env, []},
-  {runtime_dependencies, ["stdlib-8.0","kernel-8.4","erts-13.0",
+  {runtime_dependencies, ["stdlib-@OTP-20412@","kernel-8.4","erts-13.0",
 			  "crypto-5.1"]}]}.
