@@ -48,6 +48,6 @@ ERTS_ERL_MODULES = \
 	erl_tracer \
 	persistent_term
 
-ERTS_BEAM_MODULES = erl_eval
+ERTS_BEAM_MODULES = prim_eval
 
 ERTS_MODULES = $(ERTS_ERL_MODULES) $(ERTS_BEAM_MODULES)
