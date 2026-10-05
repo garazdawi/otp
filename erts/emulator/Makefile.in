@@ -815,7 +815,6 @@ else
 PRELOAD_OBJ = $(OBJDIR)/preload.o
 PRELOAD_SRC = $(TTF_DIR)/preload.c
 $(PRELOAD_SRC): $(PRELOAD_BEAM) utils/make_preload ../preloaded/src/modules.mk
-	echo "PRELOAD_BEAM: $(PRELOAD_BEAM)"
 	$(gen_verbose)LANG=C $(PERL) utils/make_preload -old $(PRELOAD_BEAM) > $@
 endif
 
