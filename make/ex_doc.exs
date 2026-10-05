@@ -46,7 +46,7 @@ true = String.equivalent?("doc", Path.split(cwd) |> Enum.reverse() |> Enum.at(0)
 ## Calculate relative path to $ERL_TOP
 rootdir =
   cond do
-    app in [:erts, :system] ->
+    app in [:system] ->
       "../../"
 
     app == :index ->
@@ -78,9 +78,6 @@ deps =
 ## Read the titles from all modules in order to create the groups_for_docs key
 modules =
   cond do
-    app == :erts ->
-      :erlang.pre_loaded()
-
     app in [:system, :index] ->
       []
 
@@ -150,11 +147,6 @@ end
 
 source_url_pattern =
   cond do
-    app == :erts ->
-      source_url_pattern.(
-        "erts/",
-        Path.join(:code.root_dir() |> String.Chars.to_string(), "erts")
-      )
 
     app == :system ->
       source_url_pattern.("", :code.root_dir() |> String.Chars.to_string())
@@ -256,7 +248,6 @@ config =
       deps ++
         [
           general_info: Path.join([link_libdir, "..", "doc"]),
-          erts: Path.join([link_libdir, "..", "erts", "doc", "html"]),
           system: Path.join([link_libdir, "..", "system", "doc", "html"])
         ],
     before_closing_body_tag: fn

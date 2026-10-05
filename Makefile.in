@@ -444,9 +444,6 @@ else
 	  PATH=$(DOC_PREFIX)"$${PATH}" ERL_TOP=$(ERL_TOP) \
 	  $(MAKE) BUILD_ALL=1 TESTROOT="$(RELEASE_ROOT)" $@
 endif
-	cd $(ERL_TOP)/erts && \
-	  PATH=$(DOC_PREFIX)"$${PATH}" ERL_TOP=$(ERL_TOP) \
-	  $(MAKE) BUILD_ALL=1 TESTROOT="$(RELEASE_ROOT)" $@
 	cd $(ERL_TOP)/system/doc && \
 	  PATH=$(DOC_PREFIX)"$${PATH}" \
 	  ERL_TOP=$(ERL_TOP) $(MAKE) TESTROOT="$(RELEASE_ROOT)" $@

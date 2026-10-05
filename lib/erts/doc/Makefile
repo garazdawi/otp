@@ -31,17 +31,17 @@ EPUB=false
 
 assets:
 	$(V_at)mkdir assets
-assets/%: ../emulator/internal_doc/assets/% | assets
+assets/%: $(ERL_TOP)/erts/emulator/internal_doc/assets/% | assets
 	$(V_at)cp $< $@
-assets/gen_tcp_dist.erl: ../../lib/kernel/examples/gen_tcp_dist/src/gen_tcp_dist.erl | assets
+assets/gen_tcp_dist.erl: $(ERL_TOP)/lib/kernel/examples/gen_tcp_dist/src/gen_tcp_dist.erl | assets
 	$(V_at)cp $< $@
-assets/erl_uds_dist.erl: ../../lib/kernel/examples/erl_uds_dist/src/erl_uds_dist.erl | assets
+assets/erl_uds_dist.erl: $(ERL_TOP)/lib/kernel/examples/erl_uds_dist/src/erl_uds_dist.erl | assets
 	$(V_at)cp $< $@
-assets/time_compat.erl: ../example/time_compat.erl
+assets/time_compat.erl: $(ERL_TOP)/erts/example/time_compat.erl
 	$(V_at)cp $< $@
 
-$(HTMLDIR)/index.html: $(wildcard ../emulator/internal_doc/*.md) \
-	$(patsubst ../emulator/internal_doc/assets/%,assets/%,$(wildcard ../emulator/internal_doc/assets/*.png) $(wildcard ../emulator/internal_doc/assets/*.svg)) \
+$(HTMLDIR)/index.html: $(wildcard $(ERL_TOP)/erts/emulator/internal_doc/*.md) \
+	$(patsubst $(ERL_TOP)/erts/emulator/internal_doc/assets/%,assets/%,$(wildcard $(ERL_TOP)/erts/emulator/internal_doc/assets/*.png) $(wildcard $(ERL_TOP)/erts/emulator/internal_doc/assets/*.svg)) \
 	assets/gen_tcp_dist.erl assets/erl_uds_dist.erl assets/time_compat.erl
 
 # ----------------------------------------------------
