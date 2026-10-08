@@ -112,6 +112,20 @@ jobs:
     with:
       base_branch: ${{ needs.pack.outputs.base_branch }}
 
+  test-windows:
+    name: Test Erlang/OTP (Windows)
+    needs:
+      - pack
+      - build-windows
+    if: needs.pack.outputs.changes != '[]' && needs.build-windows.result == 'success'
+    permissions:
+      contents: read
+      actions:  write
+    uses: ./.github/workflows/reusable-test-windows.yaml
+    with:
+      changes:       ${{ needs.pack.outputs.changes }}
+      installer_name: ${{ needs.build-windows.outputs.installer_name }}
+
   build-flavors:
     name: Build Erlang/OTP (Types and Flavors)
     needs: pack
@@ -331,6 +345,7 @@ jobs:
       - build-macos
       - build-ios
       - build-windows
+      - test-windows
       - build-flavors
       - build
       - freebsd
