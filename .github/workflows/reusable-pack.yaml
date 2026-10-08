@@ -64,6 +64,63 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Select applications needing a synthetic version bump
+        id: synthetic-version-bumps
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          apps='[]'
+          comparison_ref=
+          if test "${REF_TYPE}" != tag; then
+            case "${BASE_BRANCH}" in
+              master)
+                comparison_ref=origin/maint
+                ;;
+              maint)
+                comparison_ref=$(git for-each-ref --format='%(refname:short)' \
+                  'refs/remotes/origin/maint-[0-9]*' | sort -V | tail -1)
+                ;;
+            esac
+          fi
+
+          if test -n "${comparison_ref}"; then
+            while read -r app; do
+              if test "${app}" = erts; then
+                vsn_file=erts/vsn.mk
+              else
+                vsn_file="lib/${app}/vsn.mk"
+              fi
+              test -f "${vsn_file}" || continue
+
+              if git diff --quiet "${comparison_ref}..HEAD" -- "${vsn_file}"; then
+                apps=$(jq -cn --argjson apps "${apps}" --arg app "${app}" '$apps + [$app]')
+              fi
+            done <<EOF
+          $({
+              git diff --name-only "${comparison_ref}..HEAD" -- lib |
+                awk -F/ 'NF > 2 {print $2}'
+              if ! git diff --quiet "${comparison_ref}..HEAD" -- erts; then
+                echo erts
+              fi
+            } | sort -u)
+          EOF
+          fi
+          echo "apps=${apps}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply synthetic application versions
+        if: github.ref_type != 'tag' && steps.synthetic-version-bumps.outputs.apps != '[]'
+        env:
+          SYNTHETIC_VERSION_BUMPS: ${{ join(fromJSON(steps.synthetic-version-bumps.outputs.apps), ' ') }}
+        run: |
+          .github/scripts/bump-ct-release-test-versions.sh
+          git add -- erts/vsn.mk 'lib/*/vsn.mk'
+          git -c user.name='Erlang/OTP GitHub Actions' \
+              -c user.email='actions@github.com' \
+              -c commit.gpgsign=false \
+              commit --no-verify -m 'CI: Synthetically bump application versions'
 
       - uses: ./.github/actions/build-base-image
         with:
