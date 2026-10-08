@@ -239,6 +239,8 @@ jobs:
 
       - name: Run tests
         id: run-tests
+        env:
+          MATRIX_TYPE: ${{ matrix.type }}
         run: |
           set -x
           unzip -q tests.zip
@@ -249,7 +251,7 @@ jobs:
 
           export PATH=`pwd`/release/win32/bin/:$PATH
 
-          APP="${{ matrix.type }}"
+          APP="${MATRIX_TYPE}"
           TYPE=opt
           ## Need to specialize for epmd, emulator and debug
           case "${APP}" in
@@ -264,7 +266,12 @@ jobs:
                ## erlang:halt/0 because socket_ttest_SUITE leaks a peer node
                ## that otherwise blocks init:stop() for hours.
                find release/tests -name ct_rerun_verdict -delete 2>/dev/null || true
-               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ts:run($APP,[batch])), erlang:halt()")
+               if [ -f "release/tests/${APP}_test/${APP}_gh.spec" ]; then
+                  RUN_TESTS="ts:run_category(${APP},gh,[batch])"
+               else
+                  RUN_TESTS="ts:run(${APP},[batch])"
+               fi
+               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ${RUN_TESTS}), erlang:halt()")
                VERDICT=$(find release/tests -name ct_rerun_verdict 2>/dev/null | head -1)
                if [ -n "$VERDICT" ]; then
                   echo "ct_rerun verdict: $(cat "$VERDICT")"
@@ -325,7 +332,12 @@ jobs:
 
           export PATH=`pwd`/release/win32/bin/:$PATH
 
-          (cd release/tests/test_server && erl.exe -noshell -env OTP_WINDOWS_CI true -eval "ts:install()" -eval "ts:run(system,[batch])" -s init stop)
+          if [ -f "release/tests/system_test/system_gh.spec" ]; then
+            RUN_TESTS="ts:run_category(system,gh,[batch])"
+          else
+            RUN_TESTS="ts:run(system,[batch])"
+          fi
+          (cd release/tests/test_server && erl.exe -noshell -env OTP_WINDOWS_CI true -eval "ts:install()" -eval "${RUN_TESTS}" -s init stop)
           if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.system_test.logs/run*/suite.log; then
                exit 1
           fi

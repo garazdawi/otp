@@ -58,6 +58,9 @@ jobs:
           shopt -s nullglob
           mkdir -p make_test_dir
           for file in *_test_results/*.tar.gz; do
+            case "${file}" in
+              *_win32_test_results/*) continue ;;
+            esac
             tar xzf $file
           done
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
