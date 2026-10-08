@@ -503,7 +503,7 @@ upgrade(Apps,Level,Callback,CreateDir,InstallDir,Config) ->
 		undefined ->
 		    throw({skip,"Old release not available"});
 		Data ->
-		    ok = check_upgrade_testable(Apps, Data),
+                    ok = check_upgrade_testable(Apps, Data),
 		    {FromVsn,FromRel,FromAppsVsns} =
 			target_system(Apps, CreateDir, InstallDir, Data),
 		    {ToVsn,ToRel,ToAppsVsns} =
@@ -536,29 +536,29 @@ check_upgrade_testable(Apps, {FromVsn,_ToVsn,FromAppsVsns,_Path}) ->
 
 check_appup_coverage(App, FromRelVsn, FromAppsVsns) ->
     FromVsn =
-	case lists:keyfind(App,1,FromAppsVsns) of
-	    {App,V,_} ->
-		V;
-	    false ->
-		throw({skip,{app_not_in_old_release,App,FromRelVsn}})
-	end,
+        case lists:keyfind(App,1,FromAppsVsns) of
+            {App,V,_} ->
+                V;
+            false ->
+                throw({skip,{app_not_in_old_release,App,FromRelVsn}})
+        end,
     _ = application:load(App),
     Appup = filename:join([code:lib_dir(App),"ebin",
-			   atom_to_list(App)++".appup"]),
+                           atom_to_list(App)++".appup"]),
     case file:consult(Appup) of
-	{ok,[{ToVsn,Ups,Downs}]} ->
-	    case {systools_relup:appup_search_for_version(FromVsn,Ups),
-		  systools_relup:appup_search_for_version(FromVsn,Downs)} of
-		{{ok,_},{ok,_}} ->
-		    ok;
-		_ ->
-		    throw({skip,{no_appup_instructions,App,
-				 {from,FromVsn},{to,ToVsn}}})
-	    end;
-	{error,enoent} ->
-	    throw({skip,{no_appup_file,App,FromVsn}});
-	{error,Reason} ->
-	    throw({fail,{bad_appup_file,App,Reason}})
+        {ok,[{ToVsn,Ups,Downs}]} ->
+            case {systools_relup:appup_search_for_version(FromVsn,Ups),
+                  systools_relup:appup_search_for_version(FromVsn,Downs)} of
+                {{ok,_},{ok,_}} ->
+                    ok;
+                _ ->
+                    throw({skip,{no_appup_instructions,App,
+                                 {from,FromVsn},{to,ToVsn}}})
+            end;
+        {error,enoent} ->
+            throw({skip,{no_appup_file,App,FromVsn}});
+        {error,Reason} ->
+            throw({fail,{bad_appup_file,App,Reason}})
     end.
 
 %%% This is similar to sasl/examples/src/target_system.erl, but with

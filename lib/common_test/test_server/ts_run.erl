@@ -396,13 +396,13 @@ tricky_print_data(Port, Timeout) ->
 	    io:put_chars(Bytes),
 	    tricky_print_data(Port, Timeout);
 	{Port, eof} ->
-	    Port ! {self(), close},
+            Port ! {self(), close},
 	    receive
 		{Port, closed} ->
 		    true
-	    end,
+            end,
 	    receive
-		{'EXIT',  Port,  _} ->
+                {'EXIT',  Port,  _} ->
 		    ok
 	    after 1 ->				% force context switch
 		    ok
@@ -414,15 +414,15 @@ tricky_print_data(Port, Timeout) ->
                     %% This shouldn't happen, but better safe then hanging
                     ok
             end;
-	{Port, {exit_status, N}} ->
-	    %% The spawned test VM has exited. On Windows a leaked peer node
-	    %% can inherit and keep the test VM's stdout pipe open, so
-	    %% {Port,eof} never arrives and we would otherwise wait here until
-	    %% the CI job timeout kills everything. The OS process exit is
-	    %% authoritative that the test run is over, so drain any buffered
-	    %% output and act on the status instead of waiting for EOF.
-	    drain_port_data(Port),
-	    handle_test_exit_status(N)
+        {Port, {exit_status, N}} ->
+            %% The spawned test VM has exited. On Windows a leaked peer node
+            %% can inherit and keep the test VM's stdout pipe open, so
+            %% {Port,eof} never arrives and we would otherwise wait here until
+            %% the CI job timeout kills everything. The OS process exit is
+            %% authoritative that the test run is over, so drain any buffered
+            %% output and act on the status instead of waiting for EOF.
+            drain_port_data(Port),
+            handle_test_exit_status(N)
     after Timeout ->
 	    case erl_epmd:names() of
 		{ok,Names} ->
