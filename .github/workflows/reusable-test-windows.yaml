@@ -143,8 +143,6 @@ jobs:
 
       - name: Run tests
         id: run-tests
-        env:
-          MATRIX_TYPE: ${{ matrix.type }}
         run: |
           set -x
           unzip -q tests.zip
@@ -156,7 +154,7 @@ jobs:
           export PATH="$PWD/.cache/openssl-${OPENSSL_VERSION}/bin:$PWD/release/win32/bin:$PATH"
           openssl version
 
-          APP="${MATRIX_TYPE}"
+          APP="${{ matrix.type }}"
           TYPE=opt
           ## Need to specialize for epmd, emulator and debug
           case "${APP}" in
