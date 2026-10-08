@@ -51,9 +51,9 @@ jobs:
             disable-cache: true
             prepare: |
               # Don't update base FreeBSD system, only required ports
-              pkg update -fr FreeBSD-ports
-              pkg upgrade -yr FreeBSD-ports
-              pkg install -yr FreeBSD-ports bash gmake gtar autoconf ncurses pkgconf
+              env IGNORE_OSVERSION=yes pkg update -fr FreeBSD-ports
+              env IGNORE_OSVERSION=yes pkg upgrade -yr FreeBSD-ports
+              env IGNORE_OSVERSION=yes pkg install -yr FreeBSD-ports bash gmake gtar autoconf ncurses pkgconf
 
             run: |
                 tar -xzf ./otp_src.tar.gz
