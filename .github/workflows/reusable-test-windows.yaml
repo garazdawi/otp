@@ -80,9 +80,8 @@ jobs:
         run: start "" /WAIT %INSTALLER_NAME% /S /D=%CD%\release\win32\
 
       - name: Run tests
-        env:
-          APP: ${{ matrix.type }}
         run: |
+          APP="${{ matrix.type }}"
           unzip -q tests.zip
           export ERL_TOP="$(pwd)"
           eval `./otp_build env_win32 x64`
