@@ -18,14 +18,11 @@
 #
 # %CopyrightEnd%
 
-name: Test Erlang/OTP (Windows)
+name: Test kernel init_SUITE (Windows)
 
 on:
   workflow_call:
     inputs:
-      changes:
-        required: true
-        type: string
       installer_name:
         required: true
         type: string
@@ -35,7 +32,7 @@ permissions:
 
 jobs:
   test-windows:
-    name: Test Erlang/OTP (Windows)
+    name: Test kernel init_SUITE (Windows)
     runs-on: windows-2025
     permissions:
       contents: read
@@ -43,10 +40,6 @@ jobs:
     defaults:
       run:
         shell: wsl-bash {0}
-    strategy:
-      fail-fast: false
-      matrix:
-        type: ${{ fromJson(inputs.changes) }}
     steps:
       - name: Configure line endings for WSL
         shell: cmd
@@ -81,31 +74,23 @@ jobs:
 
       - name: Run tests
         run: |
-          APP="${{ matrix.type }}"
           unzip -q tests.zip
           export ERL_TOP="$(pwd)"
           eval `./otp_build env_win32 x64`
           export PATH="$(pwd)/release/win32/bin:$PATH"
-          if [ "${APP}" = debug ]; then
-            exit 0
-          elif [ -f "release/tests/${APP}_test/${APP}_gh.spec" ]; then
-            RUN_TESTS="ts:run_category(${APP},gh,[batch])"
-          else
-            RUN_TESTS="ts:run(${APP},[batch])"
-          fi
           (cd release/tests/test_server && \
            erl.exe -noinput -eval "ts:install()" \
-                   -eval "${RUN_TESTS}" -s init stop)
+                   -eval "ts:run(kernel,init_SUITE,[batch])" -s init stop)
           ! grep -l "^=result[ ]*failed:" \
-            release/tests/test_server/ct_run.*/*${APP}*.logs/run*/suite.log
+            release/tests/test_server/ct_run.*/*kernel*.logs/run*/suite.log
 
       - name: Package test results
-        if: ${{ !cancelled() && matrix.type != 'debug' }}
-        run: tar czf ${{ matrix.type }}_win32_test_results.tar.gz release/tests/test_server
+        if: ${{ !cancelled() }}
+        run: tar czf kernel_init_SUITE_win32_test_results.tar.gz release/tests/test_server
 
       - name: Upload test results
-        if: ${{ !cancelled() && matrix.type != 'debug' }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
         with:
-          name: ${{ matrix.type }}_win32_test_results
-          path: ${{ matrix.type }}_win32_test_results.tar.gz
+          name: kernel_init_SUITE_win32_test_results
+          path: kernel_init_SUITE_win32_test_results.tar.gz

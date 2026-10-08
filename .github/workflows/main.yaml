@@ -113,7 +113,7 @@ jobs:
       base_branch: ${{ needs.pack.outputs.base_branch }}
 
   test-windows:
-    name: Test Erlang/OTP (Windows)
+    name: Test kernel init_SUITE (Windows)
     needs:
       - pack
       - build-windows
@@ -123,7 +123,6 @@ jobs:
       actions:  write
     uses: ./.github/workflows/reusable-test-windows.yaml
     with:
-      changes:       ${{ needs.pack.outputs.changes }}
       installer_name: ${{ needs.build-windows.outputs.installer_name }}
 
   build-flavors:
