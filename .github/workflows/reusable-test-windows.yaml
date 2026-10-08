@@ -1,0 +1,122 @@
+# %CopyrightBegin%
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright Ericsson AB 2026. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# %CopyrightEnd%
+
+name: Test Erlang/OTP (Windows)
+run-name: "[${{ inputs.base_branch }}] Test Erlang/OTP (Windows)"
+
+on:
+  workflow_call:
+    inputs:
+      base_branch:
+        required: true
+        type: string
+      changes:
+        required: true
+        type: string
+      installer_name:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test-windows:
+    name: Test Win64 Erlang/OTP
+    runs-on: windows-2022
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      matrix:
+        type: ${{ fromJson(inputs.changes) }}
+      fail-fast: false
+    steps:
+      - name: Setup nl behaviour for wsl
+        shell: cmd
+        run: git config --global core.autocrlf input
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-wsl-runner
+        with:
+          installer_name: ${{ inputs.installer_name }}
+
+      - name: Run tests
+        id: run-tests
+        env:
+          MATRIX_TYPE: ${{ matrix.type }}
+        run: |
+          set -x
+          unzip -q tests.zip
+          export ERL_TOP="$(pwd)"
+          export MAKEFLAGS=-j$(($(nproc) + 2))
+
+          eval `./otp_build env_win32 x64`
+
+          export PATH=`pwd`/release/win32/bin/:$PATH
+
+          APP="${MATRIX_TYPE}"
+          TYPE=opt
+          ## Need to specialize for epmd, emulator and debug
+          case "${APP}" in
+            debug)
+               echo "No debug tests on windows"
+               ;;
+            *)
+               ## Run with the re-run-failed mechanism (ts_run reads
+               ## CT_RERUN_FAILED=N): a failure that passes on an isolated
+               ## re-run (flaky / leak-induced) does not gate; only failures
+               ## that fail every re-run do. Force a clean exit with
+               ## erlang:halt/0 because socket_ttest_SUITE leaks a peer node
+               ## that otherwise blocks init:stop() for hours.
+               find release/tests -name ct_rerun_verdict -delete 2>/dev/null || true
+               if [ -f "release/tests/${APP}_test/${APP}_gh.spec" ]; then
+                  RUN_TESTS="ts:run_category(${APP},gh,[batch])"
+               else
+                  RUN_TESTS="ts:run(${APP},[batch])"
+               fi
+               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ${RUN_TESTS}), erlang:halt()")
+               VERDICT=$(find release/tests -name ct_rerun_verdict 2>/dev/null | head -1)
+               if [ -n "$VERDICT" ]; then
+                  echo "ct_rerun verdict: $(cat "$VERDICT")"
+                  if grep -q '^FAIL' "$VERDICT"; then exit 1; fi
+               elif grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.${APP}_test.logs/run*/suite.log; then
+                  exit 1
+               fi
+               ;;
+          esac
+
+      - name: Cleanup tests
+        if: ${{ !cancelled() && matrix.type != 'debug' }}
+        run: tar czf ${{ matrix.type }}_win32_test_results.tar.gz release/tests/test_server
+
+      - name: Upload test results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        if: ${{ !cancelled() && matrix.type != 'debug' }}
+        with:
+          name: ${{ matrix.type }}_win32_test_results
+          path: ${{ matrix.type }}_win32_test_results.tar.gz
