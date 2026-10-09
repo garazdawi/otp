@@ -140,8 +140,7 @@ jobs:
         env:
           WSLENV: GITHUB_OUTPUT/p
         run: |
-          mkdir -p /mnt/c/opt/local64/pgm/
-          cp -R wxWidgets /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}
+          WXDIR="$PWD/wxWidgets"
           tar -xzf ./otp_src.tar.gz
           cd otp
           export PATH="/mnt/c/Program Files (x86)/NSIS/bin":$PATH
@@ -150,7 +149,7 @@ jobs:
           export ERLC_USE_SERVER=true
           export ERTS_SKIP_DEPEND=true
           eval `./otp_build env_win32 x64`
-          ./otp_build configure
+          ./otp_build configure --with-wxdir="$WXDIR"
           if cat erts/CONF_INFO ||
              grep -v "Static linking with OpenSSL 3.0" lib/*/CONF_INFO ||
              cat lib/*/SKIP ||
@@ -159,7 +158,7 @@ jobs:
           fi
           ./otp_build boot -a
           ./otp_build release -a
-          cp /mnt/c/opt/local64/pgm/wxWidgets-${{ env.WXWIDGETS_VERSION }}/3rdparty/webview2/runtimes/win-x64/native/WebView2Loader.dll $ERL_TOP/release/win32/erts-*/bin/
+          cp "$WXDIR/3rdparty/webview2/runtimes/win-x64/native/WebView2Loader.dll" $ERL_TOP/release/win32/erts-*/bin/
           ./otp_build installer_win32
           echo "installer_name=$(ls release/win32/otp*.exe | xargs basename)" >> $GITHUB_OUTPUT
           make release_tests
