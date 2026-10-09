@@ -19,6 +19,7 @@ configure.result.*
 *.asn1db
 lib/*/src/deps/
 erts/preloaded/src/deps/
+prebuild.keep
 
 !/bootstrap/lib/compiler/ebin/*.beam
 !/bootstrap/lib/kernel/ebin/*.beam

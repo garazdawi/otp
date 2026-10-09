@@ -677,6 +677,9 @@ done
 
 for kobj in $kobjs; do
     progress "Keeping $kobj in pre-build-directory"
+    if [ ! -d "$prebld_root/$(dirname $kobj)" ]; then
+        mkdir -p $prebld_root/$(dirname $kobj)
+    fi
     copy $build_dir/../$kobj $prebld_root/$(dirname $kobj)
 done
 
