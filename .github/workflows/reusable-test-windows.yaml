@@ -103,6 +103,7 @@ jobs:
                ## processes before terminating Erlang so the leak can be traced.
                VERDICT="release/tests/${APP}_test/ct_rerun_verdict"
                (
+                  set +x
                   while [ ! -f "$VERDICT" ]; do sleep 5; done
                   sleep 15
                   echo "::warning::Test verdict exists, but erl.exe has not exited; dumping Windows processes"
