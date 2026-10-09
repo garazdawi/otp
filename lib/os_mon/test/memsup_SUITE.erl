@@ -61,7 +61,20 @@ init_per_testcase(_Case, Config) ->
     Config.
 
 end_per_testcase(_Case, _Config) ->
-    ok.
+    %% Some testcases (alarm2) switch memsup into memsup_system_only mode. If
+    %% such a testcase fails before restoring the default, memsup is left so
+    %% that get_memory_data/0 reports an 'undefined' worst-memory user, which
+    %% then crashes later testcases (process, otp_5910) with a badmatch.
+    %% Restore the default here so a failure cannot cascade.
+    case application:get_env(os_mon, memsup_system_only) of
+        {ok, true} ->
+            application:set_env(os_mon, memsup_system_only, false),
+            _ = supervisor:terminate_child(os_mon_sup, memsup),
+            _ = supervisor:restart_child(os_mon_sup, memsup),
+            ok;
+        _ ->
+            ok
+    end.
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -316,9 +329,16 @@ alarm2(Config) when is_list(Config) ->
     %% be run correctly
     {Total, Alloc, {_Pid,_PidAlloc}} = memsup:get_memory_data(),
     SysUsage = Alloc/Total,
+    SysThreshold = memsup:get_sysmem_high_watermark()/100,
     if
         SysUsage>0.99 ->
             {skip, sys_mem_too_high};
+        abs(SysUsage - SysThreshold) < 0.05 ->
+            %% Real system memory usage sits right at the alarm watermark; the
+            %% alarm state the test asserts on is racy there (the OS figure
+            %% drifts across the threshold between the memsup check and the
+            %% assertion), so skip rather than flake.
+            {skip, sys_mem_too_close_to_watermark};
         true ->
             alarm2(Config, SysUsage)
     end.

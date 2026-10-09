@@ -828,29 +828,40 @@ do_test_srp(RelPath) ->
     end.
 
 safe_relative_path_links(Config) ->
-    PrivDir = ?config(priv_dir, Config),
-    BaseDir = filename:join(PrivDir, "filelib_SUITE_safe_relative_path_links"),
-    ok = file:make_dir(BaseDir),
-    try
-        case check_symlink_support(BaseDir) of
-            true ->
-                simple_test(BaseDir),
-                inside_directory_test(BaseDir),
-                nested_links_test(BaseDir),
-                loop_test(BaseDir),
-                loop_with_parent_test(BaseDir),
-                revist_links_test(BaseDir),
-                descend_climb_cwd_link_test(BaseDir),
-                chained_links_same_target_name_test(BaseDir),
-                ok;
-            false ->
-                {skipped, "This platform/user can't create symlinks."}
-        end
-    after
-        %% This test leaves some rather nasty links that may screw with
-        %% z_SUITE's core file search, so we must make sure everything's
-        %% removed regardless of what happens.
-        rm_rf(BaseDir)
+    case os:type() of
+        {win32, _} ->
+            %% Windows symlinks are typed (file vs directory) and the type is
+            %% decided at creation time from the target. file:read_link/1 does
+            %% not resolve a file-typed link pointing at a not-yet-existing
+            %% target the way POSIX readlink does, so the nested/chained
+            %% symlink scenarios these tests rely on cannot be reproduced on
+            %% Windows.
+            {skipped, "Windows symlink semantics differ from POSIX"};
+        _ ->
+            PrivDir = ?config(priv_dir, Config),
+            BaseDir = filename:join(PrivDir, "filelib_SUITE_safe_relative_path_links"),
+            ok = file:make_dir(BaseDir),
+            try
+                case check_symlink_support(BaseDir) of
+                    true ->
+                        simple_test(BaseDir),
+                        inside_directory_test(BaseDir),
+                        nested_links_test(BaseDir),
+                        loop_test(BaseDir),
+                        loop_with_parent_test(BaseDir),
+                        revist_links_test(BaseDir),
+                        descend_climb_cwd_link_test(BaseDir),
+                        chained_links_same_target_name_test(BaseDir),
+                        ok;
+                    false ->
+                        {skipped, "This platform/user can't create symlinks."}
+                end
+            after
+                %% This test leaves some rather nasty links that may screw with
+                %% z_SUITE's core file search, so we must make sure everything's
+                %% removed regardless of what happens.
+                rm_rf(BaseDir)
+            end
     end.
 
 check_symlink_support(BaseDir) ->

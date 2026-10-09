@@ -29,6 +29,14 @@ LIGHT_CYAN='\033[1;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+ERL=erl
+WIN_ERL_TOP="$ERL_TOP"
+
+if [ "${WSLcross}" = "true" ]
+then
+    ERL=erl.exe
+    WIN_ERL_TOP=$(w32_path.sh -m "$ERL_TOP")
+fi
 
 print_highlighted_msg_with_printer () {
     COLOR=$1
@@ -171,8 +179,8 @@ then
     echo "The tests will start in a few seconds..."
     sleep 45
     cd "$ERL_TOP/release/tests/test_server"
-    erl -noinput -eval "ts:install(),erlang:halt()"
-    erl -noinput -eval "ts:run([all_tests,batch]),erlang:halt()"
+    $ERL -noinput -eval "ts:install(),erlang:halt()"
+    $ERL -noinput -eval "ts:run([all_tests,batch]),erlang:halt()"
     exit $?
 fi
 
@@ -273,7 +281,7 @@ fi
 # Compile test server and configure
 if [ ! -f "$ERL_TOP/lib/common_test/test_server/variables.${TYPE}.${FLAVOR}" ]; then
     cd "$ERL_TOP/lib/common_test/test_server"
-    ( ${MAKE:-make} && erl -noshell -eval "ts:install()." -s init stop )  > "$INSTALL_TEST_LOG" 2>&1
+    ( ${MAKE:-make} && $ERL -noshell -eval "ts:install()." -s init stop )  > "$INSTALL_TEST_LOG" 2>&1
     if [ $? != 0 ]
     then
         cat "$INSTALL_TEST_LOG"
@@ -287,8 +295,8 @@ fi
 # Run ct_run
 cd $MAKE_TEST_REL_DIR
 
-erl -sname test -noshell -pa "$ERL_TOP/lib/common_test/test_server" \
-    -eval "ts:compile_datadirs(\"$ERL_TOP/lib/common_test/test_server/variables.${TYPE}.${FLAVOR}\",\"*_SUITE_data\")."\
+$ERL -sname test -noshell -pa "$WIN_ERL_TOP/lib/common_test/test_server" \
+    -eval "ts:compile_datadirs(\"$WIN_ERL_TOP/lib/common_test/test_server/variables.${TYPE}.${FLAVOR}\",\"*_SUITE_data\")."\
     -s init stop > "$COMPILE_TEST_LOG" 2>&1
 
 if [ $? != 0 ]
@@ -326,7 +334,6 @@ then
 else
     WIN_MAKE_TEST_CT_LOGS=`w32_path.sh -m "$MAKE_TEST_CT_LOGS"`
     WIN_MAKE_TEST_DIR=`w32_path.sh -m "$MAKE_TEST_DIR"`
-    WIN_ERL_TOP=`w32_path.sh -m "$ERL_TOP"`
     "$CT_RUN.exe" -logdir $WIN_MAKE_TEST_CT_LOGS\
         -pa "$WIN_ERL_TOP/lib/common_test/test_server"\
         -config "$WIN_ERL_TOP/lib/common_test/test_server/ts.config"\

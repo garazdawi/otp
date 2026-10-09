@@ -1,0 +1,103 @@
+# %CopyrightBegin%
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright Ericsson AB 2026. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# %CopyrightEnd%
+
+name: Test Erlang/OTP (system, Windows)
+run-name: "[${{ inputs.base_branch }}] Test Erlang/OTP (system, Windows)"
+
+on:
+  workflow_call:
+    inputs:
+      base_branch:
+        required: true
+        type: string
+      installer_name:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  system-test-windows:
+    name: Test Win64 Erlang/OTP (system)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Setup nl behaviour for wsl
+        shell: cmd
+        run: git config --global core.autocrlf input
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-wsl-runner
+        with:
+          installer_name: ${{ inputs.installer_name }}
+
+      - name: Download test results
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # ratchet:actions/download-artifact@v6.0.0
+
+      - name: Merge test results
+        run: |
+          shopt -s nullglob
+          for file in *_win32_test_results/*.tar.gz; do
+            tar xvzf $file
+          done
+          export PATH=`pwd`/release/win32/bin/:$PATH
+          cd release/tests/test_server && ct_run.exe -noshell -refresh_logs $(wslpath -w `pwd`)
+
+      - name: Run system tests
+        run: |
+          set -x
+          unzip -q -o tests.zip
+
+          export ERL_TOP="$(pwd)/otp"
+          export MAKEFLAGS=-j$(($(nproc) + 2))
+
+          eval `./otp_build env_win32 x64`
+
+          export PATH=`pwd`/release/win32/bin/:$PATH
+
+          if [ -f "release/tests/system_test/system_gh.spec" ]; then
+            RUN_TESTS="ts:run_category(system,gh,[batch])"
+          else
+            RUN_TESTS="ts:run(system,[batch])"
+          fi
+          (cd release/tests/test_server && erl.exe -noshell -env OTP_WINDOWS_CI true -eval "ts:install()" -eval "${RUN_TESTS}" -s init stop)
+          if grep "^=result[ ]*failed:" release/tests/test_server/ct_run.*/tests.system_test.logs/run*/suite.log; then
+               exit 1
+          fi
+
+      - name: Cleanup tests
+        if: ${{ !cancelled() }}
+        run: tar czf test_results_win32.tar.gz release/tests/test_server
+
+      - name: Upload test results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        if: ${{ !cancelled() }}
+        with:
+          name: test_results_win32
+          path: test_results_win32.tar.gz

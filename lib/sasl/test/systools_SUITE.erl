@@ -1140,7 +1140,11 @@ erts_tar(Config) ->
                            "typer.exe",
                            "yielding_c_fun.exe"],
                 PdbIgnored = [filename:rootname(F) ++ ".pdb" || F <- IgnoredFiles],
-                {Files ++ PdbFiles, IgnoredFiles ++ PdbIgnored}
+                %% WebView2Loader.dll is shipped in erts/bin (wx webview
+                %% support) and has no matching .pdb, so it is listed on its
+                %% own rather than via Files/PdbFiles. erl.ini is no longer
+                %% part of the Windows release.
+                {["WebView2Loader.dll"] ++ Files ++ PdbFiles, IgnoredFiles ++ PdbIgnored}
         end,
 
     ErtsTarContent =

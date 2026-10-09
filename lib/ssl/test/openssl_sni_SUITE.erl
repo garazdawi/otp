@@ -262,6 +262,14 @@ maybe_add_openssl_sigalgs(Version) when Version == 'tlsv1.3';
     case ssl_test_lib:portable_cmd("openssl", ["version"]) of
         "OpenSSL 1.0" ++  _ ->
             [];
+        "OpenSSL 1.1.0" ++ _ ->
+            %% The rsa_pss_rsae_* signature scheme names were introduced in
+            %% OpenSSL 1.1.1. Older OpenSSL (e.g. the 1.1.0 shipped with some
+            %% WSL distributions used by the Windows CI) does not understand
+            %% them, so restricting the handshake to rsa_pss_rsae_* would make
+            %% the openssl s_client fail and the test time out. Fall back to
+            %% the broader signature_algs list that such OpenSSL supports.
+            [];
         _ ->
             HelpText = ssl_test_lib:portable_cmd("openssl", ["s_client", "--help"]),
             case string:str(HelpText, "-sigalgs") of

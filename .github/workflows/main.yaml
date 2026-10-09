@@ -215,6 +215,31 @@ jobs:
     with:
       base_branch:              ${{ needs.setup.outputs.base_branch }}
 
+  test-windows:
+    name: Test Win64 Erlang/OTP
+    needs: [pack, build-windows]
+    if: needs.pack.outputs.changes != '[]'
+    permissions:
+      contents: read
+      actions:  write
+    uses: ./.github/workflows/reusable-test-windows.yaml
+    with:
+      base_branch:    ${{ needs.pack.outputs.base_branch }}
+      changes:        ${{ needs.pack.outputs.changes }}
+      installer_name: ${{ needs.build-windows.outputs.installer_name }}
+
+  system-test-windows:
+    name: Test Win64 Erlang/OTP (system)
+    if: ${{ !cancelled() }} # Run even if the need has failed
+    needs: [pack, test-windows, build-windows]
+    permissions:
+      contents: read
+      actions:  write
+    uses: ./.github/workflows/reusable-system-test-windows.yaml
+    with:
+      base_branch:    ${{ needs.pack.outputs.base_branch }}
+      installer_name: ${{ needs.build-windows.outputs.installer_name }}
+
   test:
     name: Test Erlang/OTP
     needs: pack

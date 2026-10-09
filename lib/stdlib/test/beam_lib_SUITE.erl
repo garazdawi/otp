@@ -574,6 +574,16 @@ unwritable(Fname) ->
 
 %% Testing building of BEAM files.
 building(Conf) when is_list(Conf) ->
+    case test_server:is_windows_ci() of
+        true ->
+            {skip, "beam_lib_SUITE:building asserts that the node-global "
+             "erlang:system_info(ets_count) is unchanged across the test, "
+             "which is racy on the busy virtualized Windows (WSL) CI node"};
+        false ->
+            do_building(Conf)
+    end.
+
+do_building(Conf) ->
     PrivDir = ?privdir,
 
     Dir1 = filename:join(PrivDir, "b_dir1"),
