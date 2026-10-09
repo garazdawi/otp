@@ -384,11 +384,17 @@ ifeq ($(OTP_TINY_BUILD),true)
 all_bootstraps: erl_interface emulator bootstrap_setup \
      tiny_secondary_bootstrap_copy
 else
-all_bootstraps: erl_interface emulator \
+all_bootstraps: erl_interface emulator prebuild.skip.in \
      bootstrap_setup \
      secondary_bootstrap_copy \
      tertiary_bootstrap_copy
 endif
+
+include $(ERL_TOP)/lib/erts/src/modules.mk
+
+prebuild.skip: prebuild.skip.in $(ERL_TOP)/lib/erts/src/modules.mk Makefile
+	$(V_at)cp $< $@
+	$(gen_verbose)for beam in $(PRE_LOADED_MODULES); do echo "bootstrap/lib/erts/ebin/$$beam.beam"; done >> $@
 
 #
 # Use these targets when you want to use the erl and erlc
