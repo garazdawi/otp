@@ -97,7 +97,26 @@ jobs:
                else
                   RUN_TESTS="ts:run(${APP},[batch])"
                fi
-               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ${RUN_TESTS}), erlang:halt()")
+
+               ## Some suites finish and write their verdict, but leave a Windows
+               ## process holding the WSL stdio pipe open. Log the remaining
+               ## processes before terminating Erlang so the leak can be traced.
+               VERDICT="release/tests/${APP}_test/ct_rerun_verdict"
+               (
+                  while [ ! -f "$VERDICT" ]; do sleep 5; done
+                  sleep 15
+                  echo "::warning::Test verdict exists, but erl.exe has not exited; dumping Windows processes"
+                  powershell.exe -NoProfile -Command \
+                     'Get-CimInstance Win32_Process | Where-Object { @("erl.exe", "werl.exe", "epmd.exe", "inet_gethost.exe", "conhost.exe") -contains $_.Name } | Sort-Object ParentProcessId,ProcessId | Format-List Name,ProcessId,ParentProcessId,CreationDate,ExecutablePath,CommandLine | Out-String -Width 4096'
+                  epmd.exe -names || true
+                  netstat.exe -ano || true
+                  taskkill.exe /F /T /IM erl.exe || true
+                  taskkill.exe /F /IM epmd.exe || true
+               ) &
+               WATCHDOG=$!
+               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ${RUN_TESTS}), erlang:halt()") || true
+               kill "$WATCHDOG" 2>/dev/null || true
+               wait "$WATCHDOG" 2>/dev/null || true
                VERDICT=$(find release/tests -name ct_rerun_verdict 2>/dev/null | head -1)
                if [ -n "$VERDICT" ]; then
                   echo "ct_rerun verdict: $(cat "$VERDICT")"
