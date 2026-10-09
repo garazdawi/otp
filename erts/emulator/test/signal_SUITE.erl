@@ -505,7 +505,7 @@ dirty_signal_handling(Config) when is_list(Config) ->
     %% Make sure all dirty I/O schedulers are occupied with work...
     Ps = lists:map(fun (_) ->
                            spawn(fun () ->
-                                         erts_debug:dirty_io(wait, 4000)
+                                         erts_debug:dirty_io(wait, 60000)
                                  end)
                    end, lists:seq(1, erlang:system_info(dirty_io_schedulers))),
     %% ... and wait until all of them actually execute on a dirty I/O
@@ -518,7 +518,7 @@ dirty_signal_handling(Config) when is_list(Config) ->
                     end),
     %% P ends up in the run queue waiting for a free dirty I/O scheduler...
     P = spawn(fun () ->
-                      erts_debug:dirty_io(wait, 4000)
+                      erts_debug:dirty_io(wait, 60000)
               end),
     %% current_function is added to prevent read of status from being optimized
     %% to read status directly...
