@@ -35,19 +35,19 @@ init(_Id, Opts) ->
     {ok, #state{file = File}}.
 
 on_tc_fail(Suite, Case0, _Reason, State = #state{file = File}) ->
-    Case = case Case0 of
-               {C, _Group} -> C;
-               C -> C
-           end,
+    Case = case Case0 of {C, _Group} -> C; C -> C end,
     case lists:member(Case, [init_per_suite, end_per_suite,
                              init_per_group, end_per_group,
                              init_per_testcase, end_per_testcase]) of
         true ->
             ok;
         false when File =/= undefined ->
-            _ = file:write_file(File,
-                                io_lib:format("~w ~w~n", [Suite, Case]),
-                                [append]);
+            Entry = case Case0 of
+                        {Case, Group} -> [Suite, Case, Group];
+                        Case -> [Suite, Case]
+                    end,
+            Line = string:join([atom_to_list(E) || E <- Entry], " "),
+            _ = file:write_file(File, [Line, $\n], [append]);
         false ->
             ok
     end,

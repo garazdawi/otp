@@ -164,19 +164,31 @@ ct_run_test_rerun(Dir, CommonTestArgs, N) ->
     write_rerun_verdict(Verdict),
     ok.
 
-%% Re-run one {Suite, Case} up to N times; true if it passes at least once.
+%% Re-run one failed case up to N times; preserve its group configuration when
+%% the hook reported {Suite, Case, Group}.
 passes_on_rerun(Dir, CommonTestArgs, {Suite, Case}, N) ->
+    passes_on_rerun(Dir, CommonTestArgs, Suite, Case, [], N);
+passes_on_rerun(Dir, CommonTestArgs, {Suite, Case, Group}, N) ->
+    passes_on_rerun(Dir, CommonTestArgs, Suite, Case,
+                    [{group, [[Group]]}], N).
+
+passes_on_rerun(Dir, CommonTestArgs, Suite, Case, GroupArgs, N) ->
     lists:any(
       fun(I) ->
               F = filename:join(Dir, "ct_rerun_one.txt"),
               _ = file:delete(F),
-              Args = [{dir, Dir}, {suite, Suite}, {testcase, Case}
-                      | keep_rerun_args(CommonTestArgs)],
-              io:format("=== ct_rerun: re-run ~w:~w attempt ~p/~p~n",
-                        [Suite, Case, I, N]),
+              Args = [{dir, Dir}, {suite, Suite}, {testcase, Case}]
+                     ++ GroupArgs ++ keep_rerun_args(CommonTestArgs),
+              io:format("=== ct_rerun: re-run ~w:~w~s attempt ~p/~p~n",
+                        [Suite, Case, format_rerun_group(GroupArgs), I, N]),
               _ = catch ct:run_test(add_rerun_hook(Args, F)),
               read_rerun_failed(F) =:= []
       end, lists:seq(1, N)).
+
+format_rerun_group([]) ->
+    "";
+format_rerun_group([{group, [[Group]]}]) ->
+    lists:flatten(io_lib:format(" in group ~w", [Group])).
 
 %% Keep the config-relevant args from the original run, drop the test selection
 %% and any pre-existing ct_hooks (the collector hook is added separately).
@@ -196,9 +208,10 @@ read_rerun_failed(File) ->
     case file:read_file(File) of
         {ok, Bin} ->
             lists:usort(
-              [{list_to_atom(S), list_to_atom(C)}
-               || Line <- string:lexemes(binary_to_list(Bin), "\n"),
-                  [S, C] <- [string:lexemes(Line, " ")]]);
+              [case string:lexemes(Line, " ") of
+                   [S, C] -> {list_to_atom(S), list_to_atom(C)};
+                   [S, C, G] -> {list_to_atom(S), list_to_atom(C), list_to_atom(G)}
+               end || Line <- string:lexemes(binary_to_list(Bin), "\n")]);
         _ ->
             []
     end.
@@ -208,7 +221,7 @@ write_rerun_verdict(Verdict) ->
     Text = lists:flatten(
              case Verdict of
                  {failed, L} ->
-                     ["FAIL", [io_lib:format(" ~w:~w", [S, C]) || {S, C} <- L], "\n"];
+                     ["FAIL", [format_failed_case(SC) || SC <- L], "\n"];
                  _ ->
                      "PASS\n"
              end),
@@ -220,6 +233,11 @@ write_rerun_verdict(Verdict) ->
         false -> ok;
         Path -> _ = file:write_file(Path, Text), ok
     end.
+
+format_failed_case({Suite, Case}) ->
+    io_lib:format(" ~w:~w", [Suite, Case]);
+format_failed_case({Suite, Case, Group}) ->
+    io_lib:format(" ~w:~w[~w]", [Suite, Case, Group]).
 
 %%
 %% Deletes File from Files when File is of the form .../<SUITE>_data/<file>
