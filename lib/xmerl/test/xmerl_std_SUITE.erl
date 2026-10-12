@@ -774,11 +774,17 @@ end_per_suite(Config) ->
 -endif.
 
 %% initialization before each testcase
-init_per_testcase(_TestCase,Config) ->
-    io:format("Config:~n~p",[Config]),
-    {ok, _} = file:read_file_info(filename:join([privdir(Config)])),
-    code:add_patha(privdir(Config)),
-    Config.
+init_per_testcase(TestCase,Config) ->
+    case {os:type(), TestCase} of
+        {{win32, _}, Name}
+          when Name =:= 'not-wf-sa-081'; Name =:= 'not-wf-sa-082' ->
+            {skip, "SYSTEM identifier 'nul' resolves to the Windows NUL device"};
+        _ ->
+            io:format("Config:~n~p",[Config]),
+            {ok, _} = file:read_file_info(filename:join([privdir(Config)])),
+            code:add_patha(privdir(Config)),
+            Config
+    end.
 
 
 %% clean up after each testcase
