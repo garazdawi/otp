@@ -92,12 +92,16 @@ jobs:
           fi
 
       - name: Cleanup tests
-        if: ${{ !cancelled() }}
-        run: tar czf test_results_win32.tar.gz release/tests/test_server
+        if: ${{ always() }}
+        run: |
+          if [ -d release/tests/test_server ]; then
+             tar czf test_results_win32.tar.gz release/tests/test_server
+          fi
 
       - name: Upload test results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         with:
           name: test_results_win32
           path: test_results_win32.tar.gz
+          if-no-files-found: ignore

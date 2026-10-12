@@ -143,6 +143,8 @@ jobs:
 
       - name: Run tests
         id: run-tests
+        env:
+          MATRIX_TYPE: ${{ matrix.type }}
         run: |
           set -x
           unzip -q tests.zip
@@ -154,7 +156,7 @@ jobs:
           export PATH="$PWD/.cache/openssl-${OPENSSL_VERSION}/bin:$PWD/release/win32/bin:$PATH"
           openssl version
 
-          APP="${{ matrix.type }}"
+          APP="${MATRIX_TYPE}"
           TYPE=opt
           ## Need to specialize for epmd, emulator and debug
           case "${APP}" in
@@ -206,12 +208,19 @@ jobs:
           esac
 
       - name: Cleanup tests
-        if: ${{ !cancelled() && matrix.type != 'debug' }}
-        run: tar czf ${{ matrix.type }}_win32_test_results.tar.gz release/tests/test_server
+        if: ${{ always() && matrix.type != 'debug' }}
+        env:
+          MATRIX_TYPE: ${{ matrix.type }}
+        run: |
+          if [ -d release/tests/test_server ]; then
+             tar czf "${MATRIX_TYPE}_win32_test_results.tar.gz" \
+                release/tests/test_server
+          fi
 
       - name: Upload test results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
-        if: ${{ !cancelled() && matrix.type != 'debug' }}
+        if: ${{ always() && matrix.type != 'debug' }}
         with:
           name: ${{ matrix.type }}_win32_test_results
           path: ${{ matrix.type }}_win32_test_results.tar.gz
+          if-no-files-found: ignore
