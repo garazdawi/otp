@@ -19,6 +19,11 @@
 #
 # %CopyrightEnd%
 #
+
+ifdef BOOTSTRAP
+EBIN=$(BOOTSTRAP_TOP)/lib/sasl/ebin
+endif
+
 include $(ERL_TOP)/make/target.mk
 include $(ERL_TOP)/make/$(TARGET)/otp.mk
 
@@ -79,6 +84,16 @@ clean:
 	rm -f core
 
 docs:
+
+# These files are included in the compiler used to create the primary bootstrap
+# so that the files in there don't use some old stale implementation
+primary_bootstrap_compiler: \
+  $(BOOTSTRAP_COMPILER)/ebin/systools.beam \
+  $(BOOTSTRAP_COMPILER)/ebin/systools_make.beam \
+  $(BOOTSTRAP_COMPILER)/ebin/systools_lib.beam
+
+$(BOOTSTRAP_COMPILER)/ebin/%.beam: %.erl
+	$(V_ERLC) -o $(BOOTSTRAP_COMPILER)/ebin $(ERL_COMPILE_FLAGS) $(DETERMINISM_FLAG) $<
 
 # ----------------------------------------------------
 # Special Build Targets

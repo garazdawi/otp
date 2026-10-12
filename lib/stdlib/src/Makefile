@@ -201,8 +201,8 @@ clean:
 
 docs:
 
-# This is a trick so that the preloaded files will get the correct type
-# specifications.
+# These files are included in the compiler used to create the primary bootstrap
+# so that the files in there don't use some old stale implementation
 primary_bootstrap_compiler: \
   $(BOOTSTRAP_COMPILER)/ebin/epp.beam \
   $(BOOTSTRAP_COMPILER)/ebin/erl_anno.beam \
