@@ -227,6 +227,7 @@ ci(Opts) ->
                       "lib/tools/test/crashdump_SUITE_data/ml-kem_encrypted_dump",
                       "lib/tools/test/emacs_SUITE_data/comprehensions",
                       "lib/tools/test/emacs_SUITE_data/type_specs",
+                      "make/clang_format_vsn",
                       "make/ex_doc_link",
                       "make/ex_doc.sha1sum",
                       "make/ex_doc.sha256sum",

@@ -31,11 +31,34 @@ fi
 ## This is currently used to handle search engine changes in v0.39.0
 export EX_DOC_VERSION=$($EX_DOC --version)
 
-## If EX_DOC_WARNINGS_AS_ERRORS is not explicitly turned on
-## and any .app file is missing, we turn off warnings as errors
+## If EX_DOC_WARNINGS_AS_ERRORS is not explicitly turned on and an application
+## that should have been built is missing its .app file, the repository is only
+## partially built and we turn off warnings as errors so that the build does not
+## fail.
+##
+## Applications that have been disabled never get an .app file, so they must not
+## be counted as missing. Otherwise a repository configured with for example
+## --without-javac, or simply built on a machine without a Java compiler, would
+## permanently stop treating documentation warnings as errors without saying so.
 if [ "${EX_DOC_WARNINGS_AS_ERRORS}" != "true" ]; then
-    for app in $ERL_TOP/lib/*/; do
-        if [ ! -f $app/ebin/*.app ]; then
+    SKIPPED_APPLICATIONS=" $(cat "$ERL_TOP/lib/SKIP-APPLICATIONS" 2>/dev/null | tr '\n' ' ') "
+    for app in "$ERL_TOP"/lib/*/; do
+        APPLICATION=$(basename "$app")
+
+        ## Disabled by the application's own configure
+        if [ -f "${app}SKIP" ]; then
+            continue
+        fi
+
+        ## Disabled through lib/SKIP-APPLICATIONS
+        case "${SKIPPED_APPLICATIONS}" in
+            *" ${APPLICATION} "*) continue;;
+        esac
+
+        APP_FILES=("${app}ebin"/*.app)
+        if [ ! -f "${APP_FILES[0]}" ]; then
+            echo "ex_doc_wrapper: ${APPLICATION} is not built," \
+                 "not treating ex_doc warnings as errors" >&2
             EX_DOC_WARNINGS_AS_ERRORS=false
         fi
     done

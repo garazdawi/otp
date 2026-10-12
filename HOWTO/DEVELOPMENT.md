@@ -59,12 +59,16 @@ with.
     3. [Types and Flavors](#types-and-Flavors)
     4. [cerl](#cerl)
     5. [Static analysis](#static-analysis)
-5. [Running test cases](#running-test-cases)
-6. [Writing and building documentation](#writing-and-building-documentation)
+5. [When the build lies to you](#when-the-build-lies-to-you)
+6. [Running test cases](#running-test-cases)
+    1. [Where the test logs end up](#where-the-test-logs-end-up)
+    2. [Repeating and targeting test cases](#repeating-and-targeting-test-cases)
+    3. [Testing without releasing](#testing-without-releasing)
+7. [Writing and building documentation](#writing-and-building-documentation)
     1. [Validating documentation](#validating-documentation)
-7. [Github Actions](#github-actions)
+8. [Github Actions](#github-actions)
     1. [Debugging github actions failures](#debugging-github-actions-failures)
-8. [Using Docker](#using-docker)
+9. [Using Docker](#using-docker)
     1. [Gidpod.io or VSCode dev container](#gitpod-io-or-vscode-dev-container)
 
 ## Short version
@@ -289,6 +293,14 @@ To update the primary bootstrap you do like this:
 ./otp_build update_primary [--no-commit]
 ```
 
+There is one situation where you have to update the primary bootstrap even
+though you are not extending the language: when you want to build Erlang/OTP
+*with* a compiler change in order to validate it. Until the bootstrap is
+updated, `make` uses the committed compiler from before your change, so the
+build succeeds without your change ever having been used. The same applies to
+[erts/preloaded/src](../erts/preloaded/src) and `update_preloaded`. Use
+`--no-commit` and drop the change again before you submit.
+
 *NOTE*: When submitting a PR to Erlang/OTP you will be asked to not include
 any commit updating preloaded or the primary bootstrap. This is because we
 cannot review the contents of binary files and thus cannot make sure they do
@@ -346,6 +358,17 @@ make emulator_test TYPE=debug
 Erlang/OTP repo using that TYPE or FLAVOR. That is `make TYPE=debug` for the example
 above.
 
+*NOTE*: Each type and flavor is a separate binary, and a later plain `make` only
+rebuilds the default one, so the debug or asan emulator you built earlier can be
+older than your source tree without `make` saying anything. Before you rely on a
+debug assertion or on a measurement, check what you are actually running:
+
+```bash
+bin/cerl -debug -noshell \
+  -eval 'io:format("~p ~p~n",[erlang:system_info(build_type),
+                              erlang:system_info(emu_flavor)]),halt().'
+```
+
 ### cerl
 
 `cerl` is a program available in `$ERL_TOP/bin/` that has a number of features
@@ -402,11 +425,178 @@ From the top level of Erlang/OTP you can run:
 ```
 
 This will check that the documentation is correct, that there are no
-dialyzer errors and many more things.
+dialyzer errors and many more things. Run `./otp_build check --help` for the
+list of individual checks and the `--no-*` options that turn them off, and use
+`--tests` to limit the test suite build check to the applications you touched:
+
+```bash
+./otp_build check --tests stdlib
+```
+
+Each of these checks corresponds to a [Github Actions](#github-actions) job, and
+running them locally takes minutes where a Github Actions round trip takes
+roughly half an hour. The individual checks can also be run on their own:
+
+```bash
+scripts/license-header.es ci        # license and copyright headers
+make -C erts/emulator format-check  # clang-format, JIT sources only
+(cd lib/$APPLICATION_NAME && make dialyzer)
+git diff --check                    # whitespace errors
+```
+
+`make dialyzer` builds a plt in `lib/$APPLICATION_NAME/priv/plt` from the
+applications it depends on, and rebuilds it whenever any of those have been
+rebuilt. The first run after a full build therefore takes a while.
+
+*NOTE*: The license header check is `scripts/license-header.es ci`, which is
+what Github Actions runs. `reuse lint` is a different tool with a different
+scope and will report the whole repository as non-compliant. See
+[FILE-HEADERS.md](FILE-HEADERS.md).
+
+*NOTE*: Different major versions of `clang-format` disagree about where to break
+lines, so formatting with one version and checking with another shows up as
+changes to lines you never touched. `make format-check` and `make format`
+therefore refuse to run unless `clang-format` is the major version recorded in
+`make/clang_format_vsn`, which is the version Github Actions uses. If that
+version is not the first one in your path, point at it explicitly:
+
+```bash
+make -C erts/emulator format-check CLANG_FORMAT=clang-format-14
+```
+
+Note also that `git clang-format` exits with a non-zero status when it modifies
+files, which silently ends an `&&` chain.
+
+## When the build lies to you
+
+The make system's dependency tracking is not complete, and a few build
+artifacts are committed to git rather than derived from the sources. The result
+is a class of problem where the build succeeds but does not build, or does not
+test, what you think it does. They are all easier to recognise than to debug, so
+they are collected here.
+
+**Stale object files after a header change.** The header dependencies of the
+emulator are generated in one pass rather than as a side effect of each
+compilation. That pass runs when a source file is added or removed, when
+`configure` has rewritten the `Makefile`, and when the generated sources change,
+but *not* when you add an `#include` to a file that already existed. Until the
+dependencies are generated again, changes to that header do not rebuild that
+object file, and a freshly built object can disagree with a stale one about a
+struct layout or an enum value. That shows up as assertion or crash failures
+that are impossible given the source code. If a failure makes no sense when you
+read the code, suspect the build before you suspect the code: remove the object
+files in question and any pre-compiled headers (`*.gch`), or do
+`make clean TYPE=$TYPE FLAVOR=$FLAVOR`, and build again.
+
+**A stale primary bootstrap.** The compiler in `bootstrap/` is what compiles
+Erlang/OTP. If you change `lib/compiler` and run `make`, the system is still
+compiled by the old committed compiler, so the build passes without ever
+exercising your change. See
+[Preloaded and Primary Bootstrap](#preloaded-and-primary-bootstrap).
+
+**Stale emulators of another type or flavor.** Each [type and flavor](#types-and-flavors)
+is a separate binary. A plain `make` only rebuilds the default one, so your
+debug or asan emulator can be days older than your source tree while `make`
+reports success. See [Types and Flavors](#types-and-flavors) for how to check
+which one you are running. Note that a TYPE that does not exist is rejected, so
+this is about a stale build of a real type, not a misspelled one.
+
+**Shadowed executables.** Erlang version managers put their own `erl`, `erlc`
+and `ex_doc` ahead of the ones in the source tree. When you mean to use the tree
+you are developing in, put it first:
+
+```bash
+export PATH=$ERL_TOP/bin:$PATH
+```
+
+**A clean compile is not a working build.** A miscompiled module compiles
+without complaint and fails when it runs, typically while the build is using it
+to compile something else. Check that `bin/erl` still starts before you conclude
+that a compiler or emulator change is good.
+
+When more than one of these is in play at once, `git clean -Xfdq` followed by a
+full rebuild is usually faster than working out which one you hit.
 
 ## Running test cases
 
-There is a detailed description about how to run tests in [TESTING.md](TESTING.md).
+There is a detailed description about how to run tests in [TESTING.md](TESTING.md),
+which is also where the supported way of running them is described. The rest of
+this section covers details of how the make system runs the tests. As with
+everything else in this guide, they may change without notice.
+
+### Where the test logs end up
+
+When you run `make test` in the source tree the results are written to a
+`make_test_dir` next to the application being tested:
+
+```text
+lib/$APPLICATION_NAME/make_test_dir/ct_logs/index.html
+erts/emulator/make_test_dir/ct_logs/index.html          # make emulator_test
+```
+
+`make test` prints a link to this index when it finishes, both when the tests
+pass and when they fail. The logs for an individual suite are one level further
+down, in `ct_logs/ct_run.$NODE.$TIMESTAMP/`.
+
+`make_test_dir` is generated and is ignored by git, so nothing in it should be
+edited. In particular the test specification found there is a copy; the one to
+change is in `lib/$APPLICATION_NAME/test/`.
+
+### Repeating and targeting test cases
+
+`ARGS` is read from the environment as well as from the make command line, so
+these are equivalent:
+
+```bash
+make stdlib_test ARGS="-suite lists_SUITE"
+ARGS="-suite lists_SUITE" make stdlib_test
+```
+
+The environment form is useful for targeting a single test case in an
+environment where you cannot easily change the command that is run, such as
+inside an already built container.
+
+To chase a race you can repeat the whole selection with `ct_run`'s `-repeat`
+flag. `ct_run` exits with a non-zero status if any iteration failed, so a
+successful `make` means every iteration passed:
+
+```bash
+make emulator_test ARGS="-suite signal_SUITE -case dirty_signal_handling -repeat 25"
+```
+
+Note the difference between `ERL_ARGS` and `ERL_AFLAGS` here. `ERL_ARGS` is
+passed to `ct_run` after `-erl_args` and so only reaches the node running the
+tests, whereas `ERL_FLAGS` and `ERL_AFLAGS` are picked up from the environment
+by every emulator started, including the peer nodes that the suites start
+themselves. That is how `TYPE` and `FLAVOR` reach the peers; the make system
+appends `-emu_type` and `-emu_flavor` to `ERL_AFLAGS`. It also means that a
+suite which needs to control its peers has to pass the flag on the peer's own
+command line, which takes precedence.
+
+### Testing without releasing
+
+Some applications have to be tested against a released Erlang/OTP rather than
+the source tree, because they test release handling, installation paths or code
+upgrade. Those applications set `TEST_NEEDS_RELEASE=true` in their `Makefile`:
+
+```bash
+grep -l TEST_NEEDS_RELEASE=true lib/*/Makefile
+```
+
+For them `make $APPLICATION_NAME_test` does a full release into `make_test_dir`
+first and runs the tests against that, which adds several minutes to every
+iteration.
+
+While working on a single test case you can skip that step:
+
+```bash
+make stdlib_test TEST_NEEDS_RELEASE=false ARGS="-suite lists_SUITE -case member"
+```
+
+The tests then run against the source tree instead, which is a great deal
+faster. Test cases that genuinely need a released system will fail or be skipped
+when you do this, so run them again without the override before concluding that
+a change works.
 
 ## Writing and building documentation
 
@@ -529,10 +719,38 @@ the logs of the test runs. The logs are attached to the finished run as
 `test_results`. You will find more details about why a testcase failed in
 the logs.
 
+Using the [Github CLI](https://cli.github.com):
+
+```bash
+gh run list --branch $BRANCH -R $YOUR_GITHUB_USER/otp
+gh run view $RUN_ID -R $YOUR_GITHUB_USER/otp --json status,conclusion,jobs
+gh run view $RUN_ID -R $YOUR_GITHUB_USER/otp --log-failed
+gh run download $RUN_ID -R $YOUR_GITHUB_USER/otp -n test_results
+gh run rerun $RUN_ID -R $YOUR_GITHUB_USER/otp --failed
+```
+
+After downloading `test_results`, open `make_test_dir/ct_logs/index.html` in it.
+`gh run rerun --failed` re-runs only the failed jobs and reuses the build from
+the original run, which is a lot faster than pushing again.
+
+*NOTE*: `gh` picks a repository based on the git remotes, which for a fork of
+Erlang/OTP is not necessarily your own. Pass `-R $YOUR_GITHUB_USER/otp`
+explicitly or you may be looking at runs from somewhere else.
+
+Before concluding that a change is what broke a job, look at the same job on the
+run for the parent commit. Some jobs are red for reasons that have nothing to do
+with the code, such as toolchain problems on less common platforms or API
+permissions on forks, and only the failures that are new relative to the parent
+commit are yours.
+
 ## Using Docker
 
 In order to get a reproduceable environment for building and testing you can use
-[docker](https//www.docker.com). If you are not familiar with how to use it I
+[docker](https://www.docker.com). This is also the only faithful way to check a
+change to C or C++ code before pushing it: the images build with `-Werror`
+settings and compiler versions that a plain local build does not use, so code
+that builds cleanly on your machine can still fail the corresponding Github
+Actions job. If you are not familiar with how to use it I
 would recommend [reading up a bit](https://www.docker.com/get-started) and trying
 some simple examples yourself before using it to build and test Erlang/OTP.
 

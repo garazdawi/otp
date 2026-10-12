@@ -146,6 +146,9 @@ See the [Testing](https://github.com/erlang/otp/blob/master/HOWTO/TESTING.md) an
 [Development](https://github.com/erlang/otp/blob/master/HOWTO/DEVELOPMENT.md) howtos
 for details on how to use run tests and use the Erlang/OTP make system.
 
+[AGENTS.md](AGENTS.md) is a condensed version of the same material, written for
+coding agents but useful to anyone who wants the short form.
+
 Make sure that your branch contains clean commits:
 
 * Don't make the first line in the commit message longer than 72 characters.
@@ -164,6 +167,14 @@ conflicts or include the latest changes.
 
 * Check for unnecessary whitespace before committing with `git diff --check`.
 However, do not fix preexisting whitespace errors in otherwise untouched source lines.
+
+* Check what you are about to commit with `git status` and `git diff --cached`.
+Note in particular that `git checkout <commit> -- <path>` stages what it restores,
+so it is easy to sweep unrelated files into an otherwise small commit.
+
+* When correcting a commit that is already being reviewed, add a fixup commit with
+`git commit --fixup=<commit>` and squash it with `git rebase --autosquash` before the
+final push, rather than rewriting the history that the reviewer is reading.
 
 Check your coding style:
 
