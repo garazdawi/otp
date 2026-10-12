@@ -21,6 +21,9 @@
 #
 
 ifdef BOOTSTRAP
+ifndef BOOTSTRAP_TOP
+BOOTSTRAP_TOP=$(ERL_TOP)
+endif
 EBIN=$(BOOTSTRAP_TOP)/lib/sasl/ebin
 endif
 
