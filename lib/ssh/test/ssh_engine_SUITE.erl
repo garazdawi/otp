@@ -66,6 +66,14 @@ basic_tests() ->
 
 %%--------------------------------------------------------------------
 init_per_suite(Config) ->
+    case os:type() of
+        {win32, _} ->
+            {skip, "Engine unsupported on Windows"};
+        _ ->
+            init_per_suite_1(Config)
+    end.
+
+init_per_suite_1(Config) ->
     ssh:start(),
     ?CHECK_CRYPTO(
        case crypto:info_lib() of
@@ -166,4 +174,3 @@ load_engine() ->
         {error, Error} ->
             {error, Error}
     end.
-
