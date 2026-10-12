@@ -453,10 +453,16 @@ queue_messages(Eterm from,
 	erts_proc_unlock(receiver, ERTS_PROC_LOCK_MSGQ);
     }
 
+    /*
+     * A wakeup caused by a local message send makes the receiver
+     * eligible for inline scheduling handoff...
+     */
+    erts_sched_handoff_hint_begin();
     if (last == &first->next)
         erts_proc_notify_new_message(receiver, receiver_locks);
     else
         erts_proc_notify_new_sig(receiver, state, ERTS_PSFLG_ACTIVE);
+    erts_sched_handoff_hint_end();
 }
 
 static ERTS_INLINE

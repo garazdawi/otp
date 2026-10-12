@@ -271,6 +271,13 @@ process_events(Config) when is_list(Config) ->
 schedule(Config) when is_list(Config) ->
     start_tracer(Config),
     Receiver = fun_spawn(fun receiver/0),
+    %% Make sure the receiver has reached its receive and suspended
+    %% before enabling 'running' trace. Otherwise the first scheduling
+    %% event observed may be for the initial erlang:apply/2 frame rather
+    %% than for receiver/0, depending on scheduling interleaving (for
+    %% example, the receiver may not be run in parallel before the first
+    %% trace event when scheduler inline handoff is enabled).
+    wait_until_suspended(Receiver),
     trac(Receiver, true, [running]),
 
     Receiver ! hi,
@@ -521,6 +528,17 @@ tracer_loop(RelayTo, Port) ->
             tracer_loop(RelayTo, Port);
         Other ->
             exit({bad_message,Other})
+    end.
+
+%% Wait until Pid is suspended in a receive (status 'waiting'), i.e. has
+%% executed past its initial apply frame into its message loop.
+wait_until_suspended(Pid) ->
+    case process_info(Pid, status) of
+        {status, waiting} ->
+            ok;
+        _ ->
+            receive after 1 -> ok end,
+            wait_until_suspended(Pid)
     end.
 
 fun_spawn(Fun) ->
