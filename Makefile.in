@@ -381,10 +381,10 @@ endif
 # the system is delivered in open source, the primary
 # bootstrap is not included, it requires a pre built emulator...
 ifeq ($(OTP_TINY_BUILD),true)
-all_bootstraps: erl_interface check_recreate_primary_bootstrap emulator bootstrap_setup \
+all_bootstraps: erl_interface emulator bootstrap_setup \
      tiny_secondary_bootstrap_copy
 else
-all_bootstraps: erl_interface check_recreate_primary_bootstrap emulator \
+all_bootstraps: erl_interface emulator \
      bootstrap_setup \
      secondary_bootstrap_copy \
      tertiary_bootstrap_copy
@@ -480,7 +480,7 @@ epmd_test:
 system_test:
 	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) TYPE=$(TYPE) $(MAKE) test
 
-emulator: $(PROFILE_EMU_DEPS)
+emulator: $(PROFILE_EMU_DEPS) check_recreate_primary_bootstrap
 	$(make_verbose)cd erts && ERL_TOP=$(ERL_TOP) PATH=$(BOOT_PREFIX)"$${PATH}" \
 	  $(MAKE) NO_START_SCRIPTS=true $(TYPE) FLAVOR=$(FLAVOR) PROFILE=$(PROFILE)
 
@@ -541,7 +541,7 @@ format:
 	(cd erts/emulator && ERL_TOP=$(ERL_TOP) $(MAKE) format)
 	mix format
 
-dep depend:
+dep depend: check_recreate_primary_bootstrap
 	$(make_verbose)
 	$(V_at)test X"$$ERTS_SKIP_DEPEND" = X"true" || (cd erts/emulator && PATH=$(BOOT_PREFIX)"$${PATH}" ERL_TOP=$(ERL_TOP) $(MAKE) generate)
 	$(V_at)test X"$$ERTS_SKIP_DEPEND" = X"true" || (cd erts/emulator && PATH=$(BOOT_PREFIX)"$${PATH}" ERL_TOP=$(ERL_TOP) $(MAKE) depend)
