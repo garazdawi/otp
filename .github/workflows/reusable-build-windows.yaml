@@ -59,7 +59,7 @@ jobs:
           distribution: Ubuntu-18.04
 
       - name: Install WSL dependencies
-        run: apt update && apt install -y make autoconf unzip zip
+        run: apt update && apt install -y make autoconf unzip
 
       - name: Install NSIS
         shell: cmd
@@ -202,8 +202,6 @@ jobs:
           ./otp_build debuginfo_win32
           ./otp_build installer_win32
           echo "installer_name=$(ls release/win32/otp*.exe | xargs basename)" >> $GITHUB_OUTPUT
-          make release_tests
-          zip -r tests.zip release/tests
 
       - name: Upload installer
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
@@ -214,9 +212,3 @@ jobs:
           # the default 'warn' would let a build that shipped nothing
           # pass as green (there is no in-CI consumer to catch it).
           if-no-files-found: error
-
-      - name: Upload tests
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
-        with:
-          name: otp_tests
-          path: otp/tests.zip
