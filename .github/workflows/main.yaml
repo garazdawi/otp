@@ -112,14 +112,14 @@ jobs:
     with:
       base_branch: ${{ needs.pack.outputs.base_branch }}
 
-  build-test-release:
-    name: Build Erlang/OTP test release
+  prepare-windows-tests:
+    name: Prepare Windows tests
     needs: pack
     if: needs.pack.outputs.changes != '[]'
     permissions:
       contents: read
       actions: write
-    uses: ./.github/workflows/reusable-build-test-release.yaml
+    uses: ./.github/workflows/reusable-prepare-windows-tests.yaml
     with:
       base_branch: ${{ needs.pack.outputs.base_branch }}
 
@@ -228,7 +228,7 @@ jobs:
 
   test-windows:
     name: Test Win64 Erlang/OTP
-    needs: [pack, build-windows, build-test-release]
+    needs: [pack, build-windows, prepare-windows-tests]
     if: needs.pack.outputs.changes != '[]'
     permissions:
       contents: read
@@ -242,7 +242,7 @@ jobs:
   system-test-windows:
     name: Test Win64 Erlang/OTP (system)
     if: ${{ !cancelled() }} # Run even if the need has failed
-    needs: [pack, test-windows, build-windows, build-test-release]
+    needs: [pack, test-windows, build-windows, prepare-windows-tests]
     permissions:
       contents: read
       actions:  write

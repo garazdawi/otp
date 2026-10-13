@@ -1,0 +1,106 @@
+# %CopyrightBegin%
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright Ericsson AB 2026. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# %CopyrightEnd%
+
+name: Prepare Windows tests
+run-name: "[${{ inputs.base_branch }}] Prepare Windows tests"
+
+on:
+  workflow_call:
+    inputs:
+      base_branch:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-release:
+    name: Build Erlang/OTP test release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # actions/checkout + ./.github/actions/build-base-image
+      actions: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/build-base-image
+        with:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+
+      - name: Build test release
+        run: |
+          mkdir -p test-release/release/tests
+          docker run --rm \
+            -v "$PWD/test-release:/github" \
+            otp "make TESTROOT=/github/release/tests release_tests"
+          (cd test-release && zip -q -r ../tests.zip release/tests)
+
+      - name: Upload test release
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
+        with:
+          name: otp_tests
+          path: tests.zip
+          if-no-files-found: error
+
+  build-wsl-openssl:
+    name: Build OpenSSL (WSL)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    env:
+      OPENSSL_SHA256: 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+      OPENSSL_VERSION: 3.5.9
+      WSLENV: OPENSSL_SHA256:OPENSSL_VERSION
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: Vampire/setup-wsl@6a8db447be7ed35f2f499c02c6e60ff77ef11278 # ratchet:Vampire/setup-wsl@v6.0.0
+        with:
+          distribution: Ubuntu-18.04
+
+      - name: Cache WSL OpenSSL
+        id: openssl-cache
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # ratchet:actions/cache@v5.0.3
+        with:
+          path: .cache/openssl-${{ env.OPENSSL_VERSION }}
+          key: wsl-openssl-${{ env.OPENSSL_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Build WSL OpenSSL
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        run: |
+          apt update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential curl perl
+          PREFIX="$PWD/.cache/openssl-${OPENSSL_VERSION}"
+          BUILD_DIR=$(mktemp -d)
+          trap 'rm -rf "$BUILD_DIR"' EXIT
+          ARCHIVE="openssl-${OPENSSL_VERSION}.tar.gz"
+          curl -fL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/${ARCHIVE}" -o "$BUILD_DIR/$ARCHIVE"
+          echo "${OPENSSL_SHA256}  $BUILD_DIR/$ARCHIVE" | sha256sum -c -
+          tar -xzf "$BUILD_DIR/$ARCHIVE" -C "$BUILD_DIR"
+          cd "$BUILD_DIR/openssl-${OPENSSL_VERSION}"
+          ./Configure linux-x86_64 no-shared \
+             --prefix="$PREFIX" --openssldir="$PREFIX/ssl"
+          make -j$(nproc)
+          make install_sw
