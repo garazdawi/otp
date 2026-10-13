@@ -22,7 +22,7 @@
 ifdef BOOTSTRAP
 EBIN=$(BOOTSTRAP_TOP)/lib/erts/ebin
 else
-EBIN=$(ERL_TOP)/lib/erts/ebin
+EBIN=../ebin
 endif
 
 include $(ERL_TOP)/make/target.mk
