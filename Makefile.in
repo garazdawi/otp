@@ -381,20 +381,14 @@ endif
 # the system is delivered in open source, the primary
 # bootstrap is not included, it requires a pre built emulator...
 ifeq ($(OTP_TINY_BUILD),true)
-all_bootstraps: erl_interface emulator bootstrap_setup \
+all_bootstraps: erl_interface check_recreate_primary_bootstrap emulator bootstrap_setup \
      tiny_secondary_bootstrap_copy
 else
-all_bootstraps: erl_interface emulator prebuild.keep \
+all_bootstraps: erl_interface check_recreate_primary_bootstrap emulator \
      bootstrap_setup \
      secondary_bootstrap_copy \
      tertiary_bootstrap_copy
 endif
-
-include $(ERL_TOP)/lib/erts/src/modules.mk
-
-prebuild.keep: $(ERL_TOP)/lib/erts/src/modules.mk Makefile
-	$(V_at): > $@
-	$(gen_verbose)for beam in $(PRE_LOADED_MODULES); do echo "bootstrap/lib/erts/ebin/$$beam.beam"; done >> $@
 
 #
 # Use these targets when you want to use the erl and erlc
@@ -696,7 +690,7 @@ tertiary_bootstrap_copy: tertiary_bootstrap $(foreach app, $(TERTIARY_BOOTSTRAP)
 
 
 #
-# If the source is a prebuilt delivery, no $(ERL_TOP)/bootstrap/lib
+# If the source is a prebuilt delivery, no $(ERL_TOP)/bootstrap/lib/stdlib
 # directory will exist. All applications part of the primary bootstrap
 # are delivered prebuilt though. If it is a prebuilt delivery we need
 # to recreate the primary bootstrap, from the prebuilt result.
