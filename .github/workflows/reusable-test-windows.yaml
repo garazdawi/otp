@@ -48,7 +48,7 @@ jobs:
     env:
       OPENSSL_SHA256: 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
       OPENSSL_VERSION: 3.5.9
-      WSLENV: OPENSSL_SHA256:OPENSSL_VERSION
+      WSLENV: OPENSSL_SHA256:OPENSSL_VERSION:SSH_TEST_USER:SSH_TEST_HOME
     permissions:
       contents: read
       actions: write
@@ -68,6 +68,39 @@ jobs:
       - uses: ./.github/actions/setup-wsl-runner
         with:
           installer_name: ${{ inputs.installer_name }}
+
+      - name: Install OpenSSH server
+        if: matrix.type == 'ssh'
+        shell: powershell
+        run: |
+          $capability = Get-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+          if ($capability.State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+          }
+
+          $sshDir = Join-Path $env:USERPROFILE '.ssh'
+          $privateKey = Join-Path $sshDir 'id_ed25519'
+          New-Item -ItemType Directory -Force $sshDir | Out-Null
+          if (-not (Test-Path $privateKey)) {
+            ssh-keygen.exe -q -t ed25519 -N '""' -f $privateKey
+          }
+
+          $authorizedKeys = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
+          Copy-Item "$privateKey.pub" $authorizedKeys -Force
+          icacls.exe $authorizedKeys /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F'
+
+          $firewallRule = Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue
+          if ($firewallRule) {
+            Enable-NetFirewallRule -Name 'OpenSSH-Server-In-TCP'
+          } else {
+            New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server' `
+              -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+          }
+
+          Set-Service -Name sshd -StartupType Automatic
+          Start-Service sshd
+          "SSH_TEST_USER=$env:USERNAME" >> $env:GITHUB_ENV
+          "SSH_TEST_HOME=$($env:USERPROFILE -replace '\\', '/')" >> $env:GITHUB_ENV
 
       - name: Cache WSL OpenSSL
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # ratchet:actions/cache@v5.0.3
@@ -150,7 +183,9 @@ jobs:
                   taskkill.exe /F /IM epmd.exe || true
                ) &
                WATCHDOG=$!
-               (cd release/tests/test_server && erl.exe -env USER ${USER} -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ${RUN_TESTS}), erlang:halt()") || true
+               ERL_USER="${SSH_TEST_USER:-${USER}}"
+               ERL_HOME="${SSH_TEST_HOME:-${HOME}}"
+               (cd release/tests/test_server && erl.exe -env USER "$ERL_USER" -env HOME "$ERL_HOME" -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ${RUN_TESTS}), erlang:halt()") || true
                kill "$WATCHDOG" 2>/dev/null || true
                wait "$WATCHDOG" 2>/dev/null || true
                VERDICT=$(find release/tests -name ct_rerun_verdict 2>/dev/null | head -1)
