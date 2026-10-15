@@ -205,13 +205,9 @@ add_rerun_hook(Args, FailFile) ->
                                  not (is_tuple(KV) andalso element(1, KV) =:= ct_hooks)]].
 
 read_rerun_failed(File) ->
-    case file:read_file(File) of
-        {ok, Bin} ->
-            lists:usort(
-              [case string:lexemes(Line, " ") of
-                   [S, C] -> {list_to_atom(S), list_to_atom(C)};
-                   [S, C, G] -> {list_to_atom(S), list_to_atom(C), list_to_atom(G)}
-               end || Line <- string:lexemes(binary_to_list(Bin), "\n")]);
+    case file:consult(File) of
+        {ok, Failed} ->
+            lists:usort(Failed);
         _ ->
             []
     end.

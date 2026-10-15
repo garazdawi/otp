@@ -46,8 +46,8 @@ on_tc_fail(Suite, Case0, _Reason, State = #state{file = File}) ->
                         {Case, Group} -> [Suite, Case, Group];
                         Case -> [Suite, Case]
                     end,
-            Line = string:join([atom_to_list(E) || E <- Entry], " "),
-            _ = file:write_file(File, [Line, $\n], [append]);
+            Line = io_lib:format("~0tp.~n", [list_to_tuple(Entry)]),
+            _ = file:write_file(File, Line, [append]);
         false ->
             ok
     end,
