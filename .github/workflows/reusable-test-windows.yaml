@@ -46,9 +46,7 @@ jobs:
       run:
         shell: wsl-bash {0}
     env:
-      OPENSSL_SHA256: 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
-      OPENSSL_VERSION: 3.5.9
-      WSLENV: OPENSSL_SHA256:OPENSSL_VERSION:SSH_TEST_USER:SSH_TEST_HOME:MATRIX_TYPE
+      WSLENV: SSH_TEST_USER:SSH_TEST_HOME:MATRIX_TYPE
     permissions:
       contents: read
       actions: write
@@ -102,33 +100,11 @@ jobs:
           "SSH_TEST_USER=$env:USERNAME" >> $env:GITHUB_ENV
           "SSH_TEST_HOME=$($env:USERPROFILE -replace '\\', '/')" >> $env:GITHUB_ENV
 
-      - name: Cache WSL OpenSSL
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # ratchet:actions/cache@v5.0.3
-        with:
-          path: .cache/openssl-${{ env.OPENSSL_VERSION }}
-          key: wsl-openssl-${{ env.OPENSSL_VERSION }}-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Build WSL OpenSSL
+      - name: Check native OpenSSL
+        shell: powershell
         run: |
-          PREFIX="$PWD/.cache/openssl-${OPENSSL_VERSION}"
-          if [ ! -x "$PREFIX/bin/openssl" ]; then
-             DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential curl perl
-             BUILD_DIR=$(mktemp -d)
-             trap 'rm -rf "$BUILD_DIR"' EXIT
-             ARCHIVE="openssl-${OPENSSL_VERSION}.tar.gz"
-             curl -fL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/${ARCHIVE}" -o "$BUILD_DIR/$ARCHIVE"
-             echo "${OPENSSL_SHA256}  $BUILD_DIR/$ARCHIVE" | sha256sum -c -
-             tar -xzf "$BUILD_DIR/$ARCHIVE" -C "$BUILD_DIR"
-             (
-                cd "$BUILD_DIR/openssl-${OPENSSL_VERSION}"
-                ./Configure linux-x86_64 no-shared \
-                   --prefix="$PREFIX" --openssldir="$PREFIX/ssl"
-                make -j$(nproc)
-                make install_sw
-             )
-          fi
-          ln -sf "$PREFIX/bin/openssl" /usr/local/bin/openssl
-          "$PREFIX/bin/openssl" version -a
+          $openssl = (Get-Command openssl.exe -ErrorAction Stop).Source
+          & $openssl version -a
 
       - name: Run tests
         id: run-tests
@@ -142,8 +118,7 @@ jobs:
 
           eval `./otp_build env_win32 x64`
 
-          export PATH="$PWD/.cache/openssl-${OPENSSL_VERSION}/bin:$PWD/release/win32/bin:$PATH"
-          openssl version
+          export PATH="$PWD/release/win32/bin:$PATH"
 
           APP="${MATRIX_TYPE}"
           TYPE=opt

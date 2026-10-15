@@ -3679,7 +3679,9 @@ portable_open_port("openssl" = Exe, Args0) ->
                     {win32, _} -> true;
                     _ -> false
                 end,
-    case IsWindows andalso os:getenv("WSLENV") of
+    UseWsl = IsWindows andalso os:getenv("WSLENV") =/= false
+        andalso not test_server:is_windows_ci(),
+    case UseWsl of
         false ->
             AbsPath = os:find_executable(Exe),
             %% ?CT_LOG("open_port({spawn_executable, ~p}, [stderr_to_stdout,~n {args, \"~s\"}]).",
@@ -4232,9 +4234,10 @@ digest() ->
 kill_openssl() ->
     Res = case os:type() of
               {win32, _} ->
-                  case os:getenv("WSLENV") of
-                      false -> os:cmd("cmd.exe /C \"taskkill /IM openssl.exe /F\"");
-                      _ -> os:cmd("wsl pkill openssl")
+                  case os:getenv("WSLENV") =/= false
+                      andalso not test_server:is_windows_ci() of
+                      true -> os:cmd("wsl pkill openssl");
+                      false -> os:cmd("cmd.exe /C \"taskkill /IM openssl.exe /F\"")
                   end;
               _ ->
                   os:cmd("pkill openssl")
