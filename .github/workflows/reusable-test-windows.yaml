@@ -170,13 +170,32 @@ jobs:
                ## process holding the WSL stdio pipe open. Log the remaining
                ## processes before terminating Erlang so the leak can be traced.
                VERDICT="release/tests/${APP}_test/ct_rerun_verdict"
+               powershell.exe -NoProfile -Command \
+                  'Get-CimInstance Win32_Process | Where-Object Name -eq "conhost.exe" | Select-Object -ExpandProperty ProcessId' \
+                  > .ct_conhost_baseline
                (
                   set +x
                   while [ ! -f "$VERDICT" ]; do sleep 5; done
                   sleep 15
                   echo "::warning::Test verdict exists, but erl.exe has not exited; dumping Windows processes"
                   powershell.exe -NoProfile -Command \
-                     'Get-CimInstance Win32_Process | Where-Object { @("erl.exe", "werl.exe", "epmd.exe", "inet_gethost.exe", "conhost.exe") -contains $_.Name } | Sort-Object ParentProcessId,ProcessId | Format-List Name,ProcessId,ParentProcessId,CreationDate,ExecutablePath,CommandLine | Out-String -Width 4096'
+                     '$processes = @(Get-CimInstance Win32_Process);
+                      $byPid = @{};
+                      $processes | ForEach-Object { $byPid[[uint32]$_.ProcessId] = $_ };
+                      function Get-Ancestry($process) {
+                        $parts = @(); $seen = @{}; $current = $process;
+                        while ($null -ne $current -and -not $seen.ContainsKey([uint32]$current.ProcessId)) {
+                          $seen[[uint32]$current.ProcessId] = $true;
+                          $parts += "$($current.Name)($($current.ProcessId))";
+                          $current = $byPid[[uint32]$current.ParentProcessId]
+                        };
+                        $parts -join " <- "
+                      };
+                      $interesting = $processes | Where-Object { @("erl.exe", "werl.exe", "epmd.exe", "inet_gethost.exe", "conhost.exe") -contains $_.Name };
+                      $interesting | Sort-Object ParentProcessId,ProcessId | Select-Object Name,ProcessId,ParentProcessId,CreationDate,ExecutablePath,CommandLine,@{Name="Ancestry";Expression={ Get-Ancestry $_ }} | Format-List | Out-String -Width 4096;
+                      $baseline = @(Get-Content .ct_conhost_baseline -ErrorAction SilentlyContinue | ForEach-Object { [uint32]$_ });
+                      $orphans = @($interesting | Where-Object { $_.Name -eq "conhost.exe" -and -not $byPid.ContainsKey([uint32]$_.ParentProcessId) -and -not ($baseline -contains [uint32]$_.ProcessId) });
+                      $orphans | ForEach-Object { Write-Warning "Terminating orphaned test conhost.exe PID $($_.ProcessId)"; Stop-Process -Id $_.ProcessId -Force -ErrorAction Continue }'
                   epmd.exe -names || true
                   netstat.exe -ano || true
                   taskkill.exe /F /T /IM erl.exe || true
@@ -188,6 +207,7 @@ jobs:
                (cd release/tests/test_server && erl.exe -env USER "$ERL_USER" -env HOME "$ERL_HOME" -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ${RUN_TESTS}), erlang:halt()") || true
                kill "$WATCHDOG" 2>/dev/null || true
                wait "$WATCHDOG" 2>/dev/null || true
+               rm -f .ct_conhost_baseline
                VERDICT=$(find release/tests -name ct_rerun_verdict 2>/dev/null | head -1)
                if [ -n "$VERDICT" ]; then
                   echo "ct_rerun verdict: $(cat "$VERDICT")"
