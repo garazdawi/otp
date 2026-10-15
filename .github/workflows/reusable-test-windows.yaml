@@ -148,6 +148,31 @@ jobs:
                powershell.exe -NoProfile -Command \
                   'Get-CimInstance Win32_Process | Where-Object Name -eq "conhost.exe" | Select-Object -ExpandProperty ProcessId' \
                   > .ct_conhost_baseline
+               SAMPLER=
+               if [ "$APP" = kernel ]; then
+                  (
+                     set +x
+                     while true; do
+                        powershell.exe -NoProfile -Command \
+                           '$timestamp = [DateTime]::UtcNow.ToString("o");
+                            $cpu = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average;
+                            $os = Get-CimInstance Win32_OperatingSystem;
+                            [pscustomobject]@{Timestamp=$timestamp; CPUPercent=$cpu; FreeMemoryMB=[math]::Round($os.FreePhysicalMemory / 1024)} | Format-List;
+                            Get-CimInstance Win32_Process |
+                              Where-Object { @("erl.exe", "werl.exe", "epmd.exe", "inet_gethost.exe", "conhost.exe") -contains $_.Name } |
+                              ForEach-Object {
+                                $runtime = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue;
+                                [pscustomobject]@{
+                                  Timestamp=$timestamp; Name=$_.Name; ProcessId=$_.ProcessId; ParentProcessId=$_.ParentProcessId;
+                                  CPUSeconds=$runtime.CPU; WorkingSetMB=[math]::Round($runtime.WorkingSet64 / 1MB);
+                                  Threads=$runtime.Threads.Count; Handles=$runtime.HandleCount; CommandLine=$_.CommandLine
+                                }
+                              } | Format-Table -AutoSize | Out-String -Width 4096'
+                        sleep 60
+                     done
+                  ) > release/tests/test_server/windows_process_samples.log 2>&1 &
+                  SAMPLER=$!
+               fi
                (
                   set +x
                   while [ ! -f "$VERDICT" ]; do sleep 5; done
@@ -180,6 +205,10 @@ jobs:
                ERL_USER="${SSH_TEST_USER:-${USER}}"
                ERL_HOME="${SSH_TEST_HOME:-${HOME}}"
                (cd release/tests/test_server && erl.exe -env USER "$ERL_USER" -env HOME "$ERL_HOME" -env OTP_WINDOWS_CI true -env CT_RERUN_FAILED 2 -emu_type $TYPE -noinput -eval "ts:install()" -eval "(catch ${RUN_TESTS}), erlang:halt()") || true
+               if [ -n "$SAMPLER" ]; then
+                  kill "$SAMPLER" 2>/dev/null || true
+                  wait "$SAMPLER" 2>/dev/null || true
+               fi
                kill "$WATCHDOG" 2>/dev/null || true
                wait "$WATCHDOG" 2>/dev/null || true
                rm -f .ct_conhost_baseline
