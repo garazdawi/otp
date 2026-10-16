@@ -550,7 +550,10 @@ do_buffer_size(Config) when is_list(Config) ->
     Len = 256,
     Bin = list_to_binary(lists:seq(0, Len-1)),
     M = (?BF_9K) div Len,
-    SAFE = 3,
+    %% The test prepends Cnt to each datagram. Leave one complete block for
+    %% that framing byte; Windows otherwise rejects the boundary packet with
+    %% emsgsize even though the payload alone fits the receive buffer.
+    SAFE = 4,
     LONG = 1,
     Spec0 =
 	[
