@@ -434,7 +434,12 @@ sshd_simple_exec(Config) ->
           3),
     success = ssh_connection:exec(ConnectionRef, ChannelId0,
 				  "echo testing", infinity),
-    Data0 = {ssh_cm, ConnectionRef, {data, ChannelId0, 0, <<"testing\n">>}},
+    Newline = case os:type() of
+                  {win32, _} -> <<"\r\n">>;
+                  _ -> <<"\n">>
+              end,
+    Data0 = {ssh_cm, ConnectionRef,
+             {data, ChannelId0, 0, <<"testing", Newline/binary>>}},
     case ssh_test_lib:receive_exec_result(Data0) of
 	expected ->
 	    ssh_test_lib:receive_exec_end(ConnectionRef, ChannelId0);
@@ -453,7 +458,8 @@ sshd_simple_exec(Config) ->
           3),
     success = ssh_connection:exec(ConnectionRef, ChannelId1,
 				  "echo testing1", infinity),
-    Data1 = {ssh_cm, ConnectionRef, {data, ChannelId1, 0, <<"testing1\n">>}},
+    Data1 = {ssh_cm, ConnectionRef,
+             {data, ChannelId1, 0, <<"testing1", Newline/binary>>}},
     case ssh_test_lib:receive_exec_result(Data1) of
 	expected ->
 	    ssh_test_lib:receive_exec_end(ConnectionRef, ChannelId1);

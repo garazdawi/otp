@@ -91,16 +91,20 @@ jobs:
             mv make_test_dir/${APP}_test "make_test_dir/${MATRIX_TYPE}_test"
           fi
       - name: Cleanup tests
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         env:
           MATRIX_TYPE: ${{ matrix.type }}
         run: |
-          rm -rf make_test_dir/otp || true
-          sudo bash -c "chown -R `whoami` make_test_dir && chmod -R +r make_test_dir"
-          tar czf ${MATRIX_TYPE}_test_results.tar.gz make_test_dir
+          if [ -d make_test_dir ]; then
+            rm -rf make_test_dir/otp || true
+            sudo chown -R "$(whoami)" make_test_dir || true
+            sudo chmod -R +r make_test_dir || true
+            tar czf "${MATRIX_TYPE}_test_results.tar.gz" make_test_dir
+          fi
       - name: Upload test results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         with:
           name: ${{ matrix.type }}_test_results
           path: ${{ matrix.type }}_test_results.tar.gz
+          if-no-files-found: ignore

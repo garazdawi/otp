@@ -1320,7 +1320,11 @@ verify_openssh_loop(Host, Config, Retries, Delay) ->
             [{peer, {_HostName,{IPx,Portx}}}] =
                 ssh:connection_info(Connection,[peer]),
             ssh:close(Connection),
-            [{w2l, fun w2l/1},
+            W2L = case test_server:is_windows_ci() of
+                      true -> fun(X) -> X end;
+                      false -> fun w2l/1
+                  end,
+            [{w2l, W2L},
              {peer, {fmt_host(IPx),Portx}}, {group, openssh_server} | Config];
         {error,"Key exchange failed"} ->
             {skip, "openssh server doesn't support the tested kex algorithm"};

@@ -42,6 +42,7 @@ TS_MODULES= \
 	ts_autoconf_win32 \
 	ts_install \
 	ts_install_cth \
+        ct_rerun_cth \
 	ts_benchmark
 
 TARGET_MODULES= $(MODULES:%=$(EBIN)/%)
@@ -92,4 +93,3 @@ release_tests_spec: opt
 	$(INSTALL_SCRIPT) $(PROGRAMS) "$(RELEASE_PATH)/test_server"
 
 release_docs_spec:
-

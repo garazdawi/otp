@@ -405,6 +405,13 @@ t_sendfile_closeduring(Config) ->
                                  when is_integer(Size) ->
                                    ?P("send -> epipe (~w)", [Size]),
                                    ok;
+                               {error, einval} ->
+                                   %% Windows can report a socket that is
+                                   %% closed mid-sendfile as einval; on other
+                                   %% platforms this match fails the test.
+                                   {win32, _} = os:type(),
+                                   ?P("send -> einval (windows)"),
+                                   ok;
 			       {ok, Size}  when is_integer(Size) ->
                                    ?P("send -> ok (~w)", [Size]),
 				   ok

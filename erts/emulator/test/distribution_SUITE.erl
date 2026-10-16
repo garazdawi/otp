@@ -3532,14 +3532,15 @@ async_dist_flag_test(Node, Default) when is_atom(Node), is_boolean(Default) ->
     ok.
 
 async_dist_port_dctrlr(Config) when is_list(Config) ->
-    {ok, RecvPeer, RecvNode} = ?CT_PEER(),
+    {ok, RecvPeer, RecvNode} = ?CT_PEER(dist_buffer_args()),
     ok = async_dist_test(RecvNode),
     peer:stop(RecvPeer),
     ok.
 
 async_dist_proc_dctrlr(Config) when is_list(Config) ->
-    {ok, SendPeer, SendNode} = ?CT_PEER(["-proto_dist", "gen_tcp"]),
-    {ok, RecvPeer, RecvNode} = ?CT_PEER(["-proto_dist", "gen_tcp"]),
+    PeerArgs = ["-proto_dist", "gen_tcp" | dist_buffer_args()],
+    {ok, SendPeer, SendNode} = ?CT_PEER(PeerArgs),
+    {ok, RecvPeer, RecvNode} = ?CT_PEER(PeerArgs),
     {Pid, Mon} = spawn_monitor(SendNode,
                                fun () ->
                                        ok = async_dist_test(RecvNode),
@@ -3552,6 +3553,11 @@ async_dist_proc_dctrlr(Config) when is_list(Config) ->
     peer:stop(SendPeer),
     peer:stop(RecvPeer),
     ok.
+
+dist_buffer_args() ->
+    DistBuffer = "[{sndbuf,4096},{recbuf,4096}]",
+    ["-kernel", "inet_dist_connect_options", DistBuffer,
+     "-kernel", "inet_dist_listen_options", DistBuffer].
 
 async_dist_test(Node) ->
     Scale = case round(test_server:timetrap_scale_factor()/3) of

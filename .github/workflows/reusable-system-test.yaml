@@ -58,6 +58,9 @@ jobs:
           shopt -s nullglob
           mkdir -p make_test_dir
           for file in *_test_results/*.tar.gz; do
+            case "${file}" in
+              *_win32_test_results/*) continue ;;
+            esac
             tar xzf $file
           done
           docker run -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
@@ -76,26 +79,30 @@ jobs:
             -v $PWD/make_test_dir:/buildroot/otp/erts/make_test_dir otp \
             "make system_test"
       - name: Cleanup tests
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         run: |
-          rm -rf make_test_dir/otp || true
-          tar czf test_results.tar.gz make_test_dir
-          # Translate file="/buildroot/otp/lib/os_mon/make_test_dir/os_mon_test/cpu_sup_SUITE.erl"
-          # to file="lib/os_mon/test/cpu_sup_SUITE.erl"
-          sed -i -e 's:file="/buildroot/otp/:file=":g' \
-              -e 's:\(file="[^/]*/[^/]*/\)make_test_dir/[^/]*:\1test:g' \
-              -e 's:\(file="erts/\)make_test_dir/[^/]*:\1test:g' \
-              make_test_dir/*_junit.xml
+          if [ -d make_test_dir ]; then
+            rm -rf make_test_dir/otp || true
+            tar czf test_results.tar.gz make_test_dir
+            # Translate file="/buildroot/otp/lib/os_mon/make_test_dir/os_mon_test/cpu_sup_SUITE.erl"
+            # to file="lib/os_mon/test/cpu_sup_SUITE.erl"
+            sed -i -e 's:file="/buildroot/otp/:file=":g' \
+                -e 's:\(file="[^/]*/[^/]*/\)make_test_dir/[^/]*:\1test:g' \
+                -e 's:\(file="erts/\)make_test_dir/[^/]*:\1test:g' \
+                make_test_dir/*_junit.xml || true
+          fi
       - name: Upload test results
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         with:
           name: test_results
           path: test_results.tar.gz
+          if-no-files-found: ignore
       - name: Upload Test Results
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # ratchet:actions/upload-artifact@v6.0.0
         with:
           name: Unit Test Results
           path: |
             make_test_dir/*_junit.xml
+          if-no-files-found: ignore

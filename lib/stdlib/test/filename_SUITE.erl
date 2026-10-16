@@ -1020,10 +1020,7 @@ check_basedir_xdg([Type|Types]) ->
     Opt  = #{os=>linux},
     Key  = basedir_xdg_env(Type),
     io:format("type: ~p~n", [Type]),
-    Home = case os:getenv("WSLENV") of
-               false -> os:getenv("HOME");
-               _ -> os:getenv("USERPROFILE")
-           end,
+    Home = os:getenv("HOME"),
     NDir = "/some/absolute/path",
     DefPath = basedir_xdg_def(Type,Home,Name),
     EnvPath = case Type of

@@ -112,6 +112,17 @@ jobs:
     with:
       base_branch: ${{ needs.pack.outputs.base_branch }}
 
+  prepare-windows-tests:
+    name: Prepare Windows tests
+    needs: pack
+    if: needs.pack.outputs.changes != '[]'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/reusable-prepare-windows-tests.yaml
+    with:
+      base_branch: ${{ needs.pack.outputs.base_branch }}
+
   build-flavors:
     name: Build Erlang/OTP (Types and Flavors)
     needs: pack
@@ -179,7 +190,7 @@ jobs:
   solaris:
     name: Build Erlang/OTP (Solaris)
     needs: pack
-    if: needs.pack.outputs.build-c-code == 'true' && false # Temporarily disable Solaris build as the VM image is currently broken
+    if: needs.pack.outputs.build-c-code == 'true'
     permissions:
       contents: read
       actions: read
@@ -214,6 +225,31 @@ jobs:
     uses: ./.github/workflows/reusable-static-analysis.yaml
     with:
       base_branch:              ${{ needs.setup.outputs.base_branch }}
+
+  test-windows:
+    name: Test Win64 Erlang/OTP
+    needs: [pack, build-windows, prepare-windows-tests]
+    if: needs.pack.outputs.changes != '[]'
+    permissions:
+      contents: read
+      actions:  write
+    uses: ./.github/workflows/reusable-test-windows.yaml
+    with:
+      base_branch:    ${{ needs.pack.outputs.base_branch }}
+      changes:        ${{ needs.pack.outputs.changes }}
+      installer_name: ${{ needs.build-windows.outputs.installer_name }}
+
+  system-test-windows:
+    name: Test Win64 Erlang/OTP (system)
+    if: ${{ !cancelled() }} # Run even if the need has failed
+    needs: [pack, test-windows, build-windows, prepare-windows-tests]
+    permissions:
+      contents: read
+      actions:  write
+    uses: ./.github/workflows/reusable-system-test-windows.yaml
+    with:
+      base_branch:    ${{ needs.pack.outputs.base_branch }}
+      installer_name: ${{ needs.build-windows.outputs.installer_name }}
 
   test:
     name: Test Erlang/OTP

@@ -345,7 +345,7 @@ busy_dist_port_monitor(Config) when is_list(Config) ->
                  _ -> false
              end,
 
-    {ok, PeerA, A} = ?CT_PEER(),
+    {ok, PeerA, A} = ?CT_PEER(dist_buffer_args()),
     TP1 = spawn(A, ?MODULE, test_proc, []),
     %% Check monitor over busy port
     M1 = suspend_on_busy_test(A,
@@ -386,7 +386,7 @@ busy_dist_port_link(Config) when is_list(Config) ->
                  _ -> false
              end,
 
-    {ok, PeerA, A} = ?CT_PEER(),
+    {ok, PeerA, A} = ?CT_PEER(dist_buffer_args()),
     TP1 = spawn(A, ?MODULE, test_proc, []),
     %% Check link over busy port
     suspend_on_busy_test(A,
@@ -422,6 +422,11 @@ busy_dist_port_link(Config) when is_list(Config) ->
     peer:stop(PeerA),
     stop_busy_dist_port_tracer(Tracer),
     ok.
+
+dist_buffer_args() ->
+    DistBuffer = "[{sndbuf,4096},{recbuf,4096}]",
+    ["-kernel", "inet_dist_connect_options", DistBuffer,
+     "-kernel", "inet_dist_listen_options", DistBuffer].
 
 
 otp_5772_link(Config) when is_list(Config) ->
