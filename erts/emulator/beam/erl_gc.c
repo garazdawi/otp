@@ -3285,6 +3285,8 @@ sweep_off_heap(Process *p, int fullsweep)
         p->bin_old_vheap = 0;
         p->bin_old_vheap_sz = next_vheap_size(p, MSO(p).overhead,
                                               p->bin_old_vheap_sz);
+    } else {
+        fprintf(stderr,"Minor sweep: bin_vheap=%lu, overhead=%lu\n", bin_vheap, MSO(p).overhead);
     }
     p->bin_vheap_sz     = next_vheap_size(p, bin_vheap, p->bin_vheap_sz);
     MSO(p).overhead     = bin_vheap;
