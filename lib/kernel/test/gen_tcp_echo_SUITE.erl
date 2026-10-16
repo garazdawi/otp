@@ -640,9 +640,8 @@ slow_echoer_loop(Sock) ->
 
 slow_send(Sock, [C|Rest]) ->
     ok = gen_tcp:send(Sock, [C]),
-    receive after 1 ->
-		    slow_send(Sock, Rest)
-	    end;
+    erlang:yield(),
+    slow_send(Sock, Rest);
 slow_send(_, []) ->
     ok.
 
