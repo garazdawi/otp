@@ -311,7 +311,11 @@ many_restarts() ->
     [{timetrap,{minutes,16}}].
 
 many_restarts(Config) when is_list(Config) ->
-    {ok, Peer, Node} = ?CT_PEER(#{connection => standard_io}),
+    %% Closing the original standard I/O channel does not reliably stop a
+    %% peer after init:restart/0 has replaced its system processes. Request a
+    %% graceful shutdown through the control channel instead.
+    {ok, Peer, Node} = ?CT_PEER(#{connection => standard_io,
+                                  shutdown => 10000}),
     loop_restart(50,Peer,Node,rpc:call(Node,erlang,whereis,[logger])),
     peer:stop(Peer),
     ok.
