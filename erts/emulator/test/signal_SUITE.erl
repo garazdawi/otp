@@ -512,8 +512,13 @@ dirty_signal_handling(Config) when is_list(Config) ->
     %% scheduler.
     ok = wait_until(fun () ->
                             lists:all(fun (Px) ->
-                                              {status, running}
-                                                  == process_info(Px, status)
+                                              [{status, running},
+                                               {current_function,
+                                                {erts_debug, dirty_io, 2}}]
+                                                  == process_info(
+                                                       Px,
+                                                       [status,
+                                                        current_function])
                                       end, Ps)
                     end),
     %% P ends up in the run queue waiting for a free dirty I/O scheduler...
