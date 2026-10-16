@@ -122,7 +122,11 @@ init_per_testcase(_TestCase, Config)  ->
     case AntiReplay of
         undefined -> undefined;
         _ ->
-            ct:sleep({seconds, 2 * ?LIFETIME})
+            %% These cases do not exercise warm-up. Advance both windows
+            %% explicitly instead of relying on scheduler-sensitive timers.
+            Pid ! rotate_bloom_filters,
+            Pid ! rotate_bloom_filters,
+            ok
     end,
     [{server_pid, Pid}, {listen_socket, ListenSocket} | Config].
 
