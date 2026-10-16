@@ -3279,16 +3279,13 @@ sweep_off_heap(Process *p, int fullsweep)
         }
     }
 
+    p->bin_vheap_sz     = next_vheap_size(p, bin_vheap, p->bin_vheap_sz);
     if (fullsweep) {
-        erts_fprintf(stderr,"%T: Full sweep: bin_vheap=%lu, overhead=%lu\n", p->common.id, bin_vheap, MSO(p).overhead);
         ASSERT(p->bin_old_vheap == orig_bin_old_vheap);
         p->bin_old_vheap = 0;
-        p->bin_old_vheap_sz = next_vheap_size(p, MSO(p).overhead,
-                                              p->bin_old_vheap_sz);
-    } else {
-        erts_fprintf(stderr,"%T: Minor sweep: bin_vheap=%lu, overhead=%lu\n", p->common.id, bin_vheap, MSO(p).overhead);
+        p->bin_old_vheap_sz = next_vheap_size(p, p->bin_vheap_sz,
+                                              p->bin_vheap_sz);
     }
-    p->bin_vheap_sz     = next_vheap_size(p, bin_vheap, p->bin_vheap_sz);
     MSO(p).overhead     = bin_vheap;
 }
 

@@ -33,6 +33,8 @@
     grow_heap/1,
     grow_stack/1,
     grow_stack_heap/1,
+    binary_vheap_gc/1,
+    binary_vheap_shrink/1,
     max_heap_size/1,
     max_heap_size_large_hfrag/1,
     minor_major_gc_option_async/1,
@@ -46,7 +48,8 @@ suite() ->
     [{ct_hooks,[ts_install_cth]}].
 
 all() -> 
-    [grow_heap, grow_stack, grow_stack_heap, max_heap_size,
+    [grow_heap, grow_stack, grow_stack_heap,
+     binary_vheap_gc, binary_vheap_shrink, max_heap_size,
      max_heap_size_large_hfrag,
     minor_major_gc_option_self,
     minor_major_gc_option_async, gc_signal_order, gc_dirty_exec_proc,
@@ -181,6 +184,129 @@ show_heap(String) ->
     {heap_size, HSize}=process_info(self(), heap_size),
     {stack_size, SSize}=process_info(self(), stack_size),
     io:format("Heap/Stack "++String++"~p/~p", [HSize, SSize]).
+
+binary_vheap_gc(_Config) ->
+    #{initial := Initial,
+      grown := Grown,
+      promoted := Promoted,
+      major := Major,
+      first_minor := FirstMinor,
+      second_minor := SecondMinor} = run_binary_vheap_test(gc),
+
+    %% Both generations should grow to accommodate live binaries, with room
+    %% in the old generation for binaries promoted by a minor collection.
+    ?assert(vheap_block_size(Grown) > vheap_block_size(Initial)),
+    ?assert(old_vheap_block_size(Grown) > old_vheap_block_size(Initial)),
+    ?assert(old_vheap_block_size(Grown) > vheap_block_size(Grown)),
+    ?assert(vheap_size(Grown) > vheap_block_size(Initial)),
+
+    %% The binary fits after promotion, so consecutive requested minor
+    %% collections must not turn into a major collection.
+    ?assert(old_vheap_size(Promoted) > 0),
+    ?assert(old_vheap_size(Promoted) < old_vheap_block_size(Promoted)),
+    ?assertEqual(1, maps:get(minor_gcs, Promoted)),
+
+    ?assertEqual(0, old_vheap_size(Major)),
+    ?assert(vheap_size(Major) > 0),
+    ?assertEqual(0, maps:get(minor_gcs, Major)),
+
+    ?assert(old_vheap_size(FirstMinor) > 0),
+    ?assert(old_vheap_size(FirstMinor) < old_vheap_block_size(FirstMinor)),
+    ?assertEqual(1, maps:get(minor_gcs, FirstMinor)),
+    ?assertEqual(2, maps:get(minor_gcs, SecondMinor)),
+    ok.
+
+binary_vheap_shrink(_Config) ->
+    #{grown := Grown, shrunk := Shrunk} = run_binary_vheap_test(shrink),
+    [First | _] = Shrunk,
+    Last = lists:last(Shrunk),
+
+    %% Once the binary dies, both limits should only move downwards.
+    ?assert(vheap_block_size(First) =< vheap_block_size(Grown)),
+    ?assert(old_vheap_block_size(First) =< old_vheap_block_size(Grown)),
+    ?assert(vheap_block_size(Last) < vheap_block_size(Grown)),
+    ?assert(old_vheap_block_size(Last) < old_vheap_block_size(Grown)),
+    ?assertEqual(0, vheap_size(Last)),
+    ?assertEqual(0, old_vheap_size(Last)),
+    assert_vheap_shrinks(Shrunk),
+    ok.
+
+run_binary_vheap_test(Test) ->
+    Parent = self(),
+    {Pid, Monitor} = spawn_opt(
+                       fun() ->
+                               Parent ! {self(), binary_vheap_test(Test)}
+                       end,
+                       [monitor, {min_heap_size, 100000}]),
+    receive
+        {Pid, Result} ->
+            erlang:demonitor(Monitor, [flush]),
+            Result;
+        {'DOWN', Monitor, process, Pid, Reason} ->
+            ct:fail({binary_vheap_test_failed, Reason})
+    after 10000 ->
+            ct:fail(binary_vheap_test_timeout)
+    end.
+
+binary_vheap_test(Test) ->
+    Initial = garbage_collection_info(),
+    WordSize = erlang:system_info(wordsize),
+    BinarySize = (vheap_block_size(Initial) + 1) * WordSize,
+    Binary = binary:copy(<<0>>, BinarySize),
+
+    true = erlang:garbage_collect(self(), [{type, major}]),
+    Grown = garbage_collection_info(),
+    case Test of
+        gc ->
+            true = erlang:garbage_collect(self(), [{type, minor}]),
+            Promoted = garbage_collection_info(),
+            true = erlang:garbage_collect(self(), [{type, major}]),
+            Major = garbage_collection_info(),
+            true = erlang:garbage_collect(self(), [{type, minor}]),
+            FirstMinor = garbage_collection_info(),
+            true = erlang:garbage_collect(self(), [{type, minor}]),
+            SecondMinor = garbage_collection_info(),
+            0 = binary:last(Binary),
+            #{initial => Initial,
+              grown => Grown,
+              promoted => Promoted,
+              major => Major,
+              first_minor => FirstMinor,
+              second_minor => SecondMinor};
+        shrink ->
+            0 = binary:last(Binary),
+            binary_vheap_shrink(Grown, 10, [])
+    end.
+
+binary_vheap_shrink(Grown, Count, Acc) ->
+    true = erlang:garbage_collect(self(), [{type, major}]),
+    Info = garbage_collection_info(),
+    case Count =:= 1 orelse
+         (vheap_block_size(Info) < vheap_block_size(Grown) andalso
+          old_vheap_block_size(Info) < old_vheap_block_size(Grown)) of
+        true ->
+            #{grown => Grown, shrunk => lists:reverse([Info | Acc])};
+        false ->
+            binary_vheap_shrink(Grown, Count - 1, [Info | Acc])
+    end.
+
+garbage_collection_info() ->
+    {garbage_collection_info, Info} =
+        process_info(self(), garbage_collection_info),
+    {garbage_collection, GC} = process_info(self(), garbage_collection),
+    maps:from_list([{minor_gcs, proplists:get_value(minor_gcs, GC)} | Info]).
+
+vheap_size(Info) -> maps:get(bin_vheap_size, Info).
+vheap_block_size(Info) -> maps:get(bin_vheap_block_size, Info).
+old_vheap_size(Info) -> maps:get(bin_old_vheap_size, Info).
+old_vheap_block_size(Info) -> maps:get(bin_old_vheap_block_size, Info).
+
+assert_vheap_shrinks([_]) ->
+    ok;
+assert_vheap_shrinks([First, Second | Rest]) ->
+    ?assert(vheap_block_size(Second) =< vheap_block_size(First)),
+    ?assert(old_vheap_block_size(Second) =< old_vheap_block_size(First)),
+    assert_vheap_shrinks([Second | Rest]).
     
 %% Test that doing a remote GC that triggers the max heap size
 %% kills the process.
