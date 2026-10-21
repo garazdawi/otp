@@ -86,14 +86,33 @@ static bool cache_reloc_is_portable(const RelocEntry *reloc) {
     }
 }
 
+static bool cache_add_u64(uint64_t a, uint64_t b, uint64_t &result) {
+    if (b > UINT64_MAX - a) {
+        return false;
+    }
+    result = a + b;
+    return true;
+}
+
+static bool cache_mul_u64(uint64_t a, uint64_t b, uint64_t &result) {
+    if (a != 0 && b > UINT64_MAX / a) {
+        return false;
+    }
+    result = a * b;
+    return true;
+}
+
 static bool build_cache_snapshot(CodeHolder &code, std::vector<uint8_t> &out) {
     static const uint8_t magic[8] = {'E', 'J', 'I', 'T', 'C', '0', '0', '1'};
     constexpr uint32_t header_size = 80;
     constexpr uint32_t section_record_size = 40;
     constexpr uint32_t reloc_record_size = 64;
     uint32_t reloc_count = 0;
+    uint64_t sections_size, relocs_offset, relocs_size;
+    uint64_t image_offset, total_size;
+    const uint64_t section_count = code.sections().size();
 
-    if (code.code_size() == SIZE_MAX || code.sections().size() > UINT32_MAX) {
+    if (code.code_size() == SIZE_MAX || section_count > UINT32_MAX) {
         return false;
     }
 
@@ -102,18 +121,39 @@ static bool build_cache_snapshot(CodeHolder &code, std::vector<uint8_t> &out) {
             return false;
         }
         if (reloc->reloc_type() != RelocType::kNone) {
+            const uint32_t source_id = reloc->source_section_id();
+            const uint32_t target_id = reloc->target_section_id();
+
+            if (reloc_count == UINT32_MAX || source_id >= section_count) {
+                return false;
+            }
+
+            const Section *source = code.section_by_id(source_id);
+            const uint64_t source_offset = reloc->source_offset();
+            const uint64_t region_size = reloc->format().region_size();
+            if (source == nullptr || source_offset >= source->buffer_size() ||
+                region_size > source->buffer_size() - source_offset) {
+                return false;
+            }
+
+            if ((reloc->reloc_type() == RelocType::kSectionRelative ||
+                 reloc->reloc_type() == RelocType::kRelToAbs) &&
+                (target_id == Globals::kInvalidId ||
+                 target_id >= section_count ||
+                 code.section_by_id(target_id) == nullptr)) {
+                return false;
+            }
             reloc_count++;
         }
     }
 
     const uint64_t sections_offset = header_size;
-    const uint64_t relocs_offset =
-            sections_offset + code.sections().size() * section_record_size;
-    const uint64_t image_offset =
-            relocs_offset + (uint64_t)reloc_count * reloc_record_size;
-    const uint64_t total_size = image_offset + code.code_size();
-
-    if (total_size > SIZE_MAX) {
+    if (!cache_mul_u64(section_count, section_record_size, sections_size) ||
+        !cache_add_u64(sections_offset, sections_size, relocs_offset) ||
+        !cache_mul_u64(reloc_count, reloc_record_size, relocs_size) ||
+        !cache_add_u64(relocs_offset, relocs_size, image_offset) ||
+        !cache_add_u64(image_offset, code.code_size(), total_size) ||
+        total_size > SIZE_MAX) {
         return false;
     }
 
@@ -171,8 +211,12 @@ static bool build_cache_snapshot(CodeHolder &code, std::vector<uint8_t> &out) {
     }
 
     const size_t old_size = out.size();
+    if (old_size != image_offset) {
+        out.clear();
+        return false;
+    }
     out.resize((size_t)total_size);
-    Error err = code.copy_flattened_data(out.data() + old_size,
+    Error err = code.copy_flattened_data(out.data() + image_offset,
                                          code.code_size(),
                                          CopySectionFlags::kPadSectionBuffer |
                                                  CopySectionFlags::kPadTargetBuffer);

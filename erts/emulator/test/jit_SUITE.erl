@@ -164,10 +164,9 @@ jit_cache_snapshot(_Config) ->
 
     true = Architecture =:= 1 orelse Architecture =:= 2,
     true = SectionCount > 0,
-    true = RelocationCount =< 16#ffffffff,
     80 = SectionsOffset,
-    true = RelocationsOffset >= SectionsOffset,
-    true = ImageOffset >= RelocationsOffset,
+    RelocationsOffset = SectionsOffset + SectionCount * 40,
+    ImageOffset = RelocationsOffset + RelocationCount * 64,
     true = byte_size(Cache) =:= ImageOffset + ImageSize,
     Checksum = erts_internal:beamfile_module_md5(Beam),
 

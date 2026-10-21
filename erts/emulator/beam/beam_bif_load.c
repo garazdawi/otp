@@ -311,6 +311,10 @@ erts_internal_beam_jit_cache_2(BIF_ALIST_2)
         hp = HAlloc(BIF_P, 3);
         BIF_RET(TUPLE2(hp, am_error, am_unsupported));
     }
+    if (!IS_BINARY_SIZE_OK(cache_size)) {
+        beam_load_prepared_free(magic);
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+    }
 
     result = erts_new_binary(BIF_P, cache_size, &cache_data);
     if (!beamasm_copy_cache_snapshot(stp->ba, cache_data, cache_size)) {
