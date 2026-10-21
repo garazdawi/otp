@@ -336,6 +336,35 @@ bool BeamAssemblerCommon::copyCacheSnapshot(byte *dst, size_t size) const {
     return true;
 }
 
+void BeamAssemblerCommon::appendCacheModuleMetadata(
+        uint64_t code_header_offset,
+        uint64_t code_end_offset,
+        uint64_t on_load_offset,
+        const std::vector<uint64_t> &function_offsets,
+        const std::vector<uint64_t> &label_offsets) {
+    static const uint8_t magic[8] = {'E', 'J', 'M', 'E', 'T', 'A', '0', '1'};
+
+    if (!cache_snapshot_supported || function_offsets.size() > UINT32_MAX ||
+        label_offsets.size() > UINT32_MAX) {
+        cache_snapshot_supported = false;
+        cache_snapshot.clear();
+        return;
+    }
+
+    cache_snapshot.insert(cache_snapshot.end(), magic, magic + sizeof(magic));
+    cache_append_u32(cache_snapshot, (uint32_t)function_offsets.size());
+    cache_append_u32(cache_snapshot, (uint32_t)label_offsets.size());
+    cache_append_u64(cache_snapshot, code_header_offset);
+    cache_append_u64(cache_snapshot, code_end_offset);
+    cache_append_u64(cache_snapshot, on_load_offset);
+    for (uint64_t offset : function_offsets) {
+        cache_append_u64(cache_snapshot, offset);
+    }
+    for (uint64_t offset : label_offsets) {
+        cache_append_u64(cache_snapshot, offset);
+    }
+}
+
 bool BeamAssemblerCommon::overlayCacheSnapshot(const byte *src,
                                                size_t size,
                                                void *writable_base,
@@ -368,10 +397,16 @@ bool BeamAssemblerCommon::overlayCacheSnapshot(const byte *src,
                        expected_image) ||
         !cache_add_u64(image_offset, image_size, expected_size) ||
         sections_offset != header_size || relocs_offset != expected_relocs ||
-        image_offset != expected_image || expected_size != size ||
+        image_offset != expected_image || expected_size > size ||
         sys_memcmp(src + sections_offset,
                    cache_snapshot.data() + sections_offset,
                    image_offset - sections_offset) != 0) {
+        return false;
+    }
+
+    if (sys_memcmp(src + expected_size,
+                   cache_snapshot.data() + expected_size,
+                   size - expected_size) != 0) {
         return false;
     }
 
@@ -510,6 +545,33 @@ void BeamModuleAssembler::codegen(JitAllocator *allocator,
     BeamCodeHeader *code_hdr_rw;
 
     BeamAssembler::codegen(allocator, executable_ptr, writable_ptr);
+
+    if (capture_cache) {
+        constexpr uint64_t invalid_offset = UINT64_MAX;
+        std::vector<uint64_t> function_offsets;
+        std::vector<uint64_t> label_offsets;
+
+        function_offsets.reserve(functions.size());
+        for (BeamLabel function : functions) {
+            function_offsets.push_back(
+                    code.label_offset_from_base(rawLabels[function]));
+        }
+
+        label_offsets.reserve(rawLabels.size());
+        for (const Label &label : rawLabels) {
+            label_offsets.push_back(label.is_valid() && code.is_label_bound(label)
+                                            ? code.label_offset_from_base(label)
+                                            : invalid_offset);
+        }
+
+        appendCacheModuleMetadata(
+                code.label_offset_from_base(code_header),
+                code.label_offset_from_base(code_end),
+                on_load.is_valid() ? code.label_offset_from_base(on_load)
+                                   : invalid_offset,
+                function_offsets,
+                label_offsets);
+    }
 
     {
         auto offset = code.label_offset_from_base(code_header);

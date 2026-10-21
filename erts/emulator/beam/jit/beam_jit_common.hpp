@@ -147,6 +147,11 @@ protected:
 public:
     size_t getCacheSnapshotSize() const;
     bool copyCacheSnapshot(byte *dst, size_t size) const;
+    void appendCacheModuleMetadata(uint64_t code_header_offset,
+                                   uint64_t code_end_offset,
+                                   uint64_t on_load_offset,
+                                   const std::vector<uint64_t> &function_offsets,
+                                   const std::vector<uint64_t> &label_offsets);
     bool overlayCacheSnapshot(const byte *src,
                               size_t size,
                               void *writable_base,
