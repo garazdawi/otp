@@ -7,14 +7,21 @@ running inside a real VM emits the sidecar. A later VM validates it, rebuilds
 VM-local state, installs its native code without running BeamAsm, and otherwise
 falls back to the ordinary loader.
 
-Start on x86-64. Prove the design with one module, then the preloaded set, then
-Kernel and STDLIB. Reuse the same code image and typed fixup model for ELF
-objects only after the sidecar path works.
+Start on AArch64/macOS, matching the available Apple Silicon development
+machine. Prove the design with one module, then the preloaded set, then Kernel
+and STDLIB. Add x86-64 as the second portability target. Reuse the same code
+image and typed fixup model for ELF objects only after the sidecar path works.
 
 This ordering proves the hard part first: whether BeamAsm output can survive a
 new process, ASLR, and different atom indices. Starting with ELF would add an
 object writer, linker integration, section discovery, static-code ownership,
 and text-patching policy before answering that question.
+
+AArch64 has harder atom-derived immediate encodings and branch veneers than
+x86-64, but the native edit/build/test loop outweighs that cost. The earlier
+prototype also provides useful AArch64 relocation coverage. Supporting x86-64
+next verifies that the format models architecture-independent semantics rather
+than accidentally encoding AArch64 implementation details.
 
 ## Checkout and prior work
 
@@ -221,7 +228,7 @@ Each step should be a focused commit that leaves ordinary BEAM loading working.
 2. Record emitted code/data size and module counts.
 3. Extend the startup benchmark to compare normal, valid-cache, and
    rejected-cache runs with warmups plus median and tail percentiles.
-4. Add an x86-64 relocation audit mode. Generate the same module in two fresh
+4. Add an AArch64 relocation audit mode. Generate the same module in two fresh
    processes, canonicalize known patch slots, and fail on unexplained byte or
    layout differences.
 5. Produce the dependency inventory above with concrete emitting call sites.
@@ -236,9 +243,9 @@ Exit criteria:
 ### 1. Add an in-VM producer primitive
 
 Add an experimental internal primitive that accepts a BEAM binary and output
-path, runs the real loader and x86-64 BeamAsm pipeline, and atomically writes a
-sidecar. Keep it under `erts_internal` or an emulator test interface until the
-format stabilizes.
+path, runs the real loader and AArch64 BeamAsm pipeline, and atomically writes
+a sidecar. Keep it under `erts_internal` or an emulator test interface until
+the format stabilizes.
 
 The producer must:
 
@@ -252,8 +259,8 @@ The producer must:
 - write to a temporary file, `fsync` as appropriate, then rename;
 - produce byte-identical output in two producer VMs with ASLR.
 
-Initial scope: one x86-64 module with local calls and simple atom constants.
-No standalone host tool, bundle format, or cross-compilation yet.
+Initial scope: one AArch64/macOS module with local calls and simple atom
+constants. No standalone host tool, bundle format, or cross-compilation yet.
 
 ### 2. Split loader preparation from emission
 
