@@ -147,6 +147,11 @@ protected:
 public:
     size_t getCacheSnapshotSize() const;
     bool copyCacheSnapshot(byte *dst, size_t size) const;
+    bool overlayCacheSnapshot(const byte *src,
+                              size_t size,
+                              void *writable_base,
+                              size_t preserve_prefix,
+                              size_t *copied) const;
 
     void embed_rodata(const char *labelName, const char *buff, size_t size);
     void embed_bss(const char *labelName, size_t size);

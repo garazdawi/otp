@@ -528,6 +528,20 @@ extern "C"
         return ba->copyCacheSnapshot(dst, size);
     }
 
+    int beamasm_overlay_cache_snapshot(void *instance,
+                                       const byte *src,
+                                       size_t size,
+                                       void *writable_base,
+                                       size_t preserve_prefix,
+                                       size_t *copied) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return ba->overlayCacheSnapshot(src,
+                                        size,
+                                        writable_base,
+                                        preserve_prefix,
+                                        copied);
+    }
+
     int beamasm_emit(void *instance, unsigned specific_op, BeamOp *op) {
         /* The argument array must be safely convertible from `BeamOpArg*` to
          * `ArgVal*` for us to reuse it directly.

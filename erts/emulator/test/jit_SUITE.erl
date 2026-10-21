@@ -22,12 +22,14 @@
 
 -module(jit_SUITE).
 
+-include_lib("common_test/include/ct.hrl").
+
 -export([suite/0, groups/0, all/0,
          init_per_suite/1, end_per_suite/1,
          init_per_group/2, end_per_group/2,
          init_per_testcase/2, end_per_testcase/2]).
 -export([annotate/1, frame_pointers/1, jmsingle/1, named_labels/1,
-         jit_cache_snapshot/1, symbols/1,
+         jit_cache_snapshot/1, jit_cache_fresh_vm/1, symbols/1,
          perfdirectory_set/1, perfdirectory_not_set/1]).
 -export([frame_pointer_workload/0]).
 
@@ -39,7 +41,8 @@ groups() ->
              perfdirectory_set, perfdirectory_not_set]}].
 
 all() ->
-    [{group, perf}, jmsingle, named_labels, jit_cache_snapshot].
+    [{group, perf}, jmsingle, named_labels,
+     jit_cache_snapshot, jit_cache_fresh_vm].
 
 init_per_suite(Config) ->
     case erlang:system_info(emu_flavor) of
@@ -183,6 +186,56 @@ jit_cache_snapshot(_Config) ->
     {error, badfile} =
         erts_internal:beam_jit_cache(?MODULE, <<"not a BEAM file">>),
     ok.
+
+jit_cache_fresh_vm(Config) ->
+    Module = jit_cache_fresh_probe,
+    Forms = [{attribute, 1, module, Module},
+             {attribute, 2, export, [{id, 1}]},
+             {function, 3, id, 1,
+              [{clause, 3, [{var, 3, 'Value'}], [],
+                [{var, 3, 'Value'}]}]}],
+    {ok, Module, Beam} = compile:forms(Forms, [binary, deterministic]),
+    {ok, Cache} = erts_internal:beam_jit_cache(Module, Beam),
+    <<First, Rest/binary>> = Cache,
+    {error, badfile} =
+        erts_internal:beam_jit_cache_overlay(
+          Module, Beam, <<(First bxor 1), Rest/binary>>),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    BeamPath = filename:join(PrivDir, "jit_cache_fresh_probe.beam"),
+    CachePath = filename:join(PrivDir, "jit_cache_fresh_probe.ejit"),
+    ok = file:write_file(BeamPath, Beam),
+    ok = file:write_file(CachePath, Cache),
+    Eval = lists:flatten(
+             io_lib:format(
+               "{ok,B}=file:read_file(~tp),"
+               "{ok,C}=file:read_file(~tp),"
+               "{ok,P,N}=erts_internal:beam_jit_cache_overlay("
+               "jit_cache_fresh_probe,B,C),"
+               "ok=erlang:finish_loading([P]),"
+               "true=erlang:module_loaded(jit_cache_fresh_probe),"
+               "42=jit_cache_fresh_probe:id(42),"
+               "io:format(\"CACHE_OK ~~p~n\",[N]),halt().",
+               [BeamPath, CachePath])),
+    Command = ct:get_progname() ++ " -noshell -eval '" ++ Eval ++ "'",
+    Port = open_port({spawn, Command},
+                     [binary, exit_status, stderr_to_stdout]),
+    {0, Output} = collect_port(Port, []),
+    {match, [CopiedText]} =
+        re:run(Output, "CACHE_OK ([0-9]+)", [{capture, [1], binary}]),
+    true = binary_to_integer(CopiedText) > 0,
+    ok.
+
+collect_port(Port, Acc) ->
+    receive
+        {Port, {data, Data}} ->
+            collect_port(Port, [Data | Acc]);
+        {Port, {exit_status, Status}} ->
+            {Status, iolist_to_binary(lists:reverse(Acc))}
+    after 30000 ->
+        port_close(Port),
+        ct:fail({fresh_vm_timeout,
+                 iolist_to_binary(lists:reverse(Acc))})
+    end.
 
 get_tmp_so_files() ->
     {ok, Home} = init:get_argument(home),

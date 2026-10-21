@@ -75,6 +75,19 @@ static void cache_append_u64(std::vector<uint8_t> &out, uint64_t value) {
     }
 }
 
+static uint32_t cache_read_u32(const byte *src) {
+    return ((uint32_t)src[0]) | ((uint32_t)src[1] << 8) |
+           ((uint32_t)src[2] << 16) | ((uint32_t)src[3] << 24);
+}
+
+static uint64_t cache_read_u64(const byte *src) {
+    uint64_t value = 0;
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        value |= (uint64_t)*src++ << shift;
+    }
+    return value;
+}
+
 static bool cache_reloc_is_portable(const RelocEntry *reloc) {
     switch (reloc->reloc_type()) {
     case RelocType::kNone:
@@ -321,6 +334,95 @@ bool BeamAssemblerCommon::copyCacheSnapshot(byte *dst, size_t size) const {
     }
     sys_memcpy(dst, cache_snapshot.data(), size);
     return true;
+}
+
+bool BeamAssemblerCommon::overlayCacheSnapshot(const byte *src,
+                                               size_t size,
+                                               void *writable_base,
+                                               size_t preserve_prefix,
+                                               size_t *copied) const {
+    constexpr size_t header_size = 80;
+    constexpr size_t section_record_size = 40;
+    constexpr size_t reloc_record_size = 64;
+
+    if (!cache_snapshot_supported || size != cache_snapshot.size() ||
+        size < header_size ||
+        sys_memcmp(src, cache_snapshot.data(), 40) != 0 ||
+        sys_memcmp(src + 56, cache_snapshot.data() + 56, 24) != 0) {
+        return false;
+    }
+
+    const uint32_t section_count = cache_read_u32(src + 20);
+    const uint32_t reloc_count = cache_read_u32(src + 24);
+    const uint64_t image_size = cache_read_u64(src + 32);
+    const uint64_t sections_offset = cache_read_u64(src + 56);
+    const uint64_t relocs_offset = cache_read_u64(src + 64);
+    const uint64_t image_offset = cache_read_u64(src + 72);
+
+    uint64_t expected_relocs, expected_image, expected_size;
+    if (!cache_add_u64(sections_offset,
+                       (uint64_t)section_count * section_record_size,
+                       expected_relocs) ||
+        !cache_add_u64(relocs_offset,
+                       (uint64_t)reloc_count * reloc_record_size,
+                       expected_image) ||
+        !cache_add_u64(image_offset, image_size, expected_size) ||
+        sections_offset != header_size || relocs_offset != expected_relocs ||
+        image_offset != expected_image || expected_size != size ||
+        sys_memcmp(src + sections_offset,
+                   cache_snapshot.data() + sections_offset,
+                   image_offset - sections_offset) != 0) {
+        return false;
+    }
+
+    std::vector<uint64_t> section_offsets(section_count, UINT64_MAX);
+    for (uint32_t i = 0; i < section_count; i++) {
+        const byte *record = src + sections_offset +
+                             (uint64_t)i * section_record_size;
+        const uint32_t id = cache_read_u32(record);
+        if (id >= section_count || section_offsets[id] != UINT64_MAX) {
+            return false;
+        }
+        section_offsets[id] = cache_read_u64(record + 16);
+    }
+
+    std::vector<uint8_t> skip((size_t)image_size, 0);
+    for (uint32_t i = 0; i < reloc_count; i++) {
+        const byte *record = src + relocs_offset +
+                             (uint64_t)i * reloc_record_size;
+        const uint32_t source_id = cache_read_u32(record + 12);
+        const uint32_t region_size = cache_read_u32(record + 20);
+        const uint64_t source_offset = cache_read_u64(record + 48);
+        uint64_t flat_offset;
+
+        if (source_id >= section_count ||
+            section_offsets[source_id] == UINT64_MAX ||
+            !cache_add_u64(section_offsets[source_id],
+                           source_offset,
+                           flat_offset) ||
+            flat_offset > image_size || region_size > image_size - flat_offset) {
+            return false;
+        }
+        sys_memset(skip.data() + flat_offset, 1, region_size);
+    }
+
+    const byte *cached_image = src + image_offset;
+    const byte *fresh_image = cache_snapshot.data() + image_offset;
+    byte *destination = (byte *)writable_base;
+    size_t copied_count = 0;
+
+    VirtMem::protect_jit_memory(VirtMem::ProtectJitAccess::kReadWrite);
+    for (size_t i = 0; i < image_size; i++) {
+        if (i >= preserve_prefix && !skip[i] && cached_image[i] != 0 &&
+            cached_image[i] == fresh_image[i]) {
+            destination[i] = cached_image[i];
+            copied_count++;
+        }
+    }
+    VirtMem::protect_jit_memory(VirtMem::ProtectJitAccess::kReadExecute);
+
+    *copied = copied_count;
+    return copied_count != 0;
 }
 
 void *BeamAssemblerCommon::getCode(Label label) {

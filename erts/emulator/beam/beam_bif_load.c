@@ -335,6 +335,83 @@ erts_internal_beam_jit_cache_2(BIF_ALIST_2)
 }
 
 BIF_RETTYPE
+erts_internal_beam_jit_cache_overlay_3(BIF_ALIST_3)
+{
+#ifdef BEAMASM
+    const byte *beam_temp = NULL, *cache_temp = NULL;
+    const byte *beam_code, *cache_data;
+    Uint beam_size, cache_size;
+    Binary *magic;
+    LoaderState *stp;
+    size_t copied, preserve_prefix;
+    Eterm prepared, reason, result;
+    Eterm *hp;
+
+    if (is_not_atom(BIF_ARG_1)) {
+        BIF_ERROR(BIF_P, BADARG);
+    }
+
+    beam_code = erts_get_aligned_binary_bytes(BIF_ARG_2,
+                                               &beam_size,
+                                               &beam_temp);
+    cache_data = erts_get_aligned_binary_bytes(BIF_ARG_3,
+                                                &cache_size,
+                                                &cache_temp);
+    if (beam_code == NULL || cache_data == NULL) {
+        erts_free_aligned_binary_bytes(beam_temp);
+        erts_free_aligned_binary_bytes(cache_temp);
+        BIF_ERROR(BIF_P, BADARG);
+    }
+
+    magic = erts_alloc_loader_state();
+    stp = ERTS_MAGIC_BIN_DATA(magic);
+    stp->jit_cache_requested = 1;
+    reason = erts_prepare_loading(magic,
+                                  BIF_P,
+                                  BIF_P->group_leader,
+                                  &BIF_ARG_1,
+                                  beam_code,
+                                  beam_size);
+    erts_free_aligned_binary_bytes(beam_temp);
+
+    if (reason != NIL) {
+        erts_free_aligned_binary_bytes(cache_temp);
+        hp = HAlloc(BIF_P, 3);
+        BIF_RET(TUPLE2(hp, am_error, reason));
+    }
+
+    preserve_prefix = offsetof(BeamCodeHeader, functions) +
+                      sizeof(BeamInstr) * stp->codev_size;
+    preserve_prefix = (preserve_prefix + 7) & ~(size_t)7;
+
+    if (cache_size < 56 ||
+        sys_memcmp(cache_data + 40, stp->beam.checksum, 16) != 0 ||
+        !beamasm_overlay_cache_snapshot(stp->ba,
+                                        cache_data,
+                                        cache_size,
+                                        stp->writable_region,
+                                        preserve_prefix,
+                                        &copied)) {
+        beam_load_prepared_free(magic);
+        erts_free_aligned_binary_bytes(cache_temp);
+        hp = HAlloc(BIF_P, 3);
+        BIF_RET(TUPLE2(hp, am_error, am_badfile));
+    }
+    erts_free_aligned_binary_bytes(cache_temp);
+
+    ASSERT(copied <= MAX_SMALL);
+    hp = HAlloc(BIF_P, ERTS_MAGIC_REF_THING_SIZE + 4);
+    prepared = erts_mk_magic_ref(&hp, &MSO(BIF_P), magic);
+    result = TUPLE3(hp, am_ok, prepared, make_small(copied));
+    erts_refc_dec(&magic->intern.refc, 1);
+    BIF_RET(result);
+#else
+    Eterm *hp = HAlloc(BIF_P, 3);
+    BIF_RET(TUPLE2(hp, am_error, am_unsupported));
+#endif
+}
+
+BIF_RETTYPE
 has_prepared_code_on_load_1(BIF_ALIST_1)
 {
     Eterm res;

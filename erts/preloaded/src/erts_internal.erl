@@ -119,7 +119,7 @@
 
 -export([crasher/6]).
 
--export([prepare_loading/2, beam_jit_cache/2,
+-export([prepare_loading/2, beam_jit_cache/2, beam_jit_cache_overlay/3,
          beamfile_chunk/2, beamfile_module_md5/1]).
 
 -export([no_aux_work_threads/0]).
@@ -1098,6 +1098,17 @@ prepare_loading(_Module, _Code) ->
       Cache :: binary(),
       Reason :: badfile | unsupported.
 beam_jit_cache(_Module, _Code) ->
+    erlang:nif_error(undefined).
+
+-spec beam_jit_cache_overlay(Module, Code, Cache) ->
+          {ok, Prepared, CopiedBytes} | {error, Reason} when
+      Module :: module(),
+      Code :: binary(),
+      Cache :: binary(),
+      Prepared :: reference(),
+      CopiedBytes :: non_neg_integer(),
+      Reason :: badfile | unsupported.
+beam_jit_cache_overlay(_Module, _Code, _Cache) ->
     erlang:nif_error(undefined).
 
 -spec beamfile_chunk(Bin, Chunk) -> binary() | undefined when

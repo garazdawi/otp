@@ -86,6 +86,12 @@ void beamasm_embed_rodata(void *ba,
 void beamasm_embed_bss(void *ba, char *labelName, size_t size);
 size_t beamasm_cache_snapshot_size(void *ba);
 int beamasm_copy_cache_snapshot(void *ba, byte *dst, size_t size);
+int beamasm_overlay_cache_snapshot(void *ba,
+                                   const byte *src,
+                                   size_t size,
+                                   void *writable_base,
+                                   size_t preserve_prefix,
+                                   size_t *copied);
 
 unsigned int beamasm_patch_catches(void *ba, char *rw_base);
 void beamasm_patch_import(void *ba,
