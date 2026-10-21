@@ -987,6 +987,11 @@ Eterm erts_has_code_on_load(Binary* magic);
 Eterm erts_prepare_loading(Binary *loader_state, Process *c_p,
                            Eterm group_leader, Eterm *modp,
                            const byte* code, Uint size);
+#ifdef BEAMASM
+Eterm erts_prepare_loading_metadata(Binary *loader_state, Process *c_p,
+                                    Eterm group_leader, Eterm *modp,
+                                    const byte* code, Uint size);
+#endif
 Eterm erts_finish_loading(Binary *loader_state, Process *c_p,
                           ErtsProcLocks c_p_locks, Eterm *modp);
 Eterm erts_preload_module(Process *c_p, ErtsProcLocks c_p_locks,

@@ -121,9 +121,10 @@ erts_preload_module(Process *c_p,
     return erts_finish_loading(magic, c_p, c_p_locks, modp);
 }
 
-Eterm
-erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
-                     Eterm* modp, const byte *code, Uint unloaded_size)
+static Eterm
+prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
+                Eterm* modp, const byte *code, Uint unloaded_size,
+                int metadata_only)
 {
     enum beamfile_read_result read_result;
     Eterm retval = am_badfile;
@@ -224,7 +225,16 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
                        "Erlang/OTP 25 or later.\n");
     }
 
-    if (!load_code(stp)) {
+    if (metadata_only) {
+#ifdef BEAMASM
+        if (!beam_load_prepare_metadata(stp)) {
+            goto load_error;
+        }
+#else
+        ERTS_ASSERT(0);
+        goto load_error;
+#endif
+    } else if (!load_code(stp)) {
         goto load_error;
     }
 
@@ -238,6 +248,25 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
 
     return retval;
 }
+
+Eterm
+erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
+                     Eterm* modp, const byte *code, Uint unloaded_size)
+{
+    return prepare_loading(magic, c_p, group_leader, modp, code,
+                           unloaded_size, 0);
+}
+
+#ifdef BEAMASM
+Eterm
+erts_prepare_loading_metadata(Binary* magic, Process *c_p,
+                              Eterm group_leader, Eterm* modp,
+                              const byte *code, Uint unloaded_size)
+{
+    return prepare_loading(magic, c_p, group_leader, modp, code,
+                           unloaded_size, 1);
+}
+#endif
 
 Eterm
 erts_finish_loading(Binary* magic, Process* c_p,
