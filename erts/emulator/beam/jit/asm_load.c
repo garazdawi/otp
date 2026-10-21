@@ -266,6 +266,12 @@ int beam_load_prepared_dtor(Binary *magic) {
         stp->labels = NULL;
     }
 
+    if (stp->jit_cache_labels) {
+        erts_free(ERTS_ALC_T_PREPARED_CODE, stp->jit_cache_labels);
+        stp->jit_cache_labels = NULL;
+        stp->jit_cache_label_count = 0;
+    }
+
     if (stp->lambda_literals) {
         erts_free(ERTS_ALC_T_PREPARED_CODE, (void *)stp->lambda_literals);
         stp->lambda_literals = NULL;

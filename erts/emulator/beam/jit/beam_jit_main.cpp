@@ -528,6 +528,32 @@ extern "C"
         return ba->copyCacheSnapshot(dst, size);
     }
 
+    int beamasm_install_cache_code(const byte *code,
+                                   size_t code_size,
+                                   const void **executable_region,
+                                   void **writable_region) {
+        if (!jit_allocator || code_size > SIZE_MAX - 16) {
+            return 0;
+        }
+
+        JitAllocator::Span span;
+        Out<JitAllocator::Span> out(span);
+        Error err = jit_allocator->alloc(out, code_size + 16);
+        if (err != Error::kOk) {
+            return 0;
+        }
+
+        *executable_region = span.rx();
+        *writable_region = span.rw();
+        VirtMem::protect_jit_memory(VirtMem::ProtectJitAccess::kReadWrite);
+        sys_memcpy(span.rw(), code, code_size);
+        return 1;
+    }
+
+    ErtsCodePtr beamasm_i_func_info_shared(void) {
+        return reinterpret_cast<ErtsCodePtr>(bga->get_i_func_info_shared());
+    }
+
     int beamasm_overlay_cache_snapshot(void *instance,
                                        const byte *src,
                                        size_t size,

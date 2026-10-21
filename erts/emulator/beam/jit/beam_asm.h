@@ -86,6 +86,11 @@ void beamasm_embed_rodata(void *ba,
 void beamasm_embed_bss(void *ba, char *labelName, size_t size);
 size_t beamasm_cache_snapshot_size(void *ba);
 int beamasm_copy_cache_snapshot(void *ba, byte *dst, size_t size);
+int beamasm_install_cache_code(const byte *code,
+                               size_t code_size,
+                               const void **executable_region,
+                               void **writable_region);
+ErtsCodePtr beamasm_i_func_info_shared(void);
 int beamasm_overlay_cache_snapshot(void *ba,
                                    const byte *src,
                                    size_t size,
