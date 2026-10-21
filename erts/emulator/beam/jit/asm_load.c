@@ -44,6 +44,21 @@
 
 static void init_label(Label *lp);
 
+static Uint32 cache_read_u32(const byte *p) {
+    return ((Uint32)p[0]) | ((Uint32)p[1] << 8) |
+           ((Uint32)p[2] << 16) | ((Uint32)p[3] << 24);
+}
+
+static Uint64 cache_read_u64(const byte *p) {
+    Uint64 value = 0;
+    int shift;
+
+    for (shift = 0; shift < 64; shift += 8) {
+        value |= (Uint64)*p++ << shift;
+    }
+    return value;
+}
+
 int beam_load_prepare_emit(LoaderState *stp) {
     stp->ba = beamasm_new_assembler(stp->module,
                                     stp->beam.code.label_count,
@@ -210,6 +225,159 @@ int beam_load_prepare_metadata(LoaderState *stp) {
     }
 
     return 1;
+}
+
+int beam_load_cache_image(LoaderState *stp,
+                          const byte *cache,
+                          size_t cache_size) {
+#if defined(__aarch64__)
+    const size_t header_size = 80;
+    const size_t section_record_size = 40;
+    const size_t reloc_record_size = 64;
+    Uint32 section_count, reloc_count, function_count, label_count;
+    Uint64 image_size, sections_offset, relocs_offset, image_offset;
+    Uint64 metadata_offset, code_header_offset, code_end_offset;
+    Uint64 on_load_offset, function_offset;
+    size_t metadata_size, code_header_size;
+    const byte *metadata, *label_data;
+    const void *exec;
+    void *rw;
+    BeamCodeHeader *code_hdr_rw;
+    const BeamCodeHeader *code_hdr_exec;
+    const ErtsCodeInfo **function_table;
+    BeamFile_ExportEntry *entry;
+    Sint64 delta;
+    Uint32 branch;
+    Uint i;
+
+    if (cache_size < header_size ||
+        sys_memcmp(cache, "EJITC001", 8) != 0 ||
+        cache_read_u32(cache + 8) != 1 ||
+        cache_read_u32(cache + 12) != header_size ||
+        cache_read_u32(cache + 16) != 1) {
+        return 0;
+    }
+
+    section_count = cache_read_u32(cache + 20);
+    reloc_count = cache_read_u32(cache + 24);
+    image_size = cache_read_u64(cache + 32);
+    sections_offset = cache_read_u64(cache + 56);
+    relocs_offset = cache_read_u64(cache + 64);
+    image_offset = cache_read_u64(cache + 72);
+
+    if (section_count == 0 || reloc_count != 0 ||
+        sections_offset != header_size ||
+        section_count > (SIZE_MAX - header_size) / section_record_size ||
+        relocs_offset != header_size +
+                                  (size_t)section_count * section_record_size ||
+        image_offset != relocs_offset +
+                                (size_t)reloc_count * reloc_record_size ||
+        image_size > SIZE_MAX - image_offset ||
+        image_offset + image_size > cache_size) {
+        return 0;
+    }
+
+    metadata_offset = image_offset + image_size;
+    if (metadata_offset > cache_size || cache_size - metadata_offset < 40) {
+        return 0;
+    }
+    metadata = cache + metadata_offset;
+    if (sys_memcmp(metadata, "EJMETA01", 8) != 0) {
+        return 0;
+    }
+
+    function_count = cache_read_u32(metadata + 8);
+    label_count = cache_read_u32(metadata + 12);
+    code_header_offset = cache_read_u64(metadata + 16);
+    code_end_offset = cache_read_u64(metadata + 24);
+    on_load_offset = cache_read_u64(metadata + 32);
+    metadata_size = 40 + (size_t)function_count * 8 +
+                    (size_t)label_count * 8;
+
+    if (function_count != 1 || stp->beam.code.function_count != 1 ||
+        label_count != stp->beam.code.label_count + 1 ||
+        metadata_size != cache_size - metadata_offset ||
+        code_header_offset != 0 || code_end_offset > image_size ||
+        code_end_offset < sizeof(BeamCodeHeader) ||
+        on_load_offset != UINT64_MAX || stp->beam.exports.count != 1 ||
+        stp->beam.imports.count != 0 || stp->beam.lambdas.count != 0 ||
+        stp->beam.static_literals.count != 0 ||
+        stp->beam.dynamic_literals.count > 1 ||
+        stp->beam.debug.item_count != 0 || stp->beam.record.record_count != 0 ||
+        stp->coverage != NULL) {
+        return 0;
+    }
+
+    function_offset = cache_read_u64(metadata + 40);
+    label_data = metadata + 40 + function_count * 8;
+    entry = &stp->beam.exports.entries[0];
+    code_header_size = offsetof(BeamCodeHeader, functions) +
+                       sizeof(BeamInstr) * stp->codev_size;
+    if (function_offset > code_end_offset - sizeof(ErtsCodeInfo) ||
+        entry->label >= label_count ||
+        cache_read_u64(label_data + entry->label * 8) >= code_end_offset ||
+        code_header_size > code_end_offset) {
+        return 0;
+    }
+
+    if (!beamasm_install_cache_code(cache + image_offset,
+                                    (size_t)code_end_offset,
+                                    &exec,
+                                    &rw)) {
+        return 0;
+    }
+
+    stp->executable_region = exec;
+    stp->writable_region = rw;
+    stp->loaded_size = (unsigned)code_end_offset;
+    stp->jit_cache_labels = erts_alloc(ERTS_ALC_T_PREPARED_CODE,
+                                       label_count * sizeof(Uint64));
+    stp->jit_cache_label_count = label_count;
+    for (i = 0; i < label_count; i++) {
+        stp->jit_cache_labels[i] = cache_read_u64(label_data + i * 8);
+    }
+
+    code_hdr_rw = (BeamCodeHeader *)rw;
+    code_hdr_exec = (const BeamCodeHeader *)exec;
+    sys_memcpy(code_hdr_rw, stp->load_hdr, code_header_size);
+    code_hdr_rw->on_load = NULL;
+    function_table = &code_hdr_rw->functions[0];
+    function_table[0] =
+            (ErtsCodeInfo *)((const byte *)exec + function_offset);
+    function_table[1] =
+            (ErtsCodeInfo *)((const byte *)exec + code_end_offset);
+
+    {
+        ErtsCodeInfo *info =
+                (ErtsCodeInfo *)((byte *)rw + function_offset);
+        info->gen_bp = NULL;
+        info->mfa.module = stp->module;
+        info->mfa.function = entry->function;
+        info->mfa.arity = entry->arity;
+    }
+
+    delta = (const byte *)beamasm_i_func_info_shared() -
+            ((const byte *)exec + function_offset);
+    if ((delta & 3) != 0 || delta < -(Sint64)(1 << 27) ||
+        delta >= (Sint64)(1 << 27)) {
+        return 0;
+    }
+    branch = 0x94000000u | (((Uint32)(delta / 4)) & 0x03ffffffu);
+    sys_memcpy((byte *)rw + function_offset, &branch, sizeof(branch));
+
+    stp->code_hdr = code_hdr_exec;
+    stp->on_load = NULL;
+    stp->jit_cache_loaded = 1;
+    beamasm_seal_module(stp->executable_region,
+                        stp->writable_region,
+                        stp->loaded_size);
+    return 1;
+#else
+    (void)stp;
+    (void)cache;
+    (void)cache_size;
+    return 0;
+#endif
 }
 
 static void init_label(Label *lp) {
@@ -1162,7 +1330,9 @@ void beam_load_finalize_code(LoaderState *stp,
     ERTS_LC_ASSERT(erts_initialized == 0 || erts_has_code_load_permission() ||
                    erts_thr_progress_is_blocking());
 
-    code_size = beamasm_get_header(stp->ba, &stp->code_hdr);
+    code_size = stp->jit_cache_loaded
+                        ? stp->loaded_size
+                        : beamasm_get_header(stp->ba, &stp->code_hdr);
     erts_total_code_size += code_size;
 
     inst_p->executable_region = stp->executable_region;
@@ -1188,7 +1358,10 @@ void beam_load_finalize_code(LoaderState *stp,
     erts_update_ranges(inst_p->code_hdr, code_size);
 
     /* Allocate catch indices and fix up all catch_yf instructions. */
-    inst_p->catches = beamasm_patch_catches(stp->ba, stp->writable_region);
+    inst_p->catches = stp->jit_cache_loaded
+                              ? BEAM_CATCHES_NIL
+                              : beamasm_patch_catches(stp->ba,
+                                                      stp->writable_region);
 
     /* Exported functions */
     staging_ix = erts_staging_code_ix();
@@ -1198,7 +1371,13 @@ void beam_load_finalize_code(LoaderState *stp,
         ErtsCodePtr address;
         Export *ep;
 
-        address = beamasm_get_code(stp->ba, entry->label);
+        if (stp->jit_cache_loaded) {
+            ASSERT(entry->label < stp->jit_cache_label_count);
+            address = (ErtsCodePtr)((const byte *)stp->executable_region +
+                                    stp->jit_cache_labels[entry->label]);
+        } else {
+            address = beamasm_get_code(stp->ba, entry->label);
+        }
         ep = erts_export_put(stp->module, entry->function, entry->arity);
 
         if (stp->on_load) {
@@ -1276,7 +1455,10 @@ void beam_load_finalize_code(LoaderState *stp,
     }
 
     /* Register debug / profiling info with external tools. */
-    inst_p->metadata = beamasm_register_metadata(stp->ba, stp->code_hdr);
+    inst_p->metadata = stp->jit_cache_loaded
+                               ? NULL
+                               : beamasm_register_metadata(stp->ba,
+                                                           stp->code_hdr);
 
     erts_seal_module(inst_p);
 

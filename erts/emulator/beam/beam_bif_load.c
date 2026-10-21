@@ -335,6 +335,83 @@ erts_internal_beam_jit_cache_2(BIF_ALIST_2)
 }
 
 BIF_RETTYPE
+erts_internal_beam_jit_cache_prepare_3(BIF_ALIST_3)
+{
+#ifdef BEAMASM
+    const byte *beam_temp = NULL, *cache_temp = NULL;
+    const byte *beam_code, *cache_data;
+    Uint beam_size, cache_size;
+    Binary *magic;
+    LoaderState *stp;
+    Eterm prepared, reason, result, cached_term;
+    Eterm *hp;
+    int cached = 0;
+
+    if (is_not_atom(BIF_ARG_1)) {
+        BIF_ERROR(BIF_P, BADARG);
+    }
+
+    beam_code = erts_get_aligned_binary_bytes(BIF_ARG_2,
+                                               &beam_size,
+                                               &beam_temp);
+    cache_data = erts_get_aligned_binary_bytes(BIF_ARG_3,
+                                                &cache_size,
+                                                &cache_temp);
+    if (beam_code == NULL || cache_data == NULL) {
+        erts_free_aligned_binary_bytes(beam_temp);
+        erts_free_aligned_binary_bytes(cache_temp);
+        BIF_ERROR(BIF_P, BADARG);
+    }
+
+    magic = erts_alloc_loader_state();
+    reason = erts_prepare_loading_metadata(magic,
+                                           BIF_P,
+                                           BIF_P->group_leader,
+                                           &BIF_ARG_1,
+                                           beam_code,
+                                           beam_size);
+    if (reason == NIL) {
+        stp = ERTS_MAGIC_BIN_DATA(magic);
+        cached = cache_size >= 56 &&
+                 sys_memcmp(cache_data + 40, stp->beam.checksum, 16) == 0 &&
+                 beam_load_cache_image(stp, cache_data, cache_size) &&
+                 stp->emitted_ops == 0;
+    }
+
+    if (reason == NIL && !cached) {
+        beam_load_prepared_free(magic);
+        magic = erts_alloc_loader_state();
+        reason = erts_prepare_loading(magic,
+                                      BIF_P,
+                                      BIF_P->group_leader,
+                                      &BIF_ARG_1,
+                                      beam_code,
+                                      beam_size);
+    }
+
+    erts_free_aligned_binary_bytes(beam_temp);
+    erts_free_aligned_binary_bytes(cache_temp);
+
+    if (reason != NIL) {
+        hp = HAlloc(BIF_P, 3);
+        BIF_RET(TUPLE2(hp, am_error, reason));
+    }
+
+    stp = ERTS_MAGIC_BIN_DATA(magic);
+    ASSERT(cached ? stp->emitted_ops == 0 : stp->emitted_ops > 0);
+    hp = HAlloc(BIF_P, ERTS_MAGIC_REF_THING_SIZE + 4);
+    prepared = erts_mk_magic_ref(&hp, &MSO(BIF_P), magic);
+    cached_term = cached ? am_true : am_false;
+    result = TUPLE3(hp, am_ok, prepared, cached_term);
+    erts_refc_dec(&magic->intern.refc, 1);
+    BIF_RET(result);
+#else
+    Eterm *hp = HAlloc(BIF_P, 3);
+    BIF_RET(TUPLE2(hp, am_error, am_unsupported));
+#endif
+}
+
+BIF_RETTYPE
 erts_internal_beam_jit_cache_overlay_3(BIF_ALIST_3)
 {
 #ifdef BEAMASM

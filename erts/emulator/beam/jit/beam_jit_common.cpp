@@ -550,25 +550,28 @@ void BeamModuleAssembler::codegen(JitAllocator *allocator,
         constexpr uint64_t invalid_offset = UINT64_MAX;
         std::vector<uint64_t> function_offsets;
         std::vector<uint64_t> label_offsets;
+        auto get_offset = [&](const Label &label) {
+            return code.is_label_valid(label) && code.is_label_bound(label)
+                           ? code.label_offset_from_base(label)
+                           : invalid_offset;
+        };
 
         function_offsets.reserve(functions.size());
         for (BeamLabel function : functions) {
-            function_offsets.push_back(
-                    code.label_offset_from_base(rawLabels[function]));
+            function_offsets.push_back(function < rawLabels.size()
+                                               ? get_offset(rawLabels[function])
+                                               : invalid_offset);
         }
 
         label_offsets.reserve(rawLabels.size());
         for (const Label &label : rawLabels) {
-            label_offsets.push_back(label.is_valid() && code.is_label_bound(label)
-                                            ? code.label_offset_from_base(label)
-                                            : invalid_offset);
+            label_offsets.push_back(get_offset(label));
         }
 
         appendCacheModuleMetadata(
-                code.label_offset_from_base(code_header),
-                code.label_offset_from_base(code_end),
-                on_load.is_valid() ? code.label_offset_from_base(on_load)
-                                   : invalid_offset,
+                get_offset(code_header),
+                get_offset(code_end),
+                get_offset(on_load),
                 function_offsets,
                 label_offsets);
     }
@@ -869,7 +872,7 @@ BeamCodeHeader *BeamModuleAssembler::getCodeHeader() {
 }
 
 const ErtsCodeInfo *BeamModuleAssembler::getOnLoad() {
-    if (on_load.is_valid()) {
+    if (code.is_label_valid(on_load) && code.is_label_bound(on_load)) {
         return erts_code_to_codeinfo((ErtsCodePtr)getCode(on_load));
     } else {
         return 0;

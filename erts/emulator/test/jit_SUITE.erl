@@ -200,17 +200,27 @@ jit_cache_snapshot(_Config) ->
 
 jit_cache_fresh_vm(Config) ->
     Module = jit_cache_fresh_probe,
-    Forms = [{attribute, 1, module, Module},
-             {attribute, 2, export, [{id, 1}]},
-             {function, 3, id, 1,
-              [{clause, 3, [{var, 3, 'Value'}], [],
-                [{var, 3, 'Value'}]}]}],
-    {ok, Module, Beam} = compile:forms(Forms, [binary, deterministic]),
+    Asm = {Module,
+           [{id, 1}],
+           [],
+           #{},
+           [{function, id, 1, 2,
+             [{label, 1},
+              {line, []},
+              {func_info, {atom, Module}, {atom, id}, 1},
+              {label, 2},
+              return]}],
+           3},
+    {ok, Beam} = beam_asm:module(Asm, [], [], []),
     {ok, Cache} = erts_internal:beam_jit_cache(Module, Beam),
     <<First, Rest/binary>> = Cache,
-    {error, badfile} =
-        erts_internal:beam_jit_cache_overlay(
+    {ok, Fallback, false} =
+        erts_internal:beam_jit_cache_prepare(
           Module, Beam, <<(First bxor 1), Rest/binary>>),
+    ok = erlang:finish_loading([Fallback]),
+    42 = Module:id(42),
+    true = code:delete(Module),
+    false = code:purge(Module),
     PrivDir = proplists:get_value(priv_dir, Config),
     BeamPath = filename:join(PrivDir, "jit_cache_fresh_probe.beam"),
     CachePath = filename:join(PrivDir, "jit_cache_fresh_probe.ejit"),
@@ -220,20 +230,18 @@ jit_cache_fresh_vm(Config) ->
              io_lib:format(
                "{ok,B}=file:read_file(~tp),"
                "{ok,C}=file:read_file(~tp),"
-               "{ok,P,N}=erts_internal:beam_jit_cache_overlay("
+               "{ok,P,true}=erts_internal:beam_jit_cache_prepare("
                "jit_cache_fresh_probe,B,C),"
                "ok=erlang:finish_loading([P]),"
                "true=erlang:module_loaded(jit_cache_fresh_probe),"
                "42=jit_cache_fresh_probe:id(42),"
-               "io:format(\"CACHE_OK ~~p~n\",[N]),halt().",
+               "io:format(\"CACHE_OK~n\",[]),halt().",
                [BeamPath, CachePath])),
     Command = ct:get_progname() ++ " -noshell -eval '" ++ Eval ++ "'",
     Port = open_port({spawn, Command},
                      [binary, exit_status, stderr_to_stdout]),
     {0, Output} = collect_port(Port, []),
-    {match, [CopiedText]} =
-        re:run(Output, "CACHE_OK ([0-9]+)", [{capture, [1], binary}]),
-    true = binary_to_integer(CopiedText) > 0,
+    {match, _} = re:run(Output, "CACHE_OK"),
     ok.
 
 collect_port(Port, Acc) ->
