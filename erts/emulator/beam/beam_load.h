@@ -59,6 +59,9 @@ int beam_load_prepared_dtor(Binary *magic);
 void beam_load_prepared_free(Binary *magic);
 
 int beam_load_prepare_emit(LoaderState *stp);
+#ifdef BEAMASM
+int beam_load_prepare_metadata(LoaderState *stp);
+#endif
 int beam_load_emit_op(LoaderState *stp, BeamOp *op);
 int beam_load_finish_emit(LoaderState *stp);
 

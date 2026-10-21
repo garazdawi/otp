@@ -45,14 +45,18 @@
 static void init_label(Label *lp);
 
 int beam_load_prepare_emit(LoaderState *stp) {
-    BeamCodeHeader *hdr;
-    int i;
-
     stp->ba = beamasm_new_assembler(stp->module,
                                     stp->beam.code.label_count,
                                     stp->beam.code.function_count,
                                     &stp->beam,
                                     stp->jit_cache_requested);
+
+    return beam_load_prepare_metadata(stp);
+}
+
+int beam_load_prepare_metadata(LoaderState *stp) {
+    BeamCodeHeader *hdr;
+    int i;
 
     /* Initialize code header */
     stp->codev_size = stp->beam.code.function_count + 1;
@@ -663,6 +667,7 @@ int beam_load_emit_op(LoaderState *stp, BeamOp *tmp_op) {
     }
 
     /* Generate assembly code for the specific instruction. */
+    stp->emitted_ops++;
     if (beamasm_emit(stp->ba, stp->specific_op, tmp_op) == 0) {
         BeamLoadError1(stp, "failed to emit asm for %d", stp->specific_op);
     }
