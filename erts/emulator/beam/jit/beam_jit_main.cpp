@@ -554,6 +554,19 @@ extern "C"
         return reinterpret_cast<ErtsCodePtr>(bga->get_i_func_info_shared());
     }
 
+    ErtsCodePtr beamasm_i_breakpoint_trampoline_shared(void) {
+        return reinterpret_cast<ErtsCodePtr>(
+                bga->get_i_breakpoint_trampoline_shared());
+    }
+
+    ErtsCodePtr beamasm_i_test_yield_shared(void) {
+        return reinterpret_cast<ErtsCodePtr>(bga->get_i_test_yield_shared());
+    }
+
+    ErtsCodePtr beamasm_dispatch_return(void) {
+        return reinterpret_cast<ErtsCodePtr>(bga->get_dispatch_return());
+    }
+
     int beamasm_overlay_cache_snapshot(void *instance,
                                        const byte *src,
                                        size_t size,

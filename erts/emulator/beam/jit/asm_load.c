@@ -90,6 +90,10 @@ int beam_load_prepare_metadata(LoaderState *stp) {
     hdr->compile_size = 0;
     hdr->compile_size_on_heap = 0;
     hdr->literal_area = NULL;
+    hdr->line_table = NULL;
+#ifdef ERTS_ENABLE_BEAM_CODE_DEBUGGER
+    hdr->debug = NULL;
+#endif
     hdr->md5_ptr = NULL;
     hdr->are_nifs = NULL;
     hdr->debugger_flags = erts_debugger_flags;
@@ -227,6 +231,106 @@ int beam_load_prepare_metadata(LoaderState *stp) {
     return 1;
 }
 
+static int cache_is_identity_module(LoaderState *stp) {
+    static const int expected[] = {genop_int_func_start_5,
+                                   genop_label_1,
+                                   genop_return_0,
+                                   genop_int_func_end_2,
+                                   genop_int_code_end_0};
+    BeamCodeReader *reader;
+    BeamOp *op = NULL;
+    int i;
+
+    reader = beamfile_get_code(&stp->beam, &stp->op_allocator);
+    for (i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+        if (!beamcodereader_next(reader, &op) || op->op != expected[i]) {
+            beamcodereader_close(reader);
+            return 0;
+        }
+    }
+    beamcodereader_close(reader);
+    return 1;
+}
+
+static int cache_is_identity_aarch64(const byte *code, size_t size) {
+    static const Uint32 expected[] = {0xf81f8e9e,
+                                      0x14000002,
+                                      0x94000000,
+                                      0x10ffffa2,
+                                      0x710006d6,
+                                      0x5400000d,
+                                      0xf840869e,
+                                      0x710006d6,
+                                      0x54000004,
+                                      0xd65f03c0};
+    Uint32 instruction;
+    Uint i;
+
+    if (size != sizeof(expected)) {
+        return 0;
+    }
+    for (i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+        sys_memcpy(&instruction, code + i * sizeof(instruction),
+                   sizeof(instruction));
+        if (i == 2) {
+            instruction &= 0xfc000000;
+        } else if (i == 5 || i == 8) {
+            instruction &= 0xff00001f;
+        }
+        if (instruction != expected[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int patch_aarch64_b_cond(void *rw,
+                                const void *exec,
+                                Uint64 offset,
+                                ErtsCodePtr target) {
+    Sint64 delta = (const byte *)target - ((const byte *)exec + offset);
+    Uint32 instruction;
+
+    if ((delta & 3) != 0 || delta < -(Sint64)(1 << 20) ||
+        delta >= (Sint64)(1 << 20)) {
+        return 0;
+    }
+    sys_memcpy(&instruction, (byte *)rw + offset, sizeof(instruction));
+    instruction = (instruction & 0xff00001f) |
+                  ((((Uint32)(delta / 4)) & 0x7ffff) << 5);
+    sys_memcpy((byte *)rw + offset, &instruction, sizeof(instruction));
+    return 1;
+}
+
+static int patch_aarch64_bl(void *rw,
+                            const void *exec,
+                            Uint64 offset,
+                            ErtsCodePtr target) {
+    Sint64 delta = (const byte *)target - ((const byte *)exec + offset);
+    Uint32 branch;
+
+    if ((delta & 3) != 0 || delta < -(Sint64)(1 << 27) ||
+        delta >= (Sint64)(1 << 27)) {
+        return 0;
+    }
+    branch = 0x94000000u | (((Uint32)(delta / 4)) & 0x03ffffffu);
+    sys_memcpy((byte *)rw + offset, &branch, sizeof(branch));
+    return 1;
+}
+
+static void emit_aarch64_absolute_jump(void *rw,
+                                       Uint64 offset,
+                                       ErtsCodePtr target) {
+    const UWord address = (UWord)target;
+    Uint32 code[] = {0xd2800010u | (Uint32)((address & 0xffff) << 5),
+                     0xf2a00010u | (Uint32)(((address >> 16) & 0xffff) << 5),
+                     0xf2c00010u | (Uint32)(((address >> 32) & 0xffff) << 5),
+                     0xf2e00010u | (Uint32)(((address >> 48) & 0xffff) << 5),
+                     0xd61f0200u};
+
+    sys_memcpy((byte *)rw + offset, code, sizeof(code));
+}
+
 int beam_load_cache_image(LoaderState *stp,
                           const byte *cache,
                           size_t cache_size) {
@@ -246,8 +350,7 @@ int beam_load_cache_image(LoaderState *stp,
     const BeamCodeHeader *code_hdr_exec;
     const ErtsCodeInfo **function_table;
     BeamFile_ExportEntry *entry;
-    Sint64 delta;
-    Uint32 branch;
+    Uint64 entry_offset;
     Uint i;
 
     if (cache_size < header_size ||
@@ -298,13 +401,14 @@ int beam_load_cache_image(LoaderState *stp,
         label_count != stp->beam.code.label_count + 1 ||
         metadata_size != cache_size - metadata_offset ||
         code_header_offset != 0 || code_end_offset > image_size ||
-        code_end_offset < sizeof(BeamCodeHeader) ||
+        code_end_offset < sizeof(BeamCodeHeader) || image_size > UINT_MAX ||
+        image_size - code_end_offset < 10 * sizeof(Uint32) ||
         on_load_offset != UINT64_MAX || stp->beam.exports.count != 1 ||
         stp->beam.imports.count != 0 || stp->beam.lambdas.count != 0 ||
         stp->beam.static_literals.count != 0 ||
-        stp->beam.dynamic_literals.count > 1 ||
+        stp->beam.dynamic_literals.count > 1 || stp->beam.strings.size != 0 ||
         stp->beam.debug.item_count != 0 || stp->beam.record.record_count != 0 ||
-        stp->coverage != NULL) {
+        stp->coverage != NULL || !cache_is_identity_module(stp)) {
         return 0;
     }
 
@@ -313,15 +417,23 @@ int beam_load_cache_image(LoaderState *stp,
     entry = &stp->beam.exports.entries[0];
     code_header_size = offsetof(BeamCodeHeader, functions) +
                        sizeof(BeamInstr) * stp->codev_size;
-    if (function_offset > code_end_offset - sizeof(ErtsCodeInfo) ||
-        entry->label >= label_count ||
-        cache_read_u64(label_data + entry->label * 8) >= code_end_offset ||
+    if (entry->label >= label_count) {
+        return 0;
+    }
+    entry_offset = cache_read_u64(label_data + entry->label * 8);
+    if ((function_offset & (sizeof(UWord) - 1)) != 0 ||
+        function_offset < code_header_size ||
+        function_offset > code_end_offset - sizeof(ErtsCodeInfo) ||
+        entry_offset != function_offset + sizeof(ErtsCodeInfo) ||
+        entry_offset >= code_end_offset ||
+        !cache_is_identity_aarch64(cache + image_offset + entry_offset,
+                                   code_end_offset - entry_offset) ||
         code_header_size > code_end_offset) {
         return 0;
     }
 
     if (!beamasm_install_cache_code(cache + image_offset,
-                                    (size_t)code_end_offset,
+                                    (size_t)image_size,
                                     &exec,
                                     &rw)) {
         return 0;
@@ -329,7 +441,10 @@ int beam_load_cache_image(LoaderState *stp,
 
     stp->executable_region = exec;
     stp->writable_region = rw;
-    stp->loaded_size = (unsigned)code_end_offset;
+    stp->loaded_size = (unsigned)image_size;
+    sys_memset((byte *)rw + code_end_offset,
+               0,
+               (size_t)(image_size - code_end_offset));
     stp->jit_cache_labels = erts_alloc(ERTS_ALC_T_PREPARED_CODE,
                                        label_count * sizeof(Uint64));
     stp->jit_cache_label_count = label_count;
@@ -356,14 +471,35 @@ int beam_load_cache_image(LoaderState *stp,
         info->mfa.arity = entry->arity;
     }
 
-    delta = (const byte *)beamasm_i_func_info_shared() -
-            ((const byte *)exec + function_offset);
-    if ((delta & 3) != 0 || delta < -(Sint64)(1 << 27) ||
-        delta >= (Sint64)(1 << 27)) {
+    if (!patch_aarch64_bl(rw,
+                          exec,
+                          function_offset,
+                          beamasm_i_func_info_shared()) ||
+        !patch_aarch64_bl(rw,
+                          exec,
+                          entry_offset + 2 * sizeof(Uint32),
+                          beamasm_i_breakpoint_trampoline_shared())) {
         return 0;
     }
-    branch = 0x94000000u | (((Uint32)(delta / 4)) & 0x03ffffffu);
-    sys_memcpy((byte *)rw + function_offset, &branch, sizeof(branch));
+    emit_aarch64_absolute_jump(rw,
+                               code_end_offset,
+                               beamasm_i_test_yield_shared());
+    emit_aarch64_absolute_jump(rw,
+                               code_end_offset + 5 * sizeof(Uint32),
+                               beamasm_dispatch_return());
+    if (!patch_aarch64_b_cond(rw,
+                              exec,
+                              entry_offset + 5 * sizeof(Uint32),
+                              (ErtsCodePtr)((const byte *)exec +
+                                            code_end_offset)) ||
+        !patch_aarch64_b_cond(rw,
+                              exec,
+                              entry_offset + 8 * sizeof(Uint32),
+                              (ErtsCodePtr)((const byte *)exec +
+                                            code_end_offset +
+                                            5 * sizeof(Uint32)))) {
+        return 0;
+    }
 
     stp->code_hdr = code_hdr_exec;
     stp->on_load = NULL;

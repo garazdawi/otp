@@ -91,6 +91,9 @@ int beamasm_install_cache_code(const byte *code,
                                const void **executable_region,
                                void **writable_region);
 ErtsCodePtr beamasm_i_func_info_shared(void);
+ErtsCodePtr beamasm_i_breakpoint_trampoline_shared(void);
+ErtsCodePtr beamasm_i_test_yield_shared(void);
+ErtsCodePtr beamasm_dispatch_return(void);
 int beamasm_overlay_cache_snapshot(void *ba,
                                    const byte *src,
                                    size_t size,
