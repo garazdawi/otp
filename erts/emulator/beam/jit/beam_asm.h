@@ -56,7 +56,8 @@ void beamasm_init(void);
 void *beamasm_new_assembler(Eterm mod,
                             int num_labels,
                             int num_functions,
-                            BeamFile *beam);
+                            BeamFile *beam,
+                            int capture_cache);
 void beamasm_codegen(void *ba,
                      const void **executable_region,
                      void **writable_region,
@@ -83,6 +84,8 @@ void beamasm_embed_rodata(void *ba,
                           const char *buff,
                           size_t size);
 void beamasm_embed_bss(void *ba, char *labelName, size_t size);
+size_t beamasm_cache_snapshot_size(void *ba);
+int beamasm_copy_cache_snapshot(void *ba, byte *dst, size_t size);
 
 unsigned int beamasm_patch_catches(void *ba, char *rw_base);
 void beamasm_patch_import(void *ba,

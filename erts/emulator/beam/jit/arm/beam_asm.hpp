@@ -63,14 +63,16 @@ using namespace asmjit;
 #define ERTS_CCONV_JIT
 
 struct BeamAssembler : public BeamAssemblerCommon {
-    BeamAssembler() : BeamAssemblerCommon(a) {
+    BeamAssembler(bool capture_cache = false)
+            : BeamAssemblerCommon(a, capture_cache) {
         Error err = code.attach(&a);
         ERTS_ASSERT(err == Error::kOk && "Failed to attach codeHolder");
 
         lateInit();
     }
 
-    BeamAssembler(const std::string &log) : BeamAssembler() {
+    BeamAssembler(const std::string &log, bool capture_cache = false)
+            : BeamAssembler(capture_cache) {
         if (erts_jit_asm_dump) {
             setLogger(log + ".asm");
         }
@@ -1191,12 +1193,14 @@ public:
     BeamModuleAssembler(BeamGlobalAssembler *ga,
                         Eterm mod,
                         int num_labels,
-                        const BeamFile *file = NULL);
+                        const BeamFile *file = NULL,
+                        bool capture_cache = false);
     BeamModuleAssembler(BeamGlobalAssembler *ga,
                         Eterm mod,
                         int num_labels,
                         int num_functions,
-                        const BeamFile *file = NULL);
+                        const BeamFile *file = NULL,
+                        bool capture_cache = false);
 
     bool emit(unsigned op, const Span<const ArgVal> &args);
 

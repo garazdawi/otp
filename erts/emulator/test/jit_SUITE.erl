@@ -27,7 +27,8 @@
          init_per_group/2, end_per_group/2,
          init_per_testcase/2, end_per_testcase/2]).
 -export([annotate/1, frame_pointers/1, jmsingle/1, named_labels/1,
-         symbols/1, perfdirectory_set/1, perfdirectory_not_set/1]).
+         jit_cache_snapshot/1, symbols/1,
+         perfdirectory_set/1, perfdirectory_not_set/1]).
 -export([frame_pointer_workload/0]).
 
 suite() ->
@@ -38,7 +39,7 @@ groups() ->
              perfdirectory_set, perfdirectory_not_set]}].
 
 all() ->
-    [{group, perf}, jmsingle, named_labels].
+    [{group, perf}, jmsingle, named_labels, jit_cache_snapshot].
 
 init_per_suite(Config) ->
     case erlang:system_info(emu_flavor) of
@@ -137,6 +138,51 @@ end_per_testcase(named_labels, Config) ->
       end, AsmToDelete),
     ok;
 end_per_testcase(_, _Config) ->
+    ok.
+
+jit_cache_snapshot(_Config) ->
+    {?MODULE, CompressedBeam, _} = code:get_object_code(?MODULE),
+    Beam = case CompressedBeam of
+               <<16#1f, 16#8b, _/binary>> -> zlib:gunzip(CompressedBeam);
+               _ -> CompressedBeam
+           end,
+    {ok, Cache} = erts_internal:beam_jit_cache(?MODULE, Beam),
+
+    <<"EJITC001",
+      1:32/little,
+      80:32/little,
+      Architecture:32/little,
+      SectionCount:32/little,
+      RelocationCount:32/little,
+      0:32/little,
+      ImageSize:64/little,
+      Checksum:16/binary,
+      SectionsOffset:64/little,
+      RelocationsOffset:64/little,
+      ImageOffset:64/little,
+      _/binary>> = Cache,
+
+    true = Architecture =:= 1 orelse Architecture =:= 2,
+    true = SectionCount > 0,
+    true = RelocationCount =< 16#ffffffff,
+    80 = SectionsOffset,
+    true = RelocationsOffset >= SectionsOffset,
+    true = ImageOffset >= RelocationsOffset,
+    true = byte_size(Cache) =:= ImageOffset + ImageSize,
+    Checksum = erts_internal:beamfile_module_md5(Beam),
+
+    try erts_internal:beam_jit_cache(<<"not an atom">>, Beam) of
+        _ -> ct:fail(expected_badarg)
+    catch
+        error:badarg -> ok
+    end,
+    try erts_internal:beam_jit_cache(?MODULE, not_a_binary) of
+        _ -> ct:fail(expected_badarg)
+    catch
+        error:badarg -> ok
+    end,
+    {error, badfile} =
+        erts_internal:beam_jit_cache(?MODULE, <<"not a BEAM file">>),
     ok.
 
 get_tmp_so_files() ->

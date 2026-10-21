@@ -508,12 +508,24 @@ extern "C"
     void *beamasm_new_assembler(Eterm mod,
                                 int num_labels,
                                 int num_functions,
-                                BeamFile *file) {
+                                BeamFile *file,
+                                int capture_cache) {
         return new BeamModuleAssembler(bga,
                                        mod,
                                        num_labels,
                                        num_functions,
-                                       file);
+                                       file,
+                                       capture_cache != 0);
+    }
+
+    size_t beamasm_cache_snapshot_size(void *instance) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return ba->getCacheSnapshotSize();
+    }
+
+    int beamasm_copy_cache_snapshot(void *instance, byte *dst, size_t size) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return ba->copyCacheSnapshot(dst, size);
     }
 
     int beamasm_emit(void *instance, unsigned specific_op, BeamOp *op) {

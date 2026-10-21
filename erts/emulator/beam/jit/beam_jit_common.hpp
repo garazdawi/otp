@@ -102,10 +102,13 @@ protected:
     CodeHolder code;
     FileLogger logger;
     Section *rodata;
+    bool capture_cache;
+    bool cache_snapshot_supported;
+    std::vector<uint8_t> cache_snapshot;
 
     static bool hasCpuFeature(uint32_t featureId);
 
-    BeamAssemblerCommon(BaseAssembler &assembler);
+    BeamAssemblerCommon(BaseAssembler &assembler, bool capture_cache = false);
     ~BeamAssemblerCommon();
 
     void lateInit();
@@ -142,6 +145,9 @@ protected:
     void setLogger(FILE *log);
 
 public:
+    size_t getCacheSnapshotSize() const;
+    bool copyCacheSnapshot(byte *dst, size_t size) const;
+
     void embed_rodata(const char *labelName, const char *buff, size_t size);
     void embed_bss(const char *labelName, size_t size);
     void embed_zeros(size_t size);

@@ -84,8 +84,13 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *ga,
                                          Eterm mod,
                                          int num_labels,
                                          int num_functions,
-                                         const BeamFile *file)
-        : BeamModuleAssembler(ga, mod, num_labels, file) {
+                                         const BeamFile *file,
+                                         bool capture_cache)
+        : BeamModuleAssembler(ga,
+                              mod,
+                              num_labels,
+                              file,
+                              capture_cache) {
     code_header = a.new_label();
     a.align(AlignMode::kCode, 8);
     a.bind(code_header);

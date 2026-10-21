@@ -33,7 +33,7 @@ extern "C"
 }
 
 BeamGlobalAssembler::BeamGlobalAssembler(JitAllocator *allocator)
-        : BeamAssembler("beam_asm_global") {
+        : BeamAssembler(std::string("beam_asm_global")) {
     labels.reserve(emitPtrs.size());
 
     /* These labels are defined up-front so global functions can refer to each

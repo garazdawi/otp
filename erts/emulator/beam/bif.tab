@@ -766,6 +766,7 @@ bif erts_internal:get_creation/0
 #
 
 bif erts_internal:prepare_loading/2
+bif erts_internal:beam_jit_cache/2
 bif erts_internal:beamfile_chunk/2
 bif erts_internal:beamfile_module_md5/1
 bif os:env/0

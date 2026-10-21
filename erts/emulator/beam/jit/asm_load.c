@@ -51,7 +51,8 @@ int beam_load_prepare_emit(LoaderState *stp) {
     stp->ba = beamasm_new_assembler(stp->module,
                                     stp->beam.code.label_count,
                                     stp->beam.code.function_count,
-                                    &stp->beam);
+                                    &stp->beam,
+                                    stp->jit_cache_requested);
 
     /* Initialize code header */
     stp->codev_size = stp->beam.code.function_count + 1;

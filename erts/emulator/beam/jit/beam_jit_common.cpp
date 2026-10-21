@@ -44,8 +44,10 @@ static std::string getAtom(Eterm atom) {
     return std::string((char *)erts_atom_get_name(ap), ap->len);
 }
 
-BeamAssemblerCommon::BeamAssemblerCommon(BaseAssembler &assembler_)
-        : assembler(assembler_), code() {
+BeamAssemblerCommon::BeamAssemblerCommon(BaseAssembler &assembler_,
+                                         bool capture_cache_)
+        : assembler(assembler_), code(), capture_cache(capture_cache_),
+          cache_snapshot_supported(false) {
     /* Setup with default code info */
     Error err = code.init(Environment::host());
     ERTS_ASSERT(err == Error::kOk && "Failed to init codeHolder");
@@ -59,6 +61,127 @@ BeamAssemblerCommon::BeamAssemblerCommon(BaseAssembler &assembler_)
     ERTS_ASSERT(err == Error::kOk && "Failed to create .rodata section");
 
     code.set_error_handler(this);
+}
+
+static void cache_append_u32(std::vector<uint8_t> &out, uint32_t value) {
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+        out.push_back((uint8_t)(value >> shift));
+    }
+}
+
+static void cache_append_u64(std::vector<uint8_t> &out, uint64_t value) {
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        out.push_back((uint8_t)(value >> shift));
+    }
+}
+
+static bool cache_reloc_is_portable(const RelocEntry *reloc) {
+    switch (reloc->reloc_type()) {
+    case RelocType::kNone:
+    case RelocType::kSectionRelative:
+    case RelocType::kRelToAbs:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool build_cache_snapshot(CodeHolder &code, std::vector<uint8_t> &out) {
+    static const uint8_t magic[8] = {'E', 'J', 'I', 'T', 'C', '0', '0', '1'};
+    constexpr uint32_t header_size = 80;
+    constexpr uint32_t section_record_size = 40;
+    constexpr uint32_t reloc_record_size = 64;
+    uint32_t reloc_count = 0;
+
+    if (code.code_size() == SIZE_MAX || code.sections().size() > UINT32_MAX) {
+        return false;
+    }
+
+    for (const RelocEntry *reloc : code.reloc_entries()) {
+        if (!cache_reloc_is_portable(reloc)) {
+            return false;
+        }
+        if (reloc->reloc_type() != RelocType::kNone) {
+            reloc_count++;
+        }
+    }
+
+    const uint64_t sections_offset = header_size;
+    const uint64_t relocs_offset =
+            sections_offset + code.sections().size() * section_record_size;
+    const uint64_t image_offset =
+            relocs_offset + (uint64_t)reloc_count * reloc_record_size;
+    const uint64_t total_size = image_offset + code.code_size();
+
+    if (total_size > SIZE_MAX) {
+        return false;
+    }
+
+    out.clear();
+    out.reserve((size_t)total_size);
+    out.insert(out.end(), magic, magic + sizeof(magic));
+    cache_append_u32(out, 1);
+    cache_append_u32(out, header_size);
+#if defined(__aarch64__)
+    cache_append_u32(out, 1);
+#elif defined(__x86_64__) || defined(_M_X64)
+    cache_append_u32(out, 2);
+#else
+    cache_append_u32(out, 0);
+#endif
+    cache_append_u32(out, (uint32_t)code.sections().size());
+    cache_append_u32(out, reloc_count);
+    cache_append_u32(out, 0);
+    cache_append_u64(out, code.code_size());
+    out.insert(out.end(), 16, 0);
+    cache_append_u64(out, sections_offset);
+    cache_append_u64(out, relocs_offset);
+    cache_append_u64(out, image_offset);
+
+    for (const Section *section : code.sections()) {
+        cache_append_u32(out, section->section_id());
+        cache_append_u32(out, (uint32_t)section->flags());
+        cache_append_u32(out, section->alignment());
+        cache_append_u32(out, 0);
+        cache_append_u64(out, section->offset());
+        cache_append_u64(out, section->buffer_size());
+        cache_append_u64(out, section->virtual_size());
+    }
+
+    for (const RelocEntry *reloc : code.reloc_entries()) {
+        if (reloc->reloc_type() == RelocType::kNone) {
+            continue;
+        }
+
+        const OffsetFormat &format = reloc->format();
+        cache_append_u32(out, (uint32_t)reloc->reloc_type());
+        cache_append_u32(out, (uint32_t)format.type());
+        cache_append_u32(out, format.flags());
+        cache_append_u32(out, reloc->source_section_id());
+        cache_append_u32(out, reloc->target_section_id());
+        cache_append_u32(out, format.region_size());
+        cache_append_u32(out, format.value_offset());
+        cache_append_u32(out, format.value_size());
+        cache_append_u32(out, format.imm_bit_count());
+        cache_append_u32(out, format.imm_bit_shift());
+        cache_append_u32(out, format.imm_discard_lsb());
+        cache_append_u32(out, 0);
+        cache_append_u64(out, reloc->source_offset());
+        cache_append_u64(out, reloc->payload());
+    }
+
+    const size_t old_size = out.size();
+    out.resize((size_t)total_size);
+    Error err = code.copy_flattened_data(out.data() + old_size,
+                                         code.code_size(),
+                                         CopySectionFlags::kPadSectionBuffer |
+                                                 CopySectionFlags::kPadTargetBuffer);
+    if (err != Error::kOk) {
+        out.clear();
+        return false;
+    }
+
+    return true;
 }
 
 void BeamAssemblerCommon::lateInit() {
@@ -110,6 +233,11 @@ void BeamAssemblerCommon::codegen(JitAllocator *allocator,
     }
 #endif
 
+    if (capture_cache) {
+        cache_snapshot_supported =
+                build_cache_snapshot(code, cache_snapshot);
+    }
+
     JitAllocator::Span span;
 
     Out<JitAllocator::Span> out(span);
@@ -137,6 +265,18 @@ void BeamAssemblerCommon::codegen(JitAllocator *allocator,
         if (FILE *f = l->file())
             fprintf(f, "; CODE_SIZE: %zd\n", code.code_size());
 #endif
+}
+
+size_t BeamAssemblerCommon::getCacheSnapshotSize() const {
+    return cache_snapshot_supported ? cache_snapshot.size() : 0;
+}
+
+bool BeamAssemblerCommon::copyCacheSnapshot(byte *dst, size_t size) const {
+    if (!cache_snapshot_supported || size != cache_snapshot.size()) {
+        return false;
+    }
+    sys_memcpy(dst, cache_snapshot.data(), size);
+    return true;
 }
 
 void *BeamAssemblerCommon::getCode(Label label) {
@@ -275,8 +415,10 @@ void BeamModuleAssembler::codegen(char *buff, size_t len) {
 BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *_ga,
                                          Eterm _mod,
                                          int num_labels,
-                                         const BeamFile *file)
-        : BeamAssembler(getAtom(_mod)), BeamModuleAssemblerCommon(file, _mod),
+                                         const BeamFile *file,
+                                         bool capture_cache)
+        : BeamAssembler(getAtom(_mod), capture_cache),
+          BeamModuleAssemblerCommon(file, _mod),
           ga(_ga) {
     rawLabels.resize(num_labels + 1);
 
