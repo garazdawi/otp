@@ -121,6 +121,31 @@ erts_preload_module(Process *c_p,
     return erts_finish_loading(magic, c_p, c_p_locks, modp);
 }
 
+#ifdef BEAMASM
+Eterm
+erts_preload_module_cache(Eterm *modp,
+                          const byte *code,
+                          Uint size,
+                          const byte *cache,
+                          size_t cache_size)
+{
+    Binary *magic = erts_alloc_loader_state();
+    LoaderState *stp = ERTS_MAGIC_BIN_DATA(magic);
+    Eterm retval;
+
+    ASSERT(!erts_initialized);
+    retval = erts_prepare_loading_metadata(magic, NULL, NIL, modp, code, size);
+    if (retval != NIL) {
+        return retval;
+    }
+    if (!beam_load_cache_image(stp, cache, cache_size)) {
+        beam_load_prepared_free(magic);
+        return am_badfile;
+    }
+    return erts_finish_loading(magic, NULL, 0, modp);
+}
+#endif
+
 static Eterm
 prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
                 Eterm* modp, const byte *code, Uint unloaded_size,
@@ -228,6 +253,10 @@ prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
     if (metadata_only) {
 #ifdef BEAMASM
         if (!beam_load_prepare_metadata(stp)) {
+            goto load_error;
+        }
+        stp->jit_cache_metadata_only = 1;
+        if (!load_code(stp)) {
             goto load_error;
         }
 #else
@@ -455,7 +484,7 @@ static int load_code(LoaderState* stp)
 
     op_reader = beamfile_get_code(&stp->beam, &stp->op_allocator);
 
-    if (!beam_load_prepare_emit(stp)) {
+    if (!stp->jit_cache_metadata_only && !beam_load_prepare_emit(stp)) {
         goto load_error;
     }
 
@@ -703,7 +732,7 @@ static int load_code(LoaderState* stp)
     beamcodereader_close(op_reader);
     beamopallocator_dtor(&stp->op_allocator);
 
-    return beam_load_finish_emit(stp);
+    return stp->jit_cache_metadata_only ? 1 : beam_load_finish_emit(stp);
 
 load_error:
     beamcodereader_close(op_reader);

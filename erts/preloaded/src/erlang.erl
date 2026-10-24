@@ -5493,7 +5493,7 @@ prepare_loading(Module, Code0) ->
     prepare_loading_1(Module, Code).
 
 prepare_loading_1(Module, Code) ->
-    try erts_internal:prepare_loading(Module, Code) of
+    try prepare_loading_cache(Module, Code) of
         Res -> Res
     catch
         error:Reason ->
@@ -5506,6 +5506,33 @@ prepare_loading_1(Module, Code) ->
                     Stk = [{Mod,prepare_loading,L,Loc}|T],
                     erlang:raise(error, Reason, Stk)
             end
+    end.
+
+prepare_loading_cache(Module, Code) ->
+    case init:get_argument(jit_cache_dir) of
+        {ok, [[Dir]]} ->
+            CacheFile = [Dir, $/, erlang:atom_to_list(Module), ".ejit"],
+            case prim_file:read_file(CacheFile) of
+                {ok, Cache} ->
+                    case erts_internal:beam_jit_cache_prepare(
+                           Module, Code, Cache) of
+                        {ok, Prepared, true} -> Prepared;
+                        {ok, Prepared, false} ->
+                            cache_fallback(Module, Code, Prepared);
+                        {error, _} -> cache_fallback(Module, Code, undefined)
+                    end;
+                {error, _} -> cache_fallback(Module, Code, undefined)
+            end;
+        _ ->
+            erts_internal:prepare_loading(Module, Code)
+    end.
+
+cache_fallback(Module, Code, Prepared) ->
+    case init:get_argument(jit_cache_required) of
+        {ok, _} -> erlang:error({jit_cache_miss, Module});
+        _ when Prepared =:= undefined ->
+            erts_internal:prepare_loading(Module, Code);
+        _ -> Prepared
     end.
 
 %% pre_loaded/0

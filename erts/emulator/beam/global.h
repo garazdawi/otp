@@ -997,6 +997,13 @@ Eterm erts_finish_loading(Binary *loader_state, Process *c_p,
 Eterm erts_preload_module(Process *c_p, ErtsProcLocks c_p_locks,
                           Eterm group_leader, Eterm *mod,
                           const byte *code, Uint size);
+#ifdef BEAMASM
+Eterm erts_preload_module_cache(Eterm *mod,
+                                const byte *code,
+                                Uint size,
+                                const byte *cache,
+                                size_t cache_size);
+#endif
 void init_load(void);
 const ErtsCodeMFA* erts_find_function_from_pc(ErtsCodePtr pc);
 ErtsCodePtr erts_find_next_code_for_line(const BeamCodeHeader* code_hdr,

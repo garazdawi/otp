@@ -24,6 +24,10 @@
 
 extern "C"
 {
+    const void *beamasm_cache_runtime_anchor(void) {
+        return reinterpret_cast<const void *>(&beamasm_cache_runtime_anchor);
+    }
+
 #include "bif.h"
 #include "beam_common.h"
 #include "code_ix.h"
@@ -77,6 +81,14 @@ ErtsCodePtr beam_call_trace_return; /* OpCode(i_call_trace_return) */
 static JitAllocator *jit_allocator;
 
 static BeamGlobalAssembler *bga;
+
+extern "C" const void *beamasm_cache_global_base(void) {
+    return bga ? bga->getBaseAddress() : nullptr;
+}
+
+extern "C" size_t beamasm_cache_global_size(void) {
+    return bga ? bga->getOffset() : 0;
+}
 static BeamModuleAssembler *bma;
 static CpuInfo cpuinfo;
 

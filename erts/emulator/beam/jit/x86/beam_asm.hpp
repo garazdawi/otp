@@ -1285,6 +1285,9 @@ public:
 
     void codegen(char *buff, size_t len);
 
+    void appendCacheArchitectureFixups(
+            std::vector<BeamJitCacheFixup> &fixups);
+
     AsmMetadata prepared_metadata;
     bool metadata_prepared = false;
     void prepare_metadata(const BeamCodeHeader *header);

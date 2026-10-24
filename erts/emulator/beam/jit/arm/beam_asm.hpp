@@ -779,6 +779,22 @@ protected:
     template<typename T>
     void mov_imm(a64::Gp to, T value) {
         static_assert(std::is_integral<T>::value || std::is_pointer<T>::value);
+
+        if (capture_cache && value && to.is_gp64()) {
+            const uintptr_t immediate = (uintptr_t)value;
+            const bool atom = std::is_integral<T>::value &&
+                              is_atom((Eterm)immediate);
+
+            if (std::is_pointer<T>::value || atom) {
+                recordCacheImmediate(a.offset(), immediate, atom, true);
+                a.movz(to, imm((uint16_t)(immediate >> 0)), 0);
+                a.movk(to, imm((uint16_t)(immediate >> 16)), 16);
+                a.movk(to, imm((uint16_t)(immediate >> 32)), 32);
+                a.movk(to, imm((uint16_t)(immediate >> 48)), 48);
+                return;
+            }
+        }
+
         if (value) {
             a.mov(to, imm(value));
         } else {
@@ -1218,6 +1234,9 @@ public:
                  void **writable_ptr);
 
     void codegen(char *buff, size_t len);
+
+    void appendCacheArchitectureFixups(
+            std::vector<BeamJitCacheFixup> &fixups);
 
     AsmMetadata prepared_metadata;
     bool metadata_prepared = false;

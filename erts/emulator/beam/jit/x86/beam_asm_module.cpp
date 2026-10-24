@@ -99,6 +99,11 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *ga,
                 sizeof(ErtsCodeInfo *) * num_functions);
 }
 
+void BeamModuleAssembler::appendCacheArchitectureFixups(
+        std::vector<BeamJitCacheFixup> &fixups) {
+    (void)fixups;
+}
+
 void BeamModuleAssembler::embed_vararg_rodata(const Span<const ArgVal> &args,
                                               x86::Gp reg,
                                               int y_offset) {

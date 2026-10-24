@@ -70,8 +70,13 @@ struct LoaderState_ {
     int jit_cache_requested; /* Capture pre-relocation BeamAsm output. */
     unsigned emitted_ops; /* Number of BeamAsm operations emitted. */
     int jit_cache_loaded; /* Native image installed without BeamAsm emission. */
+    int jit_cache_metadata_only; /* Decode operations without emitting code. */
     Uint64 *jit_cache_labels; /* Cached BEAM label offsets. */
     Uint jit_cache_label_count;
+    struct BeamJitCachedFixup_ *jit_cache_fixups;
+    Uint jit_cache_fixup_count;
+    Uint64 jit_cache_named_offsets[6];
+    Uint64 *jit_cache_lambda_trampolines;
     const ErtsCodeInfo *on_load; /* Pointer to the on_load function, if any */
     unsigned max_opcode;         /* Highest opcode used in module */
 

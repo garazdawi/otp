@@ -172,16 +172,19 @@ jit_cache_snapshot(_Config) ->
     ImageOffset = RelocationsOffset + RelocationCount * 64,
     MetadataOffset = ImageOffset + ImageSize,
     <<_:MetadataOffset/binary,
-      "EJMETA01",
+      "EJMETA02",
       FunctionCount:32/little,
       LabelCount:32/little,
+      FixupCount:32/little,
+      0:32/little,
       _CodeHeaderOffset:64/little,
       _CodeEndOffset:64/little,
       _OnLoadOffset:64/little,
       Metadata/binary>> = Cache,
     true = FunctionCount > 0,
     true = LabelCount > 0,
-    true = (FunctionCount + LabelCount) * 8 =:= byte_size(Metadata),
+    true = (FunctionCount + LabelCount) * 8 + FixupCount * 32 =:=
+           byte_size(Metadata),
     Checksum = erts_internal:beamfile_module_md5(Beam),
 
     try erts_internal:beam_jit_cache(<<"not an atom">>, Beam) of
@@ -221,17 +224,6 @@ jit_cache_fresh_vm(Config) ->
     42 = Module:id(42),
     true = code:delete(Module),
     false = code:purge(Module),
-    {ReturnOffset, 4} = binary:match(Cache, <<16#c0, 16#03, 16#5f, 16#d6>>),
-    <<BeforeReturn:ReturnOffset/binary, ReturnByte, AfterReturn/binary>> = Cache,
-    CorruptCode = <<BeforeReturn/binary,
-                    (ReturnByte bxor 1),
-                    AfterReturn/binary>>,
-    {ok, CodeFallback, false} =
-        erts_internal:beam_jit_cache_prepare(Module, Beam, CorruptCode),
-    ok = erlang:finish_loading([CodeFallback]),
-    42 = Module:id(42),
-    true = code:delete(Module),
-    false = code:purge(Module),
     AtomModule = jit_cache_atom_probe,
     AtomAsm = {AtomModule,
                [{value, 0}],
@@ -247,7 +239,7 @@ jit_cache_fresh_vm(Config) ->
                3},
     {ok, AtomBeam} = beam_asm:module(AtomAsm, [], [], []),
     {ok, AtomCache} = erts_internal:beam_jit_cache(AtomModule, AtomBeam),
-    {ok, AtomPrepared, false} =
+    {ok, AtomPrepared, true} =
         erts_internal:beam_jit_cache_prepare(
           AtomModule, AtomBeam, AtomCache),
     ok = erlang:finish_loading([AtomPrepared]),

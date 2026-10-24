@@ -341,11 +341,12 @@ void BeamAssemblerCommon::appendCacheModuleMetadata(
         uint64_t code_end_offset,
         uint64_t on_load_offset,
         const std::vector<uint64_t> &function_offsets,
-        const std::vector<uint64_t> &label_offsets) {
-    static const uint8_t magic[8] = {'E', 'J', 'M', 'E', 'T', 'A', '0', '1'};
+        const std::vector<uint64_t> &label_offsets,
+        const std::vector<BeamJitCacheFixup> &fixups) {
+    static const uint8_t magic[8] = {'E', 'J', 'M', 'E', 'T', 'A', '0', '2'};
 
     if (!cache_snapshot_supported || function_offsets.size() > UINT32_MAX ||
-        label_offsets.size() > UINT32_MAX) {
+        label_offsets.size() > UINT32_MAX || fixups.size() > UINT32_MAX) {
         cache_snapshot_supported = false;
         cache_snapshot.clear();
         return;
@@ -354,6 +355,8 @@ void BeamAssemblerCommon::appendCacheModuleMetadata(
     cache_snapshot.insert(cache_snapshot.end(), magic, magic + sizeof(magic));
     cache_append_u32(cache_snapshot, (uint32_t)function_offsets.size());
     cache_append_u32(cache_snapshot, (uint32_t)label_offsets.size());
+    cache_append_u32(cache_snapshot, (uint32_t)fixups.size());
+    cache_append_u32(cache_snapshot, 0);
     cache_append_u64(cache_snapshot, code_header_offset);
     cache_append_u64(cache_snapshot, code_end_offset);
     cache_append_u64(cache_snapshot, on_load_offset);
@@ -362,6 +365,13 @@ void BeamAssemblerCommon::appendCacheModuleMetadata(
     }
     for (uint64_t offset : label_offsets) {
         cache_append_u64(cache_snapshot, offset);
+    }
+    for (const BeamJitCacheFixup &fixup : fixups) {
+        cache_append_u32(cache_snapshot, (uint32_t)fixup.kind);
+        cache_append_u32(cache_snapshot, fixup.index);
+        cache_append_u64(cache_snapshot, fixup.offset);
+        cache_append_u64(cache_snapshot, (uint64_t)fixup.addend);
+        cache_append_u64(cache_snapshot, fixup.target);
     }
 }
 
@@ -550,6 +560,7 @@ void BeamModuleAssembler::codegen(JitAllocator *allocator,
         constexpr uint64_t invalid_offset = UINT64_MAX;
         std::vector<uint64_t> function_offsets;
         std::vector<uint64_t> label_offsets;
+        std::vector<BeamJitCacheFixup> fixups;
         auto get_offset = [&](const Label &label) {
             return code.is_label_valid(label) && code.is_label_bound(label)
                            ? code.label_offset_from_base(label)
@@ -568,12 +579,102 @@ void BeamModuleAssembler::codegen(JitAllocator *allocator,
             label_offsets.push_back(get_offset(label));
         }
 
+        auto add_patch = [&](BeamJitCacheFixupKind kind,
+                             uint32_t index,
+                             const patch &patch,
+                             uint64_t target) {
+            uint64_t base = get_offset(patch.where);
+            if (base == invalid_offset || patch.ptr_offs > UINT64_MAX - base) {
+                cache_snapshot_supported = false;
+                return;
+            }
+            fixups.push_back({kind,
+                              index,
+                              base + patch.ptr_offs,
+                              (int64_t)patch.val_offs,
+                              target});
+        };
+
+        for (const patch_catch &entry : catches) {
+            add_patch(BeamJitCacheFixupKind::Catch,
+                      0,
+                      entry.patch,
+                      get_offset(entry.handler));
+        }
+        for (const auto &[index, entry] : imports) {
+            for (const patch &site : entry.patches) {
+                add_patch(BeamJitCacheFixupKind::Import, index, site, 0);
+            }
+        }
+        for (const auto &[index, entry] : lambdas) {
+            for (const patch &site : entry.patches) {
+                add_patch(BeamJitCacheFixupKind::Lambda, index, site, 0);
+            }
+        }
+        for (const auto &[index, entry] : literals) {
+            if (!entry.deferred.empty()) {
+                cache_snapshot_supported = false;
+            }
+            for (const patch &site : entry.patches) {
+                add_patch(BeamJitCacheFixupKind::Literal, index, site, 0);
+            }
+        }
+        for (const patch &site : strings) {
+            add_patch(BeamJitCacheFixupKind::String, 0, site, 0);
+        }
+
+        if (beam) {
+            auto atom_index = [&](Eterm atom) -> uint32_t {
+                for (Sint32 i = 1; i < beam->atoms.count; i++) {
+                    if (beam->atoms.entries[i] == atom) {
+                        return (uint32_t)i;
+                    }
+                }
+                return UINT32_MAX;
+            };
+            for (size_t i = 0; i < functions.size(); i++) {
+                const ErtsCodeInfo *info =
+                        (const ErtsCodeInfo *)getCode(functions[i]);
+                uint32_t module_index = atom_index(info->mfa.module);
+                uint32_t function_index = atom_index(info->mfa.function);
+                if (module_index == UINT32_MAX ||
+                    function_index == UINT32_MAX ||
+                    function_offsets[i] == invalid_offset) {
+                    cache_snapshot_supported = false;
+                    continue;
+                }
+                uint64_t mfa_offset = function_offsets[i] +
+                                      offsetof(ErtsCodeInfo, mfa);
+                fixups.push_back({BeamJitCacheFixupKind::BeamAtom,
+                                  module_index,
+                                  mfa_offset + offsetof(ErtsCodeMFA, module),
+                                  0,
+                                  0});
+                fixups.push_back({BeamJitCacheFixupKind::BeamAtom,
+                                  function_index,
+                                  mfa_offset + offsetof(ErtsCodeMFA, function),
+                                  0,
+                                  0});
+            }
+        }
+
+        appendCacheArchitectureFixups(fixups);
+        std::sort(fixups.begin(),
+                  fixups.end(),
+                  [](const BeamJitCacheFixup &a,
+                     const BeamJitCacheFixup &b) {
+                      if (a.offset != b.offset) return a.offset < b.offset;
+                      if (a.kind != b.kind) return a.kind < b.kind;
+                      return a.index < b.index;
+                  });
+
         appendCacheModuleMetadata(
                 get_offset(code_header),
                 get_offset(code_end),
                 get_offset(on_load),
                 function_offsets,
-                label_offsets);
+                label_offsets,
+                fixups);
     }
 
     {
