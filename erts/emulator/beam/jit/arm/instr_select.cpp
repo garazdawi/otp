@@ -318,7 +318,9 @@ void BeamModuleAssembler::emit_i_select_val_lins(
 
     auto src = load_source(Src, ARG1);
 
-    auto plan = plan_untag(args);
+    auto plan = capture_cache && args.first().isAtom()
+                        ? std::make_pair<UWord, int>(0, 0)
+                        : plan_untag(args);
     auto base = plan.first;
     auto shift = plan.second;
 
@@ -357,6 +359,14 @@ void BeamModuleAssembler::emit_i_select_val_bins(
     comment("Binary search in table of %lu elements", count);
 
     auto src = load_source(Src, ARG1);
+
+    if (capture_cache && args.first().isAtom()) {
+        emit_linear_search(src.reg, fail, args);
+        if (!Fail.isLabel()) {
+            bind_veneer_target(fail);
+        }
+        return;
+    }
 
     auto plan = plan_untag(args);
     auto base = plan.first;
@@ -542,6 +552,16 @@ void BeamModuleAssembler::emit_optimized_two_way_select(a64::Gp reg,
 
     /* Be sure to use a register not used by any caller. */
     a64::Gp tmp = TMP6;
+
+    /* Atom indexes depend on load order. Arithmetic atom comparisons and
+     * trees ordered by atom value cannot be relocated safely. */
+    if (capture_cache && value1.isAtom()) {
+        cmp_arg(reg, value1);
+        a.b_eq(resolve_beam_label(label, disp1MB));
+        cmp_arg(reg, value2);
+        a.b_eq(resolve_beam_label(label, disp1MB));
+        return;
+    }
 
     if (x + 1 == y) {
         comment("(Src == %ld || Src == %ld) <=> (Src - %ld) < 2", x, y, x);

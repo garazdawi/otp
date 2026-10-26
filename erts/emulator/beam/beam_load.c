@@ -44,6 +44,7 @@
 #include "erl_process_dict.h"
 #include "erl_unicode.h"
 #include "beam_file.h"
+#include "beam_load_timing.h"
 
 Uint erts_total_code_size;
 
@@ -154,6 +155,7 @@ prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
     enum beamfile_read_result read_result;
     Eterm retval = am_badfile;
     LoaderState* stp;
+    ErtsSysHrTime phase_start;
 
     stp = ERTS_MAGIC_BIN_DATA(magic);
     stp->module = *modp;
@@ -163,9 +165,14 @@ prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
     erts_fprintf(stderr,"Loading a module\n");
 #endif
 
+    phase_start = erts_beam_load_timing_start();
+    if (phase_start) {
+        erts_fprintf(stderr, "JIT_LOAD_MODULE %T\n", stp->module);
+    }
     read_result = beamfile_read(code,
                                 unloaded_size,
                                 &stp->beam);
+    erts_beam_load_timing_report("beam_parse", phase_start);
 
     switch(read_result) {
     case BEAMFILE_READ_CORRUPT_FILE_HEADER:
@@ -252,13 +259,13 @@ prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
 
     if (metadata_only) {
 #ifdef BEAMASM
+        phase_start = erts_beam_load_timing_start();
         if (!beam_load_prepare_metadata(stp)) {
+            erts_beam_load_timing_report("cache_metadata_setup", phase_start);
             goto load_error;
         }
+        erts_beam_load_timing_report("cache_metadata_setup", phase_start);
         stp->jit_cache_metadata_only = 1;
-        if (!load_code(stp)) {
-            goto load_error;
-        }
 #else
         ERTS_ASSERT(0);
         goto load_error;
@@ -481,6 +488,8 @@ static int load_code(LoaderState* stp)
     BeamOp *tmp_op;
 
     int num_specific;
+    int result;
+    ErtsSysHrTime phase_start = erts_beam_load_timing_start();
 
     op_reader = beamfile_get_code(&stp->beam, &stp->op_allocator);
 
@@ -732,9 +741,17 @@ static int load_code(LoaderState* stp)
     beamcodereader_close(op_reader);
     beamopallocator_dtor(&stp->op_allocator);
 
-    return stp->jit_cache_metadata_only ? 1 : beam_load_finish_emit(stp);
+    erts_beam_load_timing_report("normal_scan_emit", phase_start);
+    if (stp->jit_cache_metadata_only) {
+        return 1;
+    }
+    phase_start = erts_beam_load_timing_start();
+    result = beam_load_finish_emit(stp);
+    erts_beam_load_timing_report("normal_codegen_finalize", phase_start);
+    return result;
 
 load_error:
+    erts_beam_load_timing_report("normal_scan_emit", phase_start);
     beamcodereader_close(op_reader);
     beamopallocator_dtor(&stp->op_allocator);
     return 0;

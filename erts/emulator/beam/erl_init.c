@@ -54,6 +54,7 @@
 #include "erl_osenv.h"
 #include "erl_proc_sig_queue.h"
 #include "beam_load.h"
+#include "beam_load_timing.h"
 #include "erl_global_literals.h"
 #include "erl_iolist.h"
 #include "erl_debugger.h"
@@ -309,6 +310,7 @@ erl_init(int ncpu,
     erl_drv_thr_init();
     erts_init_async();
     erts_init_io(port_tab_sz, port_tab_sz_ignore_files, legacy_port_tab);
+    erts_beam_load_timing_init();
     init_load();
     erts_init_bif();
     erts_init_bif_chksum();
@@ -495,6 +497,23 @@ static int    boot_argc;
 static char** boot_argv;
 #ifdef BEAMASM
 static char  *jit_cache_dir;
+
+const char *erts_jit_cache_get_dir(void)
+{
+    return jit_cache_dir;
+}
+
+int erts_jit_cache_is_required(void)
+{
+    int i;
+
+    for (i = 0; i < boot_argc; i++) {
+        if (sys_strcmp(boot_argv[i], "-jit_cache_required") == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
 #endif
 
 static char *
@@ -538,6 +557,7 @@ load_preloaded(void)
             FILE *file;
             byte *cache = NULL;
             long cache_size = 0;
+            ErtsSysHrTime cache_read_start = erts_beam_load_timing_start();
 
             if (erts_snprintf(path, sizeof(path), "%s/%s.ejit",
                               jit_cache_dir, name) >= sizeof(path)) {
@@ -560,6 +580,7 @@ load_preloaded(void)
                           name);
               }
               fclose(file);
+              erts_beam_load_timing_report("cache_read", cache_read_start);
               res = erts_preload_module_cache(&module_name, code, length,
                                               cache, cache_size);
               erts_free(ERTS_ALC_T_TMP, cache);

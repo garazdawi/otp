@@ -36,6 +36,7 @@
 
 #include "beam_asm.h"
 #include "beam_jit_cache.h"
+#include "beam_load_timing.h"
 
 #ifdef ADDRESS_SANITIZER
 #    include <sanitizer/lsan_interface.h>
@@ -351,11 +352,14 @@ static int cache_patch_fixups(LoaderState *stp,
 
     for (i = 0; i < stp->jit_cache_fixup_count; i++) {
         BeamJitCachedFixup *fixup = &stp->jit_cache_fixups[i];
-        if (fixup->kind == kind && fixup->index == index &&
-            !cache_patch_word(stp,
-                              fixup->offset,
-                              fixup->addend,
-                              value)) {
+        if (fixup->kind < kind ||
+            (fixup->kind == kind && fixup->index < index)) {
+            continue;
+        }
+        if (fixup->kind > kind || fixup->index > index) {
+            break;
+        }
+        if (!cache_patch_word(stp, fixup->offset, fixup->addend, value)) {
             return 0;
         }
     }
@@ -385,20 +389,22 @@ static int cache_copy_metadata(LoaderState *stp,
                                Uint64 *on_load_offset,
                                Uint32 *function_count) {
     const size_t header_size = 48;
-    const size_t fixup_size = 32;
-    Uint32 label_count, fixup_count;
+    const size_t fixup_size = 28;
+    Uint32 label_count, fixup_count, group_count;
     Uint64 tables_size;
     const byte *functions, *labels, *fixups;
-    Uint i;
+    const byte *record, *metadata_end;
+    Uint i, group, parsed_fixups, initial_dynamic_count, nif_bytes;
+    Uint32 previous_kind;
 
     if (metadata_size < header_size ||
-        sys_memcmp(metadata, "EJMETA02", 8) != 0 ||
-        cache_read_u32(metadata + 20) != 0) {
+        sys_memcmp(metadata, "EJMETA03", 8) != 0) {
         return 0;
     }
     *function_count = cache_read_u32(metadata + 8);
     label_count = cache_read_u32(metadata + 12);
     fixup_count = cache_read_u32(metadata + 16);
+    group_count = cache_read_u32(metadata + 20);
     *code_header_offset = cache_read_u64(metadata + 24);
     *code_end_offset = cache_read_u64(metadata + 32);
     *on_load_offset = cache_read_u64(metadata + 40);
@@ -413,14 +419,107 @@ static int cache_copy_metadata(LoaderState *stp,
     }
     tables_size = header_size + (Uint64)*function_count * 8 +
                   (Uint64)label_count * 8;
-    if (fixup_count > (SIZE_MAX - tables_size) / fixup_size ||
-        tables_size + (Uint64)fixup_count * fixup_size != metadata_size) {
+    if (tables_size > metadata_size ||
+        group_count > CACHE_FIXUP_LAMBDA_TRAMPOLINE ||
+        (fixup_count == 0) != (group_count == 0)) {
         return 0;
     }
     functions = metadata + header_size;
     labels = functions + (size_t)*function_count * 8;
     fixups = labels + (size_t)label_count * 8;
+    metadata_end = metadata + metadata_size;
 
+    record = fixups;
+    parsed_fixups = 0;
+    previous_kind = 0;
+    for (group = 0; group < group_count; group++) {
+        Uint32 kind, count;
+        if ((size_t)(metadata_end - record) < 8) return 0;
+        kind = cache_read_u32(record);
+        count = cache_read_u32(record + 4);
+        record += 8;
+        if (kind <= previous_kind || kind > CACHE_FIXUP_LAMBDA_TRAMPOLINE ||
+            count == 0 || count > fixup_count - parsed_fixups ||
+            count > (size_t)(metadata_end - record) / fixup_size) {
+            return 0;
+        }
+        previous_kind = kind;
+        parsed_fixups += count;
+        record += (size_t)count * fixup_size;
+    }
+    if (parsed_fixups != fixup_count ||
+        (size_t)(metadata_end - record) < 24 ||
+        sys_memcmp(record, "EJLDR001", 8) != 0 ||
+        cache_read_u32(record + 12) != (Uint32)stp->beam.lambdas.count ||
+        cache_read_u32(record + 16) !=
+                ((Uint32)*function_count + 7) / 8 ||
+        cache_read_u32(record + 20) != 0) {
+        return 0;
+    }
+    initial_dynamic_count = stp->beam.dynamic_literals.count;
+    {
+        Uint dynamic_count = cache_read_u32(record + 8);
+        if (dynamic_count < initial_dynamic_count) return 0;
+        record += 24;
+        for (i = 0; i < dynamic_count; i++) {
+            Uint32 kind, size;
+            Sint literal;
+            if ((size_t)(metadata_end - record) < 8) return 0;
+            kind = cache_read_u32(record);
+            size = cache_read_u32(record + 4);
+            record += 8;
+            if (size > (size_t)(metadata_end - record)) return 0;
+            if (kind > (Uint32)stp->beam.lambdas.count ||
+                (kind != 0 && size != 0)) {
+                return 0;
+            }
+            if (i >= initial_dynamic_count) {
+                literal = kind == 0
+                                  ? beamfile_add_encoded_literal(&stp->beam,
+                                                                 record,
+                                                                 size)
+                                  : beamfile_add_lambda_literal(
+                                            &stp->beam,
+                                            stp->beam.lambdas.entries[kind - 1]
+                                                    .arity);
+                if (literal != ~(Sint)i) return 0;
+            }
+            record += size;
+        }
+    }
+    if ((size_t)(metadata_end - record) <
+        (size_t)stp->beam.lambdas.count * 8) {
+        return 0;
+    }
+    for (i = 0; i < (Uint)stp->beam.lambdas.count; i++) {
+        stp->lambda_literals[i] = (Sint64)cache_read_u64(record);
+        if (stp->beam.lambdas.entries[i].num_free == 0) {
+            Sint literal = stp->lambda_literals[i];
+            if (literal == ERTS_SWORD_MAX ||
+                (literal >= 0
+                         ? literal >= stp->beam.static_literals.count
+                         : ~literal >= stp->beam.dynamic_literals.count)) {
+                return 0;
+            }
+        }
+        record += 8;
+    }
+    nif_bytes = (*function_count + 7) / 8;
+    if ((size_t)(metadata_end - record) != nif_bytes) return 0;
+    if (nif_bytes && (*function_count & 7) &&
+        (record[nif_bytes - 1] & (0xff << (*function_count & 7)))) {
+        return 0;
+    }
+    for (i = 0; i < *function_count; i++) {
+        if (record[i / 8] & (1 << (i & 7))) {
+            if (stp->load_hdr->are_nifs == NULL) {
+                stp->load_hdr->are_nifs =
+                        erts_alloc(ERTS_ALC_T_PREPARED_CODE, *function_count);
+                sys_memzero(stp->load_hdr->are_nifs, *function_count);
+            }
+            stp->load_hdr->are_nifs[i] = 1;
+        }
+    }
     stp->jit_cache_labels = erts_alloc(ERTS_ALC_T_PREPARED_CODE,
                                        label_count * sizeof(Uint64));
     stp->jit_cache_label_count = label_count;
@@ -443,62 +542,70 @@ static int cache_copy_metadata(LoaderState *stp,
     for (i = 0; i < (Uint)stp->beam.lambdas.count; i++) {
         stp->jit_cache_lambda_trampolines[i] = UINT64_MAX;
     }
-    for (i = 0; i < fixup_count; i++) {
-        const byte *record = fixups + i * fixup_size;
-        BeamJitCachedFixup *out = &stp->jit_cache_fixups[i];
-        out->kind = cache_read_u32(record);
-        out->index = cache_read_u32(record + 4);
-        out->offset = cache_read_u64(record + 8);
-        out->addend = (Sint64)cache_read_u64(record + 16);
-        out->target = cache_read_u64(record + 24);
-        if (out->kind == 0 || out->kind > CACHE_FIXUP_LAMBDA_TRAMPOLINE ||
-            out->offset >= image_size) {
-            return 0;
-        }
-        switch (out->kind) {
-        case CACHE_FIXUP_IMPORT:
-            if (out->index >= (Uint32)stp->beam.imports.count) return 0;
-            break;
-        case CACHE_FIXUP_LAMBDA:
-        case CACHE_FIXUP_LAMBDA_TRAMPOLINE:
-            if (out->index >= (Uint32)stp->beam.lambdas.count) return 0;
-            break;
-        case CACHE_FIXUP_LITERAL:
-            if (((Sint32)out->index >= 0 &&
-                 (Sint32)out->index >= stp->beam.static_literals.count) ||
-                ((Sint32)out->index < 0 &&
-                 ~((Sint32)out->index) >= stp->beam.dynamic_literals.count)) {
+    record = fixups;
+    i = 0;
+    for (group = 0; group < group_count; group++) {
+        Uint32 kind = cache_read_u32(record);
+        Uint32 count = cache_read_u32(record + 4);
+        Uint end = i + count;
+        record += 8;
+        for (; i < end; i++, record += fixup_size) {
+            BeamJitCachedFixup *out = &stp->jit_cache_fixups[i];
+            out->kind = kind;
+            out->index = cache_read_u32(record);
+            out->offset = cache_read_u64(record + 4);
+            out->addend = (Sint64)cache_read_u64(record + 12);
+            out->target = cache_read_u64(record + 20);
+            if (out->offset >= image_size) {
                 return 0;
             }
-            break;
-        case CACHE_FIXUP_BEAM_ATOM:
-        case CACHE_FIXUP_BEAM_ATOM_MOV:
-            if (out->index >= (Uint32)stp->beam.atoms.count) return 0;
-            break;
-        case CACHE_FIXUP_STRING:
-            if (out->addend < 0 ||
-                (Uint64)out->addend > stp->beam.strings.size) return 0;
-            break;
-        default:
-            break;
-        }
-        if ((out->kind == CACHE_FIXUP_BEAM_ATOM_MOV ||
-             out->kind == CACHE_FIXUP_GLOBAL_FRAGMENT_MOV ||
-             out->kind == CACHE_FIXUP_RUNTIME_FUNCTION_MOV)
-                    ? (image_size < 16 || out->offset > image_size - 16)
-                    : (out->kind <= CACHE_FIXUP_RUNTIME_FUNCTION &&
-                       (image_size < sizeof(UWord) ||
-                        out->offset > image_size - sizeof(UWord)))) {
-            return 0;
-        }
-        if (out->kind == CACHE_FIXUP_CATCH && out->target >= image_size) {
-            return 0;
-        }
-        if (out->kind == CACHE_FIXUP_NAMED_OFFSET) {
-            if (out->index >= 6) return 0;
-            stp->jit_cache_named_offsets[out->index] = out->offset;
-        } else if (out->kind == CACHE_FIXUP_LAMBDA_TRAMPOLINE) {
-            stp->jit_cache_lambda_trampolines[out->index] = out->offset;
+            switch (out->kind) {
+            case CACHE_FIXUP_IMPORT:
+                if (out->index >= (Uint32)stp->beam.imports.count) return 0;
+                break;
+            case CACHE_FIXUP_LAMBDA:
+            case CACHE_FIXUP_LAMBDA_TRAMPOLINE:
+                if (out->index >= (Uint32)stp->beam.lambdas.count) return 0;
+                break;
+            case CACHE_FIXUP_LITERAL:
+                if (((Sint32)out->index >= 0 &&
+                     (Sint32)out->index >= stp->beam.static_literals.count) ||
+                    ((Sint32)out->index < 0 &&
+                     ~((Sint32)out->index) >=
+                             stp->beam.dynamic_literals.count)) {
+                    return 0;
+                }
+                break;
+            case CACHE_FIXUP_BEAM_ATOM:
+            case CACHE_FIXUP_BEAM_ATOM_MOV:
+                if (out->index >= (Uint32)stp->beam.atoms.count) return 0;
+                break;
+            case CACHE_FIXUP_STRING:
+                if (out->addend < 0 ||
+                    (Uint64)out->addend > stp->beam.strings.size)
+                    return 0;
+                break;
+            default:
+                break;
+            }
+            if ((out->kind == CACHE_FIXUP_BEAM_ATOM_MOV ||
+                 out->kind == CACHE_FIXUP_GLOBAL_FRAGMENT_MOV ||
+                 out->kind == CACHE_FIXUP_RUNTIME_FUNCTION_MOV)
+                        ? (image_size < 16 || out->offset > image_size - 16)
+                        : (out->kind <= CACHE_FIXUP_RUNTIME_FUNCTION &&
+                           (image_size < sizeof(UWord) ||
+                            out->offset > image_size - sizeof(UWord)))) {
+                return 0;
+            }
+            if (out->kind == CACHE_FIXUP_CATCH && out->target >= image_size) {
+                return 0;
+            }
+            if (out->kind == CACHE_FIXUP_NAMED_OFFSET) {
+                if (out->index >= 6) return 0;
+                stp->jit_cache_named_offsets[out->index] = out->offset;
+            } else if (out->kind == CACHE_FIXUP_LAMBDA_TRAMPOLINE) {
+                stp->jit_cache_lambda_trampolines[out->index] = out->offset;
+            }
         }
     }
     for (i = 0; i < *function_count; i++) {
@@ -525,6 +632,7 @@ int beam_load_cache_image(LoaderState *stp,
     void *rw;
     BeamCodeHeader *header;
     Uint i;
+    ErtsSysHrTime phase_start = erts_beam_load_timing_start();
 
     if (!beam_jit_cache_open(cache_data, cache_size, &cache) ||
         cache.image_size > UINT_MAX ||
@@ -555,15 +663,19 @@ int beam_load_cache_image(LoaderState *stp,
             return 0;
         }
     }
+    erts_beam_load_timing_report("cache_parse", phase_start);
+    phase_start = erts_beam_load_timing_start();
     if (!beamasm_install_cache_code(cache.image,
                                     (size_t)cache.image_size,
                                     &exec,
                                     &rw)) {
         return 0;
     }
+    erts_beam_load_timing_report("cache_copy", phase_start);
     stp->executable_region = exec;
     stp->writable_region = rw;
     stp->loaded_size = (unsigned)cache.image_size;
+    phase_start = erts_beam_load_timing_start();
     if (!beam_jit_cache_load_aarch64(&cache,
                                      rw,
                                      exec,
@@ -584,7 +696,8 @@ int beam_load_cache_image(LoaderState *stp,
             if (!cache_apply_immediate_fixup(stp, fixup)) return 0;
         }
     }
-
+    erts_beam_load_timing_report("cache_relocate", phase_start);
+    phase_start = erts_beam_load_timing_start();
     code_header_size = offsetof(BeamCodeHeader, functions) +
                        sizeof(BeamInstr) * stp->codev_size;
     if (code_header_size > code_end_offset) return 0;
@@ -608,6 +721,7 @@ int beam_load_cache_image(LoaderState *stp,
         return 0;
     }
     beamasm_seal_module(exec, rw, stp->loaded_size);
+    erts_beam_load_timing_report("cache_finalize", phase_start);
     return 1;
 #else
     (void)stp;

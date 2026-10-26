@@ -309,6 +309,12 @@ void beamfile_free(BeamFile *beam);
  * @return A literal index that can be used in beamfile_get_literal */
 Sint beamfile_add_literal(BeamFile *beam, Eterm term, int deduplicate);
 
+/** Decodes one external term and appends it to the dynamic literal table. */
+Sint beamfile_add_encoded_literal(BeamFile *beam,
+                                  const byte *data,
+                                  size_t size);
+Sint beamfile_add_lambda_literal(BeamFile *beam, Uint arity);
+
 /** @brief Gets a term from the literal table.
  *
  * The returned term is valid until the BeamFile is freed or the literals are

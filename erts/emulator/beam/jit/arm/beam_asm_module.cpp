@@ -114,6 +114,13 @@ void BeamModuleAssembler::appendCacheArchitectureFixups(
     const uintptr_t runtime_base =
             (uintptr_t)beamasm_cache_runtime_anchor();
 
+    for (const CacheAtomData &site : cache_atom_data) {
+        recordCacheImmediate(code.label_offset_from_base(site.anchor),
+                             site.value,
+                             true,
+                             false);
+    }
+
     for (const CacheImmediate &site : cache_immediates) {
         const uintptr_t target = site.value;
 
@@ -228,6 +235,12 @@ void BeamModuleAssembler::embed_vararg_rodata(const Span<const ArgVal> &args,
             a.embed_label(rawLabels[arg.as<ArgLabel>().get()]);
             break;
         case ArgVal::Type::Immediate:
+            if (capture_cache && is_atom(arg.as<ArgImmed>().get())) {
+                Label anchor = a.new_label();
+                a.bind(anchor);
+                cache_atom_data.push_back({anchor,
+                                           arg.as<ArgImmed>().get()});
+            }
             a.embed_uint64(arg.as<ArgImmed>().get());
             break;
         case ArgVal::Type::Word:

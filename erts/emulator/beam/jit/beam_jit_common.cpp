@@ -343,7 +343,8 @@ void BeamAssemblerCommon::appendCacheModuleMetadata(
         const std::vector<uint64_t> &function_offsets,
         const std::vector<uint64_t> &label_offsets,
         const std::vector<BeamJitCacheFixup> &fixups) {
-    static const uint8_t magic[8] = {'E', 'J', 'M', 'E', 'T', 'A', '0', '2'};
+    static const uint8_t magic[8] = {'E', 'J', 'M', 'E', 'T', 'A', '0', '3'};
+    uint32_t group_count = 0;
 
     if (!cache_snapshot_supported || function_offsets.size() > UINT32_MAX ||
         label_offsets.size() > UINT32_MAX || fixups.size() > UINT32_MAX) {
@@ -352,11 +353,15 @@ void BeamAssemblerCommon::appendCacheModuleMetadata(
         return;
     }
 
+    for (size_t i = 0; i < fixups.size(); i++) {
+        group_count += i == 0 || fixups[i - 1].kind != fixups[i].kind;
+    }
+
     cache_snapshot.insert(cache_snapshot.end(), magic, magic + sizeof(magic));
     cache_append_u32(cache_snapshot, (uint32_t)function_offsets.size());
     cache_append_u32(cache_snapshot, (uint32_t)label_offsets.size());
     cache_append_u32(cache_snapshot, (uint32_t)fixups.size());
-    cache_append_u32(cache_snapshot, 0);
+    cache_append_u32(cache_snapshot, group_count);
     cache_append_u64(cache_snapshot, code_header_offset);
     cache_append_u64(cache_snapshot, code_end_offset);
     cache_append_u64(cache_snapshot, on_load_offset);
@@ -366,12 +371,22 @@ void BeamAssemblerCommon::appendCacheModuleMetadata(
     for (uint64_t offset : label_offsets) {
         cache_append_u64(cache_snapshot, offset);
     }
-    for (const BeamJitCacheFixup &fixup : fixups) {
-        cache_append_u32(cache_snapshot, (uint32_t)fixup.kind);
-        cache_append_u32(cache_snapshot, fixup.index);
-        cache_append_u64(cache_snapshot, fixup.offset);
-        cache_append_u64(cache_snapshot, (uint64_t)fixup.addend);
-        cache_append_u64(cache_snapshot, fixup.target);
+    for (size_t first = 0; first < fixups.size();) {
+        size_t last = first + 1;
+        while (last < fixups.size() &&
+               fixups[last].kind == fixups[first].kind) {
+            last++;
+        }
+        cache_append_u32(cache_snapshot, (uint32_t)fixups[first].kind);
+        cache_append_u32(cache_snapshot, (uint32_t)(last - first));
+        for (size_t i = first; i < last; i++) {
+            const BeamJitCacheFixup &fixup = fixups[i];
+            cache_append_u32(cache_snapshot, fixup.index);
+            cache_append_u64(cache_snapshot, fixup.offset);
+            cache_append_u64(cache_snapshot, (uint64_t)fixup.addend);
+            cache_append_u64(cache_snapshot, fixup.target);
+        }
+        first = last;
     }
 }
 
@@ -663,9 +678,9 @@ void BeamModuleAssembler::codegen(JitAllocator *allocator,
                   fixups.end(),
                   [](const BeamJitCacheFixup &a,
                      const BeamJitCacheFixup &b) {
-                      if (a.offset != b.offset) return a.offset < b.offset;
                       if (a.kind != b.kind) return a.kind < b.kind;
-                      return a.index < b.index;
+                      if (a.index != b.index) return a.index < b.index;
+                      return a.offset < b.offset;
                   });
 
         appendCacheModuleMetadata(
@@ -1215,6 +1230,24 @@ Uint beam_jit_get_map_elements(Eterm map,
         ks = flatmap_get_keys(mp);
         vs = flatmap_get_values(mp);
 
+        if (fs[2] == (erts_ihash_t)~(UWord)0) {
+            while (n--) {
+                Uint i;
+
+                for (i = 0; i < sz; i++) {
+                    if (EQ(fs[0], ks[i])) {
+                        PUT_TERM_REG(vs[i], fs[1]);
+                        break;
+                    }
+                }
+                if (i == sz) {
+                    return 0;
+                }
+                fs += 3;
+            }
+            return 1;
+        }
+
         while (sz) {
             if (EQ(fs[0], *ks)) {
                 PUT_TERM_REG(*vs, fs[1]);
@@ -1239,6 +1272,9 @@ Uint beam_jit_get_map_elements(Eterm map,
             const Eterm *v;
 
             hx = fs[2];
+            if (hx == (erts_ihash_t)~(UWord)0) {
+                hx = hashmap_make_hash(fs[0]);
+            }
             ASSERT(hx == hashmap_make_hash(fs[0]));
 
             if ((v = erts_hashmap_get(hx, fs[0], map)) == NULL) {

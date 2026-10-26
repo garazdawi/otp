@@ -5509,30 +5509,42 @@ prepare_loading_1(Module, Code) ->
     end.
 
 prepare_loading_cache(Module, Code) ->
-    case init:get_argument(jit_cache_dir) of
-        {ok, [[Dir]]} ->
-            CacheFile = [Dir, $/, erlang:atom_to_list(Module), ".ejit"],
-            case prim_file:read_file(CacheFile) of
+    case erts_internal:beam_jit_cache_options() of
+        {Dir, Timing, Required} ->
+            CacheFile = [erlang:binary_to_list(Dir), $/,
+                         erlang:atom_to_list(Module), ".ejit"],
+            ReadStart = erlang:monotonic_time(nanosecond),
+            ReadResult = prim_file:read_file(CacheFile),
+            case Timing of
+                true ->
+                    erlang:display({jit_load_timing, cache_read,
+                                    erlang:monotonic_time(nanosecond) -
+                                    ReadStart});
+                false -> ok
+            end,
+            case ReadResult of
                 {ok, Cache} ->
                     case erts_internal:beam_jit_cache_prepare(
                            Module, Code, Cache) of
                         {ok, Prepared, true} -> Prepared;
                         {ok, Prepared, false} ->
-                            cache_fallback(Module, Code, Prepared);
-                        {error, _} -> cache_fallback(Module, Code, undefined)
+                            cache_fallback(Module, Code, Prepared, Required);
+                        {error, _} ->
+                            cache_fallback(Module, Code, undefined, Required)
                     end;
-                {error, _} -> cache_fallback(Module, Code, undefined)
+                {error, _} ->
+                    cache_fallback(Module, Code, undefined, Required)
             end;
-        _ ->
+        false ->
             erts_internal:prepare_loading(Module, Code)
     end.
 
-cache_fallback(Module, Code, Prepared) ->
-    case init:get_argument(jit_cache_required) of
-        {ok, _} -> erlang:error({jit_cache_miss, Module});
-        _ when Prepared =:= undefined ->
+cache_fallback(Module, Code, Prepared, Required) ->
+    case Required of
+        true -> erlang:error({jit_cache_miss, Module});
+        false when Prepared =:= undefined ->
             erts_internal:prepare_loading(Module, Code);
-        _ -> Prepared
+        false -> Prepared
     end.
 
 %% pre_loaded/0

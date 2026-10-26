@@ -172,19 +172,31 @@ jit_cache_snapshot(_Config) ->
     ImageOffset = RelocationsOffset + RelocationCount * 64,
     MetadataOffset = ImageOffset + ImageSize,
     <<_:MetadataOffset/binary,
-      "EJMETA02",
+      "EJMETA03",
       FunctionCount:32/little,
       LabelCount:32/little,
       FixupCount:32/little,
-      0:32/little,
+      FixupGroupCount:32/little,
       _CodeHeaderOffset:64/little,
       _CodeEndOffset:64/little,
       _OnLoadOffset:64/little,
       Metadata/binary>> = Cache,
     true = FunctionCount > 0,
     true = LabelCount > 0,
-    true = (FunctionCount + LabelCount) * 8 + FixupCount * 32 =:=
-           byte_size(Metadata),
+    true = FixupGroupCount > 0,
+    TrailerOffset = (FunctionCount + LabelCount) * 8 +
+                    FixupGroupCount * 8 + FixupCount * 28,
+    <<_:TrailerOffset/binary,
+      "EJLDR001",
+      DynamicLiteralCount:32/little,
+      LambdaCount:32/little,
+      NifBytes:32/little,
+      0:32/little,
+      LoaderMetadata/binary>> = Metadata,
+    NifBytes = (FunctionCount + 7) div 8,
+    AfterLiterals = skip_cached_literals(DynamicLiteralCount, LoaderMetadata),
+    LambdaBytes = LambdaCount * 8,
+    <<_:LambdaBytes/binary, _:NifBytes/binary>> = AfterLiterals,
     Checksum = erts_internal:beamfile_module_md5(Beam),
 
     try erts_internal:beam_jit_cache(<<"not an atom">>, Beam) of
@@ -200,6 +212,13 @@ jit_cache_snapshot(_Config) ->
     {error, badfile} =
         erts_internal:beam_jit_cache(?MODULE, <<"not a BEAM file">>),
     ok.
+
+skip_cached_literals(0, Metadata) ->
+    Metadata;
+skip_cached_literals(Count,
+                     <<_Kind:32/little, Size:32/little,
+                       _Value:Size/binary, Rest/binary>>) ->
+    skip_cached_literals(Count - 1, Rest).
 
 jit_cache_fresh_vm(Config) ->
     Module = jit_cache_fresh_probe,

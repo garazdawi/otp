@@ -119,7 +119,8 @@
 
 -export([crasher/6]).
 
--export([prepare_loading/2, beam_jit_cache/2, beam_jit_cache_prepare/3,
+-export([prepare_loading/2, beam_jit_cache/2, beam_jit_cache_options/0,
+         beam_jit_cache_prepare/3,
          beam_jit_cache_overlay/3,
          beamfile_chunk/2, beamfile_module_md5/1]).
 
@@ -1099,6 +1100,10 @@ prepare_loading(_Module, _Code) ->
       Cache :: binary(),
       Reason :: badfile | unsupported.
 beam_jit_cache(_Module, _Code) ->
+    erlang:nif_error(undefined).
+
+-spec beam_jit_cache_options() -> false | {binary(), boolean(), boolean()}.
+beam_jit_cache_options() ->
     erlang:nif_error(undefined).
 
 -spec beam_jit_cache_prepare(Module, Code, Cache) ->

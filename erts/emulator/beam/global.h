@@ -1268,6 +1268,8 @@ extern int erts_no_line_info;
 extern Eterm erts_error_logger_warnings;
 extern int erts_initialized;
 extern int erts_compat_rel;
+const char *erts_jit_cache_get_dir(void);
+int erts_jit_cache_is_required(void);
 
 #define ERTS_COV_NONE 0
 #define ERTS_COV_FUNCTION 1

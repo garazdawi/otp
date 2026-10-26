@@ -865,9 +865,13 @@ protected:
     }
 
     void cmp(a64::Gp src, int64_t val) {
-        if (Support::is_uint_n<12>(val)) {
+        /* Atom indexes depend on load order, so cached code must route even
+         * small atom immediates through mov_imm() for relocation. */
+        const bool cached_atom = capture_cache && is_atom((Eterm)val);
+
+        if (!cached_atom && Support::is_uint_n<12>(val)) {
             a.cmp(src, imm(val));
-        } else if (Support::is_uint_n<12>(-val)) {
+        } else if (!cached_atom && Support::is_uint_n<12>(-val)) {
             a.cmn(src, imm(-val));
         } else {
             a64::Gp super_tmp = follow_size(SUPER_TMP, src);
@@ -962,6 +966,12 @@ protected:
 class BeamModuleAssembler : public BeamAssembler,
                             public BeamModuleAssemblerCommon {
     BeamGlobalAssembler *ga;
+
+    struct CacheAtomData {
+        Label anchor;
+        Eterm value;
+    };
+    std::vector<CacheAtomData> cache_atom_data;
 
     /* Sequence number used to create unique named labels by
      * resolve_label(). Only used when assembly output has been

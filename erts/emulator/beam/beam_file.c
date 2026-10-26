@@ -1974,6 +1974,48 @@ Sint beamfile_add_literal(BeamFile *beam, Eterm term, int deduplicate) {
     return ~i;
 }
 
+Sint beamfile_add_encoded_literal(BeamFile *beam,
+                                  const byte *data,
+                                  size_t size) {
+    ErtsHeapFactory factory;
+    ErlHeapFragment *fragment = NULL;
+    const byte *end = data + size;
+    const byte *cursor = data;
+    Sint decoded_size;
+    Sint result;
+    Eterm term;
+
+    decoded_size = erts_decode_ext_size(data, size);
+    if (decoded_size < 0) {
+        return ERTS_SWORD_MAX;
+    }
+    if (decoded_size > 0) {
+        fragment = new_literal_fragment(decoded_size);
+        erts_factory_heap_frag_init(&factory, fragment);
+        factory.alloc_type = ERTS_ALC_T_PREPARED_CODE;
+    } else {
+        erts_factory_dummy_init(&factory);
+    }
+    term = erts_decode_ext(&factory, &cursor, 0);
+    erts_factory_close(&factory);
+    if (is_non_value(term) || cursor != end) {
+        if (fragment) free_literal_fragment(fragment);
+        return ERTS_SWORD_MAX;
+    }
+    result = beamfile_add_literal(beam, term, 0);
+    if (fragment) free_literal_fragment(fragment);
+    return result;
+}
+
+Sint beamfile_add_lambda_literal(BeamFile *beam, Uint arity) {
+    Eterm tmp_heap[ERL_FUN_SIZE];
+    ErlFunThing *fun = (ErlFunThing *)tmp_heap;
+
+    fun->thing_word = MAKE_FUN_HEADER(arity, 0, 0);
+    fun->entry.exp = NULL;
+    return beamfile_add_literal(beam, make_fun((Eterm *)fun), 0);
+}
+
 Eterm beamfile_get_literal(const BeamFile *beam, Sint index) {
     const BeamFile_LiteralTable *literals;
 

@@ -408,6 +408,12 @@ void BeamModuleAssembler::emit_i_get_map_elements(
 
     for (size_t i = 0; i < args.size(); i += 3) {
         can_inline &= args[i].isImmed();
+        /* The inline flatmap scan relies on keys having the same order as
+         * they had during code generation. Atom indexes are VM-local, so
+         * relocation can change that order. */
+        if (capture_cache && args[i].isAtom()) {
+            can_inline = false;
+        }
     }
 
     mov_arg(ARG1, Src);
@@ -466,7 +472,20 @@ void BeamModuleAssembler::emit_i_get_map_elements(
 
     a.bind(generic);
     {
-        embed_vararg_rodata(args, ARG5);
+        if (capture_cache) {
+            std::vector<ArgVal> cache_args(args.begin(), args.end());
+
+            /* Hashes may contain VM-local atom indexes. Mark them for
+             * recomputation after cached keys have been relocated. */
+            for (size_t i = 2; i < cache_args.size(); i += 3) {
+                cache_args[i] = ArgWord(~(UWord)0);
+            }
+            embed_vararg_rodata(
+                    Span<const ArgVal>(cache_args.data(), cache_args.size()),
+                    ARG5);
+        } else {
+            embed_vararg_rodata(args, ARG5);
+        }
 
         a.mov(ARG3, E);
 
@@ -515,12 +534,22 @@ void BeamModuleAssembler::emit_i_get_map_element_hash(const ArgLabel &Fail,
                                                       const ArgRegister &Dst) {
     mov_arg(ARG1, Src);
     mov_arg(ARG2, Key);
-    mov_arg(ARG3, Hx);
 
-    if (Key.isImmed()) {
+    if (capture_cache) {
+        /* Precomputed hashes can contain VM-local atom indexes, including
+         * atoms nested in literals. Recompute after relocating the key. */
+        emit_enter_runtime();
+        runtime_call<Eterm (*)(Eterm, Eterm), get_map_element>();
+        emit_leave_runtime();
+
+        emit_branch_if_not_value(ARG1,
+                                 resolve_beam_label(Fail, dispUnknown));
+    } else if (Key.isImmed()) {
+        mov_arg(ARG3, Hx);
         fragment_call(ga->get_i_get_map_element_hash_shared());
         a.b_ne(resolve_beam_label(Fail, disp1MB));
     } else {
+        mov_arg(ARG3, Hx);
         emit_enter_runtime();
         runtime_call<Eterm (*)(Eterm, Eterm, erts_ihash_t),
                      get_map_element_hash>();

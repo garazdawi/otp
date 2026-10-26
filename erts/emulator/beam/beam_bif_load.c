@@ -43,8 +43,46 @@
 #include "erl_proc_sig_queue.h"
 #include "beam_file.h"
 #include "erl_record.h"
+#include "external.h"
+#include "beam_load_timing.h"
 
 #include "jit/beam_asm.h"
+
+BIF_RETTYPE erts_internal_beam_jit_cache_options_0(BIF_ALIST_0)
+{
+    const char *dir = erts_jit_cache_get_dir();
+    Eterm *hp;
+    Eterm path;
+
+    if (dir == NULL) {
+        BIF_RET(am_false);
+    }
+
+    path = erts_new_binary_from_data(BIF_P,
+                                     sys_strlen(dir),
+                                     (const byte *)dir);
+    hp = HAlloc(BIF_P, 4);
+    BIF_RET(TUPLE3(hp,
+                   path,
+                   erts_beam_load_timing_is_enabled() ? am_true : am_false,
+                   erts_jit_cache_is_required() ? am_true : am_false));
+}
+
+static void jit_cache_put_u32(byte *p, Uint32 value)
+{
+    p[0] = value;
+    p[1] = value >> 8;
+    p[2] = value >> 16;
+    p[3] = value >> 24;
+}
+
+static void jit_cache_put_u64(byte *p, Uint64 value)
+{
+    int i;
+    for (i = 0; i < 8; i++) {
+        p[i] = value >> (8 * i);
+    }
+}
 
 #if defined(BEAMASM) && defined(ADDRESS_SANITIZER)
 #  include <sanitizer/lsan_interface.h>
@@ -272,7 +310,10 @@ erts_internal_beam_jit_cache_2(BIF_ALIST_2)
     const byte *temp_alloc = NULL, *code;
     byte *cache_data;
     Uint size;
-    size_t cache_size;
+    size_t cache_size, snapshot_size, trailer_size;
+    Uint *literal_sizes = NULL;
+    Uint32 *literal_kinds = NULL;
+    Uint nif_bytes, i;
     Binary *magic;
     LoaderState *stp;
     Eterm reason;
@@ -305,25 +346,105 @@ erts_internal_beam_jit_cache_2(BIF_ALIST_2)
         BIF_RET(TUPLE2(hp, am_error, reason));
     }
 
-    cache_size = beamasm_cache_snapshot_size(stp->ba);
-    if (cache_size == 0) {
+    snapshot_size = beamasm_cache_snapshot_size(stp->ba);
+    if (snapshot_size == 0) {
         beam_load_prepared_free(magic);
         hp = HAlloc(BIF_P, 3);
         BIF_RET(TUPLE2(hp, am_error, am_unsupported));
     }
+    trailer_size = 24;
+    if (stp->beam.dynamic_literals.count) {
+        literal_sizes = erts_alloc(ERTS_ALC_T_LOADER_TMP,
+                                   stp->beam.dynamic_literals.count *
+                                           sizeof(*literal_sizes));
+        literal_kinds = erts_alloc(ERTS_ALC_T_LOADER_TMP,
+                                   stp->beam.dynamic_literals.count *
+                                           sizeof(*literal_kinds));
+    }
+    for (i = 0; i < stp->beam.dynamic_literals.count; i++) {
+        Uint lambda;
+        literal_kinds[i] = 0;
+        literal_sizes[i] = 0;
+        for (lambda = 0; lambda < stp->beam.lambdas.count; lambda++) {
+            if (stp->lambda_literals[lambda] == ~(Sint)i) {
+                literal_kinds[i] = lambda + 1;
+                break;
+            }
+        }
+        if ((literal_kinds[i] == 0 &&
+             erts_encode_ext_size(stp->beam.dynamic_literals.entries[i].value,
+                                  &literal_sizes[i]) != ERTS_EXT_SZ_OK) ||
+            literal_sizes[i] > SIZE_MAX - trailer_size - 8) {
+            erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+            erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
+            beam_load_prepared_free(magic);
+            BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+        }
+        trailer_size += 8 + literal_sizes[i];
+    }
+    nif_bytes = (stp->beam.code.function_count + 7) / 8;
+    if (stp->beam.lambdas.count > (SIZE_MAX - trailer_size) / 8 ||
+        nif_bytes > SIZE_MAX - trailer_size - stp->beam.lambdas.count * 8 ||
+        snapshot_size > SIZE_MAX - trailer_size) {
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
+        beam_load_prepared_free(magic);
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+    }
+    trailer_size += stp->beam.lambdas.count * 8 + nif_bytes;
+    cache_size = snapshot_size + trailer_size;
     if (!IS_BINARY_SIZE_OK(cache_size)) {
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
         beam_load_prepared_free(magic);
         BIF_ERROR(BIF_P, SYSTEM_LIMIT);
     }
 
     result = erts_new_binary(BIF_P, cache_size, &cache_data);
-    if (!beamasm_copy_cache_snapshot(stp->ba, cache_data, cache_size)) {
+    if (!beamasm_copy_cache_snapshot(stp->ba, cache_data, snapshot_size)) {
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
         beam_load_prepared_free(magic);
         BIF_ERROR(BIF_P, SYSTEM_LIMIT);
     }
 
     ASSERT(cache_size >= 56);
     sys_memcpy(cache_data + 40, stp->beam.checksum, 16);
+    {
+        byte *p = cache_data + snapshot_size;
+        sys_memcpy(p, "EJLDR001", 8);
+        jit_cache_put_u32(p + 8, stp->beam.dynamic_literals.count);
+        jit_cache_put_u32(p + 12, stp->beam.lambdas.count);
+        jit_cache_put_u32(p + 16, nif_bytes);
+        jit_cache_put_u32(p + 20, 0);
+        p += 24;
+        for (i = 0; i < stp->beam.dynamic_literals.count; i++) {
+            byte *end;
+            jit_cache_put_u32(p, literal_kinds[i]);
+            jit_cache_put_u32(p + 4, literal_sizes[i]);
+            p += 8;
+            if (literal_kinds[i] == 0) {
+                end = p;
+                erts_encode_ext(stp->beam.dynamic_literals.entries[i].value,
+                                &end);
+                ASSERT(end == p + literal_sizes[i]);
+                p = end;
+            }
+        }
+        for (i = 0; i < stp->beam.lambdas.count; i++) {
+            jit_cache_put_u64(p, (Uint64)stp->lambda_literals[i]);
+            p += 8;
+        }
+        sys_memzero(p, nif_bytes);
+        if (stp->load_hdr->are_nifs) {
+            for (i = 0; i < stp->beam.code.function_count; i++) {
+                p[i / 8] |= stp->load_hdr->are_nifs[i] << (i & 7);
+            }
+        }
+        ASSERT(p + nif_bytes == cache_data + cache_size);
+    }
+    erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+    erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
     beam_load_prepared_free(magic);
 
     hp = HAlloc(BIF_P, 3);
