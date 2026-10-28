@@ -384,7 +384,6 @@ static int cache_copy_metadata(LoaderState *stp,
                                const byte *metadata,
                                size_t metadata_size,
                                Uint64 image_size,
-                               Uint64 *code_header_offset,
                                Uint64 *code_end_offset,
                                Uint64 *on_load_offset,
                                Uint32 *function_count) {
@@ -405,12 +404,11 @@ static int cache_copy_metadata(LoaderState *stp,
     label_count = cache_read_u32(metadata + 12);
     fixup_count = cache_read_u32(metadata + 16);
     group_count = cache_read_u32(metadata + 20);
-    *code_header_offset = cache_read_u64(metadata + 24);
     *code_end_offset = cache_read_u64(metadata + 32);
     *on_load_offset = cache_read_u64(metadata + 40);
     if (*function_count != (Uint32)stp->beam.code.function_count ||
         label_count != (Uint32)stp->beam.code.label_count + 1 ||
-        *code_header_offset != 0 || *code_end_offset > image_size ||
+        cache_read_u64(metadata + 24) != 0 || *code_end_offset > image_size ||
         *code_end_offset < sizeof(BeamCodeHeader) ||
         (Uint64)*function_count > (SIZE_MAX - header_size) / 8 ||
         label_count > (SIZE_MAX - header_size - (size_t)*function_count * 8) /
@@ -474,17 +472,15 @@ static int cache_copy_metadata(LoaderState *stp,
                 (kind != 0 && size != 0)) {
                 return 0;
             }
-            if (i >= initial_dynamic_count) {
-                literal = kind == 0
-                                  ? beamfile_add_encoded_literal(&stp->beam,
-                                                                 record,
-                                                                 size)
-                                  : beamfile_add_lambda_literal(
-                                            &stp->beam,
-                                            stp->beam.lambdas.entries[kind - 1]
-                                                    .arity);
-                if (literal != ~(Sint)i) return 0;
-            }
+            literal = kind == 0
+                              ? beamfile_add_encoded_literal(&stp->beam,
+                                                             record,
+                                                             size)
+                              : beamfile_add_lambda_literal(
+                                        &stp->beam,
+                                        stp->beam.lambdas.entries[kind - 1]
+                                                .arity);
+            if (literal != ~(Sint)i) return 0;
             record += size;
         }
     }
@@ -625,7 +621,7 @@ int beam_load_cache_image(LoaderState *stp,
                           size_t cache_size) {
 #if defined(__aarch64__)
     BeamJitCache cache;
-    Uint64 metadata_offset, code_header_offset, code_end_offset, on_load_offset;
+    Uint64 metadata_offset, code_end_offset, on_load_offset;
     Uint32 function_count;
     const byte *metadata;
     size_t metadata_size, code_header_size;
@@ -648,7 +644,6 @@ int beam_load_cache_image(LoaderState *stp,
                              metadata,
                              metadata_size,
                              cache.image_size,
-                             &code_header_offset,
                              &code_end_offset,
                              &on_load_offset,
                              &function_count)) {
@@ -680,9 +675,7 @@ int beam_load_cache_image(LoaderState *stp,
     if (!beam_jit_cache_load_aarch64(&cache,
                                      rw,
                                      exec,
-                                     stp->loaded_size,
-                                     NULL,
-                                     NULL)) {
+                                     stp->loaded_size)) {
         beamasm_purge_module(exec, rw, stp->loaded_size);
         stp->executable_region = NULL;
         stp->writable_region = NULL;
@@ -731,293 +724,6 @@ int beam_load_cache_image(LoaderState *stp,
     return 0;
 #endif
 }
-
-#if 0
-static int cache_is_identity_module(LoaderState *stp) {
-    static const int expected[] = {genop_int_func_start_5,
-                                   genop_label_1,
-                                   genop_return_0,
-                                   genop_int_func_end_2,
-                                   genop_int_code_end_0};
-    BeamCodeReader *reader;
-    BeamOp *op = NULL;
-    int i;
-
-    reader = beamfile_get_code(&stp->beam, &stp->op_allocator);
-    for (i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
-        if (!beamcodereader_next(reader, &op) || op->op != expected[i]) {
-            beamcodereader_close(reader);
-            return 0;
-        }
-    }
-    beamcodereader_close(reader);
-    return 1;
-}
-
-static int cache_is_identity_aarch64(const byte *code, size_t size) {
-    static const Uint32 expected[] = {0xf81f8e9e,
-                                      0x14000002,
-                                      0x94000000,
-                                      0x10ffffa2,
-                                      0x710006d6,
-                                      0x5400000d,
-                                      0xf840869e,
-                                      0x710006d6,
-                                      0x54000004,
-                                      0xd65f03c0};
-    Uint32 instruction;
-    Uint i;
-
-    if (size != sizeof(expected)) {
-        return 0;
-    }
-    for (i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
-        sys_memcpy(&instruction, code + i * sizeof(instruction),
-                   sizeof(instruction));
-        if (i == 2) {
-            instruction &= 0xfc000000;
-        } else if (i == 5 || i == 8) {
-            instruction &= 0xff00001f;
-        }
-        if (instruction != expected[i]) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int patch_aarch64_b_cond(void *rw,
-                                const void *exec,
-                                Uint64 offset,
-                                ErtsCodePtr target) {
-    Sint64 delta = (const byte *)target - ((const byte *)exec + offset);
-    Uint32 instruction;
-
-    if ((delta & 3) != 0 || delta < -(Sint64)(1 << 20) ||
-        delta >= (Sint64)(1 << 20)) {
-        return 0;
-    }
-    sys_memcpy(&instruction, (byte *)rw + offset, sizeof(instruction));
-    instruction = (instruction & 0xff00001f) |
-                  ((((Uint32)(delta / 4)) & 0x7ffff) << 5);
-    sys_memcpy((byte *)rw + offset, &instruction, sizeof(instruction));
-    return 1;
-}
-
-static int patch_aarch64_bl(void *rw,
-                            const void *exec,
-                            Uint64 offset,
-                            ErtsCodePtr target) {
-    Sint64 delta = (const byte *)target - ((const byte *)exec + offset);
-    Uint32 branch;
-
-    if ((delta & 3) != 0 || delta < -(Sint64)(1 << 27) ||
-        delta >= (Sint64)(1 << 27)) {
-        return 0;
-    }
-    branch = 0x94000000u | (((Uint32)(delta / 4)) & 0x03ffffffu);
-    sys_memcpy((byte *)rw + offset, &branch, sizeof(branch));
-    return 1;
-}
-
-static void emit_aarch64_absolute_jump(void *rw,
-                                       Uint64 offset,
-                                       ErtsCodePtr target) {
-    const UWord address = (UWord)target;
-    Uint32 code[] = {0xd2800010u | (Uint32)((address & 0xffff) << 5),
-                     0xf2a00010u | (Uint32)(((address >> 16) & 0xffff) << 5),
-                     0xf2c00010u | (Uint32)(((address >> 32) & 0xffff) << 5),
-                     0xf2e00010u | (Uint32)(((address >> 48) & 0xffff) << 5),
-                     0xd61f0200u};
-
-    sys_memcpy((byte *)rw + offset, code, sizeof(code));
-}
-
-int beam_load_cache_image(LoaderState *stp,
-                          const byte *cache,
-                          size_t cache_size) {
-#if defined(__aarch64__)
-    const size_t header_size = 80;
-    const size_t section_record_size = 40;
-    const size_t reloc_record_size = 64;
-    Uint32 section_count, reloc_count, function_count, label_count;
-    Uint64 image_size, sections_offset, relocs_offset, image_offset;
-    Uint64 metadata_offset, code_header_offset, code_end_offset;
-    Uint64 on_load_offset, function_offset;
-    size_t metadata_size, code_header_size;
-    const byte *metadata, *label_data;
-    const void *exec;
-    void *rw;
-    BeamCodeHeader *code_hdr_rw;
-    const BeamCodeHeader *code_hdr_exec;
-    const ErtsCodeInfo **function_table;
-    BeamFile_ExportEntry *entry;
-    Uint64 entry_offset;
-    Uint i;
-
-    if (cache_size < header_size ||
-        sys_memcmp(cache, "EJITC001", 8) != 0 ||
-        cache_read_u32(cache + 8) != 1 ||
-        cache_read_u32(cache + 12) != header_size ||
-        cache_read_u32(cache + 16) != 1) {
-        return 0;
-    }
-
-    section_count = cache_read_u32(cache + 20);
-    reloc_count = cache_read_u32(cache + 24);
-    image_size = cache_read_u64(cache + 32);
-    sections_offset = cache_read_u64(cache + 56);
-    relocs_offset = cache_read_u64(cache + 64);
-    image_offset = cache_read_u64(cache + 72);
-
-    if (section_count == 0 || reloc_count != 0 ||
-        sections_offset != header_size ||
-        section_count > (SIZE_MAX - header_size) / section_record_size ||
-        relocs_offset != header_size +
-                                  (size_t)section_count * section_record_size ||
-        image_offset != relocs_offset +
-                                (size_t)reloc_count * reloc_record_size ||
-        image_size > SIZE_MAX - image_offset ||
-        image_offset + image_size > cache_size) {
-        return 0;
-    }
-
-    metadata_offset = image_offset + image_size;
-    if (metadata_offset > cache_size || cache_size - metadata_offset < 40) {
-        return 0;
-    }
-    metadata = cache + metadata_offset;
-    if (sys_memcmp(metadata, "EJMETA01", 8) != 0) {
-        return 0;
-    }
-
-    function_count = cache_read_u32(metadata + 8);
-    label_count = cache_read_u32(metadata + 12);
-    code_header_offset = cache_read_u64(metadata + 16);
-    code_end_offset = cache_read_u64(metadata + 24);
-    on_load_offset = cache_read_u64(metadata + 32);
-    metadata_size = 40 + (size_t)function_count * 8 +
-                    (size_t)label_count * 8;
-
-    if (function_count != 1 || stp->beam.code.function_count != 1 ||
-        label_count != stp->beam.code.label_count + 1 ||
-        metadata_size != cache_size - metadata_offset ||
-        code_header_offset != 0 || code_end_offset > image_size ||
-        code_end_offset < sizeof(BeamCodeHeader) || image_size > UINT_MAX ||
-        image_size - code_end_offset < 10 * sizeof(Uint32) ||
-        on_load_offset != UINT64_MAX || stp->beam.exports.count != 1 ||
-        stp->beam.imports.count != 0 || stp->beam.lambdas.count != 0 ||
-        stp->beam.static_literals.count != 0 ||
-        stp->beam.dynamic_literals.count > 1 || stp->beam.strings.size != 0 ||
-        stp->beam.debug.item_count != 0 || stp->beam.record.record_count != 0 ||
-        stp->coverage != NULL || !cache_is_identity_module(stp)) {
-        return 0;
-    }
-
-    function_offset = cache_read_u64(metadata + 40);
-    label_data = metadata + 40 + function_count * 8;
-    entry = &stp->beam.exports.entries[0];
-    code_header_size = offsetof(BeamCodeHeader, functions) +
-                       sizeof(BeamInstr) * stp->codev_size;
-    if (entry->label >= label_count) {
-        return 0;
-    }
-    entry_offset = cache_read_u64(label_data + entry->label * 8);
-    if ((function_offset & (sizeof(UWord) - 1)) != 0 ||
-        function_offset < code_header_size ||
-        function_offset > code_end_offset - sizeof(ErtsCodeInfo) ||
-        entry_offset != function_offset + sizeof(ErtsCodeInfo) ||
-        entry_offset >= code_end_offset ||
-        !cache_is_identity_aarch64(cache + image_offset + entry_offset,
-                                   code_end_offset - entry_offset) ||
-        code_header_size > code_end_offset) {
-        return 0;
-    }
-
-    if (!beamasm_install_cache_code(cache + image_offset,
-                                    (size_t)image_size,
-                                    &exec,
-                                    &rw)) {
-        return 0;
-    }
-
-    stp->executable_region = exec;
-    stp->writable_region = rw;
-    stp->loaded_size = (unsigned)image_size;
-    sys_memset((byte *)rw + code_end_offset,
-               0,
-               (size_t)(image_size - code_end_offset));
-    stp->jit_cache_labels = erts_alloc(ERTS_ALC_T_PREPARED_CODE,
-                                       label_count * sizeof(Uint64));
-    stp->jit_cache_label_count = label_count;
-    for (i = 0; i < label_count; i++) {
-        stp->jit_cache_labels[i] = cache_read_u64(label_data + i * 8);
-    }
-
-    code_hdr_rw = (BeamCodeHeader *)rw;
-    code_hdr_exec = (const BeamCodeHeader *)exec;
-    sys_memcpy(code_hdr_rw, stp->load_hdr, code_header_size);
-    code_hdr_rw->on_load = NULL;
-    function_table = &code_hdr_rw->functions[0];
-    function_table[0] =
-            (ErtsCodeInfo *)((const byte *)exec + function_offset);
-    function_table[1] =
-            (ErtsCodeInfo *)((const byte *)exec + code_end_offset);
-
-    {
-        ErtsCodeInfo *info =
-                (ErtsCodeInfo *)((byte *)rw + function_offset);
-        info->gen_bp = NULL;
-        info->mfa.module = stp->module;
-        info->mfa.function = entry->function;
-        info->mfa.arity = entry->arity;
-    }
-
-    if (!patch_aarch64_bl(rw,
-                          exec,
-                          function_offset,
-                          beamasm_i_func_info_shared()) ||
-        !patch_aarch64_bl(rw,
-                          exec,
-                          entry_offset + 2 * sizeof(Uint32),
-                          beamasm_i_breakpoint_trampoline_shared())) {
-        return 0;
-    }
-    emit_aarch64_absolute_jump(rw,
-                               code_end_offset,
-                               beamasm_i_test_yield_shared());
-    emit_aarch64_absolute_jump(rw,
-                               code_end_offset + 5 * sizeof(Uint32),
-                               beamasm_dispatch_return());
-    if (!patch_aarch64_b_cond(rw,
-                              exec,
-                              entry_offset + 5 * sizeof(Uint32),
-                              (ErtsCodePtr)((const byte *)exec +
-                                            code_end_offset)) ||
-        !patch_aarch64_b_cond(rw,
-                              exec,
-                              entry_offset + 8 * sizeof(Uint32),
-                              (ErtsCodePtr)((const byte *)exec +
-                                            code_end_offset +
-                                            5 * sizeof(Uint32)))) {
-        return 0;
-    }
-
-    stp->code_hdr = code_hdr_exec;
-    stp->on_load = NULL;
-    stp->jit_cache_loaded = 1;
-    beamasm_seal_module(stp->executable_region,
-                        stp->writable_region,
-                        stp->loaded_size);
-    return 1;
-#else
-    (void)stp;
-    (void)cache;
-    (void)cache_size;
-    return 0;
-#endif
-}
-#endif
 
 static void init_label(Label *lp) {
     sys_memset(lp, 0, sizeof(*lp));
@@ -1496,7 +1202,6 @@ int beam_load_emit_op(LoaderState *stp, BeamOp *tmp_op) {
 
     /* Generate assembly code for the specific instruction. */
     if (!stp->jit_cache_metadata_only) {
-        stp->emitted_ops++;
         if (beamasm_emit(stp->ba, stp->specific_op, tmp_op) == 0) {
             BeamLoadError1(stp, "failed to emit asm for %d", stp->specific_op);
         }

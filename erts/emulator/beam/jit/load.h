@@ -69,7 +69,6 @@ struct LoaderState_ {
     int may_load_nif;     /* true if NIFs may later be loaded for this module */
     int jit_cache_requested; /* Capture pre-relocation BeamAsm output. */
     Uint jit_cache_initial_dynamic_literals;
-    unsigned emitted_ops; /* Number of BeamAsm operations emitted. */
     int jit_cache_loaded; /* Native image installed without BeamAsm emission. */
     int jit_cache_metadata_only; /* Decode operations without emitting code. */
     Uint64 *jit_cache_labels; /* Cached BEAM label offsets. */

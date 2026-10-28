@@ -135,7 +135,6 @@ int beam_jit_cache_open(const unsigned char *data,
     }
 
     parsed.data = data;
-    parsed.size = size;
     parsed.section_count = section_count;
     parsed.relocation_count = relocation_count;
     parsed.image_size = image_size;
@@ -274,9 +273,7 @@ static void store_value(unsigned char *p, unsigned size, uint64_t value) {
 int beam_jit_cache_load_aarch64(const BeamJitCache *cache,
                                 void *writable_base,
                                 const void *executable_base,
-                                size_t allocation_size,
-                                BeamJitCacheResolver resolver,
-                                void *resolver_context) {
+                                size_t allocation_size) {
     unsigned char *rw = writable_base;
     uintptr_t rx = (uintptr_t)executable_base;
     uint32_t i;
@@ -295,7 +292,6 @@ int beam_jit_cache_load_aarch64(const BeamJitCache *cache,
         uint64_t source_at = get_u64(source + 16) + get_u64(record + 48);
         uint64_t target_at = get_u64(target + 16) + get_u64(record + 56);
         uintptr_t address;
-        BeamJitCacheRelocation relocation;
         unsigned value_offset = get_u32(record + 24);
         unsigned value_size = get_u32(record + 28);
         unsigned char *word = rw + source_at + value_offset;
@@ -305,13 +301,6 @@ int beam_jit_cache_load_aarch64(const BeamJitCache *cache,
             return 0;
         }
         address = rx + (uintptr_t)target_at;
-        relocation.type = get_u32(record);
-        relocation.target_section = get_u32(record + 16);
-        relocation.payload = get_u64(record + 56);
-        if (resolver != NULL &&
-            !resolver(resolver_context, &relocation, address, &address)) {
-            return 0;
-        }
         if (!encode_offset(record, (uint64_t)address, &encoded)) {
             return 0;
         }

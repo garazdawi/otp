@@ -193,12 +193,6 @@ public:
                                    const std::vector<uint64_t> &function_offsets,
                                    const std::vector<uint64_t> &label_offsets,
                                    const std::vector<BeamJitCacheFixup> &fixups);
-    bool overlayCacheSnapshot(const byte *src,
-                              size_t size,
-                              void *writable_base,
-                              size_t preserve_prefix,
-                              size_t *copied) const;
-
     void embed_rodata(const char *labelName, const char *buff, size_t size);
     void embed_bss(const char *labelName, size_t size);
     void embed_zeros(size_t size);

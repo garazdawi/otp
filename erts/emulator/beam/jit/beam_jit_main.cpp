@@ -562,37 +562,6 @@ extern "C"
         return 1;
     }
 
-    ErtsCodePtr beamasm_i_func_info_shared(void) {
-        return reinterpret_cast<ErtsCodePtr>(bga->get_i_func_info_shared());
-    }
-
-    ErtsCodePtr beamasm_i_breakpoint_trampoline_shared(void) {
-        return reinterpret_cast<ErtsCodePtr>(
-                bga->get_i_breakpoint_trampoline_shared());
-    }
-
-    ErtsCodePtr beamasm_i_test_yield_shared(void) {
-        return reinterpret_cast<ErtsCodePtr>(bga->get_i_test_yield_shared());
-    }
-
-    ErtsCodePtr beamasm_dispatch_return(void) {
-        return reinterpret_cast<ErtsCodePtr>(bga->get_dispatch_return());
-    }
-
-    int beamasm_overlay_cache_snapshot(void *instance,
-                                       const byte *src,
-                                       size_t size,
-                                       void *writable_base,
-                                       size_t preserve_prefix,
-                                       size_t *copied) {
-        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
-        return ba->overlayCacheSnapshot(src,
-                                        size,
-                                        writable_base,
-                                        preserve_prefix,
-                                        copied);
-    }
-
     int beamasm_emit(void *instance, unsigned specific_op, BeamOp *op) {
         /* The argument array must be safely convertible from `BeamOpArg*` to
          * `ArgVal*` for us to reuse it directly.
