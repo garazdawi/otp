@@ -453,7 +453,8 @@ static int cache_copy_metadata(LoaderState *stp,
         cache_read_u32(record + 12) != (Uint32)stp->beam.lambdas.count ||
         cache_read_u32(record + 16) !=
                 ((Uint32)*function_count + 7) / 8 ||
-        cache_read_u32(record + 20) != 0) {
+        cache_read_u32(record + 20) !=
+                stp->jit_cache_initial_dynamic_literals) {
         return 0;
     }
     initial_dynamic_count = stp->beam.dynamic_literals.count;
@@ -461,7 +462,7 @@ static int cache_copy_metadata(LoaderState *stp,
         Uint dynamic_count = cache_read_u32(record + 8);
         if (dynamic_count < initial_dynamic_count) return 0;
         record += 24;
-        for (i = 0; i < dynamic_count; i++) {
+        for (i = initial_dynamic_count; i < dynamic_count; i++) {
             Uint32 kind, size;
             Sint literal;
             if ((size_t)(metadata_end - record) < 8) return 0;

@@ -361,7 +361,9 @@ erts_internal_beam_jit_cache_2(BIF_ALIST_2)
                                    stp->beam.dynamic_literals.count *
                                            sizeof(*literal_kinds));
     }
-    for (i = 0; i < stp->beam.dynamic_literals.count; i++) {
+    for (i = stp->jit_cache_initial_dynamic_literals;
+         i < stp->beam.dynamic_literals.count;
+         i++) {
         Uint lambda;
         literal_kinds[i] = 0;
         literal_sizes[i] = 0;
@@ -416,9 +418,12 @@ erts_internal_beam_jit_cache_2(BIF_ALIST_2)
         jit_cache_put_u32(p + 8, stp->beam.dynamic_literals.count);
         jit_cache_put_u32(p + 12, stp->beam.lambdas.count);
         jit_cache_put_u32(p + 16, nif_bytes);
-        jit_cache_put_u32(p + 20, 0);
+        jit_cache_put_u32(p + 20,
+                          stp->jit_cache_initial_dynamic_literals);
         p += 24;
-        for (i = 0; i < stp->beam.dynamic_literals.count; i++) {
+        for (i = stp->jit_cache_initial_dynamic_literals;
+             i < stp->beam.dynamic_literals.count;
+             i++) {
             byte *end;
             jit_cache_put_u32(p, literal_kinds[i]);
             jit_cache_put_u32(p + 4, literal_sizes[i]);

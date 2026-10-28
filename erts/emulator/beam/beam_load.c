@@ -215,6 +215,9 @@ prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
 
     ERTS_ASSERT(read_result == BEAMFILE_READ_SUCCESS);
 
+    stp->jit_cache_initial_dynamic_literals =
+            stp->beam.dynamic_literals.count;
+
     if (stp->module != stp->beam.module) {
         BeamLoadError1(stp, "module name in object code is %T", stp->beam.module);
     }

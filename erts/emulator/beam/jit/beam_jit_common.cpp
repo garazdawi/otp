@@ -683,10 +683,16 @@ void BeamModuleAssembler::codegen(JitAllocator *allocator,
                       return a.offset < b.offset;
                   });
 
+        uint64_t on_load_offset = get_offset(on_load);
+        if (on_load_offset != invalid_offset) {
+            ASSERT(on_load_offset >= sizeof(ErtsCodeInfo));
+            on_load_offset -= sizeof(ErtsCodeInfo);
+        }
+
         appendCacheModuleMetadata(
                 get_offset(code_header),
                 get_offset(code_end),
-                get_offset(on_load),
+                on_load_offset,
                 function_offsets,
                 label_offsets,
                 fixups);
