@@ -35,6 +35,8 @@
 #include "erl_record.h"
 
 #include "beam_asm.h"
+#include "beam_jit_cache.h"
+#include "beam_load_timing.h"
 
 #ifdef ADDRESS_SANITIZER
 #    include <sanitizer/lsan_interface.h>
@@ -43,15 +45,38 @@
 #define INVALID_LAMBDA_INDEX -1
 
 static void init_label(Label *lp);
+#if defined(__aarch64__)
+static int beam_load_finish_cache(LoaderState *stp);
+
+static Uint32 cache_read_u32(const byte *p) {
+    return ((Uint32)p[0]) | ((Uint32)p[1] << 8) |
+           ((Uint32)p[2] << 16) | ((Uint32)p[3] << 24);
+}
+
+static Uint64 cache_read_u64(const byte *p) {
+    Uint64 value = 0;
+    int shift;
+
+    for (shift = 0; shift < 64; shift += 8) {
+        value |= (Uint64)*p++ << shift;
+    }
+    return value;
+}
+#endif
 
 int beam_load_prepare_emit(LoaderState *stp) {
-    BeamCodeHeader *hdr;
-    int i;
-
     stp->ba = beamasm_new_assembler(stp->module,
                                     stp->beam.code.label_count,
                                     stp->beam.code.function_count,
-                                    &stp->beam);
+                                    &stp->beam,
+                                    stp->jit_cache_requested);
+
+    return beam_load_prepare_metadata(stp);
+}
+
+int beam_load_prepare_metadata(LoaderState *stp) {
+    BeamCodeHeader *hdr;
+    int i;
 
     /* Initialize code header */
     stp->codev_size = stp->beam.code.function_count + 1;
@@ -70,6 +95,10 @@ int beam_load_prepare_emit(LoaderState *stp) {
     hdr->compile_size = 0;
     hdr->compile_size_on_heap = 0;
     hdr->literal_area = NULL;
+    hdr->line_table = NULL;
+#ifdef ERTS_ENABLE_BEAM_CODE_DEBUGGER
+    hdr->debug = NULL;
+#endif
     hdr->md5_ptr = NULL;
     hdr->are_nifs = NULL;
     hdr->debugger_flags = erts_debugger_flags;
@@ -207,6 +236,501 @@ int beam_load_prepare_emit(LoaderState *stp) {
     return 1;
 }
 
+typedef struct BeamJitCachedFixup_ {
+    Uint32 kind;
+    Uint32 index;
+    Uint64 offset;
+    Sint64 addend;
+    Uint64 target;
+} BeamJitCachedFixup;
+
+enum {
+    CACHE_FIXUP_CATCH = 1,
+    CACHE_FIXUP_IMPORT,
+    CACHE_FIXUP_LAMBDA,
+    CACHE_FIXUP_LITERAL,
+    CACHE_FIXUP_STRING,
+    CACHE_FIXUP_BEAM_ATOM,
+    CACHE_FIXUP_GLOBAL_FRAGMENT,
+    CACHE_FIXUP_RUNTIME_FUNCTION,
+    CACHE_FIXUP_BEAM_ATOM_MOV,
+    CACHE_FIXUP_GLOBAL_FRAGMENT_MOV,
+    CACHE_FIXUP_RUNTIME_FUNCTION_MOV,
+    CACHE_FIXUP_NAMED_OFFSET,
+    CACHE_FIXUP_LAMBDA_TRAMPOLINE
+};
+
+static int cache_patch_word(LoaderState *stp,
+                            Uint64 offset,
+                            Sint64 addend,
+                            UWord value) {
+    UWord patched;
+
+    if (offset > stp->loaded_size ||
+        sizeof(patched) > stp->loaded_size - offset) {
+        return 0;
+    }
+    patched = value + addend;
+    sys_memcpy((byte *)stp->writable_region + offset,
+               &patched,
+               sizeof(patched));
+    return 1;
+}
+
+#if defined(__aarch64__)
+static int cache_patch_aarch64_mov(LoaderState *stp,
+                                   Uint64 offset,
+                                   UWord value) {
+    Uint32 code[4], rd;
+    Uint i;
+
+    if (offset > stp->loaded_size || 16 > stp->loaded_size - offset) {
+        return 0;
+    }
+    sys_memcpy(code, (byte *)stp->writable_region + offset, sizeof(code));
+    rd = code[0] & 0x1f;
+    if ((code[0] & 0xffe00000) != 0xd2800000) {
+        return 0;
+    }
+    for (i = 1; i < 4; i++) {
+        if ((code[i] & 0xffe0001f) !=
+            (0xf2800000 | (i << 21) | rd)) {
+            return 0;
+        }
+    }
+    code[0] = 0xd2800000 | ((value & 0xffff) << 5) | rd;
+    for (i = 1; i < 4; i++) {
+        code[i] = 0xf2800000 | (i << 21) |
+                  (((value >> (16 * i)) & 0xffff) << 5) | rd;
+    }
+    sys_memcpy((byte *)stp->writable_region + offset, code, sizeof(code));
+    return 1;
+}
+
+static int cache_apply_immediate_fixup(LoaderState *stp,
+                                       const BeamJitCachedFixup *fixup) {
+    UWord value;
+    int mov = 0;
+
+    switch (fixup->kind) {
+    case CACHE_FIXUP_BEAM_ATOM:
+    case CACHE_FIXUP_BEAM_ATOM_MOV:
+        if (fixup->index >= (Uint32)stp->beam.atoms.count) {
+            return 0;
+        }
+        value = stp->beam.atoms.entries[fixup->index];
+        mov = fixup->kind == CACHE_FIXUP_BEAM_ATOM_MOV;
+        break;
+    case CACHE_FIXUP_GLOBAL_FRAGMENT:
+    case CACHE_FIXUP_GLOBAL_FRAGMENT_MOV:
+        if (beamasm_cache_global_base() == NULL ||
+            fixup->target >= beamasm_cache_global_size() ||
+            fixup->target > UINTPTR_MAX -
+                                    (uintptr_t)beamasm_cache_global_base()) {
+            return 0;
+        }
+        value = (uintptr_t)beamasm_cache_global_base() + fixup->target;
+        mov = fixup->kind == CACHE_FIXUP_GLOBAL_FRAGMENT_MOV;
+        break;
+    case CACHE_FIXUP_RUNTIME_FUNCTION:
+    case CACHE_FIXUP_RUNTIME_FUNCTION_MOV:
+        value = (uintptr_t)beamasm_cache_runtime_anchor() + fixup->target;
+        mov = fixup->kind == CACHE_FIXUP_RUNTIME_FUNCTION_MOV;
+        break;
+    default:
+        return 0;
+    }
+    if (mov) {
+        return fixup->addend == 16 &&
+               cache_patch_aarch64_mov(stp, fixup->offset, value);
+    }
+    return cache_patch_word(stp, fixup->offset, fixup->addend, value);
+}
+#endif
+
+static int cache_patch_fixups(LoaderState *stp,
+                              Uint32 kind,
+                              Uint32 index,
+                              UWord value) {
+    Uint i;
+
+    for (i = 0; i < stp->jit_cache_fixup_count; i++) {
+        BeamJitCachedFixup *fixup = &stp->jit_cache_fixups[i];
+        if (fixup->kind < kind ||
+            (fixup->kind == kind && fixup->index < index)) {
+            continue;
+        }
+        if (fixup->kind > kind || fixup->index > index) {
+            break;
+        }
+        if (!cache_patch_word(stp, fixup->offset, fixup->addend, value)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static const byte *cache_named_rodata(LoaderState *stp,
+                                      Uint index,
+                                      size_t size) {
+    Uint64 offset;
+
+    ASSERT(index < 6);
+    offset = stp->jit_cache_named_offsets[index];
+    if (offset == 0 || offset > stp->loaded_size ||
+        size > stp->loaded_size - offset) {
+        return NULL;
+    }
+    return (const byte *)stp->executable_region + offset;
+}
+
+#if defined(__aarch64__)
+static int cache_copy_metadata(LoaderState *stp,
+                               const byte *metadata,
+                               size_t metadata_size,
+                               Uint64 image_size,
+                               Uint64 *code_end_offset,
+                               Uint64 *on_load_offset,
+                               Uint32 *function_count) {
+    const size_t header_size = 48;
+    const size_t fixup_size = 28;
+    Uint32 label_count, fixup_count, group_count;
+    Uint64 tables_size;
+    const byte *functions, *labels, *fixups;
+    const byte *record, *metadata_end;
+    Uint i, group, parsed_fixups, initial_dynamic_count, nif_bytes;
+    Uint32 previous_kind;
+
+    if (metadata_size < header_size ||
+        sys_memcmp(metadata, "EJMETA03", 8) != 0) {
+        return 0;
+    }
+    *function_count = cache_read_u32(metadata + 8);
+    label_count = cache_read_u32(metadata + 12);
+    fixup_count = cache_read_u32(metadata + 16);
+    group_count = cache_read_u32(metadata + 20);
+    *code_end_offset = cache_read_u64(metadata + 32);
+    *on_load_offset = cache_read_u64(metadata + 40);
+    if (*function_count != (Uint32)stp->beam.code.function_count ||
+        label_count != (Uint32)stp->beam.code.label_count + 1 ||
+        cache_read_u64(metadata + 24) != 0 || *code_end_offset > image_size ||
+        *code_end_offset < sizeof(BeamCodeHeader) ||
+        (Uint64)*function_count > (SIZE_MAX - header_size) / 8 ||
+        label_count > (SIZE_MAX - header_size - (size_t)*function_count * 8) /
+                              8) {
+        return 0;
+    }
+    tables_size = header_size + (Uint64)*function_count * 8 +
+                  (Uint64)label_count * 8;
+    if (tables_size > metadata_size ||
+        group_count > CACHE_FIXUP_LAMBDA_TRAMPOLINE ||
+        (fixup_count == 0) != (group_count == 0)) {
+        return 0;
+    }
+    functions = metadata + header_size;
+    labels = functions + (size_t)*function_count * 8;
+    fixups = labels + (size_t)label_count * 8;
+    metadata_end = metadata + metadata_size;
+
+    record = fixups;
+    parsed_fixups = 0;
+    previous_kind = 0;
+    for (group = 0; group < group_count; group++) {
+        Uint32 kind, count;
+        if ((size_t)(metadata_end - record) < 8) return 0;
+        kind = cache_read_u32(record);
+        count = cache_read_u32(record + 4);
+        record += 8;
+        if (kind <= previous_kind || kind > CACHE_FIXUP_LAMBDA_TRAMPOLINE ||
+            count == 0 || count > fixup_count - parsed_fixups ||
+            count > (size_t)(metadata_end - record) / fixup_size) {
+            return 0;
+        }
+        previous_kind = kind;
+        parsed_fixups += count;
+        record += (size_t)count * fixup_size;
+    }
+    if (parsed_fixups != fixup_count ||
+        (size_t)(metadata_end - record) < 24 ||
+        sys_memcmp(record, "EJLDR001", 8) != 0 ||
+        cache_read_u32(record + 12) != (Uint32)stp->beam.lambdas.count ||
+        cache_read_u32(record + 16) !=
+                ((Uint32)*function_count + 7) / 8 ||
+        cache_read_u32(record + 20) !=
+                stp->jit_cache_initial_dynamic_literals) {
+        return 0;
+    }
+    initial_dynamic_count = stp->beam.dynamic_literals.count;
+    {
+        Uint dynamic_count = cache_read_u32(record + 8);
+        if (dynamic_count < initial_dynamic_count) return 0;
+        record += 24;
+        for (i = initial_dynamic_count; i < dynamic_count; i++) {
+            Uint32 kind, size;
+            Sint literal;
+            if ((size_t)(metadata_end - record) < 8) return 0;
+            kind = cache_read_u32(record);
+            size = cache_read_u32(record + 4);
+            record += 8;
+            if (size > (size_t)(metadata_end - record)) return 0;
+            if (kind > (Uint32)stp->beam.lambdas.count ||
+                (kind != 0 && size != 0)) {
+                return 0;
+            }
+            literal = kind == 0
+                              ? beamfile_add_encoded_literal(&stp->beam,
+                                                             record,
+                                                             size)
+                              : beamfile_add_lambda_literal(
+                                        &stp->beam,
+                                        stp->beam.lambdas.entries[kind - 1]
+                                                .arity);
+            if (literal != ~(Sint)i) return 0;
+            record += size;
+        }
+    }
+    if ((size_t)(metadata_end - record) <
+        (size_t)stp->beam.lambdas.count * 8) {
+        return 0;
+    }
+    for (i = 0; i < (Uint)stp->beam.lambdas.count; i++) {
+        stp->lambda_literals[i] = (Sint64)cache_read_u64(record);
+        if (stp->beam.lambdas.entries[i].num_free == 0) {
+            Sint literal = stp->lambda_literals[i];
+            if (literal == ERTS_SWORD_MAX ||
+                (literal >= 0
+                         ? literal >= stp->beam.static_literals.count
+                         : ~literal >= stp->beam.dynamic_literals.count)) {
+                return 0;
+            }
+        }
+        record += 8;
+    }
+    nif_bytes = (*function_count + 7) / 8;
+    if ((size_t)(metadata_end - record) != nif_bytes) return 0;
+    if (nif_bytes && (*function_count & 7) &&
+        (record[nif_bytes - 1] & (0xff << (*function_count & 7)))) {
+        return 0;
+    }
+    for (i = 0; i < *function_count; i++) {
+        if (record[i / 8] & (1 << (i & 7))) {
+            if (stp->load_hdr->are_nifs == NULL) {
+                stp->load_hdr->are_nifs =
+                        erts_alloc(ERTS_ALC_T_PREPARED_CODE, *function_count);
+                sys_memzero(stp->load_hdr->are_nifs, *function_count);
+            }
+            stp->load_hdr->are_nifs[i] = 1;
+        }
+    }
+    stp->jit_cache_labels = erts_alloc(ERTS_ALC_T_PREPARED_CODE,
+                                       label_count * sizeof(Uint64));
+    stp->jit_cache_label_count = label_count;
+    for (i = 0; i < label_count; i++) {
+        Uint64 offset = cache_read_u64(labels + i * 8);
+        if (offset != UINT64_MAX && offset >= *code_end_offset) {
+            return 0;
+        }
+        stp->jit_cache_labels[i] = offset;
+    }
+
+    stp->jit_cache_fixups = erts_alloc(ERTS_ALC_T_PREPARED_CODE,
+                                       fixup_count * sizeof(BeamJitCachedFixup));
+    stp->jit_cache_fixup_count = fixup_count;
+    stp->jit_cache_lambda_trampolines =
+            stp->beam.lambdas.count
+                    ? erts_alloc(ERTS_ALC_T_PREPARED_CODE,
+                                 stp->beam.lambdas.count * sizeof(Uint64))
+                    : NULL;
+    for (i = 0; i < (Uint)stp->beam.lambdas.count; i++) {
+        stp->jit_cache_lambda_trampolines[i] = UINT64_MAX;
+    }
+    record = fixups;
+    i = 0;
+    for (group = 0; group < group_count; group++) {
+        Uint32 kind = cache_read_u32(record);
+        Uint32 count = cache_read_u32(record + 4);
+        Uint end = i + count;
+        record += 8;
+        for (; i < end; i++, record += fixup_size) {
+            BeamJitCachedFixup *out = &stp->jit_cache_fixups[i];
+            out->kind = kind;
+            out->index = cache_read_u32(record);
+            out->offset = cache_read_u64(record + 4);
+            out->addend = (Sint64)cache_read_u64(record + 12);
+            out->target = cache_read_u64(record + 20);
+            if (out->offset >= image_size) {
+                return 0;
+            }
+            switch (out->kind) {
+            case CACHE_FIXUP_IMPORT:
+                if (out->index >= (Uint32)stp->beam.imports.count) return 0;
+                break;
+            case CACHE_FIXUP_LAMBDA:
+            case CACHE_FIXUP_LAMBDA_TRAMPOLINE:
+                if (out->index >= (Uint32)stp->beam.lambdas.count) return 0;
+                break;
+            case CACHE_FIXUP_LITERAL:
+                if (((Sint32)out->index >= 0 &&
+                     (Sint32)out->index >= stp->beam.static_literals.count) ||
+                    ((Sint32)out->index < 0 &&
+                     ~((Sint32)out->index) >=
+                             stp->beam.dynamic_literals.count)) {
+                    return 0;
+                }
+                break;
+            case CACHE_FIXUP_BEAM_ATOM:
+            case CACHE_FIXUP_BEAM_ATOM_MOV:
+                if (out->index >= (Uint32)stp->beam.atoms.count) return 0;
+                break;
+            case CACHE_FIXUP_STRING:
+                if (out->addend < 0 ||
+                    (Uint64)out->addend > stp->beam.strings.size)
+                    return 0;
+                break;
+            default:
+                break;
+            }
+            if ((out->kind == CACHE_FIXUP_BEAM_ATOM_MOV ||
+                 out->kind == CACHE_FIXUP_GLOBAL_FRAGMENT_MOV ||
+                 out->kind == CACHE_FIXUP_RUNTIME_FUNCTION_MOV)
+                        ? (image_size < 16 || out->offset > image_size - 16)
+                        : (out->kind <= CACHE_FIXUP_RUNTIME_FUNCTION &&
+                           (image_size < sizeof(UWord) ||
+                            out->offset > image_size - sizeof(UWord)))) {
+                return 0;
+            }
+            if (out->kind == CACHE_FIXUP_CATCH && out->target >= image_size) {
+                return 0;
+            }
+            if (out->kind == CACHE_FIXUP_NAMED_OFFSET) {
+                if (out->index >= 6) return 0;
+                stp->jit_cache_named_offsets[out->index] = out->offset;
+            } else if (out->kind == CACHE_FIXUP_LAMBDA_TRAMPOLINE) {
+                stp->jit_cache_lambda_trampolines[out->index] = out->offset;
+            }
+        }
+    }
+    for (i = 0; i < *function_count; i++) {
+        Uint64 offset = cache_read_u64(functions + i * 8);
+        if ((offset & (sizeof(UWord) - 1)) != 0 ||
+            offset < offsetof(BeamCodeHeader, functions) ||
+            offset > *code_end_offset - sizeof(ErtsCodeInfo)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+#endif
+
+int beam_load_cache_image(LoaderState *stp,
+                          const byte *cache_data,
+                          size_t cache_size) {
+#if defined(__aarch64__)
+    BeamJitCache cache;
+    Uint64 metadata_offset, code_end_offset, on_load_offset;
+    Uint32 function_count;
+    const byte *metadata;
+    size_t metadata_size, code_header_size;
+    const void *exec;
+    void *rw;
+    BeamCodeHeader *header;
+    Uint i;
+    ErtsSysHrTime phase_start = erts_beam_load_timing_start();
+
+    if (!beam_jit_cache_open(cache_data, cache_size, &cache) ||
+        cache.image_size > UINT_MAX ||
+        cache.image + cache.image_size < cache.image) {
+        return 0;
+    }
+    metadata_offset = (Uint64)(cache.image - cache.data) + cache.image_size;
+    if (metadata_offset > cache_size) return 0;
+    metadata = cache_data + metadata_offset;
+    metadata_size = cache_size - (size_t)metadata_offset;
+    if (!cache_copy_metadata(stp,
+                             metadata,
+                             metadata_size,
+                             cache.image_size,
+                             &code_end_offset,
+                             &on_load_offset,
+                             &function_count)) {
+        return 0;
+    }
+    if (on_load_offset != UINT64_MAX && on_load_offset >= code_end_offset) {
+        return 0;
+    }
+    for (i = 0; i < (Uint)stp->beam.exports.count; i++) {
+        Uint label = stp->beam.exports.entries[i].label;
+        if (label >= stp->jit_cache_label_count ||
+            stp->jit_cache_labels[label] == UINT64_MAX) {
+            return 0;
+        }
+    }
+    erts_beam_load_timing_report("cache_parse", phase_start);
+    phase_start = erts_beam_load_timing_start();
+    if (!beamasm_install_cache_code(cache.image,
+                                    (size_t)cache.image_size,
+                                    &exec,
+                                    &rw)) {
+        return 0;
+    }
+    erts_beam_load_timing_report("cache_copy", phase_start);
+    stp->executable_region = exec;
+    stp->writable_region = rw;
+    stp->loaded_size = (unsigned)cache.image_size;
+    phase_start = erts_beam_load_timing_start();
+    if (!beam_jit_cache_load_aarch64(&cache,
+                                     rw,
+                                     exec,
+                                     stp->loaded_size)) {
+        beamasm_purge_module(exec, rw, stp->loaded_size);
+        stp->executable_region = NULL;
+        stp->writable_region = NULL;
+        return 0;
+    }
+    for (i = 0; i < stp->jit_cache_fixup_count; i++) {
+        BeamJitCachedFixup *fixup = &stp->jit_cache_fixups[i];
+        if ((fixup->kind >= CACHE_FIXUP_BEAM_ATOM &&
+             fixup->kind <= CACHE_FIXUP_RUNTIME_FUNCTION) ||
+            (fixup->kind >= CACHE_FIXUP_BEAM_ATOM_MOV &&
+             fixup->kind <= CACHE_FIXUP_RUNTIME_FUNCTION_MOV)) {
+            if (!cache_apply_immediate_fixup(stp, fixup)) return 0;
+        }
+    }
+    erts_beam_load_timing_report("cache_relocate", phase_start);
+    phase_start = erts_beam_load_timing_start();
+    code_header_size = offsetof(BeamCodeHeader, functions) +
+                       sizeof(BeamInstr) * stp->codev_size;
+    if (code_header_size > code_end_offset) return 0;
+    header = (BeamCodeHeader *)rw;
+    sys_memcpy(header, stp->load_hdr, code_header_size);
+    for (i = 0; i < function_count; i++) {
+        Uint64 offset = cache_read_u64(metadata + 48 + i * 8);
+        header->functions[i] = (const ErtsCodeInfo *)((const byte *)exec +
+                                                      offset);
+    }
+    header->functions[function_count] =
+            (const ErtsCodeInfo *)((const byte *)exec + code_end_offset);
+    header->on_load = on_load_offset == UINT64_MAX
+                              ? NULL
+                              : (const ErtsCodeInfo *)((const byte *)exec +
+                                                       on_load_offset);
+    stp->code_hdr = (const BeamCodeHeader *)exec;
+    stp->on_load = header->on_load;
+    stp->jit_cache_loaded = 1;
+    if (!beam_load_finish_cache(stp)) {
+        return 0;
+    }
+    beamasm_seal_module(exec, rw, stp->loaded_size);
+    erts_beam_load_timing_report("cache_finalize", phase_start);
+    return 1;
+#else
+    (void)stp;
+    (void)cache_data;
+    (void)cache_size;
+    return 0;
+#endif
+}
+
 static void init_label(Label *lp) {
     sys_memset(lp, 0, sizeof(*lp));
     lp->lambda_index = INVALID_LAMBDA_INDEX;
@@ -259,6 +783,24 @@ int beam_load_prepared_dtor(Binary *magic) {
     if (stp->labels) {
         erts_free(ERTS_ALC_T_PREPARED_CODE, (void *)stp->labels);
         stp->labels = NULL;
+    }
+
+    if (stp->jit_cache_labels) {
+        erts_free(ERTS_ALC_T_PREPARED_CODE, stp->jit_cache_labels);
+        stp->jit_cache_labels = NULL;
+        stp->jit_cache_label_count = 0;
+    }
+
+    if (stp->jit_cache_fixups) {
+        erts_free(ERTS_ALC_T_PREPARED_CODE, stp->jit_cache_fixups);
+        stp->jit_cache_fixups = NULL;
+        stp->jit_cache_fixup_count = 0;
+    }
+
+    if (stp->jit_cache_lambda_trampolines) {
+        erts_free(ERTS_ALC_T_PREPARED_CODE,
+                  stp->jit_cache_lambda_trampolines);
+        stp->jit_cache_lambda_trampolines = NULL;
     }
 
     if (stp->lambda_literals) {
@@ -343,7 +885,9 @@ static int add_line_entry(LoaderState *stp,
     is_duplicate = li && (stp->line_instr[li - 1].loc == item);
 
     if (insert_duplicates || !is_duplicate) {
-        stp->line_instr[li].pos = beamasm_get_offset(stp->ba);
+        stp->line_instr[li].pos = stp->jit_cache_metadata_only
+                                          ? 0
+                                          : beamasm_get_offset(stp->ba);
         stp->line_instr[li].loc = item;
         stp->current_li++;
     }
@@ -357,6 +901,7 @@ load_error:
 int beam_load_emit_op(LoaderState *stp, BeamOp *tmp_op) {
     const char *sign;
     int arg;
+
 
     /*
      * Verify and massage the operands for the specific instruction.
@@ -662,8 +1207,10 @@ int beam_load_emit_op(LoaderState *stp, BeamOp *tmp_op) {
     }
 
     /* Generate assembly code for the specific instruction. */
-    if (beamasm_emit(stp->ba, stp->specific_op, tmp_op) == 0) {
-        BeamLoadError1(stp, "failed to emit asm for %d", stp->specific_op);
+    if (!stp->jit_cache_metadata_only) {
+        if (beamasm_emit(stp->ba, stp->specific_op, tmp_op) == 0) {
+            BeamLoadError1(stp, "failed to emit asm for %d", stp->specific_op);
+        }
     }
 
     switch (stp->specific_op) {
@@ -817,7 +1364,14 @@ static const BeamCodeLineTab *finish_line_table(LoaderState *stp,
         return NULL;
     }
 
-    line_tab_ro = (const BeamCodeLineTab *)beamasm_get_rodata(stp->ba, "line");
+    line_tab_ro = stp->jit_cache_loaded
+                          ? (const BeamCodeLineTab *)cache_named_rodata(
+                                    stp, 4, sizeof(BeamCodeLineTab))
+                          : (const BeamCodeLineTab *)beamasm_get_rodata(
+                                    stp->ba, "line");
+    if (line_tab_ro == NULL) {
+        return NULL;
+    }
     line_items_ro = (const void **)&line_tab_ro->func_tab[ftab_size + 1];
     fname_base_ro = (Eterm *)&line_items_ro[num_instrs + 1];
     locp_base_ro = &fname_base_ro[stp->beam.lines.name_count];
@@ -906,7 +1460,14 @@ static const BeamDebugTab *finish_debug_table(LoaderState *stp,
         return NULL;
     }
 
-    debug_tab_ro = (const BeamDebugTab *)beamasm_get_rodata(stp->ba, "debug");
+    debug_tab_ro = stp->jit_cache_loaded
+                           ? (const BeamDebugTab *)cache_named_rodata(
+                                     stp, 5, sizeof(BeamDebugTab))
+                           : (const BeamDebugTab *)beamasm_get_rodata(
+                                     stp->ba, "debug");
+    if (debug_tab_ro == NULL) {
+        return NULL;
+    }
     debug_tab_rw_base = get_writable_ptr(stp->executable_region,
                                          stp->writable_region,
                                          debug_tab_ro);
@@ -942,6 +1503,92 @@ static const BeamDebugTab *finish_debug_table(LoaderState *stp,
 
     return debug_tab_ro;
 }
+
+#if defined(__aarch64__)
+static int beam_load_finish_cache(LoaderState *stp) {
+    BeamCodeHeader *header = (BeamCodeHeader *)stp->writable_region;
+    Eterm *ptr;
+    ErlOffHeap code_off_heap;
+    ErtsLiteralArea *literal_area;
+    Uint total_literals, allocation_size;
+    const byte *data;
+    Sint decoded_size;
+    Uint i;
+
+    header->coverage = stp->coverage;
+    header->line_coverage_valid = stp->line_coverage_valid;
+    header->loc_index_to_cover_id = stp->loc_index_to_cover_id;
+    stp->coverage = NULL;
+    stp->line_coverage_valid = NULL;
+    stp->loc_index_to_cover_id = NULL;
+
+    total_literals = stp->beam.static_literals.heap_size +
+                     stp->beam.dynamic_literals.heap_size;
+    ERTS_INIT_OFF_HEAP(&code_off_heap);
+    allocation_size = ERTS_LITERAL_AREA_ALLOC_SIZE(total_literals);
+    literal_area = erts_alloc(ERTS_ALC_T_LITERAL, allocation_size);
+    ptr = &literal_area->start[0];
+    literal_area->end = ptr + total_literals;
+    beamfile_move_literals(&stp->beam, &ptr, &code_off_heap);
+    for (i = 0; i < stp->jit_cache_fixup_count; i++) {
+        BeamJitCachedFixup *fixup = &stp->jit_cache_fixups[i];
+        if (fixup->kind == CACHE_FIXUP_LITERAL &&
+            !cache_patch_word(stp,
+                              fixup->offset,
+                              fixup->addend,
+                              beamfile_get_literal(&stp->beam,
+                                                   (Sint32)fixup->index))) {
+            return 0;
+        }
+    }
+    literal_area->off_heap = code_off_heap.first;
+    header->literal_area = literal_area;
+    stp->load_hdr->literal_area = literal_area;
+
+    /* Metadata-only preparation does not decode the instruction stream, so
+     * line and debug indexes cannot be rebuilt yet. They are optional for
+     * execution; leave them absent until the cache format carries them. */
+    header->line_table = NULL;
+    header->debug = NULL;
+
+    if (stp->beam.attributes.size) {
+        data = cache_named_rodata(stp, 1, stp->beam.attributes.size);
+        if (data == NULL) return 0;
+        header->attr_ptr = data;
+        header->attr_size = stp->beam.attributes.size;
+        decoded_size = erts_decode_ext_size(data, header->attr_size);
+        if (decoded_size < 0) return 0;
+        header->attr_size_on_heap = decoded_size;
+    }
+    if (stp->beam.compile_info.size) {
+        data = cache_named_rodata(stp, 2, stp->beam.compile_info.size);
+        if (data == NULL) return 0;
+        header->compile_ptr = data;
+        header->compile_size = stp->beam.compile_info.size;
+        decoded_size = erts_decode_ext_size(data, header->compile_size);
+        if (decoded_size < 0) return 0;
+        header->compile_size_on_heap = decoded_size;
+    }
+    header->md5_ptr = cache_named_rodata(stp, 3, sizeof(stp->beam.checksum));
+    if (header->md5_ptr == NULL) return 0;
+
+    if (stp->beam.strings.size) {
+        data = cache_named_rodata(stp, 0, stp->beam.strings.size);
+        if (data == NULL) return 0;
+        for (i = 0; i < stp->jit_cache_fixup_count; i++) {
+            BeamJitCachedFixup *fixup = &stp->jit_cache_fixups[i];
+            if (fixup->kind == CACHE_FIXUP_STRING &&
+                !cache_patch_word(stp,
+                                  fixup->offset,
+                                  0,
+                                  (UWord)(data + fixup->addend))) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+#endif
 
 int beam_load_finish_emit(LoaderState *stp) {
     const BeamCodeHeader *code_hdr_ro = NULL;
@@ -1150,7 +1797,9 @@ void beam_load_finalize_code(LoaderState *stp,
     ERTS_LC_ASSERT(erts_initialized == 0 || erts_has_code_load_permission() ||
                    erts_thr_progress_is_blocking());
 
-    code_size = beamasm_get_header(stp->ba, &stp->code_hdr);
+    code_size = stp->jit_cache_loaded
+                        ? stp->loaded_size
+                        : beamasm_get_header(stp->ba, &stp->code_hdr);
     erts_total_code_size += code_size;
 
     inst_p->executable_region = stp->executable_region;
@@ -1176,7 +1825,31 @@ void beam_load_finalize_code(LoaderState *stp,
     erts_update_ranges(inst_p->code_hdr, code_size);
 
     /* Allocate catch indices and fix up all catch_yf instructions. */
-    inst_p->catches = beamasm_patch_catches(stp->ba, stp->writable_region);
+    if (stp->jit_cache_loaded) {
+        unsigned catch_no = BEAM_CATCHES_NIL;
+        for (int i = 0; i < stp->jit_cache_fixup_count; i++) {
+            BeamJitCachedFixup *fixup = &stp->jit_cache_fixups[i];
+            if (fixup->kind == CACHE_FIXUP_CATCH) {
+                ErtsCodePtr handler;
+                Eterm catch_term;
+                ASSERT(fixup->target < stp->loaded_size);
+                handler = (ErtsCodePtr)((const byte *)stp->executable_region +
+                                        fixup->target);
+                catch_no = beam_catches_cons(handler, catch_no, NULL);
+                catch_term = make_catch(catch_no);
+                if (!cache_patch_word(stp,
+                                      fixup->offset,
+                                      fixup->addend,
+                                      catch_term)) {
+                    erts_exit(ERTS_ABORT_EXIT, "invalid cached catch fixup\n");
+                }
+            }
+        }
+        inst_p->catches = catch_no;
+    } else {
+        inst_p->catches = beamasm_patch_catches(stp->ba,
+                                                stp->writable_region);
+    }
 
     /* Exported functions */
     staging_ix = erts_staging_code_ix();
@@ -1186,7 +1859,13 @@ void beam_load_finalize_code(LoaderState *stp,
         ErtsCodePtr address;
         Export *ep;
 
-        address = beamasm_get_code(stp->ba, entry->label);
+        if (stp->jit_cache_loaded) {
+            ASSERT(entry->label < stp->jit_cache_label_count);
+            address = (ErtsCodePtr)((const byte *)stp->executable_region +
+                                    stp->jit_cache_labels[entry->label]);
+        } else {
+            address = beamasm_get_code(stp->ba, entry->label);
+        }
         ep = erts_export_put(stp->module, entry->function, entry->arity);
 
         if (stp->on_load) {
@@ -1206,7 +1885,16 @@ void beam_load_finalize_code(LoaderState *stp,
         const Export *import;
 
         import = erts_export_put(entry->module, entry->function, entry->arity);
-        beamasm_patch_import(stp->ba, stp->writable_region, i, import);
+        if (stp->jit_cache_loaded) {
+            if (!cache_patch_fixups(stp,
+                                    CACHE_FIXUP_IMPORT,
+                                    i,
+                                    (UWord)import)) {
+                erts_exit(ERTS_ABORT_EXIT, "invalid cached import fixup\n");
+            }
+        } else {
+            beamasm_patch_import(stp->ba, stp->writable_region, i, import);
+        }
     }
 
     /* Patch fun creation. */
@@ -1239,11 +1927,30 @@ void beam_load_finalize_code(LoaderState *stp,
                 funp->entry.fun = fun_entry;
             }
 
-            erts_set_fun_code(fun_entry,
-                              staging_ix,
-                              beamasm_get_lambda(stp->ba, i));
-
-            beamasm_patch_lambda(stp->ba, stp->writable_region, i, fun_entry);
+            if (stp->jit_cache_loaded) {
+                ASSERT(stp->jit_cache_lambda_trampolines != NULL);
+                ASSERT(stp->jit_cache_lambda_trampolines[i] != UINT64_MAX);
+                erts_set_fun_code(
+                        fun_entry,
+                        staging_ix,
+                        (ErtsCodePtr)((const byte *)stp->executable_region +
+                                      stp->jit_cache_lambda_trampolines[i]));
+                if (!cache_patch_fixups(stp,
+                                        CACHE_FIXUP_LAMBDA,
+                                        i,
+                                        (UWord)fun_entry)) {
+                    erts_exit(ERTS_ABORT_EXIT,
+                              "invalid cached lambda fixup\n");
+                }
+            } else {
+                erts_set_fun_code(fun_entry,
+                                  staging_ix,
+                                  beamasm_get_lambda(stp->ba, i));
+                beamasm_patch_lambda(stp->ba,
+                                     stp->writable_region,
+                                     i,
+                                     fun_entry);
+            }
         }
     }
 
@@ -1264,7 +1971,10 @@ void beam_load_finalize_code(LoaderState *stp,
     }
 
     /* Register debug / profiling info with external tools. */
-    inst_p->metadata = beamasm_register_metadata(stp->ba, stp->code_hdr);
+    inst_p->metadata = stp->jit_cache_loaded
+                               ? NULL
+                               : beamasm_register_metadata(stp->ba,
+                                                           stp->code_hdr);
 
     erts_seal_module(inst_p);
 

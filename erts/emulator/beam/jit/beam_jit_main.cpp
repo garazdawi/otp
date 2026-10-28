@@ -24,6 +24,10 @@
 
 extern "C"
 {
+    const void *beamasm_cache_runtime_anchor(void) {
+        return reinterpret_cast<const void *>(&beamasm_cache_runtime_anchor);
+    }
+
 #include "bif.h"
 #include "beam_common.h"
 #include "code_ix.h"
@@ -77,6 +81,14 @@ ErtsCodePtr beam_call_trace_return; /* OpCode(i_call_trace_return) */
 static JitAllocator *jit_allocator;
 
 static BeamGlobalAssembler *bga;
+
+extern "C" const void *beamasm_cache_global_base(void) {
+    return bga ? bga->getBaseAddress() : nullptr;
+}
+
+extern "C" size_t beamasm_cache_global_size(void) {
+    return bga ? bga->getOffset() : 0;
+}
 static BeamModuleAssembler *bma;
 static CpuInfo cpuinfo;
 
@@ -508,12 +520,46 @@ extern "C"
     void *beamasm_new_assembler(Eterm mod,
                                 int num_labels,
                                 int num_functions,
-                                BeamFile *file) {
+                                BeamFile *file,
+                                int capture_cache) {
         return new BeamModuleAssembler(bga,
                                        mod,
                                        num_labels,
                                        num_functions,
-                                       file);
+                                       file,
+                                       capture_cache != 0);
+    }
+
+    size_t beamasm_cache_snapshot_size(void *instance) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return ba->getCacheSnapshotSize();
+    }
+
+    int beamasm_copy_cache_snapshot(void *instance, byte *dst, size_t size) {
+        BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
+        return ba->copyCacheSnapshot(dst, size);
+    }
+
+    int beamasm_install_cache_code(const byte *code,
+                                   size_t code_size,
+                                   const void **executable_region,
+                                   void **writable_region) {
+        if (!jit_allocator || code_size > SIZE_MAX - 16) {
+            return 0;
+        }
+
+        JitAllocator::Span span;
+        Out<JitAllocator::Span> out(span);
+        Error err = jit_allocator->alloc(out, code_size + 16);
+        if (err != Error::kOk) {
+            return 0;
+        }
+
+        *executable_region = span.rx();
+        *writable_region = span.rw();
+        VirtMem::protect_jit_memory(VirtMem::ProtectJitAccess::kReadWrite);
+        sys_memcpy(span.rw(), code, code_size);
+        return 1;
     }
 
     int beamasm_emit(void *instance, unsigned specific_op, BeamOp *op) {

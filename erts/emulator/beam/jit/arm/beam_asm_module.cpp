@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <dlfcn.h>
 #include <sstream>
 #include <float.h>
 
@@ -85,8 +86,13 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *ga,
                                          Eterm mod,
                                          int num_labels,
                                          int num_functions,
-                                         const BeamFile *file)
-        : BeamModuleAssembler(ga, mod, num_labels, file) {
+                                         const BeamFile *file,
+                                         bool capture_cache)
+        : BeamModuleAssembler(ga,
+                              mod,
+                              num_labels,
+                              file,
+                              capture_cache) {
     _veneers.reserve(num_labels + 1);
 
     code_header = a.new_label();
@@ -99,6 +105,92 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *ga,
 #ifdef DEBUG
     last_stub_check_offset = a.offset();
 #endif
+}
+
+void BeamModuleAssembler::appendCacheArchitectureFixups(
+        std::vector<BeamJitCacheFixup> &fixups) {
+    const uintptr_t global_base = (uintptr_t)ga->getBaseAddress();
+    const uintptr_t global_end = global_base + ga->getOffset();
+    const uintptr_t runtime_base =
+            (uintptr_t)beamasm_cache_runtime_anchor();
+
+    for (const CacheAtomData &site : cache_atom_data) {
+        recordCacheImmediate(code.label_offset_from_base(site.anchor),
+                             site.value,
+                             true,
+                             false);
+    }
+
+    for (const CacheImmediate &site : cache_immediates) {
+        const uintptr_t target = site.value;
+
+        if (site.atom) {
+            uint32_t atom_index = UINT32_MAX;
+            if (beam) {
+                for (Sint32 i = 1; i < beam->atoms.count; i++) {
+                    if (beam->atoms.entries[i] == (Eterm)target) {
+                        atom_index = (uint32_t)i;
+                        break;
+                    }
+                }
+            }
+            if (atom_index == UINT32_MAX) {
+                /* This is either a VM-global atom (whose value is fixed for
+                 * the life of this emulator build) or an integer that happens
+                 * to have the atom tag. Neither needs a module-atom fixup. */
+                continue;
+            }
+            fixups.push_back({site.instruction
+                                      ? BeamJitCacheFixupKind::BeamAtomMov
+                                      : BeamJitCacheFixupKind::BeamAtom,
+                              atom_index,
+                              site.offset,
+                              site.instruction ? 16 : 0,
+                              0});
+        } else if (target >= global_base && target < global_end) {
+            fixups.push_back({site.instruction
+                                      ? BeamJitCacheFixupKind::GlobalFragmentMov
+                                      : BeamJitCacheFixupKind::GlobalFragment,
+                              0,
+                              site.offset,
+                              site.instruction ? 16 : 0,
+                              target - global_base});
+        } else {
+            fixups.push_back({site.instruction
+                                      ? BeamJitCacheFixupKind::RuntimeFunctionMov
+                                      : BeamJitCacheFixupKind::RuntimeFunction,
+                              0,
+                              site.offset,
+                              site.instruction ? 16 : 0,
+                              (uint64_t)(target - runtime_base)});
+        }
+    }
+
+    static const char *named_offsets[] = {
+            "str", "attr", "compile", "md5", "line", "debug"};
+    for (uint32_t i = 0; i < sizeof(named_offsets) / sizeof(named_offsets[0]);
+         i++) {
+        Label label = code.label_by_name(named_offsets[i],
+                                         strlen(named_offsets[i]));
+        if (label.is_valid() && code.is_label_bound(label)) {
+            fixups.push_back({BeamJitCacheFixupKind::NamedOffset,
+                              i,
+                              code.label_offset_from_base(label),
+                              0,
+                              0});
+        }
+    }
+
+    for (const auto &[index, entry] : lambdas) {
+        if (code.is_label_valid(entry.trampoline) &&
+            code.is_label_bound(entry.trampoline)) {
+            fixups.push_back({BeamJitCacheFixupKind::LambdaTrampoline,
+                              index,
+                              code.label_offset_from_base(entry.trampoline),
+                              0,
+                              0});
+        }
+    }
 }
 
 void BeamModuleAssembler::embed_vararg_rodata(const Span<const ArgVal> &args,
@@ -143,6 +235,12 @@ void BeamModuleAssembler::embed_vararg_rodata(const Span<const ArgVal> &args,
             a.embed_label(rawLabels[arg.as<ArgLabel>().get()]);
             break;
         case ArgVal::Type::Immediate:
+            if (capture_cache && is_atom(arg.as<ArgImmed>().get())) {
+                Label anchor = a.new_label();
+                a.bind(anchor);
+                cache_atom_data.push_back({anchor,
+                                           arg.as<ArgImmed>().get()});
+            }
             a.embed_uint64(arg.as<ArgImmed>().get());
             break;
         case ArgVal::Type::Word:
@@ -449,7 +547,7 @@ static void i_emit_nyi(const char *msg) {
 void BeamModuleAssembler::emit_nyi(const char *msg) {
     emit_enter_runtime(0);
 
-    a.mov(ARG1, imm(msg));
+    mov_imm(ARG1, msg);
     runtime_call<void (*)(const char *), i_emit_nyi>();
 
     /* Never returns */
@@ -608,10 +706,20 @@ void BeamModuleAssembler::emit_int_code_end() {
     flush_pending_stubs(_dispatchTable.size() * sizeof(Uint32[8]) +
                         dispUnknown);
 
-    for (auto pair : _dispatchTable) {
+    std::vector<std::pair<void (*)(), Label>> dispatch_entries(
+            _dispatchTable.begin(), _dispatchTable.end());
+    if (capture_cache) {
+        std::sort(dispatch_entries.begin(),
+                  dispatch_entries.end(),
+                  [](const auto &lhs, const auto &rhs) {
+                      return lhs.second.id() < rhs.second.id();
+                  });
+    }
+
+    for (auto pair : dispatch_entries) {
         bind_veneer_target(pair.second);
 
-        a.mov(SUPER_TMP, imm(pair.first));
+        mov_imm(SUPER_TMP, pair.first);
         a.br(SUPER_TMP);
     }
 
@@ -957,9 +1065,32 @@ void BeamModuleAssembler::emit_constant(const Constant &constant) {
     ASSERT(!value.isRegister());
 
     if (value.isImmed()) {
-        a.embed_uint64(value.as<ArgImmed>().get());
+        Eterm immediate = value.as<ArgImmed>().get();
+        if (capture_cache && is_atom(immediate)) {
+            recordCacheImmediate(code.label_offset_from_base(anchor),
+                                 immediate,
+                                 true,
+                                 false);
+        }
+        a.embed_uint64(immediate);
     } else if (value.isWord()) {
-        a.embed_uint64(value.as<ArgWord>().get());
+        uintptr_t word = value.as<ArgWord>().get();
+        if (capture_cache && word != 0) {
+            uintptr_t global_base = (uintptr_t)ga->getBaseAddress();
+            uintptr_t global_end = global_base + ga->getOffset();
+            Dl_info target_info, runtime_info;
+            if ((word >= global_base && word < global_end) ||
+                (dladdr((void *)word, &target_info) &&
+                dladdr((void *)beamasm_cache_runtime_anchor(),
+                       &runtime_info) &&
+                target_info.dli_fbase == runtime_info.dli_fbase)) {
+                recordCacheImmediate(code.label_offset_from_base(anchor),
+                                     word,
+                                     false,
+                                     false);
+            }
+        }
+        a.embed_uint64(word);
     } else if (value.isLabel()) {
         a.embed_label(rawLabels.at(value.as<ArgLabel>().get()));
     } else {

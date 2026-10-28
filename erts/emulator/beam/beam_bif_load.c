@@ -43,8 +43,46 @@
 #include "erl_proc_sig_queue.h"
 #include "beam_file.h"
 #include "erl_record.h"
+#include "external.h"
+#include "beam_load_timing.h"
 
 #include "jit/beam_asm.h"
+
+BIF_RETTYPE erts_internal_beam_jit_cache_options_0(BIF_ALIST_0)
+{
+    const char *dir = erts_jit_cache_get_dir();
+    Eterm *hp;
+    Eterm path;
+
+    if (dir == NULL) {
+        BIF_RET(am_false);
+    }
+
+    path = erts_new_binary_from_data(BIF_P,
+                                     sys_strlen(dir),
+                                     (const byte *)dir);
+    hp = HAlloc(BIF_P, 4);
+    BIF_RET(TUPLE3(hp,
+                   path,
+                   erts_beam_load_timing_is_enabled() ? am_true : am_false,
+                   erts_jit_cache_is_required() ? am_true : am_false));
+}
+
+static void jit_cache_put_u32(byte *p, Uint32 value)
+{
+    p[0] = value;
+    p[1] = value >> 8;
+    p[2] = value >> 16;
+    p[3] = value >> 24;
+}
+
+static void jit_cache_put_u64(byte *p, Uint64 value)
+{
+    int i;
+    for (i = 0; i < 8; i++) {
+        p[i] = value >> (8 * i);
+    }
+}
 
 #if defined(BEAMASM) && defined(ADDRESS_SANITIZER)
 #  include <sanitizer/lsan_interface.h>
@@ -263,6 +301,237 @@ erts_internal_prepare_loading_2(BIF_ALIST_2)
     res = erts_mk_magic_ref(&hp, &MSO(BIF_P), magic);
     erts_refc_dec(&magic->intern.refc, 1);
     BIF_RET(res);
+}
+
+BIF_RETTYPE
+erts_internal_beam_jit_cache_2(BIF_ALIST_2)
+{
+#ifdef BEAMASM
+    const byte *temp_alloc = NULL, *code;
+    byte *cache_data;
+    Uint size;
+    size_t cache_size, snapshot_size, trailer_size;
+    Uint *literal_sizes = NULL;
+    Uint32 *literal_kinds = NULL;
+    Uint nif_bytes, i;
+    Binary *magic;
+    LoaderState *stp;
+    Eterm reason;
+    Eterm result;
+    Eterm *hp;
+
+    if (is_not_atom(BIF_ARG_1)) {
+        BIF_ERROR(BIF_P, BADARG);
+    }
+
+    code = erts_get_aligned_binary_bytes(BIF_ARG_2, &size, &temp_alloc);
+    if (code == NULL) {
+        BIF_ERROR(BIF_P, BADARG);
+    }
+
+    magic = erts_alloc_loader_state();
+    stp = ERTS_MAGIC_BIN_DATA(magic);
+    stp->jit_cache_requested = 1;
+
+    reason = erts_prepare_loading(magic,
+                                  BIF_P,
+                                  BIF_P->group_leader,
+                                  &BIF_ARG_1,
+                                  code,
+                                  size);
+    erts_free_aligned_binary_bytes(temp_alloc);
+
+    if (reason != NIL) {
+        hp = HAlloc(BIF_P, 3);
+        BIF_RET(TUPLE2(hp, am_error, reason));
+    }
+
+    snapshot_size = beamasm_cache_snapshot_size(stp->ba);
+    if (snapshot_size == 0) {
+        beam_load_prepared_free(magic);
+        hp = HAlloc(BIF_P, 3);
+        BIF_RET(TUPLE2(hp, am_error, am_unsupported));
+    }
+    trailer_size = 24;
+    if (stp->beam.dynamic_literals.count) {
+        literal_sizes = erts_alloc(ERTS_ALC_T_LOADER_TMP,
+                                   stp->beam.dynamic_literals.count *
+                                           sizeof(*literal_sizes));
+        literal_kinds = erts_alloc(ERTS_ALC_T_LOADER_TMP,
+                                   stp->beam.dynamic_literals.count *
+                                           sizeof(*literal_kinds));
+    }
+    for (i = stp->jit_cache_initial_dynamic_literals;
+         i < stp->beam.dynamic_literals.count;
+         i++) {
+        Uint lambda;
+        literal_kinds[i] = 0;
+        literal_sizes[i] = 0;
+        for (lambda = 0; lambda < stp->beam.lambdas.count; lambda++) {
+            if (stp->lambda_literals[lambda] == ~(Sint)i) {
+                literal_kinds[i] = lambda + 1;
+                break;
+            }
+        }
+        if ((literal_kinds[i] == 0 &&
+             erts_encode_ext_size(stp->beam.dynamic_literals.entries[i].value,
+                                  &literal_sizes[i]) != ERTS_EXT_SZ_OK) ||
+            literal_sizes[i] > SIZE_MAX - trailer_size - 8) {
+            erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+            erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
+            beam_load_prepared_free(magic);
+            BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+        }
+        trailer_size += 8 + literal_sizes[i];
+    }
+    nif_bytes = (stp->beam.code.function_count + 7) / 8;
+    if (stp->beam.lambdas.count > (SIZE_MAX - trailer_size) / 8 ||
+        nif_bytes > SIZE_MAX - trailer_size - stp->beam.lambdas.count * 8 ||
+        snapshot_size > SIZE_MAX - trailer_size) {
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
+        beam_load_prepared_free(magic);
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+    }
+    trailer_size += stp->beam.lambdas.count * 8 + nif_bytes;
+    cache_size = snapshot_size + trailer_size;
+    if (!IS_BINARY_SIZE_OK(cache_size)) {
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
+        beam_load_prepared_free(magic);
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+    }
+
+    result = erts_new_binary(BIF_P, cache_size, &cache_data);
+    if (!beamasm_copy_cache_snapshot(stp->ba, cache_data, snapshot_size)) {
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+        erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
+        beam_load_prepared_free(magic);
+        BIF_ERROR(BIF_P, SYSTEM_LIMIT);
+    }
+
+    ASSERT(cache_size >= 56);
+    sys_memcpy(cache_data + 40, stp->beam.checksum, 16);
+    {
+        byte *p = cache_data + snapshot_size;
+        sys_memcpy(p, "EJLDR001", 8);
+        jit_cache_put_u32(p + 8, stp->beam.dynamic_literals.count);
+        jit_cache_put_u32(p + 12, stp->beam.lambdas.count);
+        jit_cache_put_u32(p + 16, nif_bytes);
+        jit_cache_put_u32(p + 20,
+                          stp->jit_cache_initial_dynamic_literals);
+        p += 24;
+        for (i = stp->jit_cache_initial_dynamic_literals;
+             i < stp->beam.dynamic_literals.count;
+             i++) {
+            byte *end;
+            jit_cache_put_u32(p, literal_kinds[i]);
+            jit_cache_put_u32(p + 4, literal_sizes[i]);
+            p += 8;
+            if (literal_kinds[i] == 0) {
+                end = p;
+                erts_encode_ext(stp->beam.dynamic_literals.entries[i].value,
+                                &end);
+                ASSERT(end == p + literal_sizes[i]);
+                p = end;
+            }
+        }
+        for (i = 0; i < stp->beam.lambdas.count; i++) {
+            jit_cache_put_u64(p, (Uint64)stp->lambda_literals[i]);
+            p += 8;
+        }
+        sys_memzero(p, nif_bytes);
+        if (stp->load_hdr->are_nifs) {
+            for (i = 0; i < stp->beam.code.function_count; i++) {
+                p[i / 8] |= stp->load_hdr->are_nifs[i] << (i & 7);
+            }
+        }
+        ASSERT(p + nif_bytes == cache_data + cache_size);
+    }
+    erts_free(ERTS_ALC_T_LOADER_TMP, literal_sizes);
+    erts_free(ERTS_ALC_T_LOADER_TMP, literal_kinds);
+    beam_load_prepared_free(magic);
+
+    hp = HAlloc(BIF_P, 3);
+    BIF_RET(TUPLE2(hp, am_ok, result));
+#else
+    Eterm *hp = HAlloc(BIF_P, 3);
+    BIF_RET(TUPLE2(hp, am_error, am_unsupported));
+#endif
+}
+
+BIF_RETTYPE
+erts_internal_beam_jit_cache_prepare_3(BIF_ALIST_3)
+{
+#ifdef BEAMASM
+    const byte *beam_temp = NULL, *cache_temp = NULL;
+    const byte *beam_code, *cache_data;
+    Uint beam_size = 0, cache_size = 0;
+    Binary *magic;
+    LoaderState *stp;
+    Eterm prepared, reason, result, cached_term;
+    Eterm *hp;
+    int cached = 0;
+
+    if (is_not_atom(BIF_ARG_1)) {
+        BIF_ERROR(BIF_P, BADARG);
+    }
+
+    beam_code = erts_get_aligned_binary_bytes(BIF_ARG_2,
+                                               &beam_size,
+                                               &beam_temp);
+    cache_data = erts_get_aligned_binary_bytes(BIF_ARG_3,
+                                                &cache_size,
+                                                &cache_temp);
+    if (beam_code == NULL || cache_data == NULL) {
+        erts_free_aligned_binary_bytes(beam_temp);
+        erts_free_aligned_binary_bytes(cache_temp);
+        BIF_ERROR(BIF_P, BADARG);
+    }
+
+    magic = erts_alloc_loader_state();
+    reason = erts_prepare_loading_metadata(magic,
+                                           BIF_P,
+                                           BIF_P->group_leader,
+                                           &BIF_ARG_1,
+                                           beam_code,
+                                           beam_size);
+    if (reason == NIL) {
+        stp = ERTS_MAGIC_BIN_DATA(magic);
+        cached = cache_size >= 56 &&
+                 sys_memcmp(cache_data + 40, stp->beam.checksum, 16) == 0 &&
+                 beam_load_cache_image(stp, cache_data, cache_size);
+    }
+
+    if (reason == NIL && !cached) {
+        beam_load_prepared_free(magic);
+        magic = erts_alloc_loader_state();
+        reason = erts_prepare_loading(magic,
+                                      BIF_P,
+                                      BIF_P->group_leader,
+                                      &BIF_ARG_1,
+                                      beam_code,
+                                      beam_size);
+    }
+
+    erts_free_aligned_binary_bytes(beam_temp);
+    erts_free_aligned_binary_bytes(cache_temp);
+
+    if (reason != NIL) {
+        hp = HAlloc(BIF_P, 3);
+        BIF_RET(TUPLE2(hp, am_error, reason));
+    }
+
+    hp = HAlloc(BIF_P, ERTS_MAGIC_REF_THING_SIZE + 4);
+    prepared = erts_mk_magic_ref(&hp, &MSO(BIF_P), magic);
+    cached_term = cached ? am_true : am_false;
+    result = TUPLE3(hp, am_ok, prepared, cached_term);
+    erts_refc_dec(&magic->intern.refc, 1);
+    BIF_RET(result);
+#else
+    Eterm *hp = HAlloc(BIF_P, 3);
+    BIF_RET(TUPLE2(hp, am_error, am_unsupported));
+#endif
 }
 
 BIF_RETTYPE

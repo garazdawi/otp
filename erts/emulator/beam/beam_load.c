@@ -44,6 +44,7 @@
 #include "erl_process_dict.h"
 #include "erl_unicode.h"
 #include "beam_file.h"
+#include "beam_load_timing.h"
 
 Uint erts_total_code_size;
 
@@ -121,13 +122,40 @@ erts_preload_module(Process *c_p,
     return erts_finish_loading(magic, c_p, c_p_locks, modp);
 }
 
+#ifdef BEAMASM
 Eterm
-erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
-                     Eterm* modp, const byte *code, Uint unloaded_size)
+erts_preload_module_cache(Eterm *modp,
+                          const byte *code,
+                          Uint size,
+                          const byte *cache,
+                          size_t cache_size)
+{
+    Binary *magic = erts_alloc_loader_state();
+    LoaderState *stp = ERTS_MAGIC_BIN_DATA(magic);
+    Eterm retval;
+
+    ASSERT(!erts_initialized);
+    retval = erts_prepare_loading_metadata(magic, NULL, NIL, modp, code, size);
+    if (retval != NIL) {
+        return retval;
+    }
+    if (!beam_load_cache_image(stp, cache, cache_size)) {
+        beam_load_prepared_free(magic);
+        return am_badfile;
+    }
+    return erts_finish_loading(magic, NULL, 0, modp);
+}
+#endif
+
+static Eterm
+prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
+                Eterm* modp, const byte *code, Uint unloaded_size,
+                int metadata_only)
 {
     enum beamfile_read_result read_result;
     Eterm retval = am_badfile;
     LoaderState* stp;
+    ErtsSysHrTime phase_start;
 
     stp = ERTS_MAGIC_BIN_DATA(magic);
     stp->module = *modp;
@@ -137,9 +165,14 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
     erts_fprintf(stderr,"Loading a module\n");
 #endif
 
+    phase_start = erts_beam_load_timing_start();
+    if (phase_start) {
+        erts_fprintf(stderr, "JIT_LOAD_MODULE %T\n", stp->module);
+    }
     read_result = beamfile_read(code,
                                 unloaded_size,
                                 &stp->beam);
+    erts_beam_load_timing_report("beam_parse", phase_start);
 
     switch(read_result) {
     case BEAMFILE_READ_CORRUPT_FILE_HEADER:
@@ -181,6 +214,9 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
     }
 
     ERTS_ASSERT(read_result == BEAMFILE_READ_SUCCESS);
+
+    stp->jit_cache_initial_dynamic_literals =
+            stp->beam.dynamic_literals.count;
 
     if (stp->module != stp->beam.module) {
         BeamLoadError1(stp, "module name in object code is %T", stp->beam.module);
@@ -224,7 +260,20 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
                        "Erlang/OTP 25 or later.\n");
     }
 
-    if (!load_code(stp)) {
+    if (metadata_only) {
+#ifdef BEAMASM
+        phase_start = erts_beam_load_timing_start();
+        if (!beam_load_prepare_metadata(stp)) {
+            erts_beam_load_timing_report("cache_metadata_setup", phase_start);
+            goto load_error;
+        }
+        erts_beam_load_timing_report("cache_metadata_setup", phase_start);
+        stp->jit_cache_metadata_only = 1;
+#else
+        ERTS_ASSERT(0);
+        goto load_error;
+#endif
+    } else if (!load_code(stp)) {
         goto load_error;
     }
 
@@ -238,6 +287,25 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
 
     return retval;
 }
+
+Eterm
+erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
+                     Eterm* modp, const byte *code, Uint unloaded_size)
+{
+    return prepare_loading(magic, c_p, group_leader, modp, code,
+                           unloaded_size, 0);
+}
+
+#ifdef BEAMASM
+Eterm
+erts_prepare_loading_metadata(Binary* magic, Process *c_p,
+                              Eterm group_leader, Eterm* modp,
+                              const byte *code, Uint unloaded_size)
+{
+    return prepare_loading(magic, c_p, group_leader, modp, code,
+                           unloaded_size, 1);
+}
+#endif
 
 Eterm
 erts_finish_loading(Binary* magic, Process* c_p,
@@ -423,10 +491,12 @@ static int load_code(LoaderState* stp)
     BeamOp *tmp_op;
 
     int num_specific;
+    int result;
+    ErtsSysHrTime phase_start = erts_beam_load_timing_start();
 
     op_reader = beamfile_get_code(&stp->beam, &stp->op_allocator);
 
-    if (!beam_load_prepare_emit(stp)) {
+    if (!stp->jit_cache_metadata_only && !beam_load_prepare_emit(stp)) {
         goto load_error;
     }
 
@@ -674,9 +744,17 @@ static int load_code(LoaderState* stp)
     beamcodereader_close(op_reader);
     beamopallocator_dtor(&stp->op_allocator);
 
-    return beam_load_finish_emit(stp);
+    erts_beam_load_timing_report("normal_scan_emit", phase_start);
+    if (stp->jit_cache_metadata_only) {
+        return 1;
+    }
+    phase_start = erts_beam_load_timing_start();
+    result = beam_load_finish_emit(stp);
+    erts_beam_load_timing_report("normal_codegen_finalize", phase_start);
+    return result;
 
 load_error:
+    erts_beam_load_timing_report("normal_scan_emit", phase_start);
     beamcodereader_close(op_reader);
     beamopallocator_dtor(&stp->op_allocator);
     return 0;

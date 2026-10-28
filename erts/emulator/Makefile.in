@@ -1105,6 +1105,7 @@ COMMON_OBJS = \
     $(OBJDIR)/beam_catches.o \
     $(OBJDIR)/beam_debug.o \
     $(OBJDIR)/beam_load.o \
+    $(OBJDIR)/beam_load_timing.o \
     $(OBJDIR)/beam_opcodes.o \
     $(OBJDIR)/beam_ranges.o \
     $(OBJDIR)/beam_transform_helpers.o \
@@ -1116,6 +1117,7 @@ JIT_OBJS = \
     $(OBJDIR)/asm_load.o \
     $(OBJDIR)/beam_asm_global.o \
     $(OBJDIR)/beam_asm_module.o \
+    $(OBJDIR)/beam_jit_cache.o \
     $(OBJDIR)/beam_jit_bs.o \
     $(OBJDIR)/beam_jit_common.o \
     $(OBJDIR)/beam_jit_main.o \

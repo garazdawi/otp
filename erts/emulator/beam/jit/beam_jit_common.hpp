@@ -26,6 +26,7 @@
 #include <asmjit/core.h>
 
 #include <string>
+#include <algorithm>
 #include <vector>
 #include <unordered_map>
 #include <map>
@@ -92,6 +93,30 @@ struct AsmMetadata {
     std::vector<AsmRange> ranges;
 };
 
+enum class BeamJitCacheFixupKind : uint32_t {
+    Catch = 1,
+    Import = 2,
+    Lambda = 3,
+    Literal = 4,
+    String = 5,
+    BeamAtom = 6,
+    GlobalFragment = 7,
+    RuntimeFunction = 8,
+    BeamAtomMov = 9,
+    GlobalFragmentMov = 10,
+    RuntimeFunctionMov = 11,
+    NamedOffset = 12,
+    LambdaTrampoline = 13
+};
+
+struct BeamJitCacheFixup {
+    BeamJitCacheFixupKind kind;
+    uint32_t index;
+    uint64_t offset;
+    int64_t addend;
+    uint64_t target;
+};
+
 /* This is a partial class for `BeamAssembler`, containing various fields and
  * helper functions that are common to all architectures so that we won't have
  * to redefine them all the time. */
@@ -99,13 +124,31 @@ class BeamAssemblerCommon : public ErrorHandler {
     BaseAssembler &assembler;
 
 protected:
+    struct CacheImmediate {
+        uint64_t offset;
+        uintptr_t value;
+        bool atom;
+        bool instruction;
+    };
+
     CodeHolder code;
     FileLogger logger;
     Section *rodata;
+    bool capture_cache;
+    bool cache_snapshot_supported;
+    std::vector<uint8_t> cache_snapshot;
+    std::vector<CacheImmediate> cache_immediates;
+
+    void recordCacheImmediate(uint64_t offset,
+                              uintptr_t value,
+                              bool atom,
+                              bool instruction) {
+        cache_immediates.push_back({offset, value, atom, instruction});
+    }
 
     static bool hasCpuFeature(uint32_t featureId);
 
-    BeamAssemblerCommon(BaseAssembler &assembler);
+    BeamAssemblerCommon(BaseAssembler &assembler, bool capture_cache = false);
     ~BeamAssemblerCommon();
 
     void lateInit();
@@ -142,6 +185,14 @@ protected:
     void setLogger(FILE *log);
 
 public:
+    size_t getCacheSnapshotSize() const;
+    bool copyCacheSnapshot(byte *dst, size_t size) const;
+    void appendCacheModuleMetadata(uint64_t code_header_offset,
+                                   uint64_t code_end_offset,
+                                   uint64_t on_load_offset,
+                                   const std::vector<uint64_t> &function_offsets,
+                                   const std::vector<uint64_t> &label_offsets,
+                                   const std::vector<BeamJitCacheFixup> &fixups);
     void embed_rodata(const char *labelName, const char *buff, size_t size);
     void embed_bss(const char *labelName, size_t size);
     void embed_zeros(size_t size);

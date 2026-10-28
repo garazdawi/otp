@@ -987,11 +987,23 @@ Eterm erts_has_code_on_load(Binary* magic);
 Eterm erts_prepare_loading(Binary *loader_state, Process *c_p,
                            Eterm group_leader, Eterm *modp,
                            const byte* code, Uint size);
+#ifdef BEAMASM
+Eterm erts_prepare_loading_metadata(Binary *loader_state, Process *c_p,
+                                    Eterm group_leader, Eterm *modp,
+                                    const byte* code, Uint size);
+#endif
 Eterm erts_finish_loading(Binary *loader_state, Process *c_p,
                           ErtsProcLocks c_p_locks, Eterm *modp);
 Eterm erts_preload_module(Process *c_p, ErtsProcLocks c_p_locks,
                           Eterm group_leader, Eterm *mod,
                           const byte *code, Uint size);
+#ifdef BEAMASM
+Eterm erts_preload_module_cache(Eterm *mod,
+                                const byte *code,
+                                Uint size,
+                                const byte *cache,
+                                size_t cache_size);
+#endif
 void init_load(void);
 const ErtsCodeMFA* erts_find_function_from_pc(ErtsCodePtr pc);
 ErtsCodePtr erts_find_next_code_for_line(const BeamCodeHeader* code_hdr,
@@ -1256,6 +1268,8 @@ extern int erts_no_line_info;
 extern Eterm erts_error_logger_warnings;
 extern int erts_initialized;
 extern int erts_compat_rel;
+const char *erts_jit_cache_get_dir(void);
+int erts_jit_cache_is_required(void);
 
 #define ERTS_COV_NONE 0
 #define ERTS_COV_FUNCTION 1

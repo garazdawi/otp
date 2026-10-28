@@ -63,14 +63,16 @@ using namespace asmjit;
 #define ERTS_CCONV_JIT
 
 struct BeamAssembler : public BeamAssemblerCommon {
-    BeamAssembler() : BeamAssemblerCommon(a) {
+    BeamAssembler(bool capture_cache = false)
+            : BeamAssemblerCommon(a, capture_cache) {
         Error err = code.attach(&a);
         ERTS_ASSERT(err == Error::kOk && "Failed to attach codeHolder");
 
         lateInit();
     }
 
-    BeamAssembler(const std::string &log) : BeamAssembler() {
+    BeamAssembler(const std::string &log, bool capture_cache = false)
+            : BeamAssembler(capture_cache) {
         if (erts_jit_asm_dump) {
             setLogger(log + ".asm");
         }
@@ -777,6 +779,22 @@ protected:
     template<typename T>
     void mov_imm(a64::Gp to, T value) {
         static_assert(std::is_integral<T>::value || std::is_pointer<T>::value);
+
+        if (capture_cache && value && to.is_gp64()) {
+            const uintptr_t immediate = (uintptr_t)value;
+            const bool atom = std::is_integral<T>::value &&
+                              is_atom((Eterm)immediate);
+
+            if (std::is_pointer<T>::value || atom) {
+                recordCacheImmediate(a.offset(), immediate, atom, true);
+                a.movz(to, imm((uint16_t)(immediate >> 0)), 0);
+                a.movk(to, imm((uint16_t)(immediate >> 16)), 16);
+                a.movk(to, imm((uint16_t)(immediate >> 32)), 32);
+                a.movk(to, imm((uint16_t)(immediate >> 48)), 48);
+                return;
+            }
+        }
+
         if (value) {
             a.mov(to, imm(value));
         } else {
@@ -847,9 +865,13 @@ protected:
     }
 
     void cmp(a64::Gp src, int64_t val) {
-        if (Support::is_uint_n<12>(val)) {
+        /* Atom indexes depend on load order, so cached code must route even
+         * small atom immediates through mov_imm() for relocation. */
+        const bool cached_atom = capture_cache && is_atom((Eterm)val);
+
+        if (!cached_atom && Support::is_uint_n<12>(val)) {
             a.cmp(src, imm(val));
-        } else if (Support::is_uint_n<12>(-val)) {
+        } else if (!cached_atom && Support::is_uint_n<12>(-val)) {
             a.cmn(src, imm(-val));
         } else {
             a64::Gp super_tmp = follow_size(SUPER_TMP, src);
@@ -944,6 +966,12 @@ protected:
 class BeamModuleAssembler : public BeamAssembler,
                             public BeamModuleAssemblerCommon {
     BeamGlobalAssembler *ga;
+
+    struct CacheAtomData {
+        Label anchor;
+        Eterm value;
+    };
+    std::vector<CacheAtomData> cache_atom_data;
 
     /* Sequence number used to create unique named labels by
      * resolve_label(). Only used when assembly output has been
@@ -1191,12 +1219,14 @@ public:
     BeamModuleAssembler(BeamGlobalAssembler *ga,
                         Eterm mod,
                         int num_labels,
-                        const BeamFile *file = NULL);
+                        const BeamFile *file = NULL,
+                        bool capture_cache = false);
     BeamModuleAssembler(BeamGlobalAssembler *ga,
                         Eterm mod,
                         int num_labels,
                         int num_functions,
-                        const BeamFile *file = NULL);
+                        const BeamFile *file = NULL,
+                        bool capture_cache = false);
 
     bool emit(unsigned op, const Span<const ArgVal> &args);
 
@@ -1214,6 +1244,9 @@ public:
                  void **writable_ptr);
 
     void codegen(char *buff, size_t len);
+
+    void appendCacheArchitectureFixups(
+            std::vector<BeamJitCacheFixup> &fixups);
 
     AsmMetadata prepared_metadata;
     bool metadata_prepared = false;

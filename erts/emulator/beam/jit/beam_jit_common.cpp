@@ -44,8 +44,10 @@ static std::string getAtom(Eterm atom) {
     return std::string((char *)erts_atom_get_name(ap), ap->len);
 }
 
-BeamAssemblerCommon::BeamAssemblerCommon(BaseAssembler &assembler_)
-        : assembler(assembler_), code() {
+BeamAssemblerCommon::BeamAssemblerCommon(BaseAssembler &assembler_,
+                                         bool capture_cache_)
+        : assembler(assembler_), code(), capture_cache(capture_cache_),
+          cache_snapshot_supported(false) {
     /* Setup with default code info */
     Error err = code.init(Environment::host());
     ERTS_ASSERT(err == Error::kOk && "Failed to init codeHolder");
@@ -59,6 +61,171 @@ BeamAssemblerCommon::BeamAssemblerCommon(BaseAssembler &assembler_)
     ERTS_ASSERT(err == Error::kOk && "Failed to create .rodata section");
 
     code.set_error_handler(this);
+}
+
+static void cache_append_u32(std::vector<uint8_t> &out, uint32_t value) {
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+        out.push_back((uint8_t)(value >> shift));
+    }
+}
+
+static void cache_append_u64(std::vector<uint8_t> &out, uint64_t value) {
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        out.push_back((uint8_t)(value >> shift));
+    }
+}
+
+static bool cache_reloc_is_portable(const RelocEntry *reloc) {
+    switch (reloc->reloc_type()) {
+    case RelocType::kNone:
+    case RelocType::kSectionRelative:
+    case RelocType::kRelToAbs:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool cache_add_u64(uint64_t a, uint64_t b, uint64_t &result) {
+    if (b > UINT64_MAX - a) {
+        return false;
+    }
+    result = a + b;
+    return true;
+}
+
+static bool cache_mul_u64(uint64_t a, uint64_t b, uint64_t &result) {
+    if (a != 0 && b > UINT64_MAX / a) {
+        return false;
+    }
+    result = a * b;
+    return true;
+}
+
+static bool build_cache_snapshot(CodeHolder &code, std::vector<uint8_t> &out) {
+    static const uint8_t magic[8] = {'E', 'J', 'I', 'T', 'C', '0', '0', '1'};
+    constexpr uint32_t header_size = 80;
+    constexpr uint32_t section_record_size = 40;
+    constexpr uint32_t reloc_record_size = 64;
+    uint32_t reloc_count = 0;
+    uint64_t sections_size, relocs_offset, relocs_size;
+    uint64_t image_offset, total_size;
+    const uint64_t section_count = code.sections().size();
+
+    if (code.code_size() == SIZE_MAX || section_count > UINT32_MAX) {
+        return false;
+    }
+
+    for (const RelocEntry *reloc : code.reloc_entries()) {
+        if (!cache_reloc_is_portable(reloc)) {
+            return false;
+        }
+        if (reloc->reloc_type() != RelocType::kNone) {
+            const uint32_t source_id = reloc->source_section_id();
+            const uint32_t target_id = reloc->target_section_id();
+
+            if (reloc_count == UINT32_MAX || source_id >= section_count) {
+                return false;
+            }
+
+            const Section *source = code.section_by_id(source_id);
+            const uint64_t source_offset = reloc->source_offset();
+            const uint64_t region_size = reloc->format().region_size();
+            if (source == nullptr || source_offset >= source->buffer_size() ||
+                region_size > source->buffer_size() - source_offset) {
+                return false;
+            }
+
+            if ((reloc->reloc_type() == RelocType::kSectionRelative ||
+                 reloc->reloc_type() == RelocType::kRelToAbs) &&
+                (target_id == Globals::kInvalidId ||
+                 target_id >= section_count ||
+                 code.section_by_id(target_id) == nullptr)) {
+                return false;
+            }
+            reloc_count++;
+        }
+    }
+
+    const uint64_t sections_offset = header_size;
+    if (!cache_mul_u64(section_count, section_record_size, sections_size) ||
+        !cache_add_u64(sections_offset, sections_size, relocs_offset) ||
+        !cache_mul_u64(reloc_count, reloc_record_size, relocs_size) ||
+        !cache_add_u64(relocs_offset, relocs_size, image_offset) ||
+        !cache_add_u64(image_offset, code.code_size(), total_size) ||
+        total_size > SIZE_MAX) {
+        return false;
+    }
+
+    out.clear();
+    out.reserve((size_t)total_size);
+    out.insert(out.end(), magic, magic + sizeof(magic));
+    cache_append_u32(out, 1);
+    cache_append_u32(out, header_size);
+#if defined(__aarch64__)
+    cache_append_u32(out, 1);
+#elif defined(__x86_64__) || defined(_M_X64)
+    cache_append_u32(out, 2);
+#else
+    cache_append_u32(out, 0);
+#endif
+    cache_append_u32(out, (uint32_t)code.sections().size());
+    cache_append_u32(out, reloc_count);
+    cache_append_u32(out, 0);
+    cache_append_u64(out, code.code_size());
+    out.insert(out.end(), 16, 0);
+    cache_append_u64(out, sections_offset);
+    cache_append_u64(out, relocs_offset);
+    cache_append_u64(out, image_offset);
+
+    for (const Section *section : code.sections()) {
+        cache_append_u32(out, section->section_id());
+        cache_append_u32(out, (uint32_t)section->flags());
+        cache_append_u32(out, section->alignment());
+        cache_append_u32(out, 0);
+        cache_append_u64(out, section->offset());
+        cache_append_u64(out, section->buffer_size());
+        cache_append_u64(out, section->virtual_size());
+    }
+
+    for (const RelocEntry *reloc : code.reloc_entries()) {
+        if (reloc->reloc_type() == RelocType::kNone) {
+            continue;
+        }
+
+        const OffsetFormat &format = reloc->format();
+        cache_append_u32(out, (uint32_t)reloc->reloc_type());
+        cache_append_u32(out, (uint32_t)format.type());
+        cache_append_u32(out, format.flags());
+        cache_append_u32(out, reloc->source_section_id());
+        cache_append_u32(out, reloc->target_section_id());
+        cache_append_u32(out, format.region_size());
+        cache_append_u32(out, format.value_offset());
+        cache_append_u32(out, format.value_size());
+        cache_append_u32(out, format.imm_bit_count());
+        cache_append_u32(out, format.imm_bit_shift());
+        cache_append_u32(out, format.imm_discard_lsb());
+        cache_append_u32(out, 0);
+        cache_append_u64(out, reloc->source_offset());
+        cache_append_u64(out, reloc->payload());
+    }
+
+    const size_t old_size = out.size();
+    if (old_size != image_offset) {
+        out.clear();
+        return false;
+    }
+    out.resize((size_t)total_size);
+    Error err = code.copy_flattened_data(out.data() + image_offset,
+                                         code.code_size(),
+                                         CopySectionFlags::kPadSectionBuffer |
+                                                 CopySectionFlags::kPadTargetBuffer);
+    if (err != Error::kOk) {
+        out.clear();
+        return false;
+    }
+
+    return true;
 }
 
 void BeamAssemblerCommon::lateInit() {
@@ -110,6 +277,11 @@ void BeamAssemblerCommon::codegen(JitAllocator *allocator,
     }
 #endif
 
+    if (capture_cache) {
+        cache_snapshot_supported =
+                build_cache_snapshot(code, cache_snapshot);
+    }
+
     JitAllocator::Span span;
 
     Out<JitAllocator::Span> out(span);
@@ -137,6 +309,72 @@ void BeamAssemblerCommon::codegen(JitAllocator *allocator,
         if (FILE *f = l->file())
             fprintf(f, "; CODE_SIZE: %zd\n", code.code_size());
 #endif
+}
+
+size_t BeamAssemblerCommon::getCacheSnapshotSize() const {
+    return cache_snapshot_supported ? cache_snapshot.size() : 0;
+}
+
+bool BeamAssemblerCommon::copyCacheSnapshot(byte *dst, size_t size) const {
+    if (!cache_snapshot_supported || size != cache_snapshot.size()) {
+        return false;
+    }
+    sys_memcpy(dst, cache_snapshot.data(), size);
+    return true;
+}
+
+void BeamAssemblerCommon::appendCacheModuleMetadata(
+        uint64_t code_header_offset,
+        uint64_t code_end_offset,
+        uint64_t on_load_offset,
+        const std::vector<uint64_t> &function_offsets,
+        const std::vector<uint64_t> &label_offsets,
+        const std::vector<BeamJitCacheFixup> &fixups) {
+    static const uint8_t magic[8] = {'E', 'J', 'M', 'E', 'T', 'A', '0', '3'};
+    uint32_t group_count = 0;
+
+    if (!cache_snapshot_supported || function_offsets.size() > UINT32_MAX ||
+        label_offsets.size() > UINT32_MAX || fixups.size() > UINT32_MAX) {
+        cache_snapshot_supported = false;
+        cache_snapshot.clear();
+        return;
+    }
+
+    for (size_t i = 0; i < fixups.size(); i++) {
+        group_count += i == 0 || fixups[i - 1].kind != fixups[i].kind;
+    }
+
+    cache_snapshot.insert(cache_snapshot.end(), magic, magic + sizeof(magic));
+    cache_append_u32(cache_snapshot, (uint32_t)function_offsets.size());
+    cache_append_u32(cache_snapshot, (uint32_t)label_offsets.size());
+    cache_append_u32(cache_snapshot, (uint32_t)fixups.size());
+    cache_append_u32(cache_snapshot, group_count);
+    cache_append_u64(cache_snapshot, code_header_offset);
+    cache_append_u64(cache_snapshot, code_end_offset);
+    cache_append_u64(cache_snapshot, on_load_offset);
+    for (uint64_t offset : function_offsets) {
+        cache_append_u64(cache_snapshot, offset);
+    }
+    for (uint64_t offset : label_offsets) {
+        cache_append_u64(cache_snapshot, offset);
+    }
+    for (size_t first = 0; first < fixups.size();) {
+        size_t last = first + 1;
+        while (last < fixups.size() &&
+               fixups[last].kind == fixups[first].kind) {
+            last++;
+        }
+        cache_append_u32(cache_snapshot, (uint32_t)fixups[first].kind);
+        cache_append_u32(cache_snapshot, (uint32_t)(last - first));
+        for (size_t i = first; i < last; i++) {
+            const BeamJitCacheFixup &fixup = fixups[i];
+            cache_append_u32(cache_snapshot, fixup.index);
+            cache_append_u64(cache_snapshot, fixup.offset);
+            cache_append_u64(cache_snapshot, (uint64_t)fixup.addend);
+            cache_append_u64(cache_snapshot, fixup.target);
+        }
+        first = last;
+    }
 }
 
 void *BeamAssemblerCommon::getCode(Label label) {
@@ -225,6 +463,133 @@ void BeamModuleAssembler::codegen(JitAllocator *allocator,
 
     BeamAssembler::codegen(allocator, executable_ptr, writable_ptr);
 
+    if (capture_cache) {
+        constexpr uint64_t invalid_offset = UINT64_MAX;
+        std::vector<uint64_t> function_offsets;
+        std::vector<uint64_t> label_offsets;
+        std::vector<BeamJitCacheFixup> fixups;
+        auto get_offset = [&](const Label &label) {
+            return code.is_label_valid(label) && code.is_label_bound(label)
+                           ? code.label_offset_from_base(label)
+                           : invalid_offset;
+        };
+
+        function_offsets.reserve(functions.size());
+        for (BeamLabel function : functions) {
+            function_offsets.push_back(function < rawLabels.size()
+                                               ? get_offset(rawLabels[function])
+                                               : invalid_offset);
+        }
+
+        label_offsets.reserve(rawLabels.size());
+        for (const Label &label : rawLabels) {
+            label_offsets.push_back(get_offset(label));
+        }
+
+        auto add_patch = [&](BeamJitCacheFixupKind kind,
+                             uint32_t index,
+                             const patch &patch,
+                             uint64_t target) {
+            uint64_t base = get_offset(patch.where);
+            if (base == invalid_offset || patch.ptr_offs > UINT64_MAX - base) {
+                cache_snapshot_supported = false;
+                return;
+            }
+            fixups.push_back({kind,
+                              index,
+                              base + patch.ptr_offs,
+                              (int64_t)patch.val_offs,
+                              target});
+        };
+
+        for (const patch_catch &entry : catches) {
+            add_patch(BeamJitCacheFixupKind::Catch,
+                      0,
+                      entry.patch,
+                      get_offset(entry.handler));
+        }
+        for (const auto &[index, entry] : imports) {
+            for (const patch &site : entry.patches) {
+                add_patch(BeamJitCacheFixupKind::Import, index, site, 0);
+            }
+        }
+        for (const auto &[index, entry] : lambdas) {
+            for (const patch &site : entry.patches) {
+                add_patch(BeamJitCacheFixupKind::Lambda, index, site, 0);
+            }
+        }
+        for (const auto &[index, entry] : literals) {
+            if (!entry.deferred.empty()) {
+                cache_snapshot_supported = false;
+            }
+            for (const patch &site : entry.patches) {
+                add_patch(BeamJitCacheFixupKind::Literal, index, site, 0);
+            }
+        }
+        for (const patch &site : strings) {
+            add_patch(BeamJitCacheFixupKind::String, 0, site, 0);
+        }
+
+        if (beam) {
+            auto atom_index = [&](Eterm atom) -> uint32_t {
+                for (Sint32 i = 1; i < beam->atoms.count; i++) {
+                    if (beam->atoms.entries[i] == atom) {
+                        return (uint32_t)i;
+                    }
+                }
+                return UINT32_MAX;
+            };
+            for (size_t i = 0; i < functions.size(); i++) {
+                const ErtsCodeInfo *info =
+                        (const ErtsCodeInfo *)getCode(functions[i]);
+                uint32_t module_index = atom_index(info->mfa.module);
+                uint32_t function_index = atom_index(info->mfa.function);
+                if (module_index == UINT32_MAX ||
+                    function_index == UINT32_MAX ||
+                    function_offsets[i] == invalid_offset) {
+                    cache_snapshot_supported = false;
+                    continue;
+                }
+                uint64_t mfa_offset = function_offsets[i] +
+                                      offsetof(ErtsCodeInfo, mfa);
+                fixups.push_back({BeamJitCacheFixupKind::BeamAtom,
+                                  module_index,
+                                  mfa_offset + offsetof(ErtsCodeMFA, module),
+                                  0,
+                                  0});
+                fixups.push_back({BeamJitCacheFixupKind::BeamAtom,
+                                  function_index,
+                                  mfa_offset + offsetof(ErtsCodeMFA, function),
+                                  0,
+                                  0});
+            }
+        }
+
+        appendCacheArchitectureFixups(fixups);
+        std::sort(fixups.begin(),
+                  fixups.end(),
+                  [](const BeamJitCacheFixup &a,
+                     const BeamJitCacheFixup &b) {
+                      if (a.kind != b.kind) return a.kind < b.kind;
+                      if (a.index != b.index) return a.index < b.index;
+                      return a.offset < b.offset;
+                  });
+
+        uint64_t on_load_offset = get_offset(on_load);
+        if (on_load_offset != invalid_offset) {
+            ASSERT(on_load_offset >= sizeof(ErtsCodeInfo));
+            on_load_offset -= sizeof(ErtsCodeInfo);
+        }
+
+        appendCacheModuleMetadata(
+                get_offset(code_header),
+                get_offset(code_end),
+                on_load_offset,
+                function_offsets,
+                label_offsets,
+                fixups);
+    }
+
     {
         auto offset = code.label_offset_from_base(code_header);
 
@@ -275,8 +640,10 @@ void BeamModuleAssembler::codegen(char *buff, size_t len) {
 BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *_ga,
                                          Eterm _mod,
                                          int num_labels,
-                                         const BeamFile *file)
-        : BeamAssembler(getAtom(_mod)), BeamModuleAssemblerCommon(file, _mod),
+                                         const BeamFile *file,
+                                         bool capture_cache)
+        : BeamAssembler(getAtom(_mod), capture_cache),
+          BeamModuleAssemblerCommon(file, _mod),
           ga(_ga) {
     rawLabels.resize(num_labels + 1);
 
@@ -519,7 +886,7 @@ BeamCodeHeader *BeamModuleAssembler::getCodeHeader() {
 }
 
 const ErtsCodeInfo *BeamModuleAssembler::getOnLoad() {
-    if (on_load.is_valid()) {
+    if (code.is_label_valid(on_load) && code.is_label_bound(on_load)) {
         return erts_code_to_codeinfo((ErtsCodePtr)getCode(on_load));
     } else {
         return 0;
@@ -761,6 +1128,24 @@ Uint beam_jit_get_map_elements(Eterm map,
         ks = flatmap_get_keys(mp);
         vs = flatmap_get_values(mp);
 
+        if (fs[2] == (erts_ihash_t)~(UWord)0) {
+            while (n--) {
+                Uint i;
+
+                for (i = 0; i < sz; i++) {
+                    if (EQ(fs[0], ks[i])) {
+                        PUT_TERM_REG(vs[i], fs[1]);
+                        break;
+                    }
+                }
+                if (i == sz) {
+                    return 0;
+                }
+                fs += 3;
+            }
+            return 1;
+        }
+
         while (sz) {
             if (EQ(fs[0], *ks)) {
                 PUT_TERM_REG(*vs, fs[1]);
@@ -785,6 +1170,9 @@ Uint beam_jit_get_map_elements(Eterm map,
             const Eterm *v;
 
             hx = fs[2];
+            if (hx == (erts_ihash_t)~(UWord)0) {
+                hx = hashmap_make_hash(fs[0]);
+            }
             ASSERT(hx == hashmap_make_hash(fs[0]));
 
             if ((v = erts_hashmap_get(hx, fs[0], map)) == NULL) {

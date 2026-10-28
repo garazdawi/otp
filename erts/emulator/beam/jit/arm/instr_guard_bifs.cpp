@@ -909,7 +909,9 @@ void BeamModuleAssembler::emit_bif_map_get(const ArgLabel &Fail,
         }
     } else {
         emit_enter_runtime();
-        if (!Key.isLiteral()) {
+        if (!Key.isLiteral() || capture_cache) {
+            /* Literal hashes can contain VM-local atom indexes. Cached code
+             * must recompute them after literal relocation. */
             runtime_call<Eterm (*)(Eterm, Eterm), get_map_element>();
         } else {
             auto literal_key =

@@ -84,14 +84,24 @@ BeamModuleAssembler::BeamModuleAssembler(BeamGlobalAssembler *ga,
                                          Eterm mod,
                                          int num_labels,
                                          int num_functions,
-                                         const BeamFile *file)
-        : BeamModuleAssembler(ga, mod, num_labels, file) {
+                                         const BeamFile *file,
+                                         bool capture_cache)
+        : BeamModuleAssembler(ga,
+                              mod,
+                              num_labels,
+                              file,
+                              capture_cache) {
     code_header = a.new_label();
     a.align(AlignMode::kCode, 8);
     a.bind(code_header);
 
     embed_zeros(sizeof(BeamCodeHeader) +
                 sizeof(ErtsCodeInfo *) * num_functions);
+}
+
+void BeamModuleAssembler::appendCacheArchitectureFixups(
+        std::vector<BeamJitCacheFixup> &fixups) {
+    (void)fixups;
 }
 
 void BeamModuleAssembler::embed_vararg_rodata(const Span<const ArgVal> &args,

@@ -337,6 +337,23 @@ void BeamModuleAssembler::emit_i_get(const ArgSource &Src,
 void BeamModuleAssembler::emit_i_get_hash(const ArgConstant &Src,
                                           const ArgWord &Hash,
                                           const ArgRegister &Dst) {
+    if (capture_cache) {
+        /* Internal hashes of atoms contain their VM-local atom indexes. The
+         * cached atom itself can be relocated, but its precomputed hash cannot.
+         * Recompute the hash in the process-dictionary lookup instead. */
+        mov_arg(ARG2, Src);
+
+        emit_enter_runtime();
+
+        a.mov(ARG1, c_p);
+        runtime_call<Eterm (*)(Process *, Eterm), erts_pd_hash_get>();
+
+        emit_leave_runtime();
+
+        mov_arg(Dst, ARG1);
+        return;
+    }
+
     mov_arg(ARG2, Hash);
     mov_arg(ARG3, Src);
 

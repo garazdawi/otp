@@ -33,6 +33,8 @@
     grow_heap/1,
     grow_stack/1,
     grow_stack_heap/1,
+    binary_vheap_gc/1,
+    binary_vheap_shrink/1,
     max_heap_size/1,
     max_heap_size_large_hfrag/1,
     minor_major_gc_option_async/1,
@@ -46,7 +48,8 @@ suite() ->
     [{ct_hooks,[ts_install_cth]}].
 
 all() -> 
-    [grow_heap, grow_stack, grow_stack_heap, max_heap_size,
+    [grow_heap, grow_stack, grow_stack_heap,
+     binary_vheap_gc, binary_vheap_shrink, max_heap_size,
      max_heap_size_large_hfrag,
     minor_major_gc_option_self,
     minor_major_gc_option_async, gc_signal_order, gc_dirty_exec_proc,
@@ -181,6 +184,244 @@ show_heap(String) ->
     {heap_size, HSize}=process_info(self(), heap_size),
     {stack_size, SSize}=process_info(self(), stack_size),
     io:format("Heap/Stack "++String++"~p/~p", [HSize, SSize]).
+
+binary_vheap_gc(_Config) ->
+    run_binary_vheap_test(
+      2,
+      fun(Pid, Monitor, Initial) ->
+              Grown = wait_for_grown_vheap(Pid, Monitor, Initial),
+              Resized = wait_for_major_after_minors(Pid, Monitor, 2),
+              {FirstMinor, SecondMinor} = wait_for_two_minors(Pid, Monitor),
+
+              %% A surviving binary grows both limits. A full sweep leaves
+              %% room in the old generation for the next promotion.
+              ?assert(vheap_block_size(Grown) > vheap_block_size(Initial)),
+              ?assert(old_vheap_block_size(Grown) >
+                      old_vheap_block_size(Initial)),
+              ?assert(vheap_size(Grown) > vheap_block_size(Initial)),
+              ?assert(old_vheap_block_size(Resized) >
+                      vheap_block_size(Resized)),
+
+              %% Term allocation triggers two minor collections. The first
+              %% promotes the binary; the second must not become a full sweep.
+              ?assert(old_vheap_size(FirstMinor) > 0),
+              ?assert(old_vheap_size(FirstMinor) <
+                      old_vheap_block_size(FirstMinor)),
+              ?assert(old_vheap_size(SecondMinor) > 0),
+              ok
+      end).
+
+binary_vheap_shrink(_Config) ->
+    run_binary_vheap_test(
+      0,
+      fun(Pid, Monitor, Initial) ->
+              Grown = wait_for_grown_vheap(Pid, Monitor, Initial),
+              Ref = make_ref(),
+              Pid ! {drop_binary, Ref},
+              wait_for_worker(Pid, Monitor, binary_dropped, Ref),
+              Shrunk = wait_for_major_gcs(Pid, Monitor, 3),
+              [First | _] = Shrunk,
+              Last = lists:last(Shrunk),
+
+              %% Once the binary dies, natural full sweeps only move both
+              %% limits downwards.
+              ?assert(vheap_block_size(First) =< vheap_block_size(Grown)),
+              ?assert(old_vheap_block_size(First) =<
+                      old_vheap_block_size(Grown)),
+              ?assert(vheap_block_size(Last) < vheap_block_size(Grown)),
+              ?assert(old_vheap_block_size(Last) <
+                      old_vheap_block_size(Grown)),
+              ?assertEqual(0, vheap_size(Last)),
+              ?assertEqual(0, old_vheap_size(Last)),
+              assert_vheap_shrinks(Shrunk)
+      end).
+
+run_binary_vheap_test(FullsweepAfter, Test) ->
+    Parent = self(),
+    {Pid, Monitor} = spawn_opt(
+                       fun() -> binary_vheap_worker(Parent) end,
+                       [monitor, {fullsweep_after, FullsweepAfter}]),
+    1 = erlang:trace(Pid, true,
+                     [garbage_collection, {tracer, self()}]),
+    Initial = garbage_collection_info(Pid),
+    BinarySize = (vheap_block_size(Initial) + 1) *
+        erlang:system_info(wordsize),
+    Pid ! {start, BinarySize},
+    try
+        Test(Pid, Monitor, Initial)
+    after
+        erlang:trace(Pid, false, [garbage_collection]),
+        Pid ! stop,
+        receive
+            {'DOWN', Monitor, process, Pid, _} -> ok
+        after 10000 ->
+                ct:fail(binary_vheap_worker_timeout)
+        end
+    end.
+
+binary_vheap_worker(Parent) ->
+    receive
+        {start, BinarySize} ->
+            Binary = binary:copy(<<0>>, BinarySize),
+            allocate_terms(Parent, Binary, 0);
+        stop ->
+            ok
+    end.
+
+allocate_terms(Parent, Binary, Count) ->
+    receive
+        {drop_binary, Ref} ->
+            Parent ! {self(), binary_dropped, Ref},
+            allocate_terms(Parent, undefined, Count);
+        {pause, Ref} ->
+            Parent ! {self(), paused, Ref},
+            binary_vheap_worker_paused(Parent, Binary, Count);
+        stop ->
+            use_binary(Binary)
+    after 0 ->
+            Next = erlang:phash2(erlang:make_tuple(100, Count)),
+            erlang:yield(),
+            allocate_terms(Parent, Binary, Next)
+    end.
+
+binary_vheap_worker_paused(Parent, Binary, Count) ->
+    receive
+        {drop_binary, Ref} ->
+            Parent ! {self(), binary_dropped, Ref},
+            allocate_terms(Parent, undefined, Count);
+        stop ->
+            use_binary(Binary)
+    end.
+
+use_binary(undefined) -> ok;
+use_binary(Binary) -> binary:last(Binary).
+
+wait_for_grown_vheap(Pid, Monitor, Initial) ->
+    case binary_vheap_event(Pid, Monitor) of
+        {trace, gc_major_end, Info} ->
+            case vheap_size(Info) > vheap_block_size(Initial) of
+                true -> Info;
+                false -> wait_for_grown_vheap(Pid, Monitor, Initial)
+            end;
+        _ ->
+            wait_for_grown_vheap(Pid, Monitor, Initial)
+    end.
+
+wait_for_major_after_minors(Pid, Monitor, 0) ->
+    wait_for_major_end(Pid, Monitor);
+wait_for_major_after_minors(Pid, Monitor, Count) ->
+    case binary_vheap_event(Pid, Monitor) of
+        {trace, gc_minor_end, _} ->
+            wait_for_major_after_minors(Pid, Monitor, Count - 1);
+        {trace, gc_major_start, _} ->
+            ct:fail({premature_major_gc, Count});
+        _ ->
+            wait_for_major_after_minors(Pid, Monitor, Count)
+    end.
+
+wait_for_major_end(Pid, Monitor) ->
+    case binary_vheap_event(Pid, Monitor) of
+        {trace, gc_major_end, Info} -> Info;
+        _ -> wait_for_major_end(Pid, Monitor)
+    end.
+
+wait_for_two_minors(Pid, Monitor) ->
+    First = wait_for_minor_end(Pid, Monitor),
+    wait_for_minor_start(Pid, Monitor),
+    Ref = make_ref(),
+    Pid ! {pause, Ref},
+    Second = wait_for_paused_minor(Pid, Monitor, Ref, undefined, false),
+    {First, Second}.
+
+wait_for_minor_start(Pid, Monitor) ->
+    case binary_vheap_event(Pid, Monitor) of
+        {trace, gc_minor_start, _} -> ok;
+        {trace, gc_major_start, _} -> ct:fail(premature_major_gc);
+        _ -> wait_for_minor_start(Pid, Monitor)
+    end.
+
+wait_for_minor_end(Pid, Monitor) ->
+    wait_for_minor_start(Pid, Monitor),
+    wait_for_minor_end_event(Pid, Monitor).
+
+wait_for_minor_end_event(Pid, Monitor) ->
+    case binary_vheap_event(Pid, Monitor) of
+        {trace, gc_minor_end, Info} -> Info;
+        {trace, gc_major_start, _} -> ct:fail(premature_major_gc);
+        _ -> wait_for_minor_end_event(Pid, Monitor)
+    end.
+
+wait_for_paused_minor(_Pid, _Monitor, _Ref, Info, true)
+  when Info =/= undefined ->
+    Info;
+wait_for_paused_minor(Pid, Monitor, Ref, Info, Paused) ->
+    case binary_vheap_event(Pid, Monitor) of
+        {trace, gc_minor_end, Info0} ->
+            wait_for_paused_minor(Pid, Monitor, Ref, Info0, Paused);
+        {trace, gc_major_start, _} ->
+            ct:fail(premature_major_gc);
+        {worker, paused, Ref} ->
+            wait_for_paused_minor(Pid, Monitor, Ref, Info, true);
+        _ ->
+            wait_for_paused_minor(Pid, Monitor, Ref, Info, Paused)
+    end.
+
+wait_for_worker(Pid, Monitor, Tag, Ref) ->
+    case binary_vheap_event(Pid, Monitor) of
+        {worker, Tag, Ref} -> ok;
+        _ -> wait_for_worker(Pid, Monitor, Tag, Ref)
+    end.
+
+wait_for_major_gcs(Pid, Monitor, Count) ->
+    wait_for_major_gcs(Pid, Monitor, Count, []).
+
+wait_for_major_gcs(_Pid, _Monitor, 0, Acc) ->
+    lists:reverse(Acc);
+wait_for_major_gcs(Pid, Monitor, Count, Acc) ->
+    case binary_vheap_event(Pid, Monitor) of
+        {trace, gc_major_start, _} when Count =:= 1 ->
+            Ref = make_ref(),
+            Pid ! {pause, Ref},
+            Info = wait_for_major_end(Pid, Monitor),
+            wait_for_worker(Pid, Monitor, paused, Ref),
+            lists:reverse([Info | Acc]);
+        {trace, gc_major_end, Info} ->
+            wait_for_major_gcs(Pid, Monitor, Count - 1,
+                                [Info | Acc]);
+        {trace, gc_minor_start, _} ->
+            ct:fail(unexpected_minor_gc);
+        _ ->
+            wait_for_major_gcs(Pid, Monitor, Count, Acc)
+    end.
+
+binary_vheap_event(Pid, Monitor) ->
+    receive
+        {trace, Pid, Tag, Info} ->
+            {trace, Tag, maps:from_list(Info)};
+        {Pid, Tag, Ref} ->
+            {worker, Tag, Ref};
+        {'DOWN', Monitor, process, Pid, Reason} ->
+            ct:fail({binary_vheap_worker_failed, Reason})
+    after 10000 ->
+            ct:fail(binary_vheap_gc_timeout)
+    end.
+
+garbage_collection_info(Pid) ->
+    {garbage_collection_info, Info} =
+        process_info(Pid, garbage_collection_info),
+    maps:from_list(Info).
+
+vheap_size(Info) -> maps:get(bin_vheap_size, Info).
+vheap_block_size(Info) -> maps:get(bin_vheap_block_size, Info).
+old_vheap_size(Info) -> maps:get(bin_old_vheap_size, Info).
+old_vheap_block_size(Info) -> maps:get(bin_old_vheap_block_size, Info).
+
+assert_vheap_shrinks([_]) ->
+    ok;
+assert_vheap_shrinks([First, Second | Rest]) ->
+    ?assert(vheap_block_size(Second) =< vheap_block_size(First)),
+    ?assert(old_vheap_block_size(Second) =< old_vheap_block_size(First)),
+    assert_vheap_shrinks([Second | Rest]).
     
 %% Test that doing a remote GC that triggers the max heap size
 %% kills the process.

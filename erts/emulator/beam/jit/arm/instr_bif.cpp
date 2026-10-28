@@ -833,7 +833,7 @@ void BeamModuleAssembler::emit_call_bif_mfa(const ArgAtom &M,
             e->info.mfa.module,
             e->info.mfa.function,
             A.get());
-    a.mov(ARG4, imm(func));
+    mov_imm(ARG4, reinterpret_cast<void *>(func));
 
     a.b(resolve_fragment(ga->get_call_bif_shared(), disp128MB));
 }

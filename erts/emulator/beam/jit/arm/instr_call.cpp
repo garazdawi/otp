@@ -153,7 +153,7 @@ void BeamGlobalAssembler::emit_dispatch_save_calls_export() {
     a.ldr(ARG1, TMP_MEM1q);
 
     /* Keep going with the actual code index. */
-    a.mov(TMP1, imm(&the_active_code_index));
+    mov_imm(TMP1, &the_active_code_index);
     a.ldr(TMP1.w(), a64::Mem(TMP1));
 
     branch(emit_setup_dispatchable_call(ARG1, TMP1));

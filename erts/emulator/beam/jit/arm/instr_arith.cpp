@@ -1110,7 +1110,7 @@ void BeamModuleAssembler::emit_div_rem(const ArgLabel &Fail,
             fragment_call(ga->get_int_div_rem_guard_shared());
             a.b_eq(resolve_beam_label(Fail, disp1MB));
         } else {
-            a.mov(ARG4, imm(error_mfa));
+            mov_imm(ARG4, error_mfa);
             fragment_call(ga->get_int_div_rem_body_shared());
         }
 

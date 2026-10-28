@@ -54,6 +54,7 @@
 #include "erl_osenv.h"
 #include "erl_proc_sig_queue.h"
 #include "beam_load.h"
+#include "beam_load_timing.h"
 #include "erl_global_literals.h"
 #include "erl_iolist.h"
 #include "erl_debugger.h"
@@ -309,6 +310,7 @@ erl_init(int ncpu,
     erl_drv_thr_init();
     erts_init_async();
     erts_init_io(port_tab_sz, port_tab_sz_ignore_files, legacy_port_tab);
+    erts_beam_load_timing_init();
     init_load();
     erts_init_bif();
     erts_init_bif_chksum();
@@ -493,6 +495,26 @@ static char* program;
 static char* init = "init";
 static int    boot_argc;
 static char** boot_argv;
+#ifdef BEAMASM
+static char  *jit_cache_dir;
+
+const char *erts_jit_cache_get_dir(void)
+{
+    return jit_cache_dir;
+}
+
+int erts_jit_cache_is_required(void)
+{
+    int i;
+
+    for (i = 0; i < boot_argc; i++) {
+        if (sys_strcmp(boot_argv[i], "-jit_cache_required") == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif
 
 static char *
 get_arg(char* rest, char* next, int* ip)
@@ -529,6 +551,42 @@ load_preloaded(void)
 	if ((code = sys_preload_begin(&preload_p[i])) == 0)
 	    erts_exit(ERTS_ERROR_EXIT, "Failed to find preloaded code for module %s\n",
 		     name);
+#ifdef BEAMASM
+        if (jit_cache_dir != NULL) {
+            char path[MAXPATHLEN];
+            FILE *file;
+            byte *cache = NULL;
+            long cache_size = 0;
+            ErtsSysHrTime cache_read_start = erts_beam_load_timing_start();
+
+            if (erts_snprintf(path, sizeof(path), "%s/%s.ejit",
+                              jit_cache_dir, name) >= sizeof(path)) {
+                erts_exit(ERTS_ERROR_EXIT, "JIT cache path is too long\n");
+            }
+            file = fopen(path, "rb");
+            if (file == NULL) {
+                erts_exit(ERTS_ERROR_EXIT,
+                          "Missing JIT cache for preloaded module %s\n",
+                          name);
+            } else {
+              if (
+                fseek(file, 0, SEEK_END) != 0 ||
+                (cache_size = ftell(file)) <= 0 ||
+                fseek(file, 0, SEEK_SET) != 0 ||
+                (cache = erts_alloc(ERTS_ALC_T_TMP, cache_size)) == NULL ||
+                fread(cache, 1, cache_size, file) != (size_t)cache_size) {
+                erts_exit(ERTS_ERROR_EXIT,
+                          "Failed reading JIT cache for preloaded module %s\n",
+                          name);
+              }
+              fclose(file);
+              erts_beam_load_timing_report("cache_read", cache_read_start);
+              res = erts_preload_module_cache(&module_name, code, length,
+                                              cache, cache_size);
+              erts_free(ERTS_ALC_T_TMP, cache);
+            }
+        } else
+#endif
 	res = erts_preload_module(NULL, 0, NIL, &module_name, code, length);
 	sys_preload_end(&preload_p[i]);
 	if (res != NIL)
@@ -1718,6 +1776,15 @@ erl_start(int argc, char **argv)
 
             switch (sub_param[0])
             {
+            case 'c':
+                if (has_prefix("cache", sub_param)) {
+                    jit_cache_dir = get_arg(sub_param + 5,
+                                            argv[i + 1], &i);
+                } else {
+                    erts_fprintf(stderr, "bad +Jcache option %s\n", argv[i]);
+                    erts_usage();
+                }
+                break;
             case 'D':
                 sub_param++;
                 if (has_prefix("dump", sub_param)) {

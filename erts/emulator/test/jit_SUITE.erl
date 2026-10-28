@@ -22,12 +22,15 @@
 
 -module(jit_SUITE).
 
+-include_lib("common_test/include/ct.hrl").
+
 -export([suite/0, groups/0, all/0,
          init_per_suite/1, end_per_suite/1,
          init_per_group/2, end_per_group/2,
          init_per_testcase/2, end_per_testcase/2]).
 -export([annotate/1, frame_pointers/1, jmsingle/1, named_labels/1,
-         symbols/1, perfdirectory_set/1, perfdirectory_not_set/1]).
+         jit_cache_snapshot/1, jit_cache_fresh_vm/1, symbols/1,
+         perfdirectory_set/1, perfdirectory_not_set/1]).
 -export([frame_pointer_workload/0]).
 
 suite() ->
@@ -38,7 +41,8 @@ groups() ->
              perfdirectory_set, perfdirectory_not_set]}].
 
 all() ->
-    [{group, perf}, jmsingle, named_labels].
+    [{group, perf}, jmsingle, named_labels,
+     jit_cache_snapshot, jit_cache_fresh_vm].
 
 init_per_suite(Config) ->
     case erlang:system_info(emu_flavor) of
@@ -138,6 +142,199 @@ end_per_testcase(named_labels, Config) ->
     ok;
 end_per_testcase(_, _Config) ->
     ok.
+
+jit_cache_snapshot(_Config) ->
+    {?MODULE, CompressedBeam, _} = code:get_object_code(?MODULE),
+    Beam = case CompressedBeam of
+               <<16#1f, 16#8b, _/binary>> -> zlib:gunzip(CompressedBeam);
+               _ -> CompressedBeam
+           end,
+    {ok, Cache} = erts_internal:beam_jit_cache(?MODULE, Beam),
+
+    <<"EJITC001",
+      1:32/little,
+      80:32/little,
+      Architecture:32/little,
+      SectionCount:32/little,
+      RelocationCount:32/little,
+      0:32/little,
+      ImageSize:64/little,
+      Checksum:16/binary,
+      SectionsOffset:64/little,
+      RelocationsOffset:64/little,
+      ImageOffset:64/little,
+      _/binary>> = Cache,
+
+    true = Architecture =:= 1 orelse Architecture =:= 2,
+    true = SectionCount > 0,
+    80 = SectionsOffset,
+    RelocationsOffset = SectionsOffset + SectionCount * 40,
+    ImageOffset = RelocationsOffset + RelocationCount * 64,
+    MetadataOffset = ImageOffset + ImageSize,
+    <<_:MetadataOffset/binary,
+      "EJMETA03",
+      FunctionCount:32/little,
+      LabelCount:32/little,
+      FixupCount:32/little,
+      FixupGroupCount:32/little,
+      _CodeHeaderOffset:64/little,
+      _CodeEndOffset:64/little,
+      _OnLoadOffset:64/little,
+      Metadata/binary>> = Cache,
+    true = FunctionCount > 0,
+    true = LabelCount > 0,
+    true = FixupGroupCount > 0,
+    TrailerOffset = (FunctionCount + LabelCount) * 8 +
+                    FixupGroupCount * 8 + FixupCount * 28,
+    <<_:TrailerOffset/binary,
+      "EJLDR001",
+      DynamicLiteralCount:32/little,
+      LambdaCount:32/little,
+      NifBytes:32/little,
+      InitialDynamicLiteralCount:32/little,
+      LoaderMetadata/binary>> = Metadata,
+    true = InitialDynamicLiteralCount =< DynamicLiteralCount,
+    NifBytes = (FunctionCount + 7) div 8,
+    AfterLiterals = skip_cached_literals(
+                      DynamicLiteralCount - InitialDynamicLiteralCount,
+                      LoaderMetadata),
+    LambdaBytes = LambdaCount * 8,
+    <<_:LambdaBytes/binary, _:NifBytes/binary>> = AfterLiterals,
+    Checksum = erts_internal:beamfile_module_md5(Beam),
+
+    try erts_internal:beam_jit_cache(<<"not an atom">>, Beam) of
+        _ -> ct:fail(expected_badarg)
+    catch
+        error:badarg -> ok
+    end,
+    try erts_internal:beam_jit_cache(?MODULE, not_a_binary) of
+        _ -> ct:fail(expected_badarg)
+    catch
+        error:badarg -> ok
+    end,
+    {error, badfile} =
+        erts_internal:beam_jit_cache(?MODULE, <<"not a BEAM file">>),
+    ok.
+
+skip_cached_literals(0, Metadata) ->
+    Metadata;
+skip_cached_literals(Count,
+                     <<_Kind:32/little, Size:32/little,
+                       _Value:Size/binary, Rest/binary>>) ->
+    skip_cached_literals(Count - 1, Rest).
+
+jit_cache_fresh_vm(Config) ->
+    Module = jit_cache_fresh_probe,
+    Asm = {Module,
+           [{id, 1}],
+           [],
+           #{},
+           [{function, id, 1, 2,
+             [{label, 1},
+              {line, []},
+              {func_info, {atom, Module}, {atom, id}, 1},
+              {label, 2},
+              return]}],
+           3},
+    {ok, Beam} = beam_asm:module(Asm, [], [], []),
+    {ok, Cache} = erts_internal:beam_jit_cache(Module, Beam),
+    <<First, Rest/binary>> = Cache,
+    {ok, Fallback, false} =
+        erts_internal:beam_jit_cache_prepare(
+          Module, Beam, <<(First bxor 1), Rest/binary>>),
+    ok = erlang:finish_loading([Fallback]),
+    42 = Module:id(42),
+    true = code:delete(Module),
+    false = code:purge(Module),
+    AtomModule = jit_cache_atom_probe,
+    AtomAsm = {AtomModule,
+               [{value, 0}],
+               [],
+               #{},
+               [{function, value, 0, 2,
+                 [{label, 1},
+                  {line, []},
+                  {func_info, {atom, AtomModule}, {atom, value}, 0},
+                  {label, 2},
+                  {move, {atom, ok}, {x, 0}},
+                  return]}],
+               3},
+    {ok, AtomBeam} = beam_asm:module(AtomAsm, [], [], []),
+    {ok, AtomCache} = erts_internal:beam_jit_cache(AtomModule, AtomBeam),
+    {ok, AtomPrepared, true} =
+        erts_internal:beam_jit_cache_prepare(
+          AtomModule, AtomBeam, AtomCache),
+    ok = erlang:finish_loading([AtomPrepared]),
+    ok = AtomModule:value(),
+    true = code:delete(AtomModule),
+    false = code:purge(AtomModule),
+    OnLoadModule = jit_cache_on_load_probe,
+    OnLoadAsm = {OnLoadModule,
+                 [{value, 0}],
+                 [],
+                 #{},
+                 [{function, init, 0, 2,
+                   [{label, 1},
+                    {line, []},
+                    {func_info, {atom, OnLoadModule}, {atom, init}, 0},
+                    {label, 2},
+                    on_load,
+                    {move, {atom, ok}, {x, 0}},
+                    return]},
+                  {function, value, 0, 4,
+                   [{label, 3},
+                    {line, []},
+                    {func_info, {atom, OnLoadModule}, {atom, value}, 0},
+                    {label, 4},
+                    {move, {integer, 42}, {x, 0}},
+                    return]}],
+                 5},
+    {ok, OnLoadBeam} = beam_asm:module(OnLoadAsm, [], [], []),
+    {ok, OnLoadCache} =
+        erts_internal:beam_jit_cache(OnLoadModule, OnLoadBeam),
+    {ok, OnLoadPrepared, true} =
+        erts_internal:beam_jit_cache_prepare(
+          OnLoadModule, OnLoadBeam, OnLoadCache),
+    {on_load, [OnLoadModule]} = erlang:finish_loading([OnLoadPrepared]),
+    ok = erlang:call_on_load_function(OnLoadModule),
+    true = erlang:finish_after_on_load(OnLoadModule, true),
+    42 = OnLoadModule:value(),
+    true = code:delete(OnLoadModule),
+    false = code:purge(OnLoadModule),
+    PrivDir = proplists:get_value(priv_dir, Config),
+    BeamPath = filename:join(PrivDir, "jit_cache_fresh_probe.beam"),
+    CachePath = filename:join(PrivDir, "jit_cache_fresh_probe.ejit"),
+    ok = file:write_file(BeamPath, Beam),
+    ok = file:write_file(CachePath, Cache),
+    Eval = lists:flatten(
+             io_lib:format(
+               "{ok,B}=file:read_file(~tp),"
+               "{ok,C}=file:read_file(~tp),"
+               "{ok,P,true}=erts_internal:beam_jit_cache_prepare("
+               "jit_cache_fresh_probe,B,C),"
+               "ok=erlang:finish_loading([P]),"
+               "true=erlang:module_loaded(jit_cache_fresh_probe),"
+               "42=jit_cache_fresh_probe:id(42),"
+               "io:format(\"CACHE_OK~n\",[]),halt().",
+               [BeamPath, CachePath])),
+    Command = ct:get_progname() ++ " -noshell -eval '" ++ Eval ++ "'",
+    Port = open_port({spawn, Command},
+                     [binary, exit_status, stderr_to_stdout]),
+    {0, Output} = collect_port(Port, []),
+    {match, _} = re:run(Output, "CACHE_OK"),
+    ok.
+
+collect_port(Port, Acc) ->
+    receive
+        {Port, {data, Data}} ->
+            collect_port(Port, [Data | Acc]);
+        {Port, {exit_status, Status}} ->
+            {Status, iolist_to_binary(lists:reverse(Acc))}
+    after 30000 ->
+        port_close(Port),
+        ct:fail({fresh_vm_timeout,
+                 iolist_to_binary(lists:reverse(Acc))})
+    end.
 
 get_tmp_so_files() ->
     {ok, Home} = init:get_argument(home),
