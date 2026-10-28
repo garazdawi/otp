@@ -45,6 +45,7 @@
 #define INVALID_LAMBDA_INDEX -1
 
 static void init_label(Label *lp);
+#if defined(__aarch64__)
 static int beam_load_finish_cache(LoaderState *stp);
 
 static Uint32 cache_read_u32(const byte *p) {
@@ -61,6 +62,7 @@ static Uint64 cache_read_u64(const byte *p) {
     }
     return value;
 }
+#endif
 
 int beam_load_prepare_emit(LoaderState *stp) {
     stp->ba = beamasm_new_assembler(stp->module,
@@ -275,6 +277,7 @@ static int cache_patch_word(LoaderState *stp,
     return 1;
 }
 
+#if defined(__aarch64__)
 static int cache_patch_aarch64_mov(LoaderState *stp,
                                    Uint64 offset,
                                    UWord value) {
@@ -343,6 +346,7 @@ static int cache_apply_immediate_fixup(LoaderState *stp,
     }
     return cache_patch_word(stp, fixup->offset, fixup->addend, value);
 }
+#endif
 
 static int cache_patch_fixups(LoaderState *stp,
                               Uint32 kind,
@@ -380,6 +384,7 @@ static const byte *cache_named_rodata(LoaderState *stp,
     return (const byte *)stp->executable_region + offset;
 }
 
+#if defined(__aarch64__)
 static int cache_copy_metadata(LoaderState *stp,
                                const byte *metadata,
                                size_t metadata_size,
@@ -615,6 +620,7 @@ static int cache_copy_metadata(LoaderState *stp,
     }
     return 1;
 }
+#endif
 
 int beam_load_cache_image(LoaderState *stp,
                           const byte *cache_data,
@@ -1498,6 +1504,7 @@ static const BeamDebugTab *finish_debug_table(LoaderState *stp,
     return debug_tab_ro;
 }
 
+#if defined(__aarch64__)
 static int beam_load_finish_cache(LoaderState *stp) {
     BeamCodeHeader *header = (BeamCodeHeader *)stp->writable_region;
     Eterm *ptr;
@@ -1581,6 +1588,7 @@ static int beam_load_finish_cache(LoaderState *stp) {
     }
     return 1;
 }
+#endif
 
 int beam_load_finish_emit(LoaderState *stp) {
     const BeamCodeHeader *code_hdr_ro = NULL;

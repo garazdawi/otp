@@ -466,7 +466,7 @@ erts_internal_beam_jit_cache_prepare_3(BIF_ALIST_3)
 #ifdef BEAMASM
     const byte *beam_temp = NULL, *cache_temp = NULL;
     const byte *beam_code, *cache_data;
-    Uint beam_size, cache_size;
+    Uint beam_size = 0, cache_size = 0;
     Binary *magic;
     LoaderState *stp;
     Eterm prepared, reason, result, cached_term;
